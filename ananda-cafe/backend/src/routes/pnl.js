@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { todayIST } = require("../helpers");
 
 // Get P&L for date range
 router.get("/", async (req, res) => {
@@ -30,7 +31,7 @@ router.post("/", async (req, res) => {
 // Summary across all outlets for a date
 router.get("/summary", async (req, res) => {
   const { date } = req.query;
-  const targetDate = date || new Date().toISOString().split("T")[0];
+  const targetDate = date || todayIST();
   const { data, error } = await supabase
     .from("daily_pnl")
     .select("*")
