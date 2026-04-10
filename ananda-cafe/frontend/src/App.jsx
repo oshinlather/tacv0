@@ -13,7 +13,7 @@ const OUTLETS = [
   { id: "sec56", name: "Sector 56", short: "S-56" },
   { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
 ];
-const today = () => new Date().toISOString().split("T")[0];
+const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset()); return d.toISOString().split("T")[0]; };
 const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 const fmt = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
 const pct = (n) => (n || 0).toFixed(1) + "%";
@@ -233,11 +233,50 @@ const DailyPnL = () => {
 
 // ─── BK Items & Recipes (for Base Kitchen & Dispatch) ────────────────────────
 const BK_ITEMS = [
-  { id: "sambhar", name: "Sambhar", unit: "L" }, { id: "idli_batter", name: "Idli/Dosa Batter", unit: "Kg" },
-  { id: "coconut_chutney", name: "Coconut Chutney", unit: "Kg" }, { id: "tomato_chutney", name: "Tomato Chutney", unit: "Kg" },
-  { id: "peanut_chutney", name: "Peanut Chutney", unit: "Kg" }, { id: "halwa_mix", name: "Sooji Halwa", unit: "Kg" },
-  { id: "medu_vada_mix", name: "Medu Vada Mix", unit: "Kg" }, { id: "upma_mix", name: "Upma Premix", unit: "Kg" },
-  { id: "poha_mix", name: "Poha Premix", unit: "Kg" }, { id: "coffee_decoction", name: "Coffee Decoction", unit: "L" },
+  // Prepared Items (from BK) — same IDs as demand form
+  { id: "sambhar", name: "Sambhar", unit: "Kg", category: "prepared" },
+  { id: "red_chutney", name: "Red Chutney", unit: "Kg", category: "prepared" },
+  { id: "dosa_batter", name: "Dosa Batter", unit: "Batch", category: "prepared" },
+  { id: "idli_batter", name: "Idli Batter", unit: "Batch", category: "prepared" },
+  { id: "vada_batter", name: "Vada Batter", unit: "Batch", category: "prepared" },
+  { id: "rava_mix", name: "Rava Mix", unit: "Kg", category: "prepared" },
+  { id: "onion_masala", name: "Onion Masala", unit: "Kg", category: "prepared" },
+  { id: "upma_sooji", name: "Upma Sooji", unit: "gm", category: "prepared" },
+  { id: "garlic_paste", name: "Garlic Paste", unit: "gm", category: "prepared" },
+  { id: "podi_masala", name: "Podi Masala", unit: "Kg", category: "prepared" },
+  { id: "sugar", name: "Sugar", unit: "Kg", category: "prepared" },
+  { id: "poha", name: "Poha", unit: "gm", category: "prepared" },
+  { id: "besan", name: "Besan", unit: "Kg", category: "prepared" },
+  { id: "kaju", name: "Kaju", unit: "gm", category: "prepared" },
+  // Vegetable & Masala
+  { id: "onions", name: "Onions", unit: "Kg", category: "vegetable" },
+  { id: "tomatoes", name: "Tomatoes", unit: "Kg", category: "vegetable" },
+  { id: "green_chilli", name: "Green Chilli", unit: "gm", category: "vegetable" },
+  { id: "coriander", name: "Coriander Leaves", unit: "gm", category: "vegetable" },
+  { id: "curry_leaves", name: "Curry Leaves", unit: "gm", category: "vegetable" },
+  { id: "ginger", name: "Ginger", unit: "gm", category: "vegetable" },
+  { id: "coconut", name: "Coconut", unit: "Pcs", category: "vegetable" },
+  { id: "potato", name: "Potato", unit: "Kg", category: "vegetable" },
+  { id: "garlic", name: "Garlic", unit: "gm", category: "vegetable" },
+  { id: "lemon", name: "Lemon", unit: "gm", category: "vegetable" },
+  { id: "refined_oil", name: "Refined Oil", unit: "TN", category: "vegetable" },
+  { id: "desi_ghee", name: "Desi Ghee", unit: "TN", category: "vegetable" },
+  { id: "chai_patti", name: "Chai Patti", unit: "Pkt", category: "vegetable" },
+  { id: "coffee_pow", name: "Coffee Powder", unit: "Pkt", category: "vegetable" },
+  // Packaging / Disposal
+  { id: "250ml", name: "250ML Container", unit: "Pkt", category: "disposal" },
+  { id: "500ml", name: "500ML Container", unit: "Pkt", category: "disposal" },
+  { id: "vada_lifafa", name: "Vada Lifafa", unit: "Pcs", category: "disposal" },
+  { id: "dosa_box", name: "Dosa Box", unit: "Pkt", category: "disposal" },
+  { id: "bio_spoon", name: "Bio Spoon", unit: "Pkt", category: "disposal" },
+  { id: "paper_bowl", name: "Paper Bowl", unit: "Pkt", category: "disposal" },
+  { id: "garbage_bag", name: "Garbage Bag", unit: "Bundle", category: "disposal" },
+  { id: "printer_roll", name: "Printer Roll", unit: "Pcs", category: "disposal" },
+  // Cleaning
+  { id: "pochha", name: "Pochha", unit: "Pcs", category: "cleaning" },
+  { id: "jhadu", name: "Jhadu", unit: "Pcs", category: "cleaning" },
+  { id: "sarf", name: "Sarf", unit: "Pkt", category: "cleaning" },
+  { id: "sabun", name: "Bartan Sabun", unit: "Pcs", category: "cleaning" },
 ];
 const RAW_MATERIALS = [
   { id: "urad_dal", name: "Urad Dal", unit: "Kg" }, { id: "rice", name: "Idli Rice", unit: "Kg" },
@@ -251,16 +290,16 @@ const RAW_MATERIALS = [
   { id: "tamarind", name: "Tamarind", unit: "Kg" }, { id: "salt_raw", name: "Salt", unit: "Kg" },
 ];
 const RECIPES = {
-  sambhar: { name: "Sambhar", yield: "10 L", yieldQty: 10, ingredients: [{ rawId: "toor_dal", qty: 2 }, { rawId: "tomato", qty: 1.5 }, { rawId: "onion_raw", qty: 1 }, { rawId: "tamarind", qty: 0.15 }, { rawId: "oil", qty: 0.3 }, { rawId: "mustard", qty: 0.05 }, { rawId: "curry_leaves_raw", qty: 2 }, { rawId: "salt_raw", qty: 0.15 }] },
-  idli_batter: { name: "Idli/Dosa Batter", yield: "10 Kg", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
-  coconut_chutney: { name: "Coconut Chutney", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "coconut", qty: 10 }, { rawId: "green_chilli_raw", qty: 0.1 }, { rawId: "mustard", qty: 0.02 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "oil", qty: 0.05 }, { rawId: "salt_raw", qty: 0.05 }] },
-  tomato_chutney: { name: "Tomato Chutney", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "tomato", qty: 3 }, { rawId: "peanuts", qty: 0.5 }, { rawId: "onion_raw", qty: 0.5 }, { rawId: "oil", qty: 0.15 }, { rawId: "salt_raw", qty: 0.05 }] },
-  peanut_chutney: { name: "Peanut Chutney", yield: "3 Kg", yieldQty: 3, ingredients: [{ rawId: "peanuts", qty: 1.5 }, { rawId: "green_chilli_raw", qty: 0.05 }, { rawId: "salt_raw", qty: 0.03 }, { rawId: "oil", qty: 0.05 }] },
-  halwa_mix: { name: "Sooji Halwa", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "sooji", qty: 2 }, { rawId: "sugar_raw", qty: 1.5 }, { rawId: "ghee", qty: 0.8 }] },
-  medu_vada_mix: { name: "Medu Vada Mix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "urad_dal", qty: 4.5 }, { rawId: "green_chilli_raw", qty: 0.1 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "salt_raw", qty: 0.08 }] },
-  upma_mix: { name: "Upma Premix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "sooji", qty: 3.5 }, { rawId: "mustard", qty: 0.03 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "onion_raw", qty: 0.5 }, { rawId: "oil", qty: 0.2 }, { rawId: "salt_raw", qty: 0.08 }] },
-  poha_mix: { name: "Poha Premix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "poha_raw_mat", qty: 3 }, { rawId: "onion_raw", qty: 0.8 }, { rawId: "peanuts", qty: 0.3 }, { rawId: "green_chilli_raw", qty: 0.05 }, { rawId: "mustard", qty: 0.02 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "oil", qty: 0.15 }, { rawId: "salt_raw", qty: 0.05 }] },
-  coffee_decoction: { name: "Coffee Decoction", yield: "5 L", yieldQty: 5, ingredients: [{ rawId: "coffee_powder_raw", qty: 1.5 }] },
+  sambhar: { name: "Sambhar", yield: "10 Kg", yieldQty: 10, ingredients: [{ rawId: "toor_dal", qty: 2 }, { rawId: "tomato", qty: 1.5 }, { rawId: "onion_raw", qty: 1 }, { rawId: "tamarind", qty: 0.15 }, { rawId: "oil", qty: 0.3 }, { rawId: "mustard", qty: 0.05 }, { rawId: "curry_leaves_raw", qty: 2 }, { rawId: "salt_raw", qty: 0.15 }] },
+  dosa_batter: { name: "Dosa Batter", yield: "10 Batch", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
+  idli_batter: { name: "Idli Batter", yield: "10 Batch", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
+  vada_batter: { name: "Vada Batter", yield: "5 Batch", yieldQty: 5, ingredients: [{ rawId: "urad_dal", qty: 4.5 }, { rawId: "green_chilli_raw", qty: 0.1 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "salt_raw", qty: 0.08 }] },
+  red_chutney: { name: "Red Chutney", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "tomato", qty: 3 }, { rawId: "peanuts", qty: 0.5 }, { rawId: "onion_raw", qty: 0.5 }, { rawId: "oil", qty: 0.15 }, { rawId: "salt_raw", qty: 0.05 }] },
+  rava_mix: { name: "Rava Mix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "sooji", qty: 3.5 }, { rawId: "sugar_raw", qty: 1 }, { rawId: "ghee", qty: 0.5 }] },
+  onion_masala: { name: "Onion Masala", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "onion_raw", qty: 3 }, { rawId: "tomato", qty: 1 }, { rawId: "oil", qty: 0.3 }, { rawId: "salt_raw", qty: 0.05 }] },
+  upma_sooji: { name: "Upma Sooji Premix", yield: "5000 gm", yieldQty: 5000, ingredients: [{ rawId: "sooji", qty: 3500 }, { rawId: "mustard", qty: 30 }, { rawId: "curry_leaves_raw", qty: 50 }, { rawId: "onion_raw", qty: 500 }, { rawId: "oil", qty: 200 }, { rawId: "salt_raw", qty: 80 }] },
+  poha: { name: "Poha Premix", yield: "5000 gm", yieldQty: 5000, ingredients: [{ rawId: "poha_raw_mat", qty: 3000 }, { rawId: "onion_raw", qty: 800 }, { rawId: "peanuts", qty: 300 }, { rawId: "green_chilli_raw", qty: 50 }, { rawId: "mustard", qty: 20 }, { rawId: "curry_leaves_raw", qty: 50 }, { rawId: "oil", qty: 150 }, { rawId: "salt_raw", qty: 50 }] },
+  podi_masala: { name: "Podi Masala", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "urad_dal", qty: 2 }, { rawId: "green_chilli_raw", qty: 0.5 }, { rawId: "oil", qty: 0.3 }, { rawId: "salt_raw", qty: 0.1 }] },
 };
 const getBk = (id) => BK_ITEMS.find((b) => b.id === id)?.name || id;
 
