@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { todayIST } = require("../helpers");
 
 // Get all orders (with optional filters)
 router.get("/", async (req, res) => {
@@ -17,7 +18,7 @@ router.get("/", async (req, res) => {
 // Get today's consolidated view (all outlets combined)
 router.get("/consolidated", async (req, res) => {
   const { date } = req.query;
-  const targetDate = date || new Date().toISOString().split("T")[0];
+  const targetDate = date || todayIST();
   const { data, error } = await supabase
     .from("demands")
     .select("*")
@@ -44,7 +45,7 @@ router.patch("/:id/status", async (req, res) => {
 // Dashboard summary - all activity for a date
 router.get("/dashboard-summary", async (req, res) => {
   const { date } = req.query;
-  const targetDate = date || new Date().toISOString().split("T")[0];
+  const targetDate = date || todayIST();
 
   // Fetch all data in parallel
   const [demands, closingStocks, issuances, purchases] = await Promise.all([
