@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { todayIST } = require("../helpers");
 
 router.get("/", async (req, res) => {
   const { date, limit = 30 } = req.query;
@@ -18,7 +19,7 @@ router.post("/", async (req, res) => {
   // Create purchase
   const { data: purchase, error } = await supabase
     .from("purchases")
-    .insert({ payment_mode, total_amount: total, note, submitted_by })
+    .insert({ payment_mode, total_amount: total, note, submitted_by, date: todayIST() })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -64,7 +65,7 @@ router.post("/:id/photos", async (req, res) => {
 // Today's purchase total (for dashboard)
 router.get("/summary", async (req, res) => {
   const { date } = req.query;
-  const targetDate = date || new Date().toISOString().split("T")[0];
+  const targetDate = date || todayIST();
   const { data, error } = await supabase
     .from("purchases")
     .select("total_amount, payment_mode")
