@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { todayIST } = require("../helpers");
 
 // List demands for an outlet (with optional date filter)
 router.get("/", async (req, res) => {
@@ -18,7 +19,7 @@ router.post("/", async (req, res) => {
   const { outlet_id, type, items, note, submitted_by } = req.body;
   const { data, error } = await supabase
     .from("demands")
-    .insert({ outlet_id, type, items: items || {}, note, submitted_by })
+    .insert({ outlet_id, type, items: items || {}, note, submitted_by, date: todayIST() })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
@@ -57,7 +58,7 @@ router.post("/closing-stock", async (req, res) => {
   const { outlet_id, items, submitted_by } = req.body;
   const { data, error } = await supabase
     .from("closing_stocks")
-    .upsert({ outlet_id, date: new Date().toISOString().split("T")[0], items, submitted_by }, { onConflict: "outlet_id,date" })
+    .upsert({ outlet_id, date: todayIST(), items, submitted_by }, { onConflict: "outlet_id,date" })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
