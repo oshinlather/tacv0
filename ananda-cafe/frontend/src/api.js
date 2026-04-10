@@ -35,6 +35,12 @@ const api = {
   upsertPnl: (data) => post("/api/pnl", data),
   getPnlSummary: (date) => get("/api/pnl/summary", { date }),
 
+  // ── Orders / Dashboard ──
+  getOrders: (params) => get("/api/orders", params),
+  getConsolidated: (date) => get("/api/orders/consolidated", { date }),
+  updateOrderStatus: (id, status, notes) => patch(`/api/orders/${id}/status`, { status, dispatch_notes: notes }),
+  getDashboardSummary: (date) => get("/api/orders/dashboard-summary", { date }),
+
   // ── PetPooja ──
   syncPetpooja: (date) => post("/api/petpooja/sync", { date }),
   getPetpoojaStatus: () => get("/api/petpooja/status"),
@@ -58,6 +64,19 @@ async function post(path, body) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `POST ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+async function patch(path, body) {
+  const res = await fetch(API + path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `PATCH ${path} failed: ${res.status}`);
   }
   return res.json();
 }
