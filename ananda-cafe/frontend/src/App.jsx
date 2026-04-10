@@ -281,38 +281,56 @@ const PrintBtn = ({ sectionId, title }) => (
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  OUTLET ORDERS (BK ordering challan)
+//  LIVE ACTIVITY — real-time dashboard from DB
 // ═════════════════════════════════════════════════════════════════════════════
-const OutletOrders = ({ orders, setOrders }) => {
-  const [selO, setSelO] = useState("sec23");
-  const [draft, setDraft] = useState({});
-  const todayStr = today();
-  const existing = orders.find((o) => o.outlet === selO && o.date === todayStr);
-  const submit = () => { const o = { id: `ORD-${todayStr}-${selO}`, date: todayStr, outlet: selO, status: "pending", items: { ...draft } }; setOrders((p) => [...p.filter((x) => x.id !== o.id), o]); setDraft({}); };
+const LiveActivity = () => {
+  const [data, setData] = useState(null); const [loading, setLoading] = useState(true); const [err, setErr] = useState(null);
+  const load = () => { setLoading(true); setErr(null); api.getDashboardSummary(today()).then(setData).catch((e) => setErr(e.message)).finally(() => setLoading(false)); };
+  useEffect(load, []);
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading activity...</div>;
+  if (err) return <div style={{ textAlign: "center", padding: 40 }}><div style={{ color: "#DC2626", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>❌ {err}</div><button onClick={load} style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🔄 Retry</button></div>;
+  if (!data) return null;
+  const s = data.summary;
+  return (<div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔴 Live Activity — {today()}</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>All submissions from outlets & BK</p></div>
+      <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄 Refresh</button>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 20 }}>
+      {[{ l: "Demands", v: s.total_demands, bg: "#F0FDF4", bc: "#BBF7D0", c: "#16A34A" }, { l: "Pending", v: s.pending_dispatch, bg: s.pending_dispatch > 0 ? "#FFFBEB" : "#F0FDF4", bc: s.pending_dispatch > 0 ? "#FDE68A" : "#BBF7D0", c: s.pending_dispatch > 0 ? "#B45309" : "#16A34A" }, { l: "Issuances", v: s.total_issuances, bg: "#EFF6FF", bc: "#BFDBFE", c: "#2563EB" }, { l: "Purchases", v: s.total_purchases, bg: "#FFFBEB", bc: "#FDE68A", c: "#B45309" }, { l: "Purchase ₹", v: fmt(s.purchase_amount), bg: "#FFFBEB", bc: "#FDE68A", c: "#B45309" }].map((card, i) => (
+        <div key={i} style={{ background: card.bg, borderRadius: 12, padding: "12px 14px", border: `1px solid ${card.bc}`, textAlign: "center" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{card.l}</div><div style={{ fontSize: 20, fontWeight: 800, color: card.c, fontFamily: "'JetBrains Mono', monospace" }}>{card.v}</div></div>
+      ))}
+    </div>
+    {data.demands.length > 0 && <div style={{ marginBottom: 16 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>📋 Demands</div>{data.demands.map((d) => (<div key={d.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><strong style={{ fontSize: 12 }}>{OUTLETS.find((o) => o.id === d.outlet_id)?.name || d.outlet_id}</strong><span style={{ fontSize: 10, color: "#888" }}>{d.type === "photo" ? "📷" : "✏️"}</span><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: d.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: d.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{d.status}</span></div><span style={{ fontSize: 11, color: "#999" }}>{new Date(d.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>))}</div>}
+    {data.purchases.length > 0 && <div style={{ marginBottom: 16 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>🧾 Purchases</div>{data.purchases.map((p) => (<div key={p.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 12, fontWeight: 600 }}>💳 {p.payment_mode}</span><span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(Number(p.total_amount))}</span></div>))}</div>}
+    {data.issuances.length > 0 && <div><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>📋 Issuances</div>{data.issuances.map((iss) => (<div key={iss.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 12, fontWeight: 600 }}>→ {iss.issue_to === "bk" ? "BK Production" : OUTLETS.find((o) => o.id === iss.issue_to)?.name || iss.issue_to}</span><span style={{ fontSize: 11, color: "#999" }}>{new Date(iss.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>))}</div>}
+    {s.total_demands === 0 && s.total_purchases === 0 && s.total_issuances === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>📭</div><div style={{ color: "#999" }}>No activity yet today</div></div>}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  OUTLET ORDERS — fetches from DB
+// ═════════════════════════════════════════════════════════════════════════════
+const OutletOrders = () => {
+  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
+  useEffect(() => { api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); }, []);
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-orders">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Outlet Daily Order Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Fill at closing time for next day's BK requirements</p></div>
-        <PrintBtn sectionId="print-orders" title={`Order Challan — ${OUTLETS.find((o) => o.id === selO)?.name}`} />
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Outlet Orders (Live from DB)</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} orders for {today()}</p></div>
+        <PrintBtn sectionId="print-orders" title="Outlet Orders" />
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>{OUTLETS.map((o) => (<button key={o.id} onClick={() => { setSelO(o.id); setDraft({}); }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", border: selO === o.id ? "none" : "1px solid #E0E0DC", background: selO === o.id ? "#1A1A1A" : "#fff", color: selO === o.id ? "#fff" : "#666", fontFamily: "inherit" }}>{o.name}</button>))}</div>
-      {existing ? (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}><span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>SUBMITTED</span><span style={{ fontSize: 12, color: "#999" }}>{todayStr}</span></div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Qty</th><th style={thS}>Unit</th></tr></thead>
-          <tbody>{Object.entries(existing.items).filter(([, q]) => q > 0).map(([id, qty]) => { const bk = BK_ITEMS.find((b) => b.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{bk?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700 }}>{qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{bk?.unit}</td></tr>); })}</tbody></table>
-        </div>
-      ) : (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
-          <div style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>Order for <strong style={{ color: "#1A1A1A" }}>{OUTLETS.find((o) => o.id === selO)?.name}</strong> — {todayStr}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>{BK_ITEMS.map((bk) => (<div key={bk.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#FAFAF8", borderRadius: 8, padding: "8px 12px" }}><span style={{ flex: 1, fontSize: 13 }}>{bk.name}</span><input type="number" min="0" placeholder="0" value={draft[bk.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [bk.id]: Math.max(0, Number(e.target.value) || 0) }))} style={{ width: 56, padding: "5px 6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} /><span style={{ fontSize: 11, color: "#999", width: 22 }}>{bk.unit}</span></div>))}</div>
-          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}><button onClick={submit} disabled={Object.values(draft).every((v) => !v)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: Object.values(draft).every((v) => !v) ? 0.3 : 1 }}>✅ Submit Challan</button></div>
-        </div>
+      {orders.length === 0 ? <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>📋</div><div style={{ color: "#999" }}>No orders submitted yet today</div></div> : (
+        OUTLETS.map((outlet) => { const oo = orders.filter((d) => d.outlet_id === outlet.id); return (
+          <div key={outlet.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px 18px", marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <strong style={{ fontSize: 14 }}>{outlet.name}</strong>
+              {oo.length === 0 ? <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }}>NOT ORDERED</span> : <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>{oo.length} order(s)</span>}
+            </div>
+            {oo.map((o) => (<div key={o.id} style={{ padding: "6px 10px", background: "#FAFAF8", borderRadius: 8, marginBottom: 3, fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontWeight: 600 }}>{o.type === "photo" ? "📷 Photo" : "✏️ Manual"}</span><span style={{ color: "#999" }}>{new Date(o.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span><span style={{ marginLeft: "auto", padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: o.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: o.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{o.status}</span></div>))}
+          </div>); })
       )}
-      <div style={{ marginTop: 24 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Recent Orders</div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #E8E8E4" }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Date</th><th style={thS}>Status</th><th style={thS}>Items</th></tr></thead>
-        <tbody>{orders.filter((o) => o.outlet === selO).slice(0, 7).map((o) => (<tr key={o.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{o.date}</td><td style={tdS}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: o.status === "dispatched" ? "#F0FDF4" : "#FFFBEB", color: o.status === "dispatched" ? "#16A34A" : "#B45309" }}>{o.status.toUpperCase()}</span></td><td style={{ ...tdS, color: "#888" }}>{Object.values(o.items).reduce((s, q) => s + q, 0)} total</td></tr>))}</tbody></table>
-      </div>
     </div>
   );
 };
@@ -320,11 +338,12 @@ const OutletOrders = ({ orders, setOrders }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  BASE KITCHEN (Consolidated Challan + Raw Material Requisition)
 // ═════════════════════════════════════════════════════════════════════════════
-const BaseKitchen = ({ orders }) => {
-  const todayStr = today();
-  const todayOrders = orders.filter((o) => o.date === todayStr);
-  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; todayOrders.forEach((o) => { const q = o.items[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet] = q; }); });
+const BaseKitchen = () => {
+  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
+  useEffect(() => { api.getOrders({ date: today() }).then((data) => setOrders(data.filter((d) => d.type === "manual" && d.items))).catch(() => setOrders([])).finally(() => setLoading(false)); }, []);
+  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; orders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
   const rawReq = {}; Object.entries(consolidated).forEach(([bkId, data]) => { const recipe = RECIPES[bkId]; if (!recipe || data.total === 0) return; const batches = data.total / recipe.yieldQty; recipe.ingredients.forEach((ing) => { rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches; }); });
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-kitchen">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
@@ -349,12 +368,14 @@ const BaseKitchen = ({ orders }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  DISPATCH
 // ═════════════════════════════════════════════════════════════════════════════
-const Dispatch = ({ orders, setOrders }) => {
-  const todayStr = today();
-  const pending = orders.filter((o) => o.date === todayStr && o.status === "pending");
-  const done = orders.filter((o) => o.date === todayStr && o.status === "dispatched");
-  const [dq, setDq] = useState({});
-  const doDispatch = (id) => { setOrders((p) => p.map((o) => o.id === id ? { ...o, status: "dispatched", dispatchTime: new Date().toLocaleTimeString() } : o)); };
+const Dispatch = () => {
+  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
+  const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+  const pending = orders.filter((o) => o.status === "submitted" || o.status === "received");
+  const done = orders.filter((o) => o.status === "fulfilled");
+  const doDispatch = async (id) => { try { await api.updateOrderStatus(id, "fulfilled"); load(); } catch (e) { alert("Error: " + e.message); } };
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-dispatch">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
@@ -366,12 +387,11 @@ const Dispatch = ({ orders, setOrders }) => {
         <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1px solid #BBF7D0", textAlign: "center" }}><div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dispatched</div><div style={{ fontSize: 24, fontWeight: 800, color: "#16A34A" }}>{done.length}</div></div>
       </div>
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>All dispatched for today</div></div>}
-      {pending.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet); return (
+      {pending.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet_id); return (
         <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><strong style={{ fontSize: 15 }}>{outlet?.name}</strong><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309" }}>PENDING</span></div><span style={{ fontSize: 11, color: "#BBB" }}>{order.id}</span></div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Ordered</th><th style={thS}>Dispatching</th><th style={thS}>Diff</th></tr></thead>
-          <tbody>{Object.entries(order.items).filter(([, q]) => q > 0).map(([id, qty]) => { const dqty = dq[order.id]?.[id] ?? qty; const diff = dqty - qty; return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{getBk(id)}</td><td style={{ ...tdS, textAlign: "center" }}>{qty}</td><td style={{ ...tdS, textAlign: "center" }}><input type="number" value={dqty} onChange={(e) => setDq((p) => ({ ...p, [order.id]: { ...(p[order.id] || order.items), [id]: Number(e.target.value) } }))} style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} /></td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, color: diff === 0 ? "#16A34A" : diff < 0 ? "#DC2626" : "#B45309" }}>{diff === 0 ? "✓" : diff > 0 ? `+${diff}` : diff}</td></tr>); })}</tbody></table>
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}><button onClick={() => doDispatch(order.id)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Dispatch</button></div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><strong style={{ fontSize: 15 }}>{outlet?.name || order.outlet_id}</strong><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309" }}>PENDING</span></div><span style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>
+          {order.note && <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>📝 {order.note}</div>}
+          <div style={{ display: "flex", justifyContent: "flex-end" }}><button onClick={() => doDispatch(order.id)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Mark Dispatched</button></div>
         </div>
       ); })}
     </div>
@@ -787,7 +807,6 @@ const StoreMgr = ({ onBack }) => {
 export default function AnandaCafe() {
   const [app, setApp] = useState("launcher");
   const [ownerTab, setOwnerTab] = useState("activity");
-  const [orders, setOrders] = useState([]);
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
