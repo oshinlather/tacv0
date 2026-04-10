@@ -55,50 +55,6 @@ const PNL_OTHER_EXPENSES = [
 ];
 const ALL_EXPENSES = [...PNL_FIXED_EXPENSES, ...PNL_VARIABLE_EXPENSES, ...PNL_OTHER_EXPENSES];
 
-// Generate sample P&L data
-const genPnlData = () => {
-  const data = {};
-  OUTLETS.forEach((o) => {
-    const days = {};
-    for (let d = 0; d < 30; d++) {
-      const dt = new Date(); dt.setDate(dt.getDate() - d);
-      const ds = dt.toISOString().split("T")[0];
-      const totalSale = Math.floor(Math.random() * 60000) + 40000;
-      const delivery = Math.floor(totalSale * (0.3 + Math.random() * 0.3));
-      const onlineComm = Math.floor(delivery * 0.18);
-      days[ds] = {
-        effective_sale: totalSale - onlineComm,
-        total_sale: totalSale,
-        delivery,
-        online_commission: onlineComm,
-        rent: o.id === "sec23" ? 2667 : o.id === "sec31" ? 2333 : 2000,
-        salary: o.id === "sec23" ? 4200 : o.id === "sec31" ? 7433 : 5000,
-        raw_material: Math.floor(totalSale * (0.18 + Math.random() * 0.08)),
-        vegetable: Math.floor(totalSale * (0.03 + Math.random() * 0.03)),
-        dairy: Math.floor(totalSale * (0.01 + Math.random() * 0.02)),
-        disposal: Math.floor(totalSale * (0.02 + Math.random() * 0.02)),
-        gas: Math.floor(totalSale * (0.02 + Math.random() * 0.02)),
-        electricity: Math.floor(Math.random() * 500) + 200,
-        water_tanker: d % 7 === 0 ? 500 : 0,
-        transport: Math.floor(Math.random() * 800) + 200,
-        staff_room_rent: o.id === "sec23" ? 533 : o.id === "sec31" ? 617 : 0,
-        staff_room_elec: Math.floor(Math.random() * 100),
-        staff_welfare: Math.floor(Math.random() * 200),
-        mala: 0, other: Math.floor(Math.random() * 300),
-        maintenance: d % 10 === 0 ? Math.floor(Math.random() * 2000) : 0,
-        new_purchase: 0, vendor_payments: 0,
-        zomato_ads: Math.floor(Math.random() * 500),
-        swiggy_ads: Math.floor(Math.random() * 500),
-        gst: Math.floor(totalSale * 0.05),
-        profit_tax: 0,
-      };
-    }
-    data[o.id] = days;
-  });
-  return data;
-};
-const PNL_DATA = genPnlData();
-
 // ─── DEMAND / STORE DATA ────────────────────────────────────────────────────
 const DEMAND_SECTIONS = [
   { id: "prepared", titleHi: "Prepared Items (from BK)", emoji: "🍲", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A",
@@ -184,21 +140,25 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
   const [selDay, setSelDay] = useState(0);
+  const [pnlData, setPnlData] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const dateStr = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
   }, [selDay]);
 
+  useEffect(() => { setLoading(true); api.getPnl({ date: dateStr }).then(setPnlData).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
+
   const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id);
-  const getData = (oid) => PNL_DATA[oid]?.[dateStr] || {};
+  const getData = (oid) => pnlData.find((r) => r.outlet_id === oid) || {};
 
   const totals = useMemo(() => {
     const t = {};
     [...PNL_REVENUE, ...ALL_EXPENSES].forEach((item) => {
-      t[item.id] = outletIds.reduce((sum, oid) => sum + (getData(oid)[item.id] || 0), 0);
+      t[item.id] = outletIds.reduce((sum, oid) => sum + (Number(getData(oid)[item.id]) || 0), 0);
     });
     return t;
-  }, [dateStr, selOutlet]);
+  }, [dateStr, selOutlet, pnlData]);
 
   const totalExpense = ALL_EXPENSES.reduce((s, e) => s + (totals[e.id] || 0), 0);
   const netPnl = totals.effective_sale - totalExpense;
@@ -319,19 +279,6 @@ const printSection = (sectionId, title) => {
 const PrintBtn = ({ sectionId, title }) => (
   <button className="no-print" onClick={() => printSection(sectionId, title)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🖨️ Print</button>
 );
-
-// ─── Generate sample orders ─────────────────────────────────────────────────
-const generateOrders = () => {
-  const all = [];
-  for (let d = 0; d < 7; d++) {
-    const dt = new Date(); dt.setDate(dt.getDate() - d); const ds = dt.toISOString().split("T")[0];
-    OUTLETS.forEach((o) => {
-      const items = {}; BK_ITEMS.forEach((bk) => { items[bk.id] = Math.floor(Math.random() * 8) + 3; });
-      all.push({ id: `ORD-${ds}-${o.id}`, date: ds, outlet: o.id, status: d === 0 ? "pending" : "dispatched", items });
-    });
-  }
-  return all;
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  OUTLET ORDERS (BK ordering challan)
@@ -466,7 +413,7 @@ const MENU_ITEMS = [
   { id: "halwa", name: "Halwa", price: { d: 40, a: 59 } }, { id: "filter_coffee", name: "Filter Coffee", price: { d: 30, a: 49 } },
   { id: "rava_dosa", name: "Rava Dosa", price: { d: 90, a: 119 } }, { id: "uttapam", name: "Uttapam", price: { d: 80, a: 109 } },
 ];
-const genSales = () => { const d = {}; OUTLETS.forEach((o) => { const it = {}; MENU_ITEMS.forEach((m) => { it[m.id] = { d: Math.floor(Math.random() * 25) + 5, a: Math.floor(Math.random() * 18) + 3 }; }); d[o.id] = it; }); return d; };
+const genSales = () => { const d = {}; OUTLETS.forEach((o) => { const it = {}; MENU_ITEMS.forEach((m) => { it[m.id] = { d: 0, a: 0 }; }); d[o.id] = it; }); return d; };
 const SALES = genSales();
 const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC = { d: 0, a: 0 }; const items = []; MENU_ITEMS.forEach((m) => { const q = s[m.id], c = ITEM_COST[m.id]; const dr = q.d * m.price.d, ar = q.a * m.price.a, dc = q.d * c, ac = q.a * c; tR.d += dr; tR.a += ar; tC.d += dc; tC.a += ac; items.push({ id: m.id, name: m.name, dI: { q: q.d, r: dr, c: dc, cogs: dr > 0 ? dc / dr * 100 : 0 }, ag: { q: q.a, r: ar, c: ac, cogs: ar > 0 ? ac / ar * 100 : 0 }, t: { q: q.d + q.a, r: dr + ar, c: dc + ac, cogs: (dr + ar) > 0 ? (dc + ac) / (dr + ar) * 100 : 0 } }); }); const tRev = tR.d + tR.a, tCost = tC.d + tC.a; return { rev: tR, cost: tC, tRev, tCost, cogs: tRev > 0 ? tCost / tRev * 100 : 0, cogsDi: tR.d > 0 ? tC.d / tR.d * 100 : 0, cogsAg: tR.a > 0 ? tC.a / tR.a * 100 : 0, items: items.sort((a, b) => b.t.r - a.t.r) }; };
 
@@ -840,7 +787,7 @@ const StoreMgr = ({ onBack }) => {
 export default function AnandaCafe() {
   const [app, setApp] = useState("launcher");
   const [ownerTab, setOwnerTab] = useState("activity");
-  const [orders, setOrders] = useState(() => generateOrders());
+  const [orders, setOrders] = useState([]);
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
