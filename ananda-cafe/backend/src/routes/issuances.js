@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { todayIST } = require("../helpers");
 
 router.get("/", async (req, res) => {
   const { date, issue_to, limit = 20 } = req.query;
@@ -16,7 +17,7 @@ router.post("/", async (req, res) => {
   const { issue_to, note, submitted_by } = req.body;
   const { data, error } = await supabase
     .from("issuances")
-    .insert({ issue_to, note, submitted_by })
+    .insert({ issue_to, note, submitted_by, date: todayIST() })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
