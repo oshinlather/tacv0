@@ -271,6 +271,189 @@ const DailyPnL = () => {
   );
 };
 
+// ─── BK Items & Recipes (for Base Kitchen & Dispatch) ────────────────────────
+const BK_ITEMS = [
+  { id: "sambhar", name: "Sambhar", unit: "L" }, { id: "idli_batter", name: "Idli/Dosa Batter", unit: "Kg" },
+  { id: "coconut_chutney", name: "Coconut Chutney", unit: "Kg" }, { id: "tomato_chutney", name: "Tomato Chutney", unit: "Kg" },
+  { id: "peanut_chutney", name: "Peanut Chutney", unit: "Kg" }, { id: "halwa_mix", name: "Sooji Halwa", unit: "Kg" },
+  { id: "medu_vada_mix", name: "Medu Vada Mix", unit: "Kg" }, { id: "upma_mix", name: "Upma Premix", unit: "Kg" },
+  { id: "poha_mix", name: "Poha Premix", unit: "Kg" }, { id: "coffee_decoction", name: "Coffee Decoction", unit: "L" },
+];
+const RAW_MATERIALS = [
+  { id: "urad_dal", name: "Urad Dal", unit: "Kg" }, { id: "rice", name: "Idli Rice", unit: "Kg" },
+  { id: "toor_dal", name: "Toor Dal", unit: "Kg" }, { id: "coconut", name: "Coconut (Fresh)", unit: "Pcs" },
+  { id: "tomato", name: "Tomato", unit: "Kg" }, { id: "peanuts", name: "Peanuts", unit: "Kg" },
+  { id: "sooji", name: "Sooji (Rava)", unit: "Kg" }, { id: "sugar_raw", name: "Sugar", unit: "Kg" },
+  { id: "ghee", name: "Ghee", unit: "L" }, { id: "oil", name: "Oil (Refined)", unit: "L" },
+  { id: "mustard", name: "Mustard Seeds", unit: "Kg" }, { id: "curry_leaves_raw", name: "Curry Leaves", unit: "Bunch" },
+  { id: "coffee_powder_raw", name: "Coffee Powder", unit: "Kg" }, { id: "poha_raw_mat", name: "Poha", unit: "Kg" },
+  { id: "onion_raw", name: "Onion", unit: "Kg" }, { id: "green_chilli_raw", name: "Green Chilli", unit: "Kg" },
+  { id: "tamarind", name: "Tamarind", unit: "Kg" }, { id: "salt_raw", name: "Salt", unit: "Kg" },
+];
+const RECIPES = {
+  sambhar: { name: "Sambhar", yield: "10 L", yieldQty: 10, ingredients: [{ rawId: "toor_dal", qty: 2 }, { rawId: "tomato", qty: 1.5 }, { rawId: "onion_raw", qty: 1 }, { rawId: "tamarind", qty: 0.15 }, { rawId: "oil", qty: 0.3 }, { rawId: "mustard", qty: 0.05 }, { rawId: "curry_leaves_raw", qty: 2 }, { rawId: "salt_raw", qty: 0.15 }] },
+  idli_batter: { name: "Idli/Dosa Batter", yield: "10 Kg", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
+  coconut_chutney: { name: "Coconut Chutney", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "coconut", qty: 10 }, { rawId: "green_chilli_raw", qty: 0.1 }, { rawId: "mustard", qty: 0.02 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "oil", qty: 0.05 }, { rawId: "salt_raw", qty: 0.05 }] },
+  tomato_chutney: { name: "Tomato Chutney", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "tomato", qty: 3 }, { rawId: "peanuts", qty: 0.5 }, { rawId: "onion_raw", qty: 0.5 }, { rawId: "oil", qty: 0.15 }, { rawId: "salt_raw", qty: 0.05 }] },
+  peanut_chutney: { name: "Peanut Chutney", yield: "3 Kg", yieldQty: 3, ingredients: [{ rawId: "peanuts", qty: 1.5 }, { rawId: "green_chilli_raw", qty: 0.05 }, { rawId: "salt_raw", qty: 0.03 }, { rawId: "oil", qty: 0.05 }] },
+  halwa_mix: { name: "Sooji Halwa", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "sooji", qty: 2 }, { rawId: "sugar_raw", qty: 1.5 }, { rawId: "ghee", qty: 0.8 }] },
+  medu_vada_mix: { name: "Medu Vada Mix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "urad_dal", qty: 4.5 }, { rawId: "green_chilli_raw", qty: 0.1 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "salt_raw", qty: 0.08 }] },
+  upma_mix: { name: "Upma Premix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "sooji", qty: 3.5 }, { rawId: "mustard", qty: 0.03 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "onion_raw", qty: 0.5 }, { rawId: "oil", qty: 0.2 }, { rawId: "salt_raw", qty: 0.08 }] },
+  poha_mix: { name: "Poha Premix", yield: "5 Kg", yieldQty: 5, ingredients: [{ rawId: "poha_raw_mat", qty: 3 }, { rawId: "onion_raw", qty: 0.8 }, { rawId: "peanuts", qty: 0.3 }, { rawId: "green_chilli_raw", qty: 0.05 }, { rawId: "mustard", qty: 0.02 }, { rawId: "curry_leaves_raw", qty: 1 }, { rawId: "oil", qty: 0.15 }, { rawId: "salt_raw", qty: 0.05 }] },
+  coffee_decoction: { name: "Coffee Decoction", yield: "5 L", yieldQty: 5, ingredients: [{ rawId: "coffee_powder_raw", qty: 1.5 }] },
+};
+const getBk = (id) => BK_ITEMS.find((b) => b.id === id)?.name || id;
+
+// ─── Table styles ───────────────────────────────────────────────────────────
+const thS = { padding: "10px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, borderBottom: "1px solid #E8E8E4" };
+const tdS = { padding: "10px 14px" };
+
+// ─── Print helper ───────────────────────────────────────────────────────────
+const printSection = (sectionId, title) => {
+  const el = document.getElementById(sectionId); if (!el) return;
+  const pw = window.open("", "_blank");
+  const ds = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
+  pw.document.write(`<!DOCTYPE html><html><head><title>${title}</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" /><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px;background:#fff}.print-header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:20px}.print-header h1{font-size:18px;font-weight:800}.print-header span{font-size:12px;color:#888}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD;background:#F8F8F5}td{padding:8px 10px;border-bottom:1px solid #EEE}.no-print,button,input{display:none!important}@media print{body{padding:0}}</style></head><body><div class="print-header"><h1>Ananda Cafe — ${title}</h1><span>${ds}</span></div>${el.innerHTML}</body></html>`);
+  pw.document.close(); setTimeout(() => { pw.focus(); pw.print(); }, 400);
+};
+const PrintBtn = ({ sectionId, title }) => (
+  <button className="no-print" onClick={() => printSection(sectionId, title)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🖨️ Print</button>
+);
+
+// ─── Generate sample orders ─────────────────────────────────────────────────
+const generateOrders = () => {
+  const all = [];
+  for (let d = 0; d < 7; d++) {
+    const dt = new Date(); dt.setDate(dt.getDate() - d); const ds = dt.toISOString().split("T")[0];
+    OUTLETS.forEach((o) => {
+      const items = {}; BK_ITEMS.forEach((bk) => { items[bk.id] = Math.floor(Math.random() * 8) + 3; });
+      all.push({ id: `ORD-${ds}-${o.id}`, date: ds, outlet: o.id, status: d === 0 ? "pending" : "dispatched", items });
+    });
+  }
+  return all;
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  OUTLET ORDERS (BK ordering challan)
+// ═════════════════════════════════════════════════════════════════════════════
+const OutletOrders = ({ orders, setOrders }) => {
+  const [selO, setSelO] = useState("sec23");
+  const [draft, setDraft] = useState({});
+  const todayStr = today();
+  const existing = orders.find((o) => o.outlet === selO && o.date === todayStr);
+  const submit = () => { const o = { id: `ORD-${todayStr}-${selO}`, date: todayStr, outlet: selO, status: "pending", items: { ...draft } }; setOrders((p) => [...p.filter((x) => x.id !== o.id), o]); setDraft({}); };
+  return (
+    <div id="print-orders">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Outlet Daily Order Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Fill at closing time for next day's BK requirements</p></div>
+        <PrintBtn sectionId="print-orders" title={`Order Challan — ${OUTLETS.find((o) => o.id === selO)?.name}`} />
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>{OUTLETS.map((o) => (<button key={o.id} onClick={() => { setSelO(o.id); setDraft({}); }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", border: selO === o.id ? "none" : "1px solid #E0E0DC", background: selO === o.id ? "#1A1A1A" : "#fff", color: selO === o.id ? "#fff" : "#666", fontFamily: "inherit" }}>{o.name}</button>))}</div>
+      {existing ? (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}><span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>SUBMITTED</span><span style={{ fontSize: 12, color: "#999" }}>{todayStr}</span></div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Qty</th><th style={thS}>Unit</th></tr></thead>
+          <tbody>{Object.entries(existing.items).filter(([, q]) => q > 0).map(([id, qty]) => { const bk = BK_ITEMS.find((b) => b.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{bk?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700 }}>{qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{bk?.unit}</td></tr>); })}</tbody></table>
+        </div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, color: "#888", marginBottom: 14 }}>Order for <strong style={{ color: "#1A1A1A" }}>{OUTLETS.find((o) => o.id === selO)?.name}</strong> — {todayStr}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>{BK_ITEMS.map((bk) => (<div key={bk.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#FAFAF8", borderRadius: 8, padding: "8px 12px" }}><span style={{ flex: 1, fontSize: 13 }}>{bk.name}</span><input type="number" min="0" placeholder="0" value={draft[bk.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [bk.id]: Math.max(0, Number(e.target.value) || 0) }))} style={{ width: 56, padding: "5px 6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} /><span style={{ fontSize: 11, color: "#999", width: 22 }}>{bk.unit}</span></div>))}</div>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}><button onClick={submit} disabled={Object.values(draft).every((v) => !v)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: Object.values(draft).every((v) => !v) ? 0.3 : 1 }}>✅ Submit Challan</button></div>
+        </div>
+      )}
+      <div style={{ marginTop: 24 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10 }}>Recent Orders</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #E8E8E4" }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Date</th><th style={thS}>Status</th><th style={thS}>Items</th></tr></thead>
+        <tbody>{orders.filter((o) => o.outlet === selO).slice(0, 7).map((o) => (<tr key={o.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{o.date}</td><td style={tdS}><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, background: o.status === "dispatched" ? "#F0FDF4" : "#FFFBEB", color: o.status === "dispatched" ? "#16A34A" : "#B45309" }}>{o.status.toUpperCase()}</span></td><td style={{ ...tdS, color: "#888" }}>{Object.values(o.items).reduce((s, q) => s + q, 0)} total</td></tr>))}</tbody></table>
+      </div>
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  BASE KITCHEN (Consolidated Challan + Raw Material Requisition)
+// ═════════════════════════════════════════════════════════════════════════════
+const BaseKitchen = ({ orders }) => {
+  const todayStr = today();
+  const todayOrders = orders.filter((o) => o.date === todayStr);
+  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; todayOrders.forEach((o) => { const q = o.items[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet] = q; }); });
+  const rawReq = {}; Object.entries(consolidated).forEach(([bkId, data]) => { const recipe = RECIPES[bkId]; if (!recipe || data.total === 0) return; const batches = data.total / recipe.yieldQty; recipe.ingredients.forEach((ing) => { rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches; }); });
+  return (
+    <div id="print-kitchen">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen — Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{todayOrders.length} outlet orders received for {todayStr}</p></div>
+        <PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" />
+      </div>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>{[{ l: "Orders", v: todayOrders.length, s: `of ${OUTLETS.length}` }, { l: "BK Items", v: Object.values(consolidated).filter((c) => c.total > 0).length }, { l: "Raw Materials", v: Object.keys(rawReq).length }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>{s.s && <div style={{ fontSize: 11, color: "#BBB" }}>{s.s}</div>}</div>))}</div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Unit</th>{OUTLETS.map((o) => <th key={o.id} style={thS}>{o.short}</th>)}<th style={{ ...thS, color: "#1A1A1A" }}>TOTAL</th></tr></thead>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{bk.name}</td><td style={{ ...tdS, color: "#999" }}>{bk.unit}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}<td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{d.total}</td></tr>); })}</tbody></table></div>
+      </div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4" }}><div style={{ fontWeight: 700, fontSize: 14 }}>🏪 Ration Store — Raw Material Requisition</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Auto-calculated from standard recipes</div></div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Required</th><th style={thS}>Unit</th></tr></thead>
+        <tbody>{Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{qty.toFixed(2)}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
+      </div>
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  DISPATCH
+// ═════════════════════════════════════════════════════════════════════════════
+const Dispatch = ({ orders, setOrders }) => {
+  const todayStr = today();
+  const pending = orders.filter((o) => o.date === todayStr && o.status === "pending");
+  const done = orders.filter((o) => o.date === todayStr && o.status === "dispatched");
+  const [dq, setDq] = useState({});
+  const doDispatch = (id) => { setOrders((p) => p.map((o) => o.id === id ? { ...o, status: "dispatched", dispatchTime: new Date().toLocaleTimeString() } : o)); };
+  return (
+    <div id="print-dispatch">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Verify and dispatch prepared items to outlets</p></div>
+        <PrintBtn sectionId="print-dispatch" title="Dispatch Challan" />
+      </div>
+      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+        <div style={{ flex: 1, background: "#FFFBEB", borderRadius: 12, padding: "14px 16px", border: "1px solid #FDE68A", textAlign: "center" }}><div style={{ fontSize: 10, color: "#92400E", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Pending</div><div style={{ fontSize: 24, fontWeight: 800, color: "#B45309" }}>{pending.length}</div></div>
+        <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1px solid #BBF7D0", textAlign: "center" }}><div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dispatched</div><div style={{ fontSize: 24, fontWeight: 800, color: "#16A34A" }}>{done.length}</div></div>
+      </div>
+      {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>All dispatched for today</div></div>}
+      {pending.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet); return (
+        <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px", marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><strong style={{ fontSize: 15 }}>{outlet?.name}</strong><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309" }}>PENDING</span></div><span style={{ fontSize: 11, color: "#BBB" }}>{order.id}</span></div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Ordered</th><th style={thS}>Dispatching</th><th style={thS}>Diff</th></tr></thead>
+          <tbody>{Object.entries(order.items).filter(([, q]) => q > 0).map(([id, qty]) => { const dqty = dq[order.id]?.[id] ?? qty; const diff = dqty - qty; return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={tdS}>{getBk(id)}</td><td style={{ ...tdS, textAlign: "center" }}>{qty}</td><td style={{ ...tdS, textAlign: "center" }}><input type="number" value={dqty} onChange={(e) => setDq((p) => ({ ...p, [order.id]: { ...(p[order.id] || order.items), [id]: Number(e.target.value) } }))} style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} /></td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, color: diff === 0 ? "#16A34A" : diff < 0 ? "#DC2626" : "#B45309" }}>{diff === 0 ? "✓" : diff > 0 ? `+${diff}` : diff}</td></tr>); })}</tbody></table>
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}><button onClick={() => doDispatch(order.id)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Dispatch</button></div>
+        </div>
+      ); })}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  RECIPES
+// ═════════════════════════════════════════════════════════════════════════════
+const RecipesPanel = () => {
+  const [sel, setSel] = useState("sambhar");
+  const recipe = RECIPES[sel];
+  return (
+    <div id="print-recipes">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Recipe Management</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Standard recipes for raw material calculations and audit</p></div>
+        <PrintBtn sectionId="print-recipes" title={`Recipe — ${recipe.name}`} />
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>{Object.keys(RECIPES).map((k) => (<button key={k} onClick={() => setSel(k)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: sel === k ? "none" : "1px solid #E0E0DC", background: sel === k ? "#1A1A1A" : "#fff", color: sel === k ? "#fff" : "#666", fontFamily: "inherit" }}>{RECIPES[k].name}</button>))}</div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><div><h4 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>{recipe.name}</h4><span style={{ fontSize: 13, color: "#888" }}>Yield: <strong style={{ color: "#B45309" }}>{recipe.yield}</strong></span></div><span style={{ padding: "3px 10px", borderRadius: 6, background: "#EFF6FF", color: "#2563EB", fontSize: 11, fontWeight: 700 }}>STANDARD</span></div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Qty / Batch</th><th style={thS}>Unit</th></tr></thead>
+        <tbody>{recipe.ingredients.map((ing) => { const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId); return (<tr key={ing.rawId} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{ing.qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
+        <div style={{ marginTop: 14, padding: "10px 14px", background: "#FAFAF8", borderRadius: 8, fontSize: 12, color: "#888" }}>Updating recipes recalculates all audit variances and raw material requisitions automatically.</div>
+      </div>
+    </div>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  COGS DASHBOARD
 // ═════════════════════════════════════════════════════════════════════════════
@@ -657,6 +840,7 @@ const StoreMgr = ({ onBack }) => {
 export default function AnandaCafe() {
   const [app, setApp] = useState("launcher");
   const [ownerTab, setOwnerTab] = useState("cogs");
+  const [orders, setOrders] = useState(() => generateOrders());
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
@@ -664,8 +848,15 @@ export default function AnandaCafe() {
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}><BackBtn onClick={() => setApp("launcher")} /><div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49 }}>{[{ id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 Daily P&L" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 18px", border: "none", background: "transparent", fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent" }}>{t.label}</button>))}</div>
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>{ownerTab === "cogs" && <CogsDash />}{ownerTab === "pnl" && <DailyPnL />}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 Base Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "recipes", label: "📖 Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+      {ownerTab === "cogs" && <CogsDash />}
+      {ownerTab === "pnl" && <DailyPnL />}
+      {ownerTab === "orders" && <OutletOrders orders={orders} setOrders={setOrders} />}
+      {ownerTab === "kitchen" && <BaseKitchen orders={orders} />}
+      {ownerTab === "dispatch" && <Dispatch orders={orders} setOrders={setOrders} />}
+      {ownerTab === "recipes" && <RecipesPanel />}
+    </div>
   </div>);
 
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={() => setApp("launcher")} /></div></div>);
