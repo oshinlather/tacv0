@@ -30,10 +30,10 @@ router.get("/consolidated", async (req, res) => {
 // Update order status (for dispatch)
 router.patch("/:id/status", async (req, res) => {
   const { id } = req.params;
-  const { status, dispatch_notes } = req.body;
+  const { status } = req.body;
   const { data, error } = await supabase
     .from("demands")
-    .update({ status, dispatch_notes })
+    .update({ status })
     .eq("id", id)
     .select()
     .single();
