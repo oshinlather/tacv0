@@ -1,4 +1,5 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
+import api from "./api";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -309,10 +310,37 @@ const CogsDash = () => {
 //  OUTLET MANAGER
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
-  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); };
-  const submit = (type) => { const e = { id: Date.now(), date: today(), outlet, type, images: type === "photo" ? { ...images } : {}, items: type === "manual" ? { ...draft } : type === "closing" ? { ...closing } : {}, note, time: timeNow() }; setSubs((p) => [e, ...p]); setLast(e); reset(); setClosing({}); setScreen("done"); };
-  const waMsg = (e) => { let m = `📋 *Ananda Cafe — ${e.type === "closing" ? "Closing Stock" : "Demand"}*\n🏪 ${oData?.name}\n📅 ${e.date} | ⏰ ${e.time}\n`; if (e.type === "photo") m += `📷 ${Object.keys(e.images).length} photos\n`; if (e.note) m += `📝 ${e.note}\n`; m += `✅ Sent via App`; window.open(`https://wa.me/?text=${encodeURIComponent(m)}`, "_blank"); };
+  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); };
+
+  const submit = async (type) => {
+    setSaving(true); setErr(null);
+    try {
+      if (type === "closing") {
+        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing });
+        const e = { ...result, type: "closing", outlet, time: timeNow(), date: today() };
+        setSubs((p) => [e, ...p]); setLast(e);
+      } else {
+        // Create demand record
+        const result = await api.createDemand({ outlet_id: outlet, type, items: type === "manual" ? draft : {}, note });
+        // Upload photos if photo mode
+        if (type === "photo") {
+          for (const [section, base64] of Object.entries(images)) {
+            if (base64) await api.uploadDemandPhoto(result.id, section, base64);
+          }
+        }
+        const e = { ...result, type, outlet, images: type === "photo" ? { ...images } : {}, time: timeNow(), date: today() };
+        setSubs((p) => [e, ...p]); setLast(e);
+      }
+      reset(); setClosing({}); setScreen("done");
+    } catch (error) {
+      setErr(error.message || "Failed to submit. Check internet connection.");
+    } finally { setSaving(false); }
+  };
+
+  const waMsg = (e) => { let m = `📋 *Ananda Cafe — ${e.type === "closing" ? "Closing Stock" : "Demand"}*\n🏪 ${oData?.name}\n📅 ${e.date} | ⏰ ${e.time}\n`; if (e.type === "photo") m += `📷 ${Object.keys(e.images || {}).length} photos\n`; if (e.note) m += `📝 ${e.note}\n`; m += `✅ Sent via App`; window.open(`https://wa.me/?text=${encodeURIComponent(m)}`, "_blank"); };
+  const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
+  const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div><div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Please wait</div></div></div> : null;
 
   if (screen === "pick") return (<div><div style={{ textAlign: "center", marginBottom: 30 }}><div style={{ fontSize: 40, marginBottom: 6 }}>🍽️</div><h2 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>Select Outlet</h2></div>{OUTLETS.map((o) => (<button key={o.id} onClick={() => { setOutlet(o.id); setScreen("home"); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 14, border: "1px solid #E8E8E4", background: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 12, marginBottom: 8, color: "#1A1A1A" }}><span style={{ fontSize: 24 }}>🏪</span><span style={{ flex: 1 }}>{o.name}</span><span style={{ color: "#CCC" }}>→</span></button>))}<button onClick={onBack} style={{ width: "100%", marginTop: 12, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button></div>);
 
@@ -323,11 +351,11 @@ const OutletMgr = ({ onBack }) => {
     <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>
   </div>);
 
-  if (screen === "photo") { const uc = Object.values(images).filter(Boolean).length; return (<div><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📷 Demand Photo</div><span style={{ fontSize: 13, fontWeight: 700, color: uc > 0 ? "#16A34A" : "#CCC" }}>{uc}/{DEMAND_SECTIONS.length}</span></div><div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14 }}>💡 Place filled challan on table → Take photo → Submit!</div><div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>{DEMAND_SECTIONS.map((s) => <PhotoUpload key={s.id} {...s} image={images[s.id]} onUpload={(img) => setImages((p) => ({ ...p, [s.id]: img }))} onRemove={() => setImages((p) => { const n = { ...p }; delete n[s.id]; return n; })} />)}</div><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12 }} /><button onClick={() => submit("photo")} disabled={uc === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: uc > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: uc > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit Demand</button></div>); }
+  if (screen === "photo") { const uc = Object.values(images).filter(Boolean).length; return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📷 Demand Photo</div><span style={{ fontSize: 13, fontWeight: 700, color: uc > 0 ? "#16A34A" : "#CCC" }}>{uc}/{DEMAND_SECTIONS.length}</span></div><div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14 }}>💡 Place filled challan on table → Take photo → Submit!</div><div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>{DEMAND_SECTIONS.map((s) => <PhotoUpload key={s.id} {...s} image={images[s.id]} onUpload={(img) => setImages((p) => ({ ...p, [s.id]: img }))} onRemove={() => setImages((p) => { const n = { ...p }; delete n[s.id]; return n; })} />)}</div><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12 }} /><ErrBar /><button onClick={() => submit("photo")} disabled={uc === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: uc > 0 && !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: uc > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Uploading..." : "✅ Submit Demand"}</button></div>); }
 
-  if (screen === "manual") { const ft = Object.values(draft).filter((v) => v > 0).length; return (<div><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{ft}</span>}</div>{DEMAND_SECTIONS.map((sec) => { const isO = expSec === sec.id, fl = sec.items.filter((i) => draft[i.id] > 0).length; return (<div key={sec.id} style={{ borderRadius: 14, border: `1px solid ${sec.border}`, overflow: "hidden", background: "#fff", marginBottom: 6 }}><div onClick={() => setExpSec(isO ? null : sec.id)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, background: isO ? sec.bg : "#fff" }}><span style={{ fontSize: 22 }}>{sec.emoji}</span><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{sec.titleHi}</div><div style={{ fontSize: 10, color: "#999" }}>{sec.items.length} items</div></div>{fl > 0 && <span style={{ padding: "2px 8px", borderRadius: 6, background: sec.bg, color: sec.color, fontSize: 11, fontWeight: 800 }}>{fl}</span>}<span style={{ color: "#CCC", transform: isO ? "rotate(180deg)" : "", transition: "0.2s" }}>▾</span></div>{isO && <div style={{ padding: "6px 12px 12px" }}>{sec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? sec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${sec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>}</div>); })}<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "8px 0 12px" }} /><button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit ({ft} items)</button></div>); }
+  if (screen === "manual") { const ft = Object.values(draft).filter((v) => v > 0).length; return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{ft}</span>}</div>{DEMAND_SECTIONS.map((sec) => { const isO = expSec === sec.id, fl = sec.items.filter((i) => draft[i.id] > 0).length; return (<div key={sec.id} style={{ borderRadius: 14, border: `1px solid ${sec.border}`, overflow: "hidden", background: "#fff", marginBottom: 6 }}><div onClick={() => setExpSec(isO ? null : sec.id)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, background: isO ? sec.bg : "#fff" }}><span style={{ fontSize: 22 }}>{sec.emoji}</span><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{sec.titleHi}</div><div style={{ fontSize: 10, color: "#999" }}>{sec.items.length} items</div></div>{fl > 0 && <span style={{ padding: "2px 8px", borderRadius: 6, background: sec.bg, color: sec.color, fontSize: 11, fontWeight: 800 }}>{fl}</span>}<span style={{ color: "#CCC", transform: isO ? "rotate(180deg)" : "", transition: "0.2s" }}>▾</span></div>{isO && <div style={{ padding: "6px 12px 12px" }}>{sec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? sec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${sec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>}</div>); })}<input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "8px 0 12px" }} /><button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit ({ft} items)</button></div>); }
 
-  if (screen === "close") { const filled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length; const done = filled === CLOSING_STOCK.length; return (<div><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 13, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{filled}/{CLOSING_STOCK.length}</span></div><div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ <strong>Important!</strong> Fill all items. Write 0 if finished.</div><div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>{CLOSING_STOCK.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: idx < CLOSING_STOCK.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}><span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span><input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 68, padding: "8px", borderRadius: 10, border: isFilled ? "2px solid #16A34A" : "2px solid #E0E0DC", background: "#fff", fontSize: 17, textAlign: "center", fontFamily: "inherit", fontWeight: 800 }} /><span style={{ fontSize: 12, color: "#999", width: 24 }}>{item.unit}</span></div>); })}</div><button onClick={() => submit("closing")} disabled={!done} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: done ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: done ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{done ? "📊 Submit Closing Stock" : `Fill all (${CLOSING_STOCK.length - filled} remaining)`}</button></div>); }
+  if (screen === "close") { const filled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length; const done = filled === CLOSING_STOCK.length; return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 13, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{filled}/{CLOSING_STOCK.length}</span></div><div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ <strong>Important!</strong> Fill all items. Write 0 if finished.</div><div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>{CLOSING_STOCK.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: idx < CLOSING_STOCK.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}><span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span><input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 68, padding: "8px", borderRadius: 10, border: isFilled ? "2px solid #16A34A" : "2px solid #E0E0DC", background: "#fff", fontSize: 17, textAlign: "center", fontFamily: "inherit", fontWeight: 800 }} /><span style={{ fontSize: 12, color: "#999", width: 24 }}>{item.unit}</span></div>); })}</div><button onClick={() => submit("closing")} disabled={!done} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: done ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: done ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{done ? "📊 Submit Closing Stock" : `Fill all (${CLOSING_STOCK.length - filled} remaining)`}</button></div>); }
   return null;
 };
 
@@ -348,6 +376,8 @@ const StoreMgr = ({ onBack }) => {
   // Shared
   const [subs, setSubs] = useState([]);
   const [last, setLast] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
 
   const targets = [{ id: "bk", name: "BK Production", emoji: "🏭" }, ...OUTLETS.map((o) => ({ ...o, emoji: "🏪" }))];
   const todaySubs = subs.filter((s) => s.date === today());
@@ -355,20 +385,42 @@ const StoreMgr = ({ onBack }) => {
   const todayIssuances = todaySubs.filter((s) => s.category === "issuance");
   const todayPurchaseTotal = todayPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
 
-  const resetIssuance = () => { setIssueImages({}); setIssueNote(""); setIssueTo("bk"); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); };
+  const resetIssuance = () => { setIssueImages({}); setIssueNote(""); setIssueTo("bk"); setErr(null); };
+  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
-  const submitIssuance = () => {
-    const e = { id: Date.now(), date: today(), category: "issuance", issueTo, images: { ...issueImages }, note: issueNote, time: timeNow() };
-    setSubs((p) => [e, ...p]); setLast(e); resetIssuance(); setScreen("done");
+  const submitIssuance = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const result = await api.createIssuance({ issue_to: issueTo, note: issueNote });
+      // Upload photos
+      for (const [section, base64] of Object.entries(issueImages)) {
+        if (base64) await api.uploadIssuancePhoto(result.id, section, base64);
+      }
+      const e = { ...result, category: "issuance", issueTo, images: { ...issueImages }, note: issueNote, time: timeNow(), date: today() };
+      setSubs((p) => [e, ...p]); setLast(e); resetIssuance(); setScreen("done");
+    } catch (error) { setErr(error.message || "Failed to submit"); }
+    finally { setSaving(false); }
   };
 
-  const submitPurchase = () => {
-    const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-    const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const e = { id: Date.now(), date: today(), category: "purchase", items: validItems, billImages: { ...billImages }, note: purchaseNote, paymentMode, totalAmount: totalAmt, time: timeNow() };
-    setSubs((p) => [e, ...p]); setLast(e); resetPurchase(); setScreen("done");
+  const submitPurchase = async () => {
+    setSaving(true); setErr(null);
+    try {
+      const validItems = purchases.filter((p) => p.item.trim() && p.amount);
+      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor }));
+      const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote });
+      // Upload bill photos
+      for (const [label, base64] of Object.entries(billImages)) {
+        if (base64) await api.uploadPurchasePhoto(result.id, base64, label);
+      }
+      const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+      const e = { ...result, category: "purchase", items: validItems, billImages: { ...billImages }, note: purchaseNote, paymentMode, totalAmount: totalAmt, time: timeNow(), date: today() };
+      setSubs((p) => [e, ...p]); setLast(e); resetPurchase(); setScreen("done");
+    } catch (error) { setErr(error.message || "Failed to submit"); }
+    finally { setSaving(false); }
   };
+
+  const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div></div></div> : null;
+  const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
 
   const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
@@ -453,14 +505,15 @@ const StoreMgr = ({ onBack }) => {
   // ── ISSUANCE ──
   if (screen === "issuance") {
     const uc = Object.values(issueImages).filter(Boolean).length;
-    return (<div>
+    return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📋 Store Issuance</div></div>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Issuing To</div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>{targets.map((t) => (<button key={t.id} onClick={() => setIssueTo(t.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: issueTo === t.id ? "none" : "1px solid #E0E0DC", background: issueTo === t.id ? "#1A1A1A" : "#fff", color: issueTo === t.id ? "#fff" : "#888", fontFamily: "inherit" }}>{t.emoji} {t.name}</button>))}</div>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Upload Store Issue Photos</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>{[{ id: "s1", titleHi: "Store Issue Sheet 1", emoji: "📋", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }, { id: "s2", titleHi: "Store Issue Sheet 2", emoji: "📋", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" }, { id: "s3", titleHi: "Extra / Additional", emoji: "📎", color: "#9333EA", bg: "#FAF5FF", border: "#E9D5FF" }].map((s) => (<PhotoUpload key={s.id} {...s} image={issueImages[s.id]} onUpload={(img) => setIssueImages((p) => ({ ...p, [s.id]: img }))} onRemove={() => setIssueImages((p) => { const n = { ...p }; delete n[s.id]; return n; })} />))}</div>
       <input value={issueNote} onChange={(e) => setIssueNote(e.target.value)} placeholder="Issuance note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12 }} />
-      <button onClick={submitIssuance} disabled={uc === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: uc > 0 ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: uc > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>🏪 Record Issuance → {targets.find((t) => t.id === issueTo)?.name}</button>
+      <ErrBar />
+      <button onClick={submitIssuance} disabled={uc === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: uc > 0 && !saving ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: uc > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Uploading..." : `🏪 Record Issuance → ${targets.find((t) => t.id === issueTo)?.name}`}</button>
     </div>);
   }
 
