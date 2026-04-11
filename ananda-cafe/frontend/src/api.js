@@ -44,6 +44,17 @@ const api = {
   // ── PetPooja ──
   syncPetpooja: (date) => post("/api/petpooja/sync", { date }),
   getPetpoojaStatus: () => get("/api/petpooja/status"),
+
+  // ── Inventory ──
+  getInventory: (params) => get("/api/inventory", params),
+  stockIn: (items, reason) => post("/api/inventory/stock-in", { items, reason }),
+  stockOut: (items, reason) => post("/api/inventory/stock-out", { items, reason }),
+  adjustStock: (item_id, new_qty, reason) => post("/api/inventory/adjust", { item_id, new_qty, reason }),
+  updateThreshold: (id, threshold) => patch(`/api/inventory/threshold/${id}`, { threshold }),
+  bulkUpdateThresholds: (items) => post("/api/inventory/thresholds", { items }),
+  getMovements: (item_id) => get(`/api/inventory/movements/${item_id}`),
+  getTodayMovements: (date) => get("/api/inventory/movements", { date }),
+  getInventorySummary: () => get("/api/inventory/summary"),
 };
 
 // ── Helpers ──
