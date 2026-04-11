@@ -578,6 +578,7 @@ const Inventory = () => {
   const [selItem, setSelItem] = useState(null); // for history
   const [movements, setMovements] = useState([]);
   const [thresholds, setThresholds] = useState({});
+  const [orderQty, setOrderQty] = useState({});
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -663,7 +664,6 @@ const Inventory = () => {
   // ── ORDER CHALLAN VIEW ──
   if (view === "order_challan") {
     const lowItems = items.filter((i) => i.below_threshold);
-    const [orderQty, setOrderQty] = useState({});
     return (<div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📝 Order Challan</div><PrintBtn sectionId="print-order-challan" title="Inventory Order Challan" /></div>
       <div id="print-order-challan">
