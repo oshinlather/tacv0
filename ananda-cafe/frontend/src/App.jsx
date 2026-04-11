@@ -422,30 +422,95 @@ const BaseKitchen = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const Dispatch = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
+  const [dispatchQty, setDispatchQty] = useState({}); // { orderId: { itemId: actualQty } }
+  const [dispatching, setDispatching] = useState(null); // orderId being dispatched
   const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
   const pending = orders.filter((o) => o.status === "submitted" || o.status === "received");
   const done = orders.filter((o) => o.status === "fulfilled");
-  const doDispatch = async (id) => { try { await api.updateOrderStatus(id, "fulfilled"); load(); } catch (e) { alert("Error: " + e.message); } };
+
+  const getDispatchQty = (orderId, itemId, ordered) => dispatchQty[orderId]?.[itemId] ?? ordered;
+  const setDq = (orderId, itemId, val) => setDispatchQty((p) => ({ ...p, [orderId]: { ...(p[orderId] || {}), [itemId]: Number(val) || 0 } }));
+
+  const doDispatch = async (id) => {
+    setDispatching(id);
+    try { await api.updateOrderStatus(id, "fulfilled"); load(); } catch (e) { alert("Error: " + e.message); }
+    finally { setDispatching(null); }
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-dispatch">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Verify and dispatch prepared items to outlets</p></div>
-        <PrintBtn sectionId="print-dispatch" title="Dispatch Challan" />
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Verification</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Verify items loaded in transport before dispatch</p></div>
+        <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄 Refresh</button><PrintBtn sectionId="print-dispatch" title="Dispatch Challan" /></div>
       </div>
       <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
         <div style={{ flex: 1, background: "#FFFBEB", borderRadius: 12, padding: "14px 16px", border: "1px solid #FDE68A", textAlign: "center" }}><div style={{ fontSize: 10, color: "#92400E", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Pending</div><div style={{ fontSize: 24, fontWeight: 800, color: "#B45309" }}>{pending.length}</div></div>
         <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1px solid #BBF7D0", textAlign: "center" }}><div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dispatched</div><div style={{ fontSize: 24, fontWeight: 800, color: "#16A34A" }}>{done.length}</div></div>
       </div>
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>All dispatched for today</div></div>}
-      {pending.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet_id); return (
-        <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px", marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><strong style={{ fontSize: 15 }}>{outlet?.name || order.outlet_id}</strong><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309" }}>PENDING</span></div><span style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>
-          {order.note && <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>📝 {order.note}</div>}
-          <div style={{ display: "flex", justifyContent: "flex-end" }}><button onClick={() => doDispatch(order.id)} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✅ Mark Dispatched</button></div>
-        </div>
-      ); })}
+      {pending.map((order) => {
+        const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+        const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
+        const hasItems = itemEntries.length > 0;
+        const allVerified = hasItems && itemEntries.every(([id, qty]) => getDispatchQty(order.id, id, qty) === qty);
+        const hasMismatch = hasItems && itemEntries.some(([id, qty]) => getDispatchQty(order.id, id, qty) !== qty);
+        return (
+          <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${hasMismatch ? "#FECACA" : "#E8E8E4"}`, padding: "18px 20px", marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <strong style={{ fontSize: 15 }}>{outlet?.name || order.outlet_id}</strong>
+                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: order.type === "photo" ? "#EFF6FF" : "#FFFBEB", color: order.type === "photo" ? "#2563EB" : "#B45309" }}>{order.type === "photo" ? "📷 Photo" : "✏️ Manual"}</span>
+              </div>
+              <span style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+            {order.note && <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>📝 {order.note}</div>}
+            {hasItems ? (<>
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FAFAF8", fontSize: 11, color: "#888", marginBottom: 10 }}>⚠️ Verify each item loaded in transport. Adjust quantity if different from ordered.</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, marginBottom: 12 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={{ ...thS, textAlign: "center" }}>Ordered</th><th style={{ ...thS, textAlign: "center" }}>Loaded</th><th style={{ ...thS, textAlign: "center" }}>Diff</th></tr></thead>
+                <tbody>{itemEntries.map(([id, qty]) => {
+                  const actual = getDispatchQty(order.id, id, qty);
+                  const diff = actual - qty;
+                  const bkItem = BK_ITEMS.find((b) => b.id === id);
+                  return (
+                    <tr key={id} style={{ borderBottom: "1px solid #F0F0EC", background: diff !== 0 ? "#FEF2F2" : "transparent" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{bkItem?.name || id}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono', monospace" }}>{qty}</td>
+                      <td style={{ ...tdS, textAlign: "center" }}>
+                        <input type="number" min="0" value={actual} onChange={(e) => setDq(order.id, id, e.target.value)}
+                          style={{ width: 60, padding: "5px 6px", borderRadius: 6, border: diff !== 0 ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, background: "#fff" }} />
+                      </td>
+                      <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: diff === 0 ? "#16A34A" : diff < 0 ? "#DC2626" : "#B45309" }}>
+                        {diff === 0 ? "✓" : diff > 0 ? `+${diff}` : diff}
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+              {hasMismatch && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 10 }}>⚠️ Mismatch detected! Some items differ from ordered quantity. Dispatch will proceed with loaded quantities.</div>}
+            </>) : (
+              <div style={{ padding: "12px", borderRadius: 8, background: "#FAFAF8", fontSize: 12, color: "#888", marginBottom: 10 }}>📷 Photo-based order — no item breakdown available. Verify manually before dispatching.</div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button onClick={() => doDispatch(order.id)} disabled={dispatching === order.id}
+                style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: dispatching === order.id ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 700, fontSize: 14, cursor: dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {dispatching === order.id ? "⏳ Dispatching..." : `✅ Dispatch to ${outlet?.name || order.outlet_id}`}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      {done.length > 0 && (<div style={{ marginTop: 24 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>✅ Dispatched Today</div>
+        {done.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet_id); return (
+          <div key={order.id} style={{ background: "#F0FDF4", borderRadius: 12, border: "1px solid #BBF7D0", padding: "12px 16px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.name || order.outlet_id}</span><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: "#DCFCE7", color: "#16A34A" }}>DISPATCHED</span></div>
+            <span style={{ fontSize: 11, color: "#999" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
+          </div>
+        ); })}
+      </div>)}
     </div>
   );
 };
