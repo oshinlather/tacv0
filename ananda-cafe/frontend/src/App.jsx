@@ -422,16 +422,22 @@ const BaseKitchen = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const Dispatch = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  const [checked, setChecked] = useState({}); // { orderId: { itemId: true/false } }
+  const [checked, setChecked] = useState({});
   const [dispatching, setDispatching] = useState(null);
+  const [selOutlet, setSelOutlet] = useState(null); // null = all
+  const [expandedCat, setExpandedCat] = useState({}); // { orderId_catId: true }
   const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
-  const pending = orders.filter((o) => o.status === "submitted" || o.status === "received");
-  const done = orders.filter((o) => o.status === "fulfilled");
+
+  const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received") && (!selOutlet || o.outlet_id === selOutlet));
+  const done = orders.filter((o) => o.status === "fulfilled" && (!selOutlet || o.outlet_id === selOutlet));
+  const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received");
+  const allDone = orders.filter((o) => o.status === "fulfilled");
 
   const isChecked = (oid, iid) => checked[oid]?.[iid] || false;
   const toggle = (oid, iid) => setChecked((p) => ({ ...p, [oid]: { ...(p[oid] || {}), [iid]: !isChecked(oid, iid) } }));
-  const checkAll = (oid, items) => { const allDone = items.every(([id]) => isChecked(oid, id)); const v = {}; items.forEach(([id]) => { v[id] = !allDone; }); setChecked((p) => ({ ...p, [oid]: v })); };
+  const checkAllCat = (oid, items) => { const allDone = items.every(([id]) => isChecked(oid, id)); const v = { ...(checked[oid] || {}) }; items.forEach(([id]) => { v[id] = !allDone; }); setChecked((p) => ({ ...p, [oid]: v })); };
+  const toggleCat = (key) => setExpandedCat((p) => ({ ...p, [key]: !p[key] }));
 
   const doDispatch = async (id) => {
     setDispatching(id);
@@ -439,64 +445,114 @@ const Dispatch = () => {
     finally { setDispatching(null); }
   };
 
+  // Group items by category from DEMAND_SECTIONS
+  const getItemsByCategory = (items) => {
+    const grouped = {};
+    DEMAND_SECTIONS.forEach((sec) => { grouped[sec.id] = { label: sec.titleHi, emoji: sec.emoji, color: sec.color, bg: sec.bg, border: sec.border, items: [] }; });
+    grouped["_other"] = { label: "Other", emoji: "📦", color: "#666", bg: "#FAFAF8", border: "#E0E0DC", items: [] };
+    Object.entries(items).filter(([, q]) => q > 0).forEach(([id, qty]) => {
+      let found = false;
+      DEMAND_SECTIONS.forEach((sec) => { if (sec.items.some((i) => i.id === id)) { grouped[sec.id].items.push([id, qty]); found = true; } });
+      if (!found) grouped["_other"].items.push([id, qty]);
+    });
+    return Object.entries(grouped).filter(([, g]) => g.items.length > 0);
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  // Count pending per outlet for pills
+  const outletCounts = {};
+  OUTLETS.forEach((o) => { outletCounts[o.id] = allPending.filter((d) => d.outlet_id === o.id).length; });
+
   return (
     <div id="print-dispatch">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Verification</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Tick each item after verifying it's loaded in transport</p></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Verification</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Tick each item after loading in transport</p></div>
         <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-dispatch" title="Dispatch Challan" /></div>
       </div>
+
+      {/* Outlet filter pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All ({allPending.length})</button>
+        {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 4 }}>{o.short} {outletCounts[o.id] > 0 && <span style={{ padding: "1px 6px", borderRadius: 10, background: selOutlet === o.id ? "rgba(255,255,255,0.2)" : "#FFFBEB", color: selOutlet === o.id ? "#fff" : "#B45309", fontSize: 10, fontWeight: 800 }}>{outletCounts[o.id]}</span>}</button>))}
+      </div>
+
       <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
         <div style={{ flex: 1, background: "#FFFBEB", borderRadius: 12, padding: "14px 16px", border: "1px solid #FDE68A", textAlign: "center" }}><div style={{ fontSize: 10, color: "#92400E", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Pending</div><div style={{ fontSize: 24, fontWeight: 800, color: "#B45309" }}>{pending.length}</div></div>
         <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1px solid #BBF7D0", textAlign: "center" }}><div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dispatched</div><div style={{ fontSize: 24, fontWeight: 800, color: "#16A34A" }}>{done.length}</div></div>
       </div>
-      {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>All dispatched for today</div></div>}
+
+      {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
+
       {pending.map((order) => {
         const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
         const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
         const hasItems = itemEntries.length > 0;
         const checkedCount = hasItems ? itemEntries.filter(([id]) => isChecked(order.id, id)).length : 0;
         const allChecked = hasItems && checkedCount === itemEntries.length;
+        const categories = hasItems ? getItemsByCategory(order.items) : [];
+
         return (
-          <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${allChecked ? "#BBF7D0" : "#E8E8E4"}`, padding: "18px 20px", marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${allChecked ? "#BBF7D0" : "#E8E8E4"}`, marginBottom: 14, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <strong style={{ fontSize: 15 }}>{outlet?.name || order.outlet_id}</strong>
                 <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: order.type === "photo" ? "#EFF6FF" : "#FFFBEB", color: order.type === "photo" ? "#2563EB" : "#B45309" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
               </div>
-              <span style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
-            </div>
-            {hasItems && <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-              <span style={{ fontSize: 12, color: checkedCount === itemEntries.length ? "#16A34A" : "#B45309", fontWeight: 700 }}>✓ {checkedCount}/{itemEntries.length} verified</span>
-              <button onClick={() => checkAll(order.id, itemEntries)} style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", fontSize: 11, fontWeight: 600, color: "#666", cursor: "pointer", fontFamily: "inherit" }}>{allChecked ? "Uncheck All" : "Check All"}</button>
-            </div>}
-            {order.note && <div style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>📝 {order.note}</div>}
-            {hasItems ? (
-              <div style={{ marginBottom: 12 }}>
-                {itemEntries.map(([id, qty]) => {
-                  const done = isChecked(order.id, id);
-                  const bkItem = BK_ITEMS.find((b) => b.id === id);
-                  return (
-                    <div key={id} onClick={() => toggle(order.id, id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, marginBottom: 3, cursor: "pointer", background: done ? "#F0FDF4" : "#FAFAF8", border: done ? "1px solid #BBF7D0" : "1px solid #F0F0EC", transition: "all 0.15s" }}>
-                      <div style={{ width: 24, height: 24, borderRadius: 6, border: done ? "2px solid #16A34A" : "2px solid #D0D0CC", background: done ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
-                        {done && <span style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>✓</span>}
-                      </div>
-                      <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: done ? "#16A34A" : "#1A1A1A", textDecoration: done ? "line-through" : "none" }}>{bkItem?.name || id}</span>
-                      <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: done ? "#16A34A" : "#B45309" }}>{qty}</span>
-                    </div>
-                  );
-                })}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+                {hasItems && <div style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓ {checkedCount}/{itemEntries.length}</div>}
               </div>
-            ) : (
-              <div style={{ padding: "12px", borderRadius: 8, background: "#FAFAF8", fontSize: 12, color: "#888", marginBottom: 12 }}>📷 Photo order — verify items manually before dispatching.</div>
-            )}
-            <button onClick={() => doDispatch(order.id)} disabled={dispatching === order.id || (hasItems && !allChecked)}
-              style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-              {dispatching === order.id ? "⏳ Dispatching..." : !hasItems || allChecked ? `🚚 Dispatch to ${outlet?.name || order.outlet_id}` : `Verify all ${itemEntries.length - checkedCount} remaining items`}
-            </button>
+            </div>
+
+            {order.note && <div style={{ padding: "8px 18px", fontSize: 12, color: "#888", borderBottom: "1px solid #F0F0EC" }}>📝 {order.note}</div>}
+
+            {/* Category-wise items */}
+            {hasItems ? categories.map(([catId, cat]) => {
+              const catKey = `${order.id}_${catId}`;
+              const isOpen = expandedCat[catKey] !== false; // default open
+              const catChecked = cat.items.filter(([id]) => isChecked(order.id, id)).length;
+              const catTotal = cat.items.length;
+              return (
+                <div key={catKey}>
+                  <div onClick={() => toggleCat(catKey)} style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: cat.bg, borderBottom: "1px solid #F0F0EC" }}>
+                    <span style={{ fontSize: 16 }}>{cat.emoji}</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: cat.color }}>{cat.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: catChecked === catTotal ? "#16A34A" : "#999" }}>{catChecked}/{catTotal}</span>
+                    <button onClick={(e) => { e.stopPropagation(); checkAllCat(order.id, cat.items); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>{catChecked === catTotal ? "✕" : "✓ All"}</button>
+                    <span style={{ color: "#CCC", transform: isOpen ? "rotate(180deg)" : "", transition: "0.2s", fontSize: 12 }}>▾</span>
+                  </div>
+                  {isOpen && <div style={{ padding: "4px 14px 8px" }}>
+                    {cat.items.map(([id, qty]) => {
+                      const isDone = isChecked(order.id, id);
+                      const bkItem = BK_ITEMS.find((b) => b.id === id);
+                      return (
+                        <div key={id} onClick={() => toggle(order.id, id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 10, marginBottom: 2, cursor: "pointer", background: isDone ? "#F0FDF4" : "transparent", transition: "all 0.15s" }}>
+                          <div style={{ width: 22, height: 22, borderRadius: 5, border: isDone ? "2px solid #16A34A" : "2px solid #D0D0CC", background: isDone ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            {isDone && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
+                          </div>
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isDone ? "#16A34A" : "#1A1A1A", textDecoration: isDone ? "line-through" : "none" }}>{bkItem?.name || id}</span>
+                          <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isDone ? "#16A34A" : "#B45309", minWidth: 40, textAlign: "right" }}>{qty}</span>
+                        </div>
+                      );
+                    })}
+                  </div>}
+                </div>
+              );
+            }) : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
+
+            {/* Dispatch button */}
+            <div style={{ padding: "12px 18px", borderTop: "1px solid #F0F0EC" }}>
+              <button onClick={() => doDispatch(order.id)} disabled={dispatching === order.id || (hasItems && !allChecked)}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {dispatching === order.id ? "⏳ Dispatching..." : !hasItems || allChecked ? `🚚 Dispatch to ${outlet?.name || order.outlet_id}` : `Verify ${itemEntries.length - checkedCount} more items`}
+              </button>
+            </div>
           </div>
         );
       })}
+
       {done.length > 0 && (<div style={{ marginTop: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>✅ Dispatched Today</div>
         {done.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet_id); return (
