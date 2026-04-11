@@ -471,15 +471,21 @@ const Dispatch = () => {
         <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-dispatch" title="Dispatch Challan" /></div>
       </div>
 
-      {/* Outlet filter pills */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All ({allPending.length})</button>
-        {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 4 }}>{o.short} {outletCounts[o.id] > 0 && <span style={{ padding: "1px 6px", borderRadius: 10, background: selOutlet === o.id ? "rgba(255,255,255,0.2)" : "#FFFBEB", color: selOutlet === o.id ? "#fff" : "#B45309", fontSize: 10, fontWeight: 800 }}>{outletCounts[o.id]}</span>}</button>))}
-      </div>
-
-      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
-        <div style={{ flex: 1, background: "#FFFBEB", borderRadius: 12, padding: "14px 16px", border: "1px solid #FDE68A", textAlign: "center" }}><div style={{ fontSize: 10, color: "#92400E", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Pending</div><div style={{ fontSize: 24, fontWeight: 800, color: "#B45309" }}>{pending.length}</div></div>
-        <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1px solid #BBF7D0", textAlign: "center" }}><div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dispatched</div><div style={{ fontSize: 24, fontWeight: 800, color: "#16A34A" }}>{done.length}</div></div>
+      {/* Outlet filter pills with status - sticky */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", position: "sticky", top: 96, background: "#FAF9F6", paddingTop: 8, paddingBottom: 8, zIndex: 10 }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
+        {OUTLETS.map((o) => {
+          const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
+          const dCount = allDone.filter((d) => d.outlet_id === o.id).length;
+          const isAllDone = pCount === 0 && dCount > 0;
+          const hasOrders = pCount > 0 || dCount > 0;
+          return (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : isAllDone ? "1px solid #BBF7D0" : pCount > 0 ? "1px solid #FDE68A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : isAllDone ? "#F0FDF4" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 5 }}>
+            {isAllDone && <span style={{ fontSize: 11 }}>✅</span>}
+            {pCount > 0 && <span style={{ width: 8, height: 8, borderRadius: 4, background: "#F59E0B", flexShrink: 0 }} />}
+            {o.short}
+            {pCount > 0 && <span style={{ padding: "1px 7px", borderRadius: 10, background: selOutlet === o.id ? "rgba(255,255,255,0.25)" : "#FFFBEB", color: selOutlet === o.id ? "#fff" : "#B45309", fontSize: 11, fontWeight: 800 }}>{pCount}</span>}
+          </button>);
+        })}
       </div>
 
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
@@ -667,23 +673,28 @@ const Inventory = () => {
     return (<div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📝 Order Challan</div><PrintBtn sectionId="print-order-challan" title="Inventory Order Challan" /></div>
       <div id="print-order-challan">
-        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>Items below threshold are pre-filled. Adjust quantities and print to send to vendor.</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #E8E8E4" }}>
-          <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={{ ...thS, textAlign: "center" }}>Stock</th><th style={{ ...thS, textAlign: "center" }}>Threshold</th><th style={{ ...thS, textAlign: "center" }}>Order Qty</th><th style={thS}>Unit</th></tr></thead>
-          <tbody>{filtered.map((item) => {
-            const qty = Number(item.current_qty);
-            const isLow = item.below_threshold;
-            const suggestedOrder = isLow ? Math.max(0, (item.threshold * 2) - qty) : 0;
-            return (<tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC", background: isLow ? "#FFFDF5" : "transparent" }}>
-              <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
-              <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: qty === 0 ? "#DC2626" : isLow ? "#B45309" : "#666" }}>{qty}</td>
-              <td style={{ ...tdS, textAlign: "center", color: "#999" }}>{item.threshold}</td>
-              <td style={{ ...tdS, textAlign: "center" }}><input type="number" min="0" value={orderQty[item.id] ?? (isLow ? suggestedOrder : "")} onChange={(e) => setOrderQty((p) => ({ ...p, [item.id]: e.target.value }))} style={{ width: 56, padding: "4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /></td>
-              <td style={{ ...tdS, color: "#999", fontSize: 11 }}>{item.unit}</td>
-            </tr>);
-          })}</tbody>
-        </table>
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>Low stock items are pre-filled with suggested order qty. Adjust and print.</div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", position: "sticky", top: 0, background: "#FAF9F6", paddingBottom: 6, zIndex: 10 }}><button onClick={() => setSelCat(null)} style={{ padding: "8px 14px", borderRadius: 20, fontSize: 12, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "8px 14px", borderRadius: 20, fontSize: 12, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
+        {filtered.map((item) => {
+          const qty = Number(item.current_qty);
+          const isLow = item.below_threshold;
+          const suggestedOrder = isLow ? Math.max(0, (item.threshold * 2) - qty) : 0;
+          return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: "#fff", borderRadius: 12, border: `1px solid ${isLow ? "#FDE68A" : "#E8E8E4"}`, marginBottom: 6 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{item.name}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: qty === 0 ? "#DC2626" : isLow ? "#B45309" : "#888" }}>Stock: <strong>{qty}</strong></span>
+                <span style={{ fontSize: 11, color: "#BBB" }}>•</span>
+                <span style={{ fontSize: 11, color: "#999" }}>Min: {item.threshold}</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input type="number" inputMode="numeric" min="0" placeholder="0" value={orderQty[item.id] ?? (isLow ? suggestedOrder : "")} onChange={(e) => setOrderQty((p) => ({ ...p, [item.id]: e.target.value }))}
+                style={{ width: 64, height: 44, padding: "4px", borderRadius: 10, border: (orderQty[item.id] > 0 || (isLow && suggestedOrder > 0)) ? "2px solid #2563EB" : "1px solid #E0E0DC", fontSize: 18, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, background: "#fff" }} />
+              <span style={{ fontSize: 12, color: "#999", width: 28 }}>{item.unit}</span>
+            </div>
+          </div>);
+        })}
       </div>
     </div>);
   }
