@@ -9,6 +9,7 @@ const purchasesRouter = require("./routes/purchases");
 const pnlRouter = require("./routes/pnl");
 const petpoojaRouter = require("./routes/petpooja");
 const ordersRouter = require("./routes/orders");
+const inventoryRouter = require("./routes/inventory");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -29,6 +30,7 @@ app.use("/api/purchases", purchasesRouter);
 app.use("/api/pnl", pnlRouter);
 app.use("/api/petpooja", petpoojaRouter);
 app.use("/api/orders", ordersRouter);
+app.use("/api/inventory", inventoryRouter);
 
 // Outlets
 app.get("/api/outlets", async (req, res) => {
