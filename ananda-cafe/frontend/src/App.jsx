@@ -405,8 +405,8 @@ const BaseKitchen = () => {
       <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>{[{ l: "Orders", v: orders.length, s: `of ${OUTLETS.length}` }, { l: "BK Items", v: Object.values(consolidated).filter((c) => c.total > 0).length }, { l: "Raw Materials", v: Object.keys(rawReq).length }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>{s.s && <div style={{ fontSize: 11, color: "#BBB" }}>{s.s}</div>}</div>))}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</div>
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={{ ...thS, textAlign: "center", color: "#1A1A1A" }}>TOTAL</th>{OUTLETS.map((o) => <th key={o.id} style={{ ...thS, textAlign: "center" }}>{o.short}</th>)}</tr></thead>
-        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{bk.name}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
+        <div style={{ overflowX: "auto", position: "relative" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8", position: "sticky", top: 0, zIndex: 5 }}><th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 6, minWidth: 90 }}>Item</th><th style={{ ...thS, textAlign: "center", color: "#1A1A1A", fontWeight: 800, minWidth: 60 }}>TOTAL</th>{OUTLETS.map((o) => <th key={o.id} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap", minWidth: 50 }}>{o.short}</th>)}</tr></thead>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
       </div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4" }}><div style={{ fontWeight: 700, fontSize: 14 }}>🏪 Ration Store — Raw Material Requisition</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Auto-calculated from standard recipes</div></div>
@@ -471,18 +471,16 @@ const Dispatch = () => {
         <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-dispatch" title="Dispatch Challan" /></div>
       </div>
 
-      {/* Outlet filter pills with status - sticky */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", position: "sticky", top: 96, background: "#FAF9F6", paddingTop: 8, paddingBottom: 8, zIndex: 10 }}>
-        <button onClick={() => setSelOutlet(null)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
+      {/* Outlet filter pills with status - sticky, single row scrollable */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, position: "sticky", top: 96, background: "#FAF9F6", paddingTop: 8, paddingBottom: 8, zIndex: 10, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
         {OUTLETS.map((o) => {
           const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
           const dCount = allDone.filter((d) => d.outlet_id === o.id).length;
           const isAllDone = pCount === 0 && dCount > 0;
-          const hasOrders = pCount > 0 || dCount > 0;
-          return (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : isAllDone ? "1px solid #BBF7D0" : pCount > 0 ? "1px solid #FDE68A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : isAllDone ? "#F0FDF4" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 5 }}>
+          return (<button key={o.id} onClick={() => setSelOutlet(selOutlet === o.id ? null : o.id)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : isAllDone ? "1px solid #BBF7D0" : pCount > 0 ? "1px solid #FDE68A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : isAllDone ? "#F0FDF4" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0 }}>
             {isAllDone && <span style={{ fontSize: 11 }}>✅</span>}
             {pCount > 0 && <span style={{ width: 8, height: 8, borderRadius: 4, background: "#F59E0B", flexShrink: 0 }} />}
-            {o.short}
+            {o.name}
             {pCount > 0 && <span style={{ padding: "1px 7px", borderRadius: 10, background: selOutlet === o.id ? "rgba(255,255,255,0.25)" : "#FFFBEB", color: selOutlet === o.id ? "#fff" : "#B45309", fontSize: 11, fontWeight: 800 }}>{pCount}</span>}
           </button>);
         })}
@@ -1218,7 +1216,7 @@ export default function AnandaCafe() {
     return "launcher";
   });
   const [ownerTab, setOwnerTab] = useState("activity");
-  const [storeView, setStoreView] = useState("actions");
+  const [storeView, setStoreView] = useState("bk");
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
@@ -1242,14 +1240,12 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "actions", label: "📋 Actions" }, { id: "live", label: "🔴 Live" }, { id: "orders", label: "📋 Orders" }, { id: "bk", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "actions", label: "📋 Actions" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
-      {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
-      {storeView === "live" && <LiveActivity />}
-      {storeView === "orders" && <OutletOrders />}
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "inventory" && <Inventory />}
+      {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
     </div>
   </div>);
   return null;
