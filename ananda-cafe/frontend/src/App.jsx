@@ -660,6 +660,34 @@ const Inventory = () => {
     </div>);
   }
 
+  // ── ORDER CHALLAN VIEW ──
+  if (view === "order_challan") {
+    const lowItems = items.filter((i) => i.below_threshold);
+    const [orderQty, setOrderQty] = useState({});
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📝 Order Challan</div><PrintBtn sectionId="print-order-challan" title="Inventory Order Challan" /></div>
+      <div id="print-order-challan">
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>Items below threshold are pre-filled. Adjust quantities and print to send to vendor.</div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, background: "#fff", borderRadius: 12, overflow: "hidden", border: "1px solid #E8E8E4" }}>
+          <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={{ ...thS, textAlign: "center" }}>Stock</th><th style={{ ...thS, textAlign: "center" }}>Threshold</th><th style={{ ...thS, textAlign: "center" }}>Order Qty</th><th style={thS}>Unit</th></tr></thead>
+          <tbody>{filtered.map((item) => {
+            const qty = Number(item.current_qty);
+            const isLow = item.below_threshold;
+            const suggestedOrder = isLow ? Math.max(0, (item.threshold * 2) - qty) : 0;
+            return (<tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC", background: isLow ? "#FFFDF5" : "transparent" }}>
+              <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
+              <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: qty === 0 ? "#DC2626" : isLow ? "#B45309" : "#666" }}>{qty}</td>
+              <td style={{ ...tdS, textAlign: "center", color: "#999" }}>{item.threshold}</td>
+              <td style={{ ...tdS, textAlign: "center" }}><input type="number" min="0" value={orderQty[item.id] ?? (isLow ? suggestedOrder : "")} onChange={(e) => setOrderQty((p) => ({ ...p, [item.id]: e.target.value }))} style={{ width: 56, padding: "4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /></td>
+              <td style={{ ...tdS, color: "#999", fontSize: 11 }}>{item.unit}</td>
+            </tr>);
+          })}</tbody>
+        </table>
+      </div>
+    </div>);
+  }
+
   // ── MAIN STOCK VIEW ──
   return (<div>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -667,39 +695,43 @@ const Inventory = () => {
       <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button>
     </div>
 
-    {/* Alert banner */}
-    {alerts.length > 0 && <div style={{ padding: "12px 16px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>🚨 {alerts.length} items below threshold{outOfStock.length > 0 ? ` (${outOfStock.length} out of stock)` : ""}</div>
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{alerts.slice(0, 10).map((a) => (<span key={a.id} style={{ padding: "2px 8px", borderRadius: 5, background: Number(a.current_qty) === 0 ? "#DC2626" : "#FFFBEB", color: Number(a.current_qty) === 0 ? "#fff" : "#B45309", fontSize: 11, fontWeight: 600 }}>{a.name}: {a.current_qty}</span>))}{alerts.length > 10 && <span style={{ fontSize: 11, color: "#999" }}>+{alerts.length - 10} more</span>}</div>
-    </div>}
-
-    {/* Action buttons */}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
-      <button onClick={() => { setDraft({}); setView("stock_in"); }} style={{ padding: "14px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
-      <button onClick={() => { setDraft({}); setView("stock_out"); }} style={{ padding: "14px", borderRadius: 12, border: "none", background: "#DC2626", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+    {/* Summary cards */}
+    <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+      <div style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Items</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{items.length}</div></div>
+      <div style={{ flex: 1, background: alerts.length > 0 ? "#FFFDF5" : "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: `1px solid ${alerts.length > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Low Stock</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: alerts.length > 0 ? "#B45309" : "#16A34A" }}>{alerts.length}</div></div>
+      <div style={{ flex: 1, background: outOfStock.length > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: `1px solid ${outOfStock.length > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Out of Stock</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: outOfStock.length > 0 ? "#DC2626" : "#16A34A" }}>{outOfStock.length}</div></div>
     </div>
-    <button onClick={() => { setThresholds({}); setView("thresholds"); }} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>⚙️ Set Thresholds</button>
+
+    {/* Action buttons - softer colors */}
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+      <button onClick={() => { setDraft({}); setView("stock_in"); }} style={{ padding: "14px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
+      <button onClick={() => { setDraft({}); setView("stock_out"); }} style={{ padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+      <button onClick={() => { setView("order_challan"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 13, fontWeight: 600, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>📝 Order Challan</button>
+      <button onClick={() => { setThresholds({}); setView("thresholds"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>⚙️ Thresholds</button>
+    </div>
 
     {/* Category filter */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({items.length})</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c} ({items.filter((i) => i.category === c).length})</button>))}</div>
 
-    {/* Stock list */}
+    {/* Stock list - softer colors */}
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
       {filtered.map((item, idx) => {
         const qty = Number(item.current_qty);
         const isLow = item.below_threshold;
         const isOut = qty === 0;
         return (
-          <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < filtered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: isOut ? "#FEF2F2" : isLow ? "#FFFBEB" : "transparent" }}>
+          <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < filtered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: "transparent" }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-              <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Threshold: {item.threshold} {item.unit}</div>
+              <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Min: {item.threshold} {item.unit}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#16A34A" }}>{qty}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#1A1A1A" }}>{qty}</div>
               <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
             </div>
-            {isLow && <span style={{ fontSize: 10, fontWeight: 800, color: isOut ? "#DC2626" : "#B45309" }}>{isOut ? "⛔" : "⚠️"}</span>}
+            {isLow && <div style={{ width: 8, height: 8, borderRadius: 4, background: isOut ? "#DC2626" : "#F59E0B", flexShrink: 0 }} />}
           </div>
         );
       })}
