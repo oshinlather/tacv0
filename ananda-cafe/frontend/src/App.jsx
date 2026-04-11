@@ -1016,14 +1016,23 @@ const StoreMgr = ({ onBack }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
   // Check URL for role parameter: ?role=outlet or ?role=store or ?role=owner
-  const urlRole = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const role = params.get("role");
-    if (role === "outlet" || role === "store" || role === "owner") return role;
+  const [urlRole] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const role = params.get("role");
+      if (role === "outlet" || role === "store" || role === "owner") return role;
+    } catch (e) {}
     return null;
-  }, []);
+  });
 
-  const [app, setApp] = useState(urlRole || "launcher");
+  const [app, setApp] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const role = params.get("role");
+      if (role === "outlet" || role === "store" || role === "owner") return role;
+    } catch (e) {}
+    return "launcher";
+  });
   const [ownerTab, setOwnerTab] = useState("activity");
   const [storeView, setStoreView] = useState("actions");
 
