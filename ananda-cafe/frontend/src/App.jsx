@@ -567,6 +567,147 @@ const Dispatch = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  INVENTORY MANAGEMENT
+// ═════════════════════════════════════════════════════════════════════════════
+const Inventory = () => {
+  const [items, setItems] = useState([]); const [loading, setLoading] = useState(true);
+  const [view, setView] = useState("stock"); // stock, stock_in, stock_out, thresholds, history
+  const [selCat, setSelCat] = useState(null);
+  const [draft, setDraft] = useState({}); // { item_id: qty }
+  const [saving, setSaving] = useState(false);
+  const [selItem, setSelItem] = useState(null); // for history
+  const [movements, setMovements] = useState([]);
+  const [thresholds, setThresholds] = useState({});
+
+  const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const categories = [...new Set(items.map((i) => i.category))];
+  const filtered = selCat ? items.filter((i) => i.category === selCat) : items;
+  const alerts = items.filter((i) => i.below_threshold);
+  const outOfStock = items.filter((i) => Number(i.current_qty) === 0);
+
+  const submitStockIn = async () => {
+    const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
+    if (entries.length === 0) return;
+    setSaving(true);
+    try { await api.stockIn(entries, "purchase"); setDraft({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const submitStockOut = async () => {
+    const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
+    if (entries.length === 0) return;
+    setSaving(true);
+    try { await api.stockOut(entries, "issuance"); setDraft({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const saveThresholds = async () => {
+    const entries = Object.entries(thresholds).filter(([id, t]) => { const item = items.find((i) => i.id === id); return item && Number(t) !== item.threshold; }).map(([id, threshold]) => ({ id, threshold: Number(threshold) }));
+    if (entries.length === 0) return;
+    setSaving(true);
+    try { await api.bulkUpdateThresholds(entries); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const loadHistory = async (itemId) => { setSelItem(itemId); try { const data = await api.getMovements(itemId); setMovements(data); } catch (e) { setMovements([]); } setView("history"); };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading inventory...</div>;
+
+  // ── HISTORY VIEW ──
+  if (view === "history" && selItem) {
+    const item = items.find((i) => i.id === selItem);
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1 }}><div style={{ fontSize: 15, fontWeight: 800 }}>{item?.name || selItem}</div><div style={{ fontSize: 11, color: "#999" }}>Stock: {item?.current_qty} {item?.unit}</div></div></div>
+      {movements.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No movements yet</div> : movements.map((m) => (
+        <div key={m.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div><span style={{ fontSize: 12, fontWeight: 700, color: m.type === "stock_in" ? "#16A34A" : m.type === "stock_out" ? "#DC2626" : "#B45309" }}>{m.type === "stock_in" ? "📥 IN" : m.type === "stock_out" ? "📤 OUT" : "🔄 ADJ"}</span><span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>{m.reason}</span></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: m.quantity > 0 ? "#16A34A" : "#DC2626" }}>{m.quantity > 0 ? "+" : ""}{m.quantity}</div><div style={{ fontSize: 10, color: "#999" }}>{new Date(m.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} {new Date(m.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div></div>
+        </div>
+      ))}
+    </div>);
+  }
+
+  // ── STOCK IN / OUT VIEW ──
+  if (view === "stock_in" || view === "stock_out") {
+    const isIn = view === "stock_in";
+    const count = Object.values(draft).filter((v) => v > 0).length;
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? "📥 Stock In" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
+      {filtered.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3 }}>
+        <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div><div style={{ fontSize: 10, color: "#999" }}>Stock: {item.current_qty} {item.unit}</div></div>
+        <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+        <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+      </div>))}
+      <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>{saving ? "⏳..." : isIn ? `📥 Add Stock (${count} items)` : `📤 Remove Stock (${count} items)`}</button>
+    </div>);
+  }
+
+  // ── THRESHOLDS VIEW ──
+  if (view === "thresholds") {
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>⚙️ Set Thresholds</div></div>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14 }}>Set minimum stock level for each item. Alert shows when stock falls below threshold.</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
+      {filtered.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: "#FAFAF8", marginBottom: 3 }}>
+        <div style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+        <input type="number" inputMode="numeric" min="0" placeholder={String(item.threshold)} value={thresholds[item.id] ?? item.threshold} onChange={(e) => setThresholds((p) => ({ ...p, [item.id]: e.target.value }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+        <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+      </div>))}
+      <button onClick={saveThresholds} disabled={saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: !saving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>{saving ? "⏳..." : "💾 Save Thresholds"}</button>
+    </div>);
+  }
+
+  // ── MAIN STOCK VIEW ──
+  return (<div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+      <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Inventory</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{items.length} items tracked</p></div>
+      <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button>
+    </div>
+
+    {/* Alert banner */}
+    {alerts.length > 0 && <div style={{ padding: "12px 16px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>🚨 {alerts.length} items below threshold{outOfStock.length > 0 ? ` (${outOfStock.length} out of stock)` : ""}</div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{alerts.slice(0, 10).map((a) => (<span key={a.id} style={{ padding: "2px 8px", borderRadius: 5, background: Number(a.current_qty) === 0 ? "#DC2626" : "#FFFBEB", color: Number(a.current_qty) === 0 ? "#fff" : "#B45309", fontSize: 11, fontWeight: 600 }}>{a.name}: {a.current_qty}</span>))}{alerts.length > 10 && <span style={{ fontSize: 11, color: "#999" }}>+{alerts.length - 10} more</span>}</div>
+    </div>}
+
+    {/* Action buttons */}
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+      <button onClick={() => { setDraft({}); setView("stock_in"); }} style={{ padding: "14px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
+      <button onClick={() => { setDraft({}); setView("stock_out"); }} style={{ padding: "14px", borderRadius: 12, border: "none", background: "#DC2626", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+    </div>
+    <button onClick={() => { setThresholds({}); setView("thresholds"); }} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>⚙️ Set Thresholds</button>
+
+    {/* Category filter */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({items.length})</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c} ({items.filter((i) => i.category === c).length})</button>))}</div>
+
+    {/* Stock list */}
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+      {filtered.map((item, idx) => {
+        const qty = Number(item.current_qty);
+        const isLow = item.below_threshold;
+        const isOut = qty === 0;
+        return (
+          <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < filtered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: isOut ? "#FEF2F2" : isLow ? "#FFFBEB" : "transparent" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+              <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Threshold: {item.threshold} {item.unit}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#16A34A" }}>{qty}</div>
+              <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
+            </div>
+            {isLow && <span style={{ fontSize: 10, fontWeight: 800, color: isOut ? "#DC2626" : "#B45309" }}>{isOut ? "⛔" : "⚠️"}</span>}
+          </div>
+        );
+      })}
+    </div>
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  RECIPES
 // ═════════════════════════════════════════════════════════════════════════════
 const RecipesPanel = () => {
@@ -1042,7 +1183,7 @@ export default function AnandaCafe() {
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "recipes", label: "📖 Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "📖 Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "activity" && <LiveActivity />}
       {ownerTab === "cogs" && <CogsDash />}
@@ -1050,6 +1191,7 @@ export default function AnandaCafe() {
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "dispatch" && <Dispatch />}
+      {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
     </div>
   </div>);
@@ -1057,13 +1199,14 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "actions", label: "📋 Actions" }, { id: "live", label: "🔴 Live" }, { id: "orders", label: "📋 Orders" }, { id: "bk", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "actions", label: "📋 Actions" }, { id: "live", label: "🔴 Live" }, { id: "orders", label: "📋 Orders" }, { id: "bk", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "live" && <LiveActivity />}
       {storeView === "orders" && <OutletOrders />}
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
+      {storeView === "inventory" && <Inventory />}
     </div>
   </div>);
   return null;
