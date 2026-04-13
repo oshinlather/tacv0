@@ -1740,4 +1740,3 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
