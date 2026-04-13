@@ -55,6 +55,26 @@ const api = {
   getMovements: (item_id) => get(`/api/inventory/movements/${item_id}`),
   getTodayMovements: (date) => get("/api/inventory/movements", { date }),
   getInventorySummary: () => get("/api/inventory/summary"),
+
+  // ── NEW: Sales Upload ──
+  uploadSalesCSV: (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return fetchRaw("/api/sales/upload", { method: "POST", body: formData });
+  },
+  getSales: (date, outlet) => get("/api/sales/" + date, outlet && outlet !== "all" ? { outlet } : {}),
+
+  // ── NEW: Recipes (PetPooja) ──
+  getRecipesPetpooja: () => get("/api/recipes"),
+
+  // ── NEW: RM Audit ──
+  getRMAudit: (date) => get("/api/audit/" + date),
+
+  // ── NEW: Daily P&L (computed) ──
+  getComputedPnl: (date) => get("/api/pnl/" + date),
+
+  // ── NEW: BK Demand (fixed units) ──
+  getBKDemand: (date) => get("/api/bk-demand/" + date),
 };
 
 // ── Helpers ──
@@ -88,6 +108,16 @@ async function patch(path, body) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `PATCH ${path} failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+// For file uploads (no Content-Type header — browser sets multipart boundary)
+async function fetchRaw(path, options) {
+  const res = await fetch(API + path, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `${options.method} ${path} failed: ${res.status}`);
   }
   return res.json();
 }
