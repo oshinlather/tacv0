@@ -10,6 +10,7 @@ const pnlRouter = require("./routes/pnl");
 const petpoojaRouter = require("./routes/petpooja");
 const ordersRouter = require("./routes/orders");
 const inventoryRouter = require("./routes/inventory");
+const salesRoutes = require('./routes/salesRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -17,6 +18,7 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors({ origin: process.env.FRONTEND_URL || "*" }));
 app.use(express.json({ limit: "50mb" }));
+app.use('/api', salesRoutes);
 
 // Health check
 app.get("/", (req, res) => {
