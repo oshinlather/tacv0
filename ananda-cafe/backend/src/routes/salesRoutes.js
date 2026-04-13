@@ -6,15 +6,10 @@
 
 const express = require('express');
 const router = express.Router();
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../supabase');
 const multer = require('multer');
-const csv = require('csv-parser'); // npm install csv-parser
+const csv = require('csv-parser');
 const { Readable } = require('stream');
-
-const supabase = createClient(
-  process.env.SUPABASE_URL,      // https://hikreqarwdrwxrnjxsna.supabase.co
-  process.env.SUPABASE_KEY       // your service_role key
-);
 
 const upload = multer({ storage: multer.memoryStorage() });
 
