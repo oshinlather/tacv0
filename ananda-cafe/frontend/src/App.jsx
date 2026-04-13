@@ -1217,6 +1217,283 @@ const StoreMgr = ({ onBack }) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  SALES UPLOAD — PetPooja CSV
+// ═════════════════════════════════════════════════════════════════════════════
+const SalesUpload = () => {
+  const [selDay, setSelDay] = useState(0);
+  const [sales, setSales] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+
+  const dateStr = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+  }, [selDay]);
+
+  const loadSales = useCallback(() => {
+    setLoading(true);
+    api.getSales(dateStr).then(setSales).catch(() => setSales(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  useEffect(loadSales, [loadSales]);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLoading(true);
+    try {
+      const result = await api.uploadSalesCSV(file);
+      setUploadResult({ ok: true, msg: `✅ Uploaded ${result.rows_inserted} rows for ${result.date}` });
+      loadSales();
+    } catch (err) {
+      setUploadResult({ ok: false, msg: `❌ ${err.message}` });
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 24, textAlign: "center", marginBottom: 20 }}>
+        <div style={{ fontSize: 32, marginBottom: 8 }}>📤</div>
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>Upload PetPooja Daily Sales</h3>
+        <p style={{ color: "#999", fontSize: 13, margin: "0 0 16px" }}>CSV format: Order Summary Item Report</p>
+        <label style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "10px 24px", borderRadius: 10, cursor: "pointer", fontSize: 14 }}>
+          📁 Choose CSV File
+          <input type="file" accept=".csv" onChange={handleFile} style={{ display: "none" }} />
+        </label>
+        {uploadResult && (
+          <div style={{ marginTop: 12, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            background: uploadResult.ok ? "#F0FDF4" : "#FEF2F2",
+            color: uploadResult.ok ? "#16A34A" : "#DC2626",
+            border: `1px solid ${uploadResult.ok ? "#BBF7D0" : "#FECACA"}` }}>
+            {uploadResult.msg}
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 10 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+      </div>
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading sales...</div>}
+      {sales && !loading && (
+        <>
+          {sales.outlets && sales.outlets.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 20 }}>
+              {sales.outlets.map((o) => (
+                <div key={o.outlet_code} style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{o.outlet_code}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", margin: "4px 0" }}>{fmt(o.revenue || 0)}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{o.orders} orders</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              { l: "Total Revenue", v: fmt(sales.total_revenue || 0), c: "#16A34A" },
+              { l: "Items Sold", v: sales.total_items || 0, c: "#2563EB" },
+              { l: "Orders", v: sales.total_orders || 0, c: "#B45309" },
+            ].map((s, i) => (
+              <div key={i} style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>
+              </div>
+            ))}
+          </div>
+          {sales.items && (
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+              <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Item-wise Sales</span>
+                <span style={{ fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{fmt(sales.total_revenue || 0)}</span>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>#</th><th style={thS}>Item</th><th style={thS}>Category</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Qty</th><th style={{ ...thS, textAlign: "right" }}>Revenue</th>
+                  </tr></thead>
+                  <tbody>
+                    {sales.items.map((item, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}</td>
+                        <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  RM AUDIT — Theoretical vs Actual consumption
+// ═════════════════════════════════════════════════════════════════════════════
+const RMAuditPanel = () => {
+  const [selDay, setSelDay] = useState(0);
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const dateStr = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+  }, [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getRMAudit(dateStr).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Raw Material Audit</h3>
+        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume vs Actually Issued</p>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 10 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+      </div>
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing audit...</div>}
+      {audit?.items && !loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Raw Material</th><th style={thS}>Unit</th>
+                <th style={{ ...thS, textAlign: "right" }}>Should Consume</th>
+                <th style={{ ...thS, textAlign: "right" }}>Actual Issued</th>
+                <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+              </tr></thead>
+              <tbody>
+                {audit.items.map((item, i) => {
+                  const hasActual = item.actual_issued != null;
+                  const variance = hasActual ? item.actual_issued - item.should_consume : null;
+                  const isOver = variance > 0;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material}</td>
+                      <td style={{ ...tdS, color: "#888" }}>{item.unit}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(item.should_consume).toFixed(2)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{hasActual ? Number(item.actual_issued).toFixed(2) : "—"}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
+                        {hasActual ? `${isOver ? "+" : ""}${Number(variance).toFixed(2)}` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ padding: "10px 16px", background: "#FAFAF8", fontSize: 11, color: "#888" }}>
+            "Actual Issued" connects to issuance records. Shows — until data is available.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PETPOOJA RECIPES — from PetPooja recipe export
+// ═════════════════════════════════════════════════════════════════════════════
+const PetPoojaRecipes = () => {
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    api.getRecipesPetpooja().then(setRecipes).catch(() => setRecipes([])).finally(() => setLoading(false));
+  }, []);
+
+  const normUnit = (qty, unit) => {
+    const u = (unit || "").toUpperCase();
+    if (["GM", "G", "GMS"].includes(u)) return { qty: qty / 1000, unit: "Kg" };
+    if (["LTR.", "LTR", "L"].includes(u)) return { qty, unit: "Ltr" };
+    return { qty, unit };
+  };
+
+  const filtered = recipes.filter((r) => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return r.item_name.toLowerCase().includes(q) ||
+      r.recipe_ingredients?.some((m) => m.raw_material.toLowerCase().includes(q));
+  });
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading recipes...</div>;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📖 PetPooja Recipes</h3>
+        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Item-level recipes from PetPooja export — used for RM audit</p>
+      </div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
+        <input type="text" placeholder="Search items or ingredients..." value={search} onChange={(e) => setSearch(e.target.value)}
+          style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+        <span style={{ fontSize: 12, color: "#888", whiteSpace: "nowrap" }}>{filtered.length} recipes</span>
+      </div>
+      {filtered.map((r, i) => {
+        const isOpen = expanded === i;
+        const food = (r.recipe_ingredients || []).filter((m) => { const n = normUnit(m.qty, m.unit); return n.unit !== "Piece" && n.unit !== "Pcs"; });
+        const pack = (r.recipe_ingredients || []).filter((m) => { const n = normUnit(m.qty, m.unit); return n.unit === "Piece" || n.unit === "Pcs"; });
+        return (
+          <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+            <div onClick={() => setExpanded(isOpen ? null : i)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontWeight: 700, fontSize: 13 }}>{r.item_name}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, fontWeight: 700,
+                  background: r.item_type === "Item" ? "#F0FDF4" : "#FFFBEB",
+                  color: r.item_type === "Item" ? "#16A34A" : "#B45309" }}>{r.item_type}</span>
+              </div>
+              <span style={{ fontSize: 12, color: "#888" }}>{r.recipe_ingredients?.length || 0} items {isOpen ? "▲" : "▼"}</span>
+            </div>
+            {isOpen && (
+              <div style={{ padding: "0 16px 14px", borderTop: "1px solid #F0F0EC" }}>
+                <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, margin: "10px 0 6px", textTransform: "uppercase", letterSpacing: 0.5 }}>Food Ingredients</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 6 }}>
+                  {food.map((m, j) => {
+                    const n = normUnit(m.qty, m.unit);
+                    return (
+                      <div key={j} style={{ background: "#FAFAF8", borderRadius: 8, padding: "6px 10px", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
+                        <span>{m.raw_material}</span>
+                        <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{n.qty.toFixed(3)} {n.unit}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {pack.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, color: "#888", fontWeight: 700, margin: "10px 0 6px", textTransform: "uppercase", letterSpacing: 0.5 }}>Packaging</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {pack.map((m, j) => (
+                        <span key={j} style={{ background: "#FAFAF8", borderRadius: 6, padding: "4px 8px", fontSize: 11, color: "#888" }}>{m.raw_material} × {m.qty}</span>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -1247,16 +1524,19 @@ export default function AnandaCafe() {
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "📖 Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "audit", label: "🔍 Audit" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "📖 Recipes" }, { id: "pp_recipes", label: "🍳 PP Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "activity" && <LiveActivity />}
+      {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "cogs" && <CogsDash />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
+      {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
+      {ownerTab === "pp_recipes" && <PetPoojaRecipes />}
     </div>
   </div>);
 
