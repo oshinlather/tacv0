@@ -18,10 +18,9 @@ const istHour = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
   const h = istHour();
-  if (h >= 21 || h < 1) return { id: "night", label: "🌙 Night Order (9PM–1AM)", active: true };
-  if (h >= 11 && h < 16) return { id: "day", label: "☀️ Day Order (11AM–4PM)", active: true };
-  if (h >= 1 && h < 11) return { id: "closed", label: "Next window opens at 11:00 AM", active: false };
-  return { id: "closed", label: "Next window opens at 9:00 PM", active: false };
+  if (h >= 21 || h < 1) return { id: "night", label: "🌙 Night Order", active: true };
+  if (h >= 11 && h < 16) return { id: "day", label: "☀️ Day Order", active: true };
+  return { id: "anytime", label: "📋 Manual Entry", active: true };
 };
 const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 const fmt = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -597,12 +596,16 @@ const Dispatch = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const Inventory = () => {
   const [items, setItems] = useState([]); const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("stock"); // stock, stock_in, stock_out, thresholds, history
+  const [view, setView] = useState("stock"); // stock, stock_in, stock_out, smart_stock_out, thresholds, history
   const [selCat, setSelCat] = useState(null);
   const [draft, setDraft] = useState({}); // { item_id: qty }
   const [saving, setSaving] = useState(false);
   const [selItem, setSelItem] = useState(null); // for history
   const [movements, setMovements] = useState([]);
+  const [thresholds, setThresholds] = useState({});
+  const [orderQty, setOrderQty] = useState({});
+  const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
+  const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [thresholds, setThresholds] = useState({});
   const [orderQty, setOrderQty] = useState({});
 
@@ -626,8 +629,69 @@ const Inventory = () => {
     const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
     if (entries.length === 0) return;
     setSaving(true);
-    try { await api.stockOut(entries, "issuance"); setDraft({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    try {
+      await api.stockOut(entries, "issuance");
+      // Save audit: original calculated vs actual issued
+      if (Object.keys(originalReq).length > 0) {
+        const auditEntries = entries.map(({ item_id, quantity }) => ({
+          item_id,
+          item_name: items.find((i) => i.id === item_id)?.name || item_id,
+          calculated_qty: originalReq[item_id] || 0,
+          issued_qty: quantity,
+          variance: quantity - (originalReq[item_id] || 0),
+          date: today(),
+        }));
+        try { await api.saveIssuanceAudit(auditEntries); } catch (e) { console.error("Audit save failed:", e); }
+      }
+      setDraft({}); setOriginalReq({}); load(); setView("stock");
+    } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
+  };
+
+  // Load raw material requisition from BK consolidated demand
+  const loadSmartStockOut = async () => {
+    try {
+      const ordersData = await api.getOrders({ date: today() });
+      const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items);
+      const consolidated = {};
+      BK_ITEMS.forEach((bk) => {
+        consolidated[bk.id] = { total: 0 };
+        manualOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+      });
+      const rawReq = {};
+      Object.entries(consolidated).forEach(([bkId, data]) => {
+        const recipe = RECIPES[bkId];
+        if (!recipe || data.total === 0) return;
+        const batches = data.total / recipe.yieldQty;
+        recipe.ingredients.forEach((ing) => {
+          rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches;
+        });
+      });
+      // Match rawReq IDs to inventory item IDs and pre-fill draft
+      const newDraft = {};
+      const newOriginal = {};
+      Object.entries(rawReq).forEach(([rawId, qty]) => {
+        const raw = RAW_MATERIALS.find((r) => r.id === rawId);
+        if (!raw) return;
+        // Find matching inventory item by name (fuzzy match)
+        const invItem = items.find((i) =>
+          i.name.toLowerCase() === raw.name.toLowerCase() ||
+          i.name.toLowerCase().includes(raw.name.toLowerCase()) ||
+          raw.name.toLowerCase().includes(i.name.toLowerCase())
+        );
+        if (invItem) {
+          const rounded = Math.round(qty * 100) / 100;
+          newDraft[invItem.id] = rounded;
+          newOriginal[invItem.id] = rounded;
+        }
+      });
+      setDraft(newDraft);
+      setOriginalReq(newOriginal);
+      setRawReqData(rawReq);
+      setView("stock_out");
+    } catch (e) {
+      alert("Failed to load requisition: " + e.message);
+    }
   };
 
   const saveThresholds = async () => {
@@ -660,15 +724,32 @@ const Inventory = () => {
   if (view === "stock_in" || view === "stock_out") {
     const isIn = view === "stock_in";
     const count = Object.values(draft).filter((v) => v > 0).length;
+    const hasPreFill = Object.keys(originalReq).length > 0;
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? "📥 Stock In" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); setOriginalReq({}); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? "📥 Stock In" : hasPreFill ? "📤 Smart Issue (from Requisition)" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      {hasPreFill && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", marginBottom: 14, fontSize: 12, color: "#2563EB" }}>
+          ℹ️ Pre-filled from today's Raw Material Requisition. Edit quantities as needed — changes will be tracked in audit.
+        </div>
+      )}
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
-      {filtered.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3 }}>
-        <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div><div style={{ fontSize: 10, color: "#999" }}>Stock: {item.current_qty} {item.unit}</div></div>
-        <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-        <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
-      </div>))}
-      <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>{saving ? "⏳..." : isIn ? `📥 Add Stock (${count} items)` : `📤 Remove Stock (${count} items)`}</button>
+      {filtered.map((item) => {
+        const preFilled = originalReq[item.id];
+        const isEdited = preFilled !== undefined && draft[item.id] !== preFilled;
+        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: isEdited ? "#FFFBEB" : draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3, border: isEdited ? "1px solid #FDE68A" : "1px solid transparent" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+            <div style={{ fontSize: 10, color: "#999" }}>
+              Stock: {item.current_qty} {item.unit}
+              {preFilled !== undefined && <span style={{ marginLeft: 6, color: "#2563EB" }}>• Calc: {preFilled}</span>}
+              {isEdited && <span style={{ marginLeft: 4, color: "#B45309", fontWeight: 700 }}>✏️ edited</span>}
+            </div>
+          </div>
+          <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 70, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+          <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+        </div>);
+      })}
+      <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>{saving ? "⏳..." : isIn ? `📥 Add Stock (${count} items)` : `📤 Issue Stock (${count} items)`}</button>
     </div>);
   }
 
@@ -736,9 +817,10 @@ const Inventory = () => {
     {/* Action buttons - softer colors */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
       <button onClick={() => { setDraft({}); setView("stock_in"); }} style={{ padding: "14px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
-      <button onClick={() => { setDraft({}); setView("stock_out"); }} style={{ padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+      <button onClick={loadSmartStockOut} style={{ padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Smart Issue</button>
     </div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+      <button onClick={() => { setDraft({}); setOriginalReq({}); setView("stock_out"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #FECACA", background: "#fff", fontSize: 13, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>📤 Manual Out</button>
       <button onClick={() => { setView("order_challan"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 13, fontWeight: 600, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>📝 Order Challan</button>
       <button onClick={() => { setThresholds({}); setView("thresholds"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>⚙️ Thresholds</button>
     </div>
@@ -1494,6 +1576,110 @@ const PetPoojaRecipes = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  ISSUANCE AUDIT — Calculated vs Actually Issued
+// ═════════════════════════════════════════════════════════════════════════════
+const IssuanceAudit = () => {
+  const [selDay, setSelDay] = useState(0);
+  const [auditData, setAuditData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const dateStr = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+  }, [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getIssuanceAudit(dateStr).then(setAuditData).catch(() => setAuditData([])).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const totalCalc = auditData.reduce((s, a) => s + (a.calculated_qty || 0), 0);
+  const totalIssued = auditData.reduce((s, a) => s + (a.issued_qty || 0), 0);
+  const editsCount = auditData.filter((a) => a.variance !== 0).length;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 Issuance Audit</h3>
+        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Calculated Requisition vs Actual Issued — track edits</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 10 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+      </div>
+
+      {/* Summary Cards */}
+      {auditData.length > 0 && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 100px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Items Issued</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{auditData.length}</div>
+          </div>
+          <div style={{ flex: "1 1 100px", background: editsCount > 0 ? "#FFFBEB" : "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: `1px solid ${editsCount > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Edits Made</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: editsCount > 0 ? "#B45309" : "#16A34A" }}>{editsCount}</div>
+          </div>
+          <div style={{ flex: "1 1 100px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Net Variance</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: totalIssued > totalCalc ? "#DC2626" : "#16A34A" }}>{totalIssued > totalCalc ? "+" : ""}{(totalIssued - totalCalc).toFixed(2)}</div>
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading audit...</div>}
+
+      {!loading && auditData.length === 0 && (
+        <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No issuance data for {dateStr}. Use "Smart Issue" in Inventory to track.</div>
+      )}
+
+      {!loading && auditData.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Calculated</th>
+                <th style={{ ...thS, textAlign: "right" }}>Issued</th>
+                <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+                <th style={{ ...thS, textAlign: "center" }}>Status</th>
+              </tr></thead>
+              <tbody>
+                {auditData.map((a, i) => {
+                  const isEdited = a.variance !== 0;
+                  const isOver = a.variance > 0;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC", background: isEdited ? "#FFFDF5" : "transparent" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{a.item_name}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(a.calculated_qty).toFixed(2)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{Number(a.issued_qty).toFixed(2)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !isEdited ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
+                        {isEdited ? `${isOver ? "+" : ""}${Number(a.variance).toFixed(2)}` : "—"}
+                      </td>
+                      <td style={{ ...tdS, textAlign: "center" }}>
+                        {isEdited ? (
+                          <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isOver ? "#FEF2F2" : "#F0FDF4", color: isOver ? "#DC2626" : "#16A34A" }}>
+                            {isOver ? "⬆ Over" : "⬇ Under"}
+                          </span>
+                        ) : (
+                          <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>✓ Match</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -1524,7 +1710,7 @@ export default function AnandaCafe() {
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "audit", label: "🔍 Audit" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "📖 Recipes" }, { id: "pp_recipes", label: "🍳 PP Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }, { id: "kitchen", label: "🏭 BK" }, { id: "audit", label: "🔍 Audit" }, { id: "iss_audit", label: "📊 Issue Audit" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "📖 Recipes" }, { id: "pp_recipes", label: "🍳 PP Recipes" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "activity" && <LiveActivity />}
       {ownerTab === "sales" && <SalesUpload />}
@@ -1533,6 +1719,7 @@ export default function AnandaCafe() {
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
+      {ownerTab === "iss_audit" && <IssuanceAudit />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
