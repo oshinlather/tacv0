@@ -424,20 +424,48 @@ const OutletOrders = () => {
 //  BASE KITCHEN (Consolidated Demand + Stock Out BK + Per-Outlet Direct Items)
 // ═════════════════════════════════════════════════════════════════════════════
 const BaseKitchen = () => {
-  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
+  const [orders, setOrders] = useState([]); const [prevDayOrders, setPrevDayOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selDate, setSelDate] = useState(today());
   const [showAll, setShowAll] = useState(false);
+  const [cycle, setCycle] = useState("all"); // all, morning, evening
   const [stockOutFilter, setStockOutFilter] = useState("bk");
   const load = useCallback(() => {
     setLoading(true);
-    api.getOrders({ date: selDate }).then((data) => setOrders(data.filter((d) => d.type === "manual" && d.items))).catch(() => setOrders([])).finally(() => setLoading(false));
+    // Load today's orders AND previous day's orders (for night demands)
+    const prevDate = (() => { const d = new Date(); d.setDate(d.getDate() - 1); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; })();
+    Promise.all([
+      api.getOrders({ date: selDate }),
+      selDate === today() ? api.getOrders({ date: prevDate }) : Promise.resolve([]),
+    ]).then(([todayData, prevData]) => {
+      setOrders(todayData.filter((d) => d.type === "manual" && d.items));
+      setPrevDayOrders(prevData.filter((d) => d.type === "manual" && d.items));
+    }).catch(() => { setOrders([]); setPrevDayOrders([]); }).finally(() => setLoading(false));
   }, [selDate]);
   useEffect(load, [load]);
 
-  const pendingOrders = orders.filter((o) => o.status === "submitted" || o.status === "received");
-  const dispatchedOrders = orders.filter((o) => o.status === "fulfilled");
-  const issuedOrders = orders.filter((o) => o.status === "issued");
-  const activeOrders = showAll ? orders : pendingOrders;
+  // Split orders into morning and evening cycles
+  const getOrderHour = (o) => {
+    if (!o.submitted_at) return 12; // default to day
+    const d = new Date(o.submitted_at);
+    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
+    return ist.getHours();
+  };
+
+  // Morning cycle = night orders (prev day 9PM-midnight + today midnight-1AM)
+  const morningOrders = [
+    ...prevDayOrders.filter((o) => getOrderHour(o) >= 21), // prev day 9PM+
+    ...orders.filter((o) => getOrderHour(o) < 1),           // today before 1AM (practically midnight orders)
+  ];
+  // Evening cycle = day orders (today 1AM onwards, mainly 11AM-4PM)
+  const eveningOrders = orders.filter((o) => getOrderHour(o) >= 1);
+
+  const cycleOrders = cycle === "morning" ? morningOrders : cycle === "evening" ? eveningOrders : orders;
+
+  const pendingOrders = cycleOrders.filter((o) => o.status === "submitted" || o.status === "received");
+  const dispatchedOrders = cycleOrders.filter((o) => o.status === "fulfilled");
+  const issuedOrders = cycleOrders.filter((o) => o.status === "issued");
+  const activeOrders = showAll ? cycleOrders : pendingOrders;
 
   const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
 
@@ -480,9 +508,25 @@ const BaseKitchen = () => {
         <button onClick={() => setSelDate(today())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === today() ? 700 : 500, border: selDate === today() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
         {Array.from({ length: 6 }, (_, i) => { const now = new Date(); const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000); ist.setDate(ist.getDate() - (i + 1)); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
       </div>
+      {/* Morning / Evening cycle */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {[
+          { id: "all", label: "📋 All Orders", count: orders.length },
+          { id: "morning", label: "🌅 Morning", count: morningOrders.length, sub: "Night demands (9PM-1AM)" },
+          { id: "evening", label: "🌇 Evening", count: eveningOrders.length, sub: "Day demands (11AM-4PM)" },
+        ].map((c) => (
+          <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? (c.id === "morning" ? "#B45309" : c.id === "evening" ? "#2563EB" : "#1A1A1A") : "#fff", color: cycle === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label} ({c.count})</button>
+        ))}
+      </div>
+      {cycle !== "all" && (
+        <div style={{ padding: "8px 14px", borderRadius: 8, background: cycle === "morning" ? "#FFFBEB" : "#EFF6FF", border: `1px solid ${cycle === "morning" ? "#FDE68A" : "#BFDBFE"}`, fontSize: 11, color: cycle === "morning" ? "#92400E" : "#1D4ED8", marginBottom: 14 }}>
+          {cycle === "morning" ? "🌅 Showing night demands (placed 9PM-1AM) → for morning BK preparation" : "🌇 Showing day demands (placed after 1AM) → for evening BK preparation"}
+        </div>
+      )}
+      {/* Pending / All status */}
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         <button onClick={() => setShowAll(false)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888" }}>⏳ Pending ({pendingOrders.length})</button>
-        <button onClick={() => setShowAll(true)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888" }}>📋 All ({orders.length})</button>
+        <button onClick={() => setShowAll(true)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888" }}>📋 All ({cycleOrders.length})</button>
       </div>
       {!showAll && pendingOrders.length === 0 && orders.length > 0 && (<div style={{ padding: "14px 18px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 13, color: "#166534", marginBottom: 16, textAlign: "center" }}>✅ All stock issued! Requisition is clear.</div>)}
       <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>{[{ l: "Pending", v: pendingOrders.length, c: pendingOrders.length > 0 ? "#B45309" : "#16A34A" }, { l: "Issued", v: issuedOrders.length, c: "#2563EB" }, { l: "Dispatched", v: dispatchedOrders.length, c: "#16A34A" }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "12px 14px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: s.c || "#1A1A1A" }}>{s.v}</div></div>))}</div>
