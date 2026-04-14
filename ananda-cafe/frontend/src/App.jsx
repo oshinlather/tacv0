@@ -819,7 +819,51 @@ const Inventory = () => {
   const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
-  const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan, all
+  const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
+  const [stockOutData, setStockOutData] = useState(null);
+  const [stockOutLoading, setStockOutLoading] = useState(false);
+
+  // Auto-load stock out data when view changes
+  useEffect(() => {
+    setStockOutLoading(true);
+    api.getOrders({ date: today() }).then((ordersData) => {
+      const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
+      if (stockOutView === "bk") {
+        // BK raw materials from recipes
+        const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+        const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
+        const consolidated = {};
+        foodItemIds.forEach((id) => { consolidated[id] = 0; manualOrders.forEach((o) => { consolidated[id] += (o.items?.[id] || 0); }); });
+        const rawReq = {};
+        Object.entries(consolidated).forEach(([bkId, total]) => {
+          if (total === 0) return;
+          const recipe = RECIPES[bkId]; if (!recipe) return;
+          const batches = total / recipe.yieldQty;
+          recipe.ingredients.forEach((ing) => {
+            const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+            if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg" };
+            rawReq[ing.rawId].qty += ing.qty * batches;
+          });
+        });
+        setStockOutData(rawReq);
+      } else {
+        // Direct items for specific outlet
+        const nonFoodSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
+        const outletOrders = manualOrders.filter((o) => o.outlet_id === stockOutView);
+        const directItems = {};
+        outletOrders.forEach((o) => {
+          nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
+            const qty = o.items?.[item.id] || 0;
+            if (qty > 0) {
+              if (!directItems[item.id]) directItems[item.id] = { name: item.name, qty: 0, unit: item.unit || "", category: sec.titleHi };
+              directItems[item.id].qty += qty;
+            }
+          }); });
+        });
+        setStockOutData(directItems);
+      }
+    }).catch(() => setStockOutData(null)).finally(() => setStockOutLoading(false));
+  }, [stockOutView, items]);
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -1057,14 +1101,37 @@ const Inventory = () => {
       </button>
     </div>
 
-    {/* Stock Out with filter pills */}
-    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>📤 Stock Out</div>
-    <div style={{ display: "flex", gap: 5, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
-      {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" })), { id: "all", label: "📦 All Direct", color: "#1A1A1A" }].map((f) => (
-        <button key={f.id} onClick={() => setStockOutView(f.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
-      ))}
+    {/* Stock Out with filter pills — shows items directly */}
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
+      <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>📤 Stock Out</span>
+        <button data-smart-issue onClick={loadSmartStockOut} disabled={!stockOutData || Object.keys(stockOutData).length === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", opacity: (!stockOutData || Object.keys(stockOutData).length === 0) ? 0.5 : 1 }}>📤 Issue</button>
+      </div>
+      <div style={{ display: "flex", gap: 5, padding: "10px 16px", overflowX: "auto", borderBottom: "1px solid #F0F0EC" }}>
+        {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
+          <button key={f.id} onClick={() => setStockOutView(f.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+        ))}
+      </div>
+      {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading demand...</div>}
+      {!stockOutLoading && stockOutData && Object.keys(stockOutData).length > 0 ? (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ background: "#FAFAF8" }}><th style={{ ...thS, textAlign: "left" }}>Item</th><th style={thS}>Demand</th><th style={thS}>Stock</th><th style={thS}>Unit</th></tr></thead>
+          <tbody>{Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
+            const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
+            const stock = invItem ? Number(invItem.current_qty) : "—";
+            const isLow = typeof stock === "number" && stock < item.qty;
+            return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+              <td style={{ ...tdS, fontWeight: 600, fontSize: 12 }}>{item.name}</td>
+              <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{typeof item.qty === "number" ? item.qty.toFixed(2) : item.qty}</td>
+              <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: isLow ? "#DC2626" : "#16A34A" }}>{stock}</td>
+              <td style={{ ...tdS, textAlign: "center", color: "#999", fontSize: 11 }}>{item.unit}</td>
+            </tr>);
+          })}</tbody>
+        </table>
+      ) : !stockOutLoading && (
+        <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand. Submit demand from outlets first.</div>
+      )}
     </div>
-    <button data-smart-issue onClick={loadSmartStockOut} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>📤 Issue Stock ({stockOutView === "bk" ? "BK Raw Materials" : stockOutView === "all" ? "All Direct Items" : OUTLETS.find((o) => o.id === stockOutView)?.short || stockOutView})</button>
 
     {/* Category filter - only show when viewing "all" */}
     {stockFilter === "all" && <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c}</button>))}</div>}
