@@ -819,7 +819,9 @@ const Inventory = () => {
   const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
+  const [invSection, setInvSection] = useState("inventory"); // inventory, stockout
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
+  const [invTab, setInvTab] = useState("inventory"); // inventory, stockout
   const [stockOutData, setStockOutData] = useState(null);
   const [stockOutLoading, setStockOutLoading] = useState(false);
 
@@ -1074,9 +1076,9 @@ const Inventory = () => {
   const stockFiltered = stockFilter === "low" ? alerts : stockFilter === "out" ? outOfStock : filtered;
 
   return (<div>
-    {/* Header with action icons */}
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-      <div><h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📦 Inventory</h3><p style={{ fontSize: 11, color: "#888", margin: 0 }}>{items.length} items</p></div>
+    {/* Header */}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📦 Store</h3>
       <div style={{ display: "flex", gap: 6 }}>
         <button onClick={() => { setDraft({}); setView("stock_in"); }} title="Stock In" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 14, cursor: "pointer" }}>📥</button>
         <button onClick={() => { setView("order_challan"); }} title="Order Challan" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 14, cursor: "pointer" }}>📝</button>
@@ -1085,79 +1087,85 @@ const Inventory = () => {
       </div>
     </div>
 
-    {/* Summary cards as clickable filters */}
-    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-      <button onClick={() => { setStockFilter("all"); setSelCat(null); }} style={{ flex: 1, background: stockFilter === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: stockFilter === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
-        <div style={{ fontSize: 9, color: stockFilter === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>All</div>
-        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "all" ? "#fff" : "#1A1A1A" }}>{items.length}</div>
-      </button>
-      <button onClick={() => setStockFilter("low")} style={{ flex: 1, background: stockFilter === "low" ? "#B45309" : alerts.length > 0 ? "#FFFDF5" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: stockFilter === "low" ? "none" : `1px solid ${alerts.length > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
-        <div style={{ fontSize: 9, color: stockFilter === "low" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Low</div>
-        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "low" ? "#fff" : alerts.length > 0 ? "#B45309" : "#16A34A" }}>{alerts.length}</div>
-      </button>
-      <button onClick={() => setStockFilter("out")} style={{ flex: 1, background: stockFilter === "out" ? "#DC2626" : outOfStock.length > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: stockFilter === "out" ? "none" : `1px solid ${outOfStock.length > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
-        <div style={{ fontSize: 9, color: stockFilter === "out" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Out</div>
-        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "out" ? "#fff" : outOfStock.length > 0 ? "#DC2626" : "#16A34A" }}>{outOfStock.length}</div>
-      </button>
+    {/* Top-level pills: Inventory | Stock Out */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <button onClick={() => setInvSection("inventory")} style={{ flex: 1, padding: "12px", borderRadius: 10, border: invSection === "inventory" ? "none" : "1px solid #E0E0DC", background: invSection === "inventory" ? "#1A1A1A" : "#fff", color: invSection === "inventory" ? "#fff" : "#888", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📦 Inventory</button>
+      <button onClick={() => setInvSection("stockout")} style={{ flex: 1, padding: "12px", borderRadius: 10, border: invSection === "stockout" ? "none" : "1px solid #FECACA", background: invSection === "stockout" ? "#DC2626" : "#FEF2F2", color: invSection === "stockout" ? "#fff" : "#DC2626", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
     </div>
 
-    {/* Stock Out with filter pills — shows items directly */}
-    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
-      <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>📤 Stock Out</span>
-        <button data-smart-issue onClick={loadSmartStockOut} disabled={!stockOutData || Object.keys(stockOutData).length === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", opacity: (!stockOutData || Object.keys(stockOutData).length === 0) ? 0.5 : 1 }}>📤 Issue</button>
+    {/* ── INVENTORY SECTION ── */}
+    {invSection === "inventory" && (<>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button onClick={() => { setStockFilter("all"); setSelCat(null); }} style={{ flex: 1, background: stockFilter === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: stockFilter === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: stockFilter === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>All</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "all" ? "#fff" : "#1A1A1A" }}>{items.length}</div>
+        </button>
+        <button onClick={() => setStockFilter("low")} style={{ flex: 1, background: stockFilter === "low" ? "#B45309" : alerts.length > 0 ? "#FFFDF5" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: stockFilter === "low" ? "none" : `1px solid ${alerts.length > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: stockFilter === "low" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Low</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "low" ? "#fff" : alerts.length > 0 ? "#B45309" : "#16A34A" }}>{alerts.length}</div>
+        </button>
+        <button onClick={() => setStockFilter("out")} style={{ flex: 1, background: stockFilter === "out" ? "#DC2626" : outOfStock.length > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: stockFilter === "out" ? "none" : `1px solid ${outOfStock.length > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: stockFilter === "out" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Out</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "out" ? "#fff" : outOfStock.length > 0 ? "#DC2626" : "#16A34A" }}>{outOfStock.length}</div>
+        </button>
       </div>
-      <div style={{ display: "flex", gap: 5, padding: "10px 16px", overflowX: "auto", borderBottom: "1px solid #F0F0EC" }}>
+      {stockFilter === "all" && <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c}</button>))}</div>}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        {stockFiltered.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>{stockFilter === "out" ? "No items out of stock" : stockFilter === "low" ? "No low stock items" : "No items"}</div>}
+        {stockFiltered.map((item, idx) => {
+          const qty = Number(item.current_qty);
+          const isLow = item.below_threshold;
+          const isOut = qty === 0;
+          return (
+            <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < stockFiltered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: "transparent" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+                <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Min: {item.threshold} {item.unit}</div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#1A1A1A" }}>{qty}</div>
+                <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
+              </div>
+              {isLow && <div style={{ width: 8, height: 8, borderRadius: 4, background: isOut ? "#DC2626" : "#F59E0B", flexShrink: 0 }} />}
+            </div>
+          );
+        })}
+      </div>
+    </>)}
+
+    {/* ── STOCK OUT SECTION ── */}
+    {invSection === "stockout" && (<>
+      <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
-          <button key={f.id} onClick={() => setStockOutView(f.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+          <button key={f.id} onClick={() => setStockOutView(f.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
         ))}
       </div>
-      {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading demand...</div>}
-      {!stockOutLoading && stockOutData && Object.keys(stockOutData).length > 0 ? (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr style={{ background: "#FAFAF8" }}><th style={{ ...thS, textAlign: "left" }}>Item</th><th style={thS}>Demand</th><th style={thS}>Stock</th><th style={thS}>Unit</th></tr></thead>
-          <tbody>{Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
-            const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
-            const stock = invItem ? Number(invItem.current_qty) : "—";
-            const isLow = typeof stock === "number" && stock < item.qty;
-            return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-              <td style={{ ...tdS, fontWeight: 600, fontSize: 12 }}>{item.name}</td>
-              <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{typeof item.qty === "number" ? item.qty.toFixed(2) : item.qty}</td>
-              <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: isLow ? "#DC2626" : "#16A34A" }}>{stock}</td>
-              <td style={{ ...tdS, textAlign: "center", color: "#999", fontSize: 11 }}>{item.unit}</td>
-            </tr>);
-          })}</tbody>
-        </table>
-      ) : !stockOutLoading && (
-        <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand. Submit demand from outlets first.</div>
-      )}
-    </div>
-
-    {/* Category filter - only show when viewing "all" */}
-    {stockFilter === "all" && <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c}</button>))}</div>}
-
-    {/* Stock list */}
-    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-      {stockFiltered.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>{stockFilter === "out" ? "No items out of stock" : stockFilter === "low" ? "No low stock items" : "No items"}</div>}
-      {stockFiltered.map((item, idx) => {
-        const qty = Number(item.current_qty);
-        const isLow = item.below_threshold;
-        const isOut = qty === 0;
-        return (
-          <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < stockFiltered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: "transparent" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-              <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Min: {item.threshold} {item.unit}</div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#1A1A1A" }}>{qty}</div>
-              <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
-            </div>
-            {isLow && <div style={{ width: 8, height: 8, borderRadius: 4, background: isOut ? "#DC2626" : "#F59E0B", flexShrink: 0 }} />}
-          </div>
-        );
-      })}
-    </div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Raw materials for BK preparation" : `Direct items for ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
+          <button data-smart-issue onClick={loadSmartStockOut} disabled={!stockOutData || Object.keys(stockOutData).length === 0} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", opacity: (!stockOutData || Object.keys(stockOutData).length === 0) ? 0.5 : 1 }}>📤 Issue</button>
+        </div>
+        {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading demand...</div>}
+        {!stockOutLoading && stockOutData && Object.keys(stockOutData).length > 0 ? (
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}><th style={{ ...thS, textAlign: "left" }}>Item</th><th style={thS}>Demand</th><th style={thS}>Stock</th><th style={thS}>Unit</th></tr></thead>
+            <tbody>{Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
+              const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
+              const stock = invItem ? Number(invItem.current_qty) : "—";
+              const isLow = typeof stock === "number" && stock < item.qty;
+              return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                <td style={{ ...tdS, fontWeight: 600, fontSize: 12 }}>{item.name}</td>
+                <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{typeof item.qty === "number" ? item.qty.toFixed(2) : item.qty}</td>
+                <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, color: isLow ? "#DC2626" : "#16A34A" }}>{stock}</td>
+                <td style={{ ...tdS, textAlign: "center", color: "#999", fontSize: 11 }}>{item.unit}</td>
+              </tr>);
+            })}</tbody>
+          </table>
+        ) : !stockOutLoading && (
+          <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand</div>
+        )}
+      </div>
+    </>)}
   </div>);
 };
 
