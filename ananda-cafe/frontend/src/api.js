@@ -75,6 +75,10 @@ const api = {
 
   // ── NEW: BK Demand (fixed units) ──
   getBKDemand: (date) => get("/api/bk-demand/" + date),
+
+  // ── NEW: Issuance Audit ──
+  saveIssuanceAudit: (entries) => post("/api/issuance-audit", { entries }),
+  getIssuanceAudit: (date) => get("/api/issuance-audit/" + date),
 };
 
 // ── Helpers ──
