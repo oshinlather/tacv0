@@ -819,7 +819,7 @@ const Inventory = () => {
   const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
-  const [invSection, setInvSection] = useState("inventory"); // inventory, stockout
+  const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
@@ -1077,21 +1077,15 @@ const Inventory = () => {
   const stockFiltered = stockFilter === "low" ? alerts : stockFilter === "out" ? outOfStock : filtered;
 
   return (<div>
-    {/* Header */}
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-      <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📦 Store</h3>
-      <div style={{ display: "flex", gap: 6 }}>
-        <button onClick={() => { setDraft({}); setView("stock_in"); }} title="Stock In" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 14, cursor: "pointer" }}>📥</button>
-        <button onClick={() => { setView("order_challan"); }} title="Order Challan" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 14, cursor: "pointer" }}>📝</button>
-        <button onClick={() => { setThresholds({}); setView("thresholds"); }} title="Thresholds" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>⚙️</button>
-        <button onClick={load} title="Refresh" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>🔄</button>
-      </div>
-    </div>
-
-    {/* Top-level pills: Inventory | Stock Out */}
-    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-      <button onClick={() => setInvSection("inventory")} style={{ flex: 1, padding: "12px", borderRadius: 10, border: invSection === "inventory" ? "none" : "1px solid #E0E0DC", background: invSection === "inventory" ? "#1A1A1A" : "#fff", color: invSection === "inventory" ? "#fff" : "#888", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📦 Inventory</button>
-      <button onClick={() => setInvSection("stockout")} style={{ flex: 1, padding: "12px", borderRadius: 10, border: invSection === "stockout" ? "none" : "1px solid #FECACA", background: invSection === "stockout" ? "#DC2626" : "#FEF2F2", color: invSection === "stockout" ? "#fff" : "#DC2626", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+    {/* Top bar: pills + action icons all in one row */}
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+      <button onClick={() => setInvSection("stockout")} style={{ padding: "8px 16px", borderRadius: 8, border: invSection === "stockout" ? "none" : "1px solid #FECACA", background: invSection === "stockout" ? "#DC2626" : "#FEF2F2", color: invSection === "stockout" ? "#fff" : "#DC2626", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+      <button onClick={() => setInvSection("inventory")} style={{ padding: "8px 16px", borderRadius: 8, border: invSection === "inventory" ? "none" : "1px solid #E0E0DC", background: invSection === "inventory" ? "#1A1A1A" : "#fff", color: invSection === "inventory" ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>📦 Inventory</button>
+      <div style={{ flex: 1 }} />
+      <button onClick={() => { setDraft({}); setView("stock_in"); }} title="Stock In" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 14, cursor: "pointer" }}>📥</button>
+      <button onClick={() => { setView("order_challan"); }} title="Order Challan" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 14, cursor: "pointer" }}>📝</button>
+      <button onClick={() => { setThresholds({}); setView("thresholds"); }} title="Thresholds" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>⚙️</button>
+      <button onClick={load} title="Refresh" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>🔄</button>
     </div>
 
     {/* ── INVENTORY SECTION ── */}
