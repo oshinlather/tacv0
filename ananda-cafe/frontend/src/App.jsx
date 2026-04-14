@@ -213,7 +213,7 @@ const DailyPnL = () => {
     const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
   }, [selDay]);
 
-  useEffect(() => { setLoading(true); api.getComputedPnl(dateStr).then(setPnlData).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
+  useEffect(() => { setLoading(true); api.getComputedPnl(dateStr).then((res) => setPnlData(res?.pnl || res || [])).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
 
   const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id);
   const getData = (oid) => pnlData.find((r) => r.outlet_id === oid) || {};
