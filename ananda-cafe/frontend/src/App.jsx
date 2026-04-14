@@ -500,36 +500,24 @@ const BaseKitchen = () => {
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-kitchen">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen — Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} orders for {selDate}</p></div>
-        <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" /></div>
+      {/* Header + date + refresh in one compact row */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div><h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>BK — {selDate === today() ? "Today" : selDate}</h3><p style={{ fontSize: 11, color: "#888", margin: 0 }}>{pendingOrders.length} pending · {issuedOrders.length} issued · {dispatchedOrders.length} done</p></div>
+        <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-kitchen" title="BK Challan" /></div>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
-        <button onClick={() => setSelDate(today())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === today() ? 700 : 500, border: selDate === today() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
-        {Array.from({ length: 6 }, (_, i) => { const now = new Date(); const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000); ist.setDate(ist.getDate() - (i + 1)); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
-      </div>
-      {/* Morning / Evening cycle */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        {[
-          { id: "all", label: "📋 All Orders", count: orders.length },
-          { id: "morning", label: "🌅 Morning", count: morningOrders.length, sub: "Night demands (9PM-1AM)" },
-          { id: "evening", label: "🌇 Evening", count: eveningOrders.length, sub: "Day demands (11AM-4PM)" },
-        ].map((c) => (
-          <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? (c.id === "morning" ? "#B45309" : c.id === "evening" ? "#2563EB" : "#1A1A1A") : "#fff", color: cycle === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label} ({c.count})</button>
+      {/* Combined controls row: Date | Cycle | Status */}
+      <div style={{ display: "flex", gap: 5, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setSelDate(today())} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: selDate === today() ? 700 : 500, border: selDate === today() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
+        {Array.from({ length: 4 }, (_, i) => { const now = new Date(); const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000); ist.setDate(ist.getDate() - (i + 1)); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yest" : ds.slice(5)}</button>); })}
+        <span style={{ borderLeft: "1px solid #E0E0DC", margin: "0 2px" }} />
+        {[{ id: "morning", label: "🌅 AM", c: "#B45309" }, { id: "evening", label: "🌇 PM", c: "#2563EB" }, { id: "all", label: "All", c: "#1A1A1A" }].map((c) => (
+          <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? c.c : "#fff", color: cycle === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label}</button>
         ))}
+        <span style={{ borderLeft: "1px solid #E0E0DC", margin: "0 2px" }} />
+        <button onClick={() => setShowAll(false)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888", whiteSpace: "nowrap" }}>Pending</button>
+        <button onClick={() => setShowAll(true)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 11, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>
       </div>
-      {cycle !== "all" && (
-        <div style={{ padding: "8px 14px", borderRadius: 8, background: cycle === "morning" ? "#FFFBEB" : "#EFF6FF", border: `1px solid ${cycle === "morning" ? "#FDE68A" : "#BFDBFE"}`, fontSize: 11, color: cycle === "morning" ? "#92400E" : "#1D4ED8", marginBottom: 14 }}>
-          {cycle === "morning" ? "🌅 Showing night demands (placed 9PM-1AM) → for morning BK preparation" : "🌇 Showing day demands (placed after 1AM) → for evening BK preparation"}
-        </div>
-      )}
-      {/* Pending / All status */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        <button onClick={() => setShowAll(false)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888" }}>⏳ Pending ({pendingOrders.length})</button>
-        <button onClick={() => setShowAll(true)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888" }}>📋 All ({cycleOrders.length})</button>
-      </div>
-      {!showAll && pendingOrders.length === 0 && orders.length > 0 && (<div style={{ padding: "14px 18px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 13, color: "#166534", marginBottom: 16, textAlign: "center" }}>✅ All stock issued! Requisition is clear.</div>)}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>{[{ l: "Pending", v: pendingOrders.length, c: pendingOrders.length > 0 ? "#B45309" : "#16A34A" }, { l: "Issued", v: issuedOrders.length, c: "#2563EB" }, { l: "Dispatched", v: dispatchedOrders.length, c: "#16A34A" }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "12px 14px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: s.c || "#1A1A1A" }}>{s.v}</div></div>))}</div>
+      {!showAll && pendingOrders.length === 0 && orders.length > 0 && (<div style={{ padding: "10px 14px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 12, textAlign: "center" }}>✅ All issued</div>)}
 
       <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 20 }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
