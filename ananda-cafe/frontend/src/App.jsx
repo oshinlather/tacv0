@@ -429,84 +429,112 @@ const OutletOrders = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  BASE KITCHEN (Consolidated Challan + Raw Material Requisition)
+//  BASE KITCHEN (Consolidated Demand + Stock Out BK + Per-Outlet Direct Items)
 // ═════════════════════════════════════════════════════════════════════════════
 const BaseKitchen = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
   const [selDate, setSelDate] = useState(bkToday());
+  const [showAll, setShowAll] = useState(false);
+  const [stockOutFilter, setStockOutFilter] = useState("bk");
   const load = useCallback(() => {
     setLoading(true);
     api.getOrders({ date: selDate }).then((data) => setOrders(data.filter((d) => d.type === "manual" && d.items))).catch(() => setOrders([])).finally(() => setLoading(false));
   }, [selDate]);
   useEffect(load, [load]);
-  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; orders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
-  const rawReq = {}; Object.entries(consolidated).forEach(([bkId, data]) => { const recipe = RECIPES[bkId]; if (!recipe || data.total === 0) return; const batches = data.total / recipe.yieldQty; recipe.ingredients.forEach((ing) => { rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches; }); });
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  const issuedIds = useMemo(() => { try { return JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]"); } catch { return []; } }, [orders]);
+  const pendingOrders = orders.filter((o) => (o.status === "submitted" || o.status === "received") && !issuedIds.includes(o.id));
+  const dispatchedOrders = orders.filter((o) => o.status === "fulfilled");
+  const issuedOrders = orders.filter((o) => issuedIds.includes(o.id) && o.status !== "fulfilled");
+  const activeOrders = showAll ? orders : pendingOrders;
+
+  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
+
+  const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+  const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
+  const rawReq = {};
+  Object.entries(consolidated).forEach(([bkId, data]) => {
+    if (!foodItemIds.has(bkId)) return;
+    const recipe = RECIPES[bkId]; if (!recipe || data.total === 0) return;
+    const batches = data.total / recipe.yieldQty;
+    recipe.ingredients.forEach((ing) => { rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches; });
+  });
+
+  const nonFoodSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
+  const directItems = {}; const allDirectItems = {};
+  activeOrders.forEach((o) => {
+    if (!directItems[o.outlet_id]) directItems[o.outlet_id] = {};
+    nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
+      const qty = o.items?.[item.id] || 0;
+      if (qty > 0) {
+        if (!directItems[o.outlet_id][item.id]) directItems[o.outlet_id][item.id] = { name: item.name, qty: 0, unit: item.unit || "", category: sec.titleHi };
+        directItems[o.outlet_id][item.id].qty += qty;
+        if (!allDirectItems[item.id]) allDirectItems[item.id] = { name: item.name, qty: 0, unit: item.unit || "", category: sec.titleHi };
+        allDirectItems[item.id].qty += qty;
+      }
+    }); });
+  });
+
+  const stockOutItems = stockOutFilter === "bk" ? null : stockOutFilter === "all" ? allDirectItems : (directItems[stockOutFilter] || {});
+  const hasRawReq = Object.keys(rawReq).length > 0;
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>\u23f3 Loading...</div>;
   return (
     <div id="print-kitchen">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen — Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} manual orders for {selDate}</p></div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button>
-          <PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" />
-        </div>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen \u2014 Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} orders for {selDate}</p></div>
+        <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>\ud83d\udd04</button><PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" /></div>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         <button onClick={() => setSelDate(bkToday())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === bkToday() ? 700 : 500, border: selDate === bkToday() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === bkToday() ? "#1A1A1A" : "#fff", color: selDate === bkToday() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
-        {Array.from({ length: 6 }, (_, i) => {
-          const d = new Date(); d.setDate(d.getDate() - (i + 1));
-          const ds = d.toISOString().split("T")[0];
-          return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>);
-        })}
+        {Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (i + 1)); const ds = d.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
       </div>
-      {istHour() >= 21 && selDate === bkToday() && (
-        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#2563EB", marginBottom: 14 }}>
-          🌙 Night cycle active — showing demands for tomorrow ({selDate})
-        </div>
-      )}
-      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>{[{ l: "Orders", v: orders.length, s: `of ${OUTLETS.length}` }, { l: "BK Items", v: Object.values(consolidated).filter((c) => c.total > 0).length }, { l: "Raw Materials", v: Object.keys(rawReq).length }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>{s.s && <div style={{ fontSize: 11, color: "#BBB" }}>{s.s}</div>}</div>))}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 16, marginBottom: 20 }}>
-        <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
-          <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <ExportBtn onClick={() => {
-                const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)];
-                const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => {
-                  const d = consolidated[bk.id];
-                  return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)];
-                });
-                exportCSV(headers, rows, `demand_${selDate}.csv`);
-              }} />
-              <PrintBtn sectionId="print-demand" title="Consolidated Demand" />
-            </div>
-          </div>
-          <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
-          <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
-        </div>
-        <div id="print-requisition" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-          <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div><div style={{ fontWeight: 700, fontSize: 14 }}>🏪 Raw Material Requisition</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Auto-calculated from recipes</div></div>
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <span style={{ fontSize: 11, color: "#DC2626", fontWeight: 600 }}>📤 Use Smart Issue in Inventory tab →</span>
-              <ExportBtn onClick={() => {
-                const headers = ["Raw Material", "Required", "Unit"];
-                const rows = Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => {
-                  const raw = RAW_MATERIALS.find((r) => r.id === id);
-                  return [raw?.name || id, qty.toFixed(2), raw?.unit || ""];
-                });
-                exportCSV(headers, rows, `requisition_${selDate}.csv`);
-              }} />
-              <PrintBtn sectionId="print-requisition" title="Raw Material Requisition" />
-            </div>
-          </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Required</th><th style={thS}>Unit</th></tr></thead>
-          <tbody>{Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{qty.toFixed(2)}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
-        </div>
+      {istHour() >= 21 && selDate === bkToday() && (<div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#2563EB", marginBottom: 12 }}>\ud83c\udf19 Night cycle \u2014 demands for tomorrow ({selDate})</div>)}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        <button onClick={() => setShowAll(false)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888" }}>\u23f3 Pending ({pendingOrders.length})</button>
+        <button onClick={() => setShowAll(true)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888" }}>\ud83d\udccb All ({orders.length})</button>
       </div>
+      {!showAll && pendingOrders.length === 0 && orders.length > 0 && (<div style={{ padding: "14px 18px", borderRadius: 12, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 13, color: "#166534", marginBottom: 16, textAlign: "center" }}>\u2705 All stock issued! Requisition is clear.</div>)}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>{[{ l: "Pending", v: pendingOrders.length, c: pendingOrders.length > 0 ? "#B45309" : "#16A34A" }, { l: "Issued", v: issuedOrders.length, c: "#2563EB" }, { l: "Dispatched", v: dispatchedOrders.length, c: "#16A34A" }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "12px 14px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: s.c || "#1A1A1A" }}>{s.v}</div></div>))}</div>
+
+      <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 20 }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>\ud83d\udccb Consolidated Demand</span>
+          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
+        </div>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "\u2014"}</td>)}</tr>); })}</tbody></table></div>
+      </div>
+
+      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>\ud83d\udce4 Stock Out</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+        {[{ id: "bk", label: "\ud83c\udfed BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "\ud83c\udfea " + o.short, color: "#2563EB" })), { id: "all", label: "\ud83d\udce6 All Direct", color: "#1A1A1A" }].map((f) => (<button key={f.id} onClick={() => setStockOutFilter(f.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutFilter === f.id ? 700 : 500, border: stockOutFilter === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutFilter === f.id ? f.color : "#fff", color: stockOutFilter === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>))}
+      </div>
+
+      {stockOutFilter === "bk" && (<div id="print-stockout-bk" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div><div style={{ fontWeight: 700, fontSize: 14 }}>\ud83c\udfed Stock Out \u2192 BK {!hasRawReq && <span style={{ color: "#16A34A" }}>\u2705 Issued</span>}</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Raw materials for BK preparation</div></div>
+          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Raw Material", "Required", "Unit"]; const rows = Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return [raw?.name || id, qty.toFixed(2), raw?.unit || ""]; }); exportCSV(headers, rows, `stockout_bk_${selDate}.csv`); }} /><PrintBtn sectionId="print-stockout-bk" title="Stock Out BK" /></div>
+        </div>
+        {hasRawReq ? (<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Required</th><th style={thS}>Unit</th></tr></thead>
+        <tbody>{Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{qty.toFixed(2)}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
+        ) : (<div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No pending BK requisition</div>)}
+      </div>)}
+
+      {stockOutFilter !== "bk" && (<div id="print-stockout-outlet" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div><div style={{ fontWeight: 700, fontSize: 14 }}>\ud83d\udce4 Stock Out \u2192 {stockOutFilter === "all" ? "All Outlets (Direct)" : OUTLETS.find((o) => o.id === stockOutFilter)?.name || stockOutFilter}</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Direct items from store</div></div>
+          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Qty", "Unit", "Category"]; const rows = Object.entries(stockOutItems || {}).sort((a, b) => a[1].category.localeCompare(b[1].category)).map(([, item]) => [item.name, item.qty, item.unit, item.category]); exportCSV(headers, rows, `stockout_${stockOutFilter}_${selDate}.csv`); }} /><PrintBtn sectionId="print-stockout-outlet" title={"Stock Out " + stockOutFilter} /></div>
+        </div>
+        {stockOutItems && Object.keys(stockOutItems).length > 0 ? (<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Qty</th><th style={thS}>Unit</th><th style={thS}>Category</th></tr></thead>
+        <tbody>{Object.entries(stockOutItems).sort((a, b) => a[1].category.localeCompare(b[1].category)).map(([id, item]) => (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{item.qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{item.unit}</td><td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.category}</td></tr>))}</tbody></table>
+        ) : (<div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No direct items for this outlet</div>)}
+      </div>)}
     </div>
   );
 };
+
+
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  DISPATCH
@@ -710,21 +738,39 @@ const Inventory = () => {
           date: today(),
         }));
         try { await api.saveIssuanceAudit(auditEntries); } catch (e) { console.error("Audit save failed:", e); }
+        // Record which orders were covered by this issuance
+        try {
+          const prev = JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]");
+          const all = [...new Set([...prev, ...issuedForOrders])];
+          sessionStorage.setItem("issuedOrderIds", JSON.stringify(all));
+        } catch (e) {}
       }
-      setDraft({}); setOriginalReq({}); load(); setView("stock");
+      setDraft({}); setOriginalReq({}); setIssuedForOrders([]); load(); setView("stock");
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
-  // Load raw material requisition from BK consolidated demand
+  const [issuedForOrders, setIssuedForOrders] = useState([]);
+
+  // Load raw material requisition from BK — PENDING orders only
   const loadSmartStockOut = async () => {
     try {
       const ordersData = await api.getOrders({ date: bkToday() });
-      const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items);
+      // Only use pending orders (not dispatched/fulfilled)
+      const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
+      // Also exclude orders already issued in this session
+      const issuedIds = JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]");
+      const unissuedOrders = pendingOrders.filter((o) => !issuedIds.includes(o.id));
+
+      if (unissuedOrders.length === 0) {
+        alert("No pending demands to issue. All demands have been issued or dispatched.");
+        return;
+      }
+
       const consolidated = {};
       BK_ITEMS.forEach((bk) => {
         consolidated[bk.id] = { total: 0 };
-        manualOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+        unissuedOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
       });
       const rawReq = {};
       Object.entries(consolidated).forEach(([bkId, data]) => {
@@ -756,6 +802,7 @@ const Inventory = () => {
       setDraft(newDraft);
       setOriginalReq(newOriginal);
       setRawReqData(rawReq);
+      setIssuedForOrders(unissuedOrders.map((o) => o.id));
       setView("stock_out");
     } catch (e) {
       alert("Failed to load requisition: " + e.message);
