@@ -213,7 +213,7 @@ const DailyPnL = () => {
     const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
   }, [selDay]);
 
-  useEffect(() => { setLoading(true); api.getPnl({ date: dateStr }).then(setPnlData).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
+  useEffect(() => { setLoading(true); api.getComputedPnl(dateStr).then(setPnlData).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
 
   const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id);
   const getData = (oid) => pnlData.find((r) => r.outlet_id === oid) || {};
@@ -2106,14 +2106,15 @@ export default function AnandaCafe() {
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto", alignItems: "center" }}>
-      {[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }].map((t) => (<button key={t.id} onClick={() => setOwnerTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
+      <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
+      {[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       {/* BK Dropdown */}
       <div style={{ position: "relative" }}>
         <button onClick={() => setBkDropdown(!bkDropdown)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
         {bkDropdown && (<>
           <div onClick={() => setBkDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 98 }} />
-          <div style={{ position: "absolute", top: "100%", left: 0, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 99, minWidth: 200, padding: "6px 0", marginTop: 4 }}>
+          <div style={{ position: "absolute", top: "100%", right: 0, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 99, minWidth: 220, padding: "6px 0", marginTop: 4 }}>
             {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
               { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
               { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
@@ -2129,6 +2130,7 @@ export default function AnandaCafe() {
             ))}
           </div>
         </>)}
+      </div>
       </div>
     </div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
