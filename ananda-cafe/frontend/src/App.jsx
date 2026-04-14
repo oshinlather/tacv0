@@ -14,6 +14,14 @@ const OUTLETS = [
   { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
 ];
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset()); return d.toISOString().split("T")[0]; };
+const bkToday = () => {
+  // BK day resets at 9 PM IST — after 9 PM, demands are for next day
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset());
+  const h = d.getUTCHours();
+  if (h >= 21) d.setUTCDate(d.getUTCDate() + 1); // after 9 PM → next day
+  return d.toISOString().split("T")[0];
+};
 const istHour = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset()); return d.getUTCHours(); };
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
@@ -413,16 +421,37 @@ const OutletOrders = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const BaseKitchen = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  useEffect(() => { api.getOrders({ date: today() }).then((data) => setOrders(data.filter((d) => d.type === "manual" && d.items))).catch(() => setOrders([])).finally(() => setLoading(false)); }, []);
+  const [selDate, setSelDate] = useState(bkToday());
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getOrders({ date: selDate }).then((data) => setOrders(data.filter((d) => d.type === "manual" && d.items))).catch(() => setOrders([])).finally(() => setLoading(false));
+  }, [selDate]);
+  useEffect(load, [load]);
   const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; orders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
   const rawReq = {}; Object.entries(consolidated).forEach(([bkId, data]) => { const recipe = RECIPES[bkId]; if (!recipe || data.total === 0) return; const batches = data.total / recipe.yieldQty; recipe.ingredients.forEach((ing) => { rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches; }); });
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-kitchen">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen — Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} manual orders for {today()}</p></div>
-        <PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Base Kitchen — Consolidated Challan</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} manual orders for {selDate}</p></div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button>
+          <PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" />
+        </div>
       </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setSelDate(bkToday())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === bkToday() ? 700 : 500, border: selDate === bkToday() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === bkToday() ? "#1A1A1A" : "#fff", color: selDate === bkToday() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
+        {Array.from({ length: 6 }, (_, i) => {
+          const d = new Date(); d.setDate(d.getDate() - (i + 1));
+          const ds = d.toISOString().split("T")[0];
+          return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>);
+        })}
+      </div>
+      {istHour() >= 21 && selDate === bkToday() && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#2563EB", marginBottom: 14 }}>
+          🌙 Night cycle active — showing demands for tomorrow ({selDate})
+        </div>
+      )}
       <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>{[{ l: "Orders", v: orders.length, s: `of ${OUTLETS.length}` }, { l: "BK Items", v: Object.values(consolidated).filter((c) => c.total > 0).length }, { l: "Raw Materials", v: Object.keys(rawReq).length }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>{s.s && <div style={{ fontSize: 11, color: "#BBB" }}>{s.s}</div>}</div>))}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 20 }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</div>
@@ -447,7 +476,7 @@ const Dispatch = () => {
   const [dispatching, setDispatching] = useState(null);
   const [selOutlet, setSelOutlet] = useState(null); // null = all
   const [expandedCat, setExpandedCat] = useState({}); // { orderId_catId: true }
-  const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
+  const load = () => { setLoading(true); api.getOrders({ date: bkToday() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
   const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received") && (!selOutlet || o.outlet_id === selOutlet));
@@ -649,7 +678,7 @@ const Inventory = () => {
   // Load raw material requisition from BK consolidated demand
   const loadSmartStockOut = async () => {
     try {
-      const ordersData = await api.getOrders({ date: today() });
+      const ordersData = await api.getOrders({ date: bkToday() });
       const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items);
       const consolidated = {};
       BK_ITEMS.forEach((bk) => {
