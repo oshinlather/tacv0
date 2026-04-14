@@ -2109,30 +2109,28 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "activity", label: "🔴 Live" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "pnl", label: "💰 P&L" }, { id: "orders", label: "📋 Orders" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      {/* BK Dropdown */}
-      <div style={{ position: "relative" }}>
-        <button onClick={() => setBkDropdown(!bkDropdown)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-        {bkDropdown && (<>
-          <div onClick={() => setBkDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 98 }} />
-          <div style={{ position: "absolute", top: "100%", right: 0, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", zIndex: 99, minWidth: 220, padding: "6px 0", marginTop: 4 }}>
-            {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
-              { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
-              { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
-              { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual" },
-              { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued" },
-              { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
-              { id: "pp_recipes", label: "🍳 PetPooja Recipes", sub: "Item-level from PetPooja" },
-            ].map((t) => (
-              <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
-                <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
-                <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
-              </button>
-            ))}
-          </div>
-        </>)}
-      </div>
+      <button onClick={() => setBkDropdown(!bkDropdown)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       </div>
     </div>
+    {/* BK Dropdown - rendered outside sticky container */}
+    {bkDropdown && (<>
+      <div onClick={() => setBkDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
+      <div style={{ position: "fixed", top: 100, right: 18, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, padding: "6px 0" }}>
+        {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
+          { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
+          { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
+          { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual" },
+          { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued" },
+          { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
+          { id: "pp_recipes", label: "🍳 PetPooja Recipes", sub: "Item-level from PetPooja" },
+        ].map((t) => (
+          <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
+            <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
+            <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
+          </button>
+        ))}
+      </div>
+    </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "activity" && <LiveActivity />}
       {ownerTab === "sales" && <SalesUpload />}
