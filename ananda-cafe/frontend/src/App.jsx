@@ -1145,8 +1145,9 @@ const Inventory = () => {
           <div>
             {Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
               const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
-              const stock = invItem ? Number(invItem.current_qty) : "—";
-              const isLow = typeof stock === "number" && stock < item.qty;
+              const stock = invItem ? Number(invItem.current_qty) : null;
+              const isLow = stock !== null && stock < item.qty;
+              const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
               const issued = issuedItems[id] || false;
               const editQty = editedQty[id];
               const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? item.qty.toFixed(2) : item.qty);
@@ -1158,11 +1159,14 @@ const Inventory = () => {
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, textDecoration: issued ? "line-through" : "none" }}>{item.name}</div>
-                    <div style={{ fontSize: 10, color: "#999" }}>Stock: <span style={{ color: isLow ? "#DC2626" : "#16A34A", fontWeight: 600 }}>{stock}</span> {item.unit}</div>
+                  </div>
+                  <div style={{ textAlign: "right", minWidth: 40, flexShrink: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
+                    <div style={{ fontSize: 9, color: "#999" }}>{item.unit}</div>
                   </div>
                   <input type="number" step="0.01" value={displayQty} onChange={(e) => setEditedQty((p) => ({ ...p, [id]: e.target.value }))} disabled={issued}
-                    style={{ width: 60, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
-                  <span style={{ fontSize: 10, color: "#999", width: 24, flexShrink: 0 }}>{item.unit}</span>
+                    style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
+                  <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{item.unit}</span>
                 </div>
               );
             })}
