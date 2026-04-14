@@ -465,7 +465,10 @@ const BaseKitchen = () => {
         <div id="print-requisition" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
           <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div><div style={{ fontWeight: 700, fontSize: 14 }}>🏪 Raw Material Requisition</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Auto-calculated from recipes</div></div>
-            <PrintBtn sectionId="print-requisition" title="Raw Material Requisition" />
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#DC2626", fontWeight: 600 }}>📤 Use Smart Issue in Inventory tab →</span>
+              <PrintBtn sectionId="print-requisition" title="Raw Material Requisition" />
+            </div>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Required</th><th style={thS}>Unit</th></tr></thead>
           <tbody>{Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{qty.toFixed(2)}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
@@ -852,7 +855,7 @@ const Inventory = () => {
     {/* Action buttons - softer colors */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
       <button onClick={() => { setDraft({}); setView("stock_in"); }} style={{ padding: "14px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
-      <button onClick={loadSmartStockOut} style={{ padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Smart Issue</button>
+      <button data-smart-issue onClick={loadSmartStockOut} style={{ padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>📤 Smart Issue</button>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
       <button onClick={() => { setDraft({}); setOriginalReq({}); setView("stock_out"); }} style={{ padding: "10px", borderRadius: 10, border: "1px solid #FECACA", background: "#fff", fontSize: 13, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>📤 Manual Out</button>
