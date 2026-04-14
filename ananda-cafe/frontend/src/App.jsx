@@ -307,7 +307,7 @@ const DailyPnL = () => {
 
 // ─── BK Items — auto-derived from DEMAND_SECTIONS so they always match ──────
 const BK_ITEMS = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((item) => ({ ...item, category: sec.id })));
-const RAW_MATERIALS = [
+let RAW_MATERIALS = [
   { id: "urad_dal", name: "Urad Dal", unit: "Kg" }, { id: "rice", name: "Idli Rice", unit: "Kg" },
   { id: "toor_dal", name: "Toor Dal", unit: "Kg" }, { id: "coconut", name: "Coconut (Fresh)", unit: "Pcs" },
   { id: "tomato", name: "Tomato", unit: "Kg" }, { id: "peanuts", name: "Peanuts", unit: "Kg" },
@@ -318,7 +318,7 @@ const RAW_MATERIALS = [
   { id: "onion_raw", name: "Onion", unit: "Kg" }, { id: "green_chilli_raw", name: "Green Chilli", unit: "Kg" },
   { id: "tamarind", name: "Tamarind", unit: "Kg" }, { id: "salt_raw", name: "Salt", unit: "Kg" },
 ];
-const RECIPES = {
+let RECIPES = {
   sambhar: { name: "Sambhar", yield: "10 Kg", yieldQty: 10, ingredients: [{ rawId: "toor_dal", qty: 2 }, { rawId: "tomato", qty: 1.5 }, { rawId: "onion_raw", qty: 1 }, { rawId: "tamarind", qty: 0.15 }, { rawId: "oil", qty: 0.3 }, { rawId: "mustard", qty: 0.05 }, { rawId: "curry_leaves_raw", qty: 2 }, { rawId: "salt_raw", qty: 0.15 }] },
   dosa_batter: { name: "Dosa Batter", yield: "10 Batch", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
   idli_batter: { name: "Idli Batter", yield: "10 Batch", yieldQty: 10, ingredients: [{ rawId: "urad_dal", qty: 2.5 }, { rawId: "rice", qty: 7 }, { rawId: "salt_raw", qty: 0.1 }] },
@@ -892,19 +892,153 @@ const Inventory = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const RecipesPanel = () => {
   const [sel, setSel] = useState("sambhar");
-  const recipe = RECIPES[sel];
+  const [editMode, setEditMode] = useState(false);
+  const [editRecipes, setEditRecipes] = useState(JSON.parse(JSON.stringify(RECIPES)));
+  const [newIngName, setNewIngName] = useState("");
+  const [newIngQty, setNewIngQty] = useState("");
+  const [newIngUnit, setNewIngUnit] = useState("Kg");
+  const [saved, setSaved] = useState(false);
+
+  const recipe = editRecipes[sel];
+
+  const updateQty = (idx, newQty) => {
+    setEditRecipes((prev) => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      copy[sel].ingredients[idx].qty = Number(newQty) || 0;
+      return copy;
+    });
+  };
+
+  const updateYield = (newYield) => {
+    setEditRecipes((prev) => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      copy[sel].yield = newYield;
+      // Extract number from yield string
+      const num = parseFloat(newYield);
+      if (!isNaN(num)) copy[sel].yieldQty = num;
+      return copy;
+    });
+  };
+
+  const removeIngredient = (idx) => {
+    setEditRecipes((prev) => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      copy[sel].ingredients.splice(idx, 1);
+      return copy;
+    });
+  };
+
+  const addIngredient = () => {
+    if (!newIngName.trim() || !newIngQty) return;
+    // Find or create rawId
+    const rawId = newIngName.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
+    // Check if raw material exists, if not add to RAW_MATERIALS
+    if (!RAW_MATERIALS.find((r) => r.id === rawId)) {
+      RAW_MATERIALS.push({ id: rawId, name: newIngName.trim(), unit: newIngUnit });
+    }
+    setEditRecipes((prev) => {
+      const copy = JSON.parse(JSON.stringify(prev));
+      copy[sel].ingredients.push({ rawId, qty: Number(newIngQty) || 0 });
+      return copy;
+    });
+    setNewIngName(""); setNewIngQty(""); setNewIngUnit("Kg");
+  };
+
+  const saveRecipes = () => {
+    // Update the global RECIPES object
+    Object.keys(editRecipes).forEach((k) => {
+      RECIPES[k] = editRecipes[k];
+    });
+    setSaved(true);
+    setEditMode(false);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const discardChanges = () => {
+    setEditRecipes(JSON.parse(JSON.stringify(RECIPES)));
+    setEditMode(false);
+  };
+
   return (
     <div id="print-recipes">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Recipe Management</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Standard recipes for raw material calculations and audit</p></div>
-        <PrintBtn sectionId="print-recipes" title={`Recipe — ${recipe.name}`} />
+        <div style={{ display: "flex", gap: 6 }}>
+          {!editMode ? (
+            <button onClick={() => setEditMode(true)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 12, fontWeight: 600, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+          ) : (
+            <>
+              <button onClick={discardChanges} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>✕ Cancel</button>
+              <button onClick={saveRecipes} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#16A34A", fontSize: 12, fontWeight: 600, color: "#fff", cursor: "pointer", fontFamily: "inherit" }}>💾 Save</button>
+            </>
+          )}
+          <PrintBtn sectionId="print-recipes" title={`Recipe — ${recipe.name}`} />
+        </div>
       </div>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>{Object.keys(RECIPES).map((k) => (<button key={k} onClick={() => setSel(k)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: sel === k ? "none" : "1px solid #E0E0DC", background: sel === k ? "#1A1A1A" : "#fff", color: sel === k ? "#fff" : "#666", fontFamily: "inherit" }}>{RECIPES[k].name}</button>))}</div>
+      {saved && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Recipes saved! Raw material requisitions will use updated values.</div>}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>{Object.keys(editRecipes).map((k) => (<button key={k} onClick={() => setSel(k)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: sel === k ? "none" : "1px solid #E0E0DC", background: sel === k ? "#1A1A1A" : "#fff", color: sel === k ? "#fff" : "#666", fontFamily: "inherit" }}>{editRecipes[k].name}</button>))}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><div><h4 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>{recipe.name}</h4><span style={{ fontSize: 13, color: "#888" }}>Yield: <strong style={{ color: "#B45309" }}>{recipe.yield}</strong></span></div><span style={{ padding: "3px 10px", borderRadius: 6, background: "#EFF6FF", color: "#2563EB", fontSize: 11, fontWeight: 700 }}>STANDARD</span></div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Qty / Batch</th><th style={thS}>Unit</th></tr></thead>
-        <tbody>{recipe.ingredients.map((ing) => { const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId); return (<tr key={ing.rawId} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{ing.qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
-        <div style={{ marginTop: 14, padding: "10px 14px", background: "#FAFAF8", borderRadius: 8, fontSize: 12, color: "#888" }}>Updating recipes recalculates all audit variances and raw material requisitions automatically.</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div>
+            <h4 style={{ margin: 0, fontSize: 17, fontWeight: 800 }}>{recipe.name}</h4>
+            {editMode ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                <span style={{ fontSize: 13, color: "#888" }}>Yield:</span>
+                <input type="text" value={recipe.yield} onChange={(e) => updateYield(e.target.value)} style={{ width: 80, padding: "4px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontWeight: 700, color: "#B45309", fontFamily: "inherit" }} />
+              </div>
+            ) : (
+              <span style={{ fontSize: 13, color: "#888" }}>Yield: <strong style={{ color: "#B45309" }}>{recipe.yield}</strong></span>
+            )}
+          </div>
+          <span style={{ padding: "3px 10px", borderRadius: 6, background: editMode ? "#FFFBEB" : "#EFF6FF", color: editMode ? "#B45309" : "#2563EB", fontSize: 11, fontWeight: 700 }}>{editMode ? "EDITING" : "STANDARD"}</span>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr style={{ background: "#FAFAF8" }}>
+            <th style={thS}>Raw Material</th><th style={thS}>Qty / Batch</th><th style={thS}>Unit</th>
+            {editMode && <th style={{ ...thS, width: 40 }}></th>}
+          </tr></thead>
+          <tbody>
+            {recipe.ingredients.map((ing, idx) => {
+              const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+              return (
+                <tr key={idx} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td>
+                  <td style={tdS}>
+                    {editMode ? (
+                      <input type="number" step="0.01" value={ing.qty} onChange={(e) => updateQty(idx, e.target.value)} style={{ width: 70, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309" }} />
+                    ) : (
+                      <span style={{ display: "block", textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{ing.qty}</span>
+                    )}
+                  </td>
+                  <td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit || ""}</td>
+                  {editMode && (
+                    <td style={tdS}>
+                      <button onClick={() => removeIngredient(idx)} style={{ padding: "2px 8px", borderRadius: 4, border: "none", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {editMode && (
+          <div style={{ marginTop: 14, padding: "14px", background: "#FAFAF8", borderRadius: 10, border: "1px dashed #E0E0DC" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 8 }}>+ Add Ingredient</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <input type="text" placeholder="Material name" value={newIngName} onChange={(e) => setNewIngName(e.target.value)} list="raw-materials-list"
+                style={{ flex: "1 1 140px", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
+              <datalist id="raw-materials-list">{RAW_MATERIALS.map((r) => <option key={r.id} value={r.name} />)}</datalist>
+              <input type="number" step="0.01" placeholder="Qty" value={newIngQty} onChange={(e) => setNewIngQty(e.target.value)}
+                style={{ width: 70, padding: "8px 6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} />
+              <select value={newIngUnit} onChange={(e) => setNewIngUnit(e.target.value)}
+                style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                <option value="Kg">Kg</option><option value="Ltr">Ltr</option><option value="Gm">Gm</option><option value="Pcs">Pcs</option><option value="Bunch">Bunch</option>
+              </select>
+              <button onClick={addIngredient} disabled={!newIngName.trim() || !newIngQty} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: newIngName.trim() && newIngQty ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newIngName.trim() && newIngQty ? "pointer" : "not-allowed", fontFamily: "inherit" }}>+ Add</button>
+            </div>
+          </div>
+        )}
+        {!editMode && <div style={{ marginTop: 14, padding: "10px 14px", background: "#FAFAF8", borderRadius: 8, fontSize: 12, color: "#888" }}>Click "Edit" to modify quantities or add new ingredients. Changes affect all raw material requisitions.</div>}
       </div>
     </div>
   );
