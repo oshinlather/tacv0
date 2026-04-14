@@ -433,7 +433,7 @@ const OutletOrders = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const BaseKitchen = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  const [selDate, setSelDate] = useState(bkToday());
+  const [selDate, setSelDate] = useState(today());
   const [showAll, setShowAll] = useState(false);
   const [stockOutFilter, setStockOutFilter] = useState("bk");
   const load = useCallback(() => {
@@ -486,10 +486,9 @@ const BaseKitchen = () => {
         <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-kitchen" title="BK Consolidated Challan" /></div>
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
-        <button onClick={() => setSelDate(bkToday())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === bkToday() ? 700 : 500, border: selDate === bkToday() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === bkToday() ? "#1A1A1A" : "#fff", color: selDate === bkToday() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
-        {Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (i + 1)); const ds = d.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
+        <button onClick={() => setSelDate(today())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === today() ? 700 : 500, border: selDate === today() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
+        {Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (i + 1)); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
       </div>
-      {istHour() >= 21 && selDate === bkToday() && (<div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#2563EB", marginBottom: 12 }}>🌙 Night cycle — demands for tomorrow ({selDate})</div>)}
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         <button onClick={() => setShowAll(false)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888" }}>⏳ Pending ({pendingOrders.length})</button>
         <button onClick={() => setShowAll(true)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888" }}>📋 All ({orders.length})</button>
@@ -545,7 +544,7 @@ const Dispatch = () => {
   const [dispatching, setDispatching] = useState(null);
   const [selOutlet, setSelOutlet] = useState(null); // null = all
   const [expandedCat, setExpandedCat] = useState({}); // { orderId_catId: true }
-  const load = () => { setLoading(true); api.getOrders({ date: bkToday() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
+  const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
   const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received") && (!selOutlet || o.outlet_id === selOutlet));
@@ -755,7 +754,7 @@ const Inventory = () => {
   // Load raw material requisition from BK — PENDING orders only
   const loadSmartStockOut = async () => {
     try {
-      const ordersData = await api.getOrders({ date: bkToday() });
+      const ordersData = await api.getOrders({ date: today() });
       // Only use pending orders (not dispatched/fulfilled)
       const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
       // Also exclude orders already issued in this session
