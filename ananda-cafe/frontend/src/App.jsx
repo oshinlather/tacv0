@@ -799,6 +799,7 @@ const Inventory = () => {
   const [orderQty, setOrderQty] = useState({});
   const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
+  const [stockFilter, setStockFilter] = useState("all"); // all, low, out
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -1006,7 +1007,6 @@ const Inventory = () => {
   }
 
   // ── MAIN STOCK VIEW ──
-  const [stockFilter, setStockFilter] = useState("all"); // all, low, out
   const stockFiltered = stockFilter === "low" ? alerts : stockFilter === "out" ? outOfStock : filtered;
 
   return (<div>
