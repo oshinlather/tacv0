@@ -13,16 +13,16 @@ const OUTLETS = [
   { id: "sec56", name: "Sector 56", short: "S-56" },
   { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
 ];
-const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset()); return d.toISOString().split("T")[0]; };
+const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
 const bkToday = () => {
   // BK day resets at 9 PM IST — after 9 PM, demands are for next day
   const d = new Date();
-  d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset());
-  const h = d.getUTCHours();
-  if (h >= 21) d.setUTCDate(d.getUTCDate() + 1); // after 9 PM → next day
-  return d.toISOString().split("T")[0];
+  const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
+  const h = ist.getHours();
+  if (h >= 21) ist.setDate(ist.getDate() + 1);
+  return ist.toISOString().split("T")[0];
 };
-const istHour = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330 - d.getTimezoneOffset()); return d.getUTCHours(); };
+const istHour = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.getHours(); };
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
   const h = istHour();
@@ -2088,3 +2088,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
+
