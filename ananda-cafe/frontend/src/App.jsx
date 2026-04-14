@@ -14,14 +14,6 @@ const OUTLETS = [
   { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
 ];
 const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
-const bkToday = () => {
-  // BK day resets at 9 PM IST — after 9 PM, demands are for next day
-  const d = new Date();
-  const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
-  const h = ist.getHours();
-  if (h >= 21) ist.setDate(ist.getDate() + 1);
-  return ist.toISOString().split("T")[0];
-};
 const istHour = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.getHours(); };
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
@@ -442,10 +434,9 @@ const BaseKitchen = () => {
   }, [selDate]);
   useEffect(load, [load]);
 
-  const issuedIds = useMemo(() => { try { return JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]"); } catch { return []; } }, [orders]);
-  const pendingOrders = orders.filter((o) => (o.status === "submitted" || o.status === "received") && !issuedIds.includes(o.id));
+  const pendingOrders = orders.filter((o) => o.status === "submitted" || o.status === "received");
   const dispatchedOrders = orders.filter((o) => o.status === "fulfilled");
-  const issuedOrders = orders.filter((o) => issuedIds.includes(o.id) && o.status !== "fulfilled");
+  const issuedOrders = orders.filter((o) => o.status === "issued");
   const activeOrders = showAll ? orders : pendingOrders;
 
   const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
@@ -487,7 +478,7 @@ const BaseKitchen = () => {
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         <button onClick={() => setSelDate(today())} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === today() ? 700 : 500, border: selDate === today() ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#888", whiteSpace: "nowrap" }}>Today</button>
-        {Array.from({ length: 6 }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (i + 1)); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
+        {Array.from({ length: 6 }, (_, i) => { const now = new Date(); const ist = new Date(now.getTime() + (330 + now.getTimezoneOffset()) * 60000); ist.setDate(ist.getDate() - (i + 1)); const ds = ist.toISOString().split("T")[0]; return (<button key={i} onClick={() => setSelDate(ds)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === ds ? 700 : 500, border: selDate === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === ds ? "#1A1A1A" : "#fff", color: selDate === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{i === 0 ? "Yesterday" : ds.slice(5)}</button>); })}
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
         <button onClick={() => setShowAll(false)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888" }}>⏳ Pending ({pendingOrders.length})</button>
@@ -547,9 +538,9 @@ const Dispatch = () => {
   const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
-  const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received") && (!selOutlet || o.outlet_id === selOutlet));
+  const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet));
   const done = orders.filter((o) => o.status === "fulfilled" && (!selOutlet || o.outlet_id === selOutlet));
-  const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received");
+  const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received" || o.status === "issued");
   const allDone = orders.filter((o) => o.status === "fulfilled");
 
   const isChecked = (oid, iid) => checked[oid]?.[iid] || false;
@@ -737,12 +728,10 @@ const Inventory = () => {
           date: today(),
         }));
         try { await api.saveIssuanceAudit(auditEntries); } catch (e) { console.error("Audit save failed:", e); }
-        // Record which orders were covered by this issuance
-        try {
-          const prev = JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]");
-          const all = [...new Set([...prev, ...issuedForOrders])];
-          sessionStorage.setItem("issuedOrderIds", JSON.stringify(all));
-        } catch (e) {}
+        // Mark orders as "issued" in database
+        for (const orderId of issuedForOrders) {
+          try { await api.updateOrderStatus(orderId, "issued"); } catch (e) { console.error("Status update failed:", e); }
+        }
       }
       setDraft({}); setOriginalReq({}); setIssuedForOrders([]); load(); setView("stock");
     } catch (e) { alert("Error: " + e.message); }
@@ -755,13 +744,10 @@ const Inventory = () => {
   const loadSmartStockOut = async () => {
     try {
       const ordersData = await api.getOrders({ date: today() });
-      // Only use pending orders (not dispatched/fulfilled)
+      // Only use pending orders (not issued, not dispatched)
       const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
-      // Also exclude orders already issued in this session
-      const issuedIds = JSON.parse(sessionStorage.getItem("issuedOrderIds") || "[]");
-      const unissuedOrders = pendingOrders.filter((o) => !issuedIds.includes(o.id));
 
-      if (unissuedOrders.length === 0) {
+      if (pendingOrders.length === 0) {
         alert("No pending demands to issue. All demands have been issued or dispatched.");
         return;
       }
@@ -769,7 +755,7 @@ const Inventory = () => {
       const consolidated = {};
       BK_ITEMS.forEach((bk) => {
         consolidated[bk.id] = { total: 0 };
-        unissuedOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+        pendingOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
       });
       const rawReq = {};
       Object.entries(consolidated).forEach(([bkId, data]) => {
@@ -801,7 +787,7 @@ const Inventory = () => {
       setDraft(newDraft);
       setOriginalReq(newOriginal);
       setRawReqData(rawReq);
-      setIssuedForOrders(unissuedOrders.map((o) => o.id));
+      setIssuedForOrders(pendingOrders.map((o) => o.id));
       setView("stock_out");
     } catch (e) {
       alert("Failed to load requisition: " + e.message);
