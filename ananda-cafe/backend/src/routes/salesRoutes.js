@@ -565,4 +565,49 @@ async function computeRMAudit(date) {
   return auditRows;
 }
 
+// ────────────────────────────────────────────────────────────
+// POST /api/issuance-audit — Save issuance audit entries
+// ────────────────────────────────────────────────────────────
+router.post('/issuance-audit', async (req, res) => {
+  try {
+    const { entries } = req.body;
+    if (!entries || entries.length === 0) return res.status(400).json({ error: 'No entries' });
+
+    const rows = entries.map(e => ({
+      item_id: e.item_id,
+      item_name: e.item_name,
+      calculated_qty: e.calculated_qty,
+      issued_qty: e.issued_qty,
+      variance: e.variance,
+      audit_date: e.date || new Date().toISOString().split('T')[0],
+    }));
+
+    const { error } = await supabase.from('issuance_audit').insert(rows);
+    if (error) throw error;
+
+    res.json({ success: true, count: rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
+// GET /api/issuance-audit/:date — Get issuance audit for a date
+// ────────────────────────────────────────────────────────────
+router.get('/issuance-audit/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { data, error } = await supabase
+      .from('issuance_audit')
+      .select('*')
+      .eq('audit_date', date)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json(data || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
