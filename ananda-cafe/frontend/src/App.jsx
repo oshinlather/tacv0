@@ -69,33 +69,23 @@ const DEMAND_SECTIONS = [
     items: [
       { id: "sambhar", name: "Sambhar", unit: "Kg" },
       { id: "red_chutney", name: "Red Chutney", unit: "Kg" },
-      { id: "dosa_batter", name: "Dosa Batter", unit: "Batch" },
-      { id: "idli_batter", name: "Idli Batter", unit: "Batch" },
-      { id: "vada_batter", name: "Vada Batter", unit: "Batch" },
-      { id: "rawa_mix", name: "Rawa Mix", unit: "Kg" },
-      { id: "onion_masala", name: "Onion Masala", unit: "Kg" },
-      { id: "upma_sooji", name: "Upma Sooji", unit: "Gm" },
-      { id: "garlic_paste", name: "Garlic Paste", unit: "Gm" },
+      { id: "coconut_crush", name: "Coconut Crush", unit: "Kg" },
+      { id: "pineapple_halwa", name: "Pineapple Halwa", unit: "Kg" },
       { id: "podi_masala", name: "Podi Masala", unit: "Kg" },
-      { id: "sugar", name: "Sugar", unit: "Kg" },
-      { id: "poha", name: "Poha", unit: "Gm" },
-      { id: "besan", name: "Besan", unit: "Kg" },
-      { id: "mustard_seeds", name: "Sarson (Mustard Seed)", unit: "Gm" },
-      { id: "kali_mirch", name: "Kaali Mirch", unit: "Gm" },
-      { id: "jeera", name: "Jeera", unit: "Gm" },
-      { id: "kaju", name: "Kaju", unit: "Gm" },
-      { id: "pineapple_halwa", name: "Pineapple Halwa", unit: "Gm" },
-      { id: "kacha_peanut", name: "Kacha Peanut Chilke Wala", unit: "Gm" },
-      { id: "coconut_crush", name: "Coconut Crush", unit: "Pcs" },
-      { id: "rasam", name: "Rasam", unit: "Ltr" },
-      { id: "roasted_karipatta", name: "Roasted Karipatta", unit: "Gm" },
-      { id: "roasted_peanuts", name: "Roasted Peanuts", unit: "Gm" },
+      { id: "vada_batter", name: "Vada Batter", unit: "Kg" },
+      { id: "rawa_mix", name: "Rawa Mix", unit: "Kg" },
+      { id: "roasted_peanuts", name: "Roasted Peanuts", unit: "Kg" },
       { id: "sevya_payasam", name: "Sevya Payasam", unit: "Kg" },
-      { id: "tadka", name: "Tadka", unit: "Ltr" },
+      { id: "rasam", name: "Rasam", unit: "Kg" },
+      { id: "onion_masala", name: "Onion Masala", unit: "Kg" },
+      { id: "dosa_batter", name: "Dosa Batter", unit: "Batch" },
+      { id: "roasted_chana", name: "Roasted Chana", unit: "Kg" },
+      { id: "garlic_paste", name: "Garlic Paste", unit: "Kg" },
+      { id: "idli_batter", name: "Idli Batter", unit: "Batch" },
+      { id: "sona_masoori_rice", name: "Sona Masoori Rice", unit: "Kg" },
       { id: "white_chutney", name: "White Chutney", unit: "Kg" },
-      { id: "roti", name: "Roti", unit: "Pcs" },
-      { id: "sabji", name: "Sabji", unit: "Kg" },
-      { id: "chawal", name: "Chawal", unit: "Kg" },
+      { id: "tadka", name: "Tadka", unit: "Kg" },
+      { id: "roasted_karipatta", name: "Roasted Karipatta", unit: "Kg" },
     ]},
   { id: "vegetable", titleHi: "Vegetables", emoji: "🥬", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0",
     items: [
@@ -143,11 +133,9 @@ const DEMAND_SECTIONS = [
     items: [
       { id: "dhaniya_whole", name: "Dhaniya Whole", unit: "Gm" },
       { id: "golden_sela_rice", name: "Rice (Golden Sela)", unit: "Kg" },
-      { id: "sona_masoori_rice", name: "Sona Masoori Rice", unit: "Kg" },
       { id: "atta", name: "Atta", unit: "Kg" },
       { id: "fortune_refined", name: "Fortune Refined Oil", unit: "Tin" },
       { id: "desi_ghee", name: "Desi Ghee", unit: "Tin" },
-      { id: "roasted_chana", name: "Roasted Chana", unit: "Kg" },
       { id: "staff_dal", name: "Staff Dal", unit: "Kg" },
       { id: "whole_red_chilli", name: "Whole Red Chilli", unit: "Gm" },
       { id: "achar", name: "Achar", unit: "Box" },
@@ -1406,11 +1394,22 @@ const OutletMgr = ({ onBack }) => {
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
-  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; return (<div><SavingOverlay />
+  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food" || sec.id === "vegetable" || sec.id === "masala" || sec.id === "grocery"); const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
-    <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. This is tracked for audit.</div>
-    {DEMAND_SECTIONS.filter((sec) => sec.id === "food" || sec.id === "vegetable" || sec.id === "masala" || sec.id === "grocery").map((sec) => { const isO = expSec === sec.id, fl = sec.items.filter((i) => draft[i.id] > 0).length; return (<div key={sec.id} style={{ borderRadius: 14, border: `1px solid ${sec.border}`, overflow: "hidden", background: "#fff", marginBottom: 6 }}><div onClick={() => setExpSec(isO ? null : sec.id)} style={{ padding: "14px 16px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, background: isO ? sec.bg : "#fff" }}><span style={{ fontSize: 22 }}>{sec.emoji}</span><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{sec.titleHi}</div><div style={{ fontSize: 10, color: "#999" }}>{sec.items.length} items</div></div>{fl > 0 && <span style={{ padding: "2px 8px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 800 }}>{fl}</span>}<span style={{ color: "#CCC", transform: isO ? "rotate(180deg)" : "", transition: "0.2s" }}>▾</span></div>{isO && <div style={{ padding: "6px 12px 12px" }}>{sec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : sec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>}</div>); })}
-    <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "8px 0 12px" }} />
+    <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
+      {wastageSections.map((sec) => { const fl = sec.items.filter((i) => draft[i.id] > 0).length; return (
+        <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || wastageSections[0].id) === sec.id ? 700 : 500, border: (expSec || wastageSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || wastageSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || wastageSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+          <span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
+        </button>); })}
+    </div>
+    <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 18 }}>{activeSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length})</span>
+      </div>
+      <div style={{ padding: "6px 12px 12px" }}>{activeSec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
+    </div>
+    <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 12px" }} />
     <ErrBar />
     <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🗑️ Record Wastage (${ft} items)`}</button>
   </div>); }
