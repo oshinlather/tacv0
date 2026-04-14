@@ -931,8 +931,101 @@ const RecipesPanel = () => {
   const [newIngQty, setNewIngQty] = useState("");
   const [newIngUnit, setNewIngUnit] = useState("Kg");
   const [saved, setSaved] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState(null);
 
   const recipe = editRecipes[sel];
+
+  // ── Download all recipes as CSV ──
+  const downloadRecipes = () => {
+    const headers = ["Recipe", "Yield", "YieldQty", "RawMaterial", "RawMaterialId", "Qty", "Unit"];
+    const rows = [];
+    Object.entries(editRecipes).forEach(([key, r]) => {
+      r.ingredients.forEach((ing) => {
+        const raw = RAW_MATERIALS.find((rm) => rm.id === ing.rawId);
+        rows.push([r.name, r.yield, r.yieldQty, raw?.name || ing.rawId, ing.rawId, ing.qty, raw?.unit || ""]);
+      });
+    });
+    const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `ananda_recipes_${today()}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // ── Upload recipes from CSV ──
+  const handleUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const text = ev.target.result;
+        const lines = text.split("\n").filter((l) => l.trim());
+        if (lines.length < 2) { setUploadMsg({ ok: false, msg: "Empty file" }); return; }
+
+        const headers = lines[0].split(",").map((h) => h.replace(/"/g, "").trim().toLowerCase());
+        const recipeIdx = headers.indexOf("recipe");
+        const yieldIdx = headers.indexOf("yield");
+        const yieldQtyIdx = headers.indexOf("yieldqty");
+        const rmIdx = headers.indexOf("rawmaterial");
+        const rmIdIdx = headers.indexOf("rawmaterialid");
+        const qtyIdx = headers.indexOf("qty");
+        const unitIdx = headers.indexOf("unit");
+
+        if (recipeIdx < 0 || qtyIdx < 0) {
+          setUploadMsg({ ok: false, msg: "CSV must have columns: Recipe, Yield, YieldQty, RawMaterial, RawMaterialId, Qty, Unit" });
+          return;
+        }
+
+        const newRecipes = {};
+        for (let i = 1; i < lines.length; i++) {
+          const cols = lines[i].match(/(".*?"|[^,]*)/g)?.map((c) => c.replace(/^"|"$/g, "").trim()) || [];
+          const recipeName = cols[recipeIdx];
+          const yieldStr = cols[yieldIdx] || "";
+          const yieldQty = parseFloat(cols[yieldQtyIdx]) || 0;
+          const rmName = cols[rmIdx] || "";
+          const rmId = cols[rmIdIdx] || rmName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+          const qty = parseFloat(cols[qtyIdx]) || 0;
+          const unit = cols[unitIdx] || "Kg";
+
+          if (!recipeName || !rmName) continue;
+
+          const recipeKey = recipeName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+          if (!newRecipes[recipeKey]) {
+            newRecipes[recipeKey] = { name: recipeName, yield: yieldStr, yieldQty: yieldQty, ingredients: [] };
+          }
+
+          // Add raw material if not in RAW_MATERIALS
+          if (!RAW_MATERIALS.find((r) => r.id === rmId)) {
+            RAW_MATERIALS.push({ id: rmId, name: rmName, unit: unit });
+          }
+
+          newRecipes[recipeKey].ingredients.push({ rawId: rmId, qty });
+        }
+
+        const count = Object.keys(newRecipes).length;
+        if (count === 0) { setUploadMsg({ ok: false, msg: "No valid recipes found in file" }); return; }
+
+        // Merge: update existing, add new
+        const merged = { ...editRecipes };
+        Object.entries(newRecipes).forEach(([key, recipe]) => {
+          merged[key] = recipe;
+        });
+
+        setEditRecipes(merged);
+        // Also save to global
+        Object.keys(merged).forEach((k) => { RECIPES[k] = merged[k]; });
+
+        setSel(Object.keys(newRecipes)[0]);
+        setUploadMsg({ ok: true, msg: `✅ Loaded ${count} recipes with ${Object.values(newRecipes).reduce((s, r) => s + r.ingredients.length, 0)} ingredients` });
+      } catch (err) {
+        setUploadMsg({ ok: false, msg: `❌ Parse error: ${err.message}` });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
 
   const updateQty = (idx, newQty) => {
     setEditRecipes((prev) => {
@@ -996,7 +1089,12 @@ const RecipesPanel = () => {
     <div id="print-recipes">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Recipe Management</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Standard recipes for raw material calculations and audit</p></div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={downloadRecipes} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 12, fontWeight: 600, color: "#16A34A", cursor: "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
+          <label style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 12, fontWeight: 600, color: "#2563EB", cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center" }}>
+            📤 Upload CSV
+            <input type="file" accept=".csv" onChange={handleUpload} style={{ display: "none" }} />
+          </label>
           {!editMode ? (
             <button onClick={() => setEditMode(true)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 12, fontWeight: 600, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
           ) : (
@@ -1009,6 +1107,7 @@ const RecipesPanel = () => {
         </div>
       </div>
       {saved && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Recipes saved! Raw material requisitions will use updated values.</div>}
+      {uploadMsg && <div style={{ padding: "10px 14px", borderRadius: 10, background: uploadMsg.ok ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${uploadMsg.ok ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: uploadMsg.ok ? "#166534" : "#991B1B", marginBottom: 14 }}>{uploadMsg.msg}</div>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>{Object.keys(editRecipes).map((k) => (<button key={k} onClick={() => setSel(k)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: sel === k ? "none" : "1px solid #E0E0DC", background: sel === k ? "#1A1A1A" : "#fff", color: sel === k ? "#fff" : "#666", fontFamily: "inherit" }}>{editRecipes[k].name}</button>))}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "18px 20px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
