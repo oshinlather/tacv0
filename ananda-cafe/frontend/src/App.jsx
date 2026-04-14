@@ -644,30 +644,6 @@ const BaseKitchen = () => {
         <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
       </div>
 
-      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>📤 Stock Out</div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
-        {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" })), { id: "all", label: "📦 All Direct", color: "#1A1A1A" }].map((f) => (<button key={f.id} onClick={() => setStockOutFilter(f.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutFilter === f.id ? 700 : 500, border: stockOutFilter === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutFilter === f.id ? f.color : "#fff", color: stockOutFilter === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>))}
-      </div>
-
-      {stockOutFilter === "bk" && (<div id="print-stockout-bk" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div><div style={{ fontWeight: 700, fontSize: 14 }}>🏭 Stock Out → BK {!hasRawReq && <span style={{ color: "#16A34A" }}>✅ Issued</span>}</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Raw materials for BK preparation</div></div>
-          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Raw Material", "Required", "Unit"]; const rows = Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return [raw?.name || id, qty.toFixed(2), raw?.unit || ""]; }); exportCSV(headers, rows, `stockout_bk_${selDate}.csv`); }} /><PrintBtn sectionId="print-stockout-bk" title="Stock Out BK" /></div>
-        </div>
-        {hasRawReq ? (<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Required</th><th style={thS}>Unit</th></tr></thead>
-        <tbody>{Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => { const raw = RAW_MATERIALS.find((r) => r.id === id); return (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || id}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{qty.toFixed(2)}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit}</td></tr>); })}</tbody></table>
-        ) : (<div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No pending BK requisition</div>)}
-      </div>)}
-
-      {stockOutFilter !== "bk" && (<div id="print-stockout-outlet" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div><div style={{ fontWeight: 700, fontSize: 14 }}>📤 Stock Out → {stockOutFilter === "all" ? "All Outlets (Direct)" : OUTLETS.find((o) => o.id === stockOutFilter)?.name || stockOutFilter}</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Direct items from store</div></div>
-          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Qty", "Unit", "Category"]; const rows = Object.entries(stockOutItems || {}).sort((a, b) => a[1].category.localeCompare(b[1].category)).map(([, item]) => [item.name, item.qty, item.unit, item.category]); exportCSV(headers, rows, `stockout_${stockOutFilter}_${selDate}.csv`); }} /><PrintBtn sectionId="print-stockout-outlet" title={"Stock Out " + stockOutFilter} /></div>
-        </div>
-        {stockOutItems && Object.keys(stockOutItems).length > 0 ? (<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}><thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Item</th><th style={thS}>Qty</th><th style={thS}>Unit</th><th style={thS}>Category</th></tr></thead>
-        <tbody>{Object.entries(stockOutItems).sort((a, b) => a[1].category.localeCompare(b[1].category)).map(([id, item]) => (<tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td><td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{item.qty}</td><td style={{ ...tdS, textAlign: "center", color: "#999" }}>{item.unit}</td><td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.category}</td></tr>))}</tbody></table>
-        ) : (<div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No direct items for this outlet</div>)}
-      </div>)}
     </div>
   );
 };
@@ -843,6 +819,7 @@ const Inventory = () => {
   const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
+  const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan, all
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -1080,8 +1057,14 @@ const Inventory = () => {
       </button>
     </div>
 
-    {/* Smart Issue - main action */}
-    <button data-smart-issue onClick={loadSmartStockOut} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>📤 Smart Issue (from BK Requisition)</button>
+    {/* Stock Out with filter pills */}
+    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>📤 Stock Out</div>
+    <div style={{ display: "flex", gap: 5, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+      {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" })), { id: "all", label: "📦 All Direct", color: "#1A1A1A" }].map((f) => (
+        <button key={f.id} onClick={() => setStockOutView(f.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+      ))}
+    </div>
+    <button data-smart-issue onClick={loadSmartStockOut} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 12 }}>📤 Issue Stock ({stockOutView === "bk" ? "BK Raw Materials" : stockOutView === "all" ? "All Direct Items" : OUTLETS.find((o) => o.id === stockOutView)?.short || stockOutView})</button>
 
     {/* Category filter - only show when viewing "all" */}
     {stockFilter === "all" && <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c}</button>))}</div>}
