@@ -348,6 +348,18 @@ const PrintBtn = ({ sectionId, title }) => (
   <button className="no-print" onClick={() => printSection(sectionId, title)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🖨️ Print</button>
 );
 
+// ─── CSV Export helper ──────────────────────────────────────────────────────
+const exportCSV = (headers, rows, filename) => {
+  const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
+const ExportBtn = ({ onClick }) => (
+  <button className="no-print" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 12, fontWeight: 600, color: "#16A34A", cursor: "pointer", fontFamily: "inherit" }}>📥 CSV</button>
+);
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  LIVE ACTIVITY — real-time dashboard from DB
 // ═════════════════════════════════════════════════════════════════════════════
@@ -457,7 +469,17 @@ const BaseKitchen = () => {
         <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
           <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</span>
-            <PrintBtn sectionId="print-demand" title="Consolidated Demand" />
+            <div style={{ display: "flex", gap: 6 }}>
+              <ExportBtn onClick={() => {
+                const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)];
+                const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => {
+                  const d = consolidated[bk.id];
+                  return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)];
+                });
+                exportCSV(headers, rows, `demand_${selDate}.csv`);
+              }} />
+              <PrintBtn sectionId="print-demand" title="Consolidated Demand" />
+            </div>
           </div>
           <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
           <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
@@ -467,6 +489,14 @@ const BaseKitchen = () => {
             <div><div style={{ fontWeight: 700, fontSize: 14 }}>🏪 Raw Material Requisition</div><div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Auto-calculated from recipes</div></div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: 11, color: "#DC2626", fontWeight: 600 }}>📤 Use Smart Issue in Inventory tab →</span>
+              <ExportBtn onClick={() => {
+                const headers = ["Raw Material", "Required", "Unit"];
+                const rows = Object.entries(rawReq).sort((a, b) => b[1] - a[1]).map(([id, qty]) => {
+                  const raw = RAW_MATERIALS.find((r) => r.id === id);
+                  return [raw?.name || id, qty.toFixed(2), raw?.unit || ""];
+                });
+                exportCSV(headers, rows, `requisition_${selDate}.csv`);
+              }} />
               <PrintBtn sectionId="print-requisition" title="Raw Material Requisition" />
             </div>
           </div>
