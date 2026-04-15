@@ -72,6 +72,12 @@ const api = {
   addConversion: (data) => post("/api/master/conversions", data),
   updateConversion: (data) => patch("/api/master/conversions", data),
   deleteConversion: (unit_type, item_id) => del(`/api/master/conversions?unit_type=${unit_type}&item_id=${item_id}`),
+
+  // ── Outlet Daily Sales ──
+  getOutletSales: (params) => get("/api/outlet-sales", params),
+  getLatestCash: (outlet_id, before_date) => get("/api/outlet-sales/latest-cash", { outlet_id, before_date }),
+  submitOutletSales: (data) => post("/api/outlet-sales", data),
+  verifyOutletSales: (data) => patch("/api/outlet-sales/verify", data),
 };
 
 // ── Helpers ──
