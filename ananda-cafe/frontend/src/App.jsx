@@ -3043,7 +3043,16 @@ const MasterData = () => {
               <tbody>{invItems.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase())).map((item, idx) => (
                 <tr key={item.id}>
                   <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
-                  <td style={{ ...tdS, fontWeight: 600 }}>{item.name}<span style={{ fontSize: 8, color: "#CCC", marginLeft: 4 }}>{item.id}</span></td>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{editId === `inv_name_${item.id}` ? (
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ flex: 1, padding: "3px 6px", borderRadius: 4, border: "1px solid #B45309", fontSize: 12, fontFamily: "inherit", fontWeight: 600 }} />
+                      <button onClick={async () => {
+                        try { await api.updateInventoryItem(item.id, { name: editUnit }); const d = await api.getInventory(); setInvItems(d || []); setEditId(null); } catch (e) { alert(e.message); }
+                      }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                    </div>
+                  ) : (
+                    <span onClick={() => { setEditId(`inv_name_${item.id}`); setEditUnit(item.name); }} style={{ cursor: "pointer" }}>{item.name} <span style={{ fontSize: 8, color: "#CCC" }}>{item.id}</span></span>
+                  )}</td>
                   <td style={{ ...tdS, fontSize: 10, color: "#888" }}>{item.category}</td>
                   <td style={{ ...tdS, fontWeight: 600 }}>{item.unit}</td>
                   <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: Number(item.current_qty) === 0 ? "#DC2626" : "#16A34A" }}>{item.current_qty}</td>
@@ -3207,5 +3216,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
