@@ -2839,31 +2839,81 @@ const MasterData = () => {
       {/* ── RECIPES TAB ── */}
       {tab === "recipes" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{Object.keys(RECIPES).length} recipes. Shows how demand items are converted to raw materials.</p>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{Object.keys(RECIPES).length} recipes. Tap qty to edit. Changes save to DB.</p>
           {Object.entries(RECIPES).filter(([, r]) => !search || r.name.toLowerCase().includes(search.toLowerCase())).map(([id, recipe]) => {
             const demandItem = foodItems.find((i) => i.id === id);
+            const isAdding = addingTo === `recipe_${id}`;
             return (
               <div key={id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
-                <div style={{ padding: "10px 14px", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ padding: "8px 12px", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <span style={{ fontWeight: 700, fontSize: 13 }}>{recipe.name}</span>
-                    <span style={{ fontSize: 10, color: "#888", marginLeft: 8 }}>Demand unit: {demandItem?.unit || "?"}</span>
+                    <span style={{ fontSize: 10, color: "#888", marginLeft: 6 }}>{demandItem?.unit || "?"}</span>
                   </div>
-                  <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 600 }}>Yield: {recipe.yield}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 600 }}>Yield: {recipe.yield}</span>
+                    <button onClick={() => setAddingTo(isAdding ? null : `recipe_${id}`)} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 9, fontWeight: 700, cursor: "pointer" }}>{isAdding ? "×" : "+"}</button>
+                  </div>
                 </div>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Qty per Batch</th><th style={thS}>Unit</th></tr></thead>
-                  <tbody>{recipe.ingredients.map((ing) => {
-                    const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
-                    return (
-                      <tr key={ing.rawId}>
-                        <td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td>
-                        <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", textAlign: "center" }}>{ing.qty}</td>
-                        <td style={{ ...tdS, color: "#888" }}>{raw?.unit || "Kg"}</td>
-                      </tr>
-                    );
-                  })}</tbody>
-                </table>
+                {/* Add ingredient form */}
+                {isAdding && (
+                  <div style={{ padding: "6px 10px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", display: "flex", gap: 4, flexWrap: "wrap", position: "relative" }}>
+                    <div style={{ position: "relative", flex: 2, minWidth: 100 }}>
+                      <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Type raw material..." style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", boxSizing: "border-box" }} />
+                      {newName.length > 1 && (
+                        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 6, maxHeight: 120, overflowY: "auto", zIndex: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+                          {RAW_MATERIALS.filter((r) => r.name.toLowerCase().includes(newName.toLowerCase()) && !recipe.ingredients.find((i) => i.rawId === r.id)).slice(0, 6).map((r) => (
+                            <button key={r.id} onClick={() => { setNewName(r.name); setEditUnit(r.id); setNewUnit(r.unit); }} style={{ width: "100%", padding: "6px 10px", border: "none", background: editUnit === r.id ? "#F0FDF4" : "#fff", textAlign: "left", fontSize: 11, cursor: "pointer", fontFamily: "inherit", borderBottom: "1px solid #F5F5F3" }}>{r.name} <span style={{ color: "#999", fontSize: 9 }}>({r.unit})</span></button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Qty" type="number" step="0.001" style={{ width: 50, padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, textAlign: "center" }} />
+                    <button onClick={async () => {
+                      if (!editUnit || !newUnit) return;
+                      const newIngs = [...recipe.ingredients, { rawId: editUnit, qty: Number(newUnit) }];
+                      try {
+                        await api.saveRecipe({ id, name: recipe.name, yield_qty: recipe.yieldQty, yield_unit: "Kg", yield_label: recipe.yield, ingredients: newIngs });
+                        const recipes = await api.getMasterRecipes(); if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
+                        setNewName(""); setNewUnit(""); setEditUnit(""); setAddingTo(null); refresh();
+                      } catch (e) { alert(e.message); }
+                    }} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>Add</button>
+                  </div>
+                )}
+                {recipe.ingredients.map((ing) => {
+                  const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+                  const isEditingQty = editId === `rq_${id}_${ing.rawId}`;
+                  return (
+                    <div key={ing.rawId} style={{ display: "flex", alignItems: "center", padding: "6px 12px", borderBottom: "1px solid #F5F5F3", gap: 6 }}>
+                      <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{raw?.name || ing.rawId}</span>
+                      {isEditingQty ? (
+                        <div style={{ display: "flex", gap: 3 }}>
+                          <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} type="number" step="0.001" style={{ width: 55, padding: "3px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 12, textAlign: "center", fontFamily: "'JetBrains Mono'" }} />
+                          <button onClick={async () => {
+                            const newIngs = recipe.ingredients.map((i) => i.rawId === ing.rawId ? { ...i, qty: Number(editUnit) } : i);
+                            try {
+                              await api.saveRecipe({ id, name: recipe.name, yield_qty: recipe.yieldQty, yield_unit: "Kg", yield_label: recipe.yield, ingredients: newIngs });
+                              const recipes = await api.getMasterRecipes(); if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
+                              setEditId(null); refresh();
+                            } catch (e) { alert(e.message); }
+                          }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <span onClick={() => { setEditId(`rq_${id}_${ing.rawId}`); setEditUnit(String(ing.qty)); }} style={{ cursor: "pointer", padding: "2px 8px", borderRadius: 4, background: "#FFFBEB", fontSize: 12, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{ing.qty} ✏️</span>
+                      )}
+                      <span style={{ fontSize: 10, color: "#999", width: 24 }}>{raw?.unit || "Kg"}</span>
+                      <button onClick={async () => {
+                        if (!confirm(`Remove ${raw?.name || ing.rawId}?`)) return;
+                        const newIngs = recipe.ingredients.filter((i) => i.rawId !== ing.rawId);
+                        try {
+                          await api.saveRecipe({ id, name: recipe.name, yield_qty: recipe.yieldQty, yield_unit: "Kg", yield_label: recipe.yield, ingredients: newIngs });
+                          const recipes = await api.getMasterRecipes(); if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
+                          refresh();
+                        } catch (e) { alert(e.message); }
+                      }} style={{ padding: "1px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+                    </div>
+                  );
+                })}
               </div>
             );
           })}
