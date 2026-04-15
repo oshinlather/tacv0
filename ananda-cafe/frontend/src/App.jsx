@@ -2962,18 +2962,45 @@ const MasterData = () => {
       {/* ── INVENTORY SKUs TAB ── */}
       {tab === "inventory" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{invItems.length} items in Supabase inventory. These are what Stock In/Out operates on.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <p style={{ fontSize: 11, color: "#888", margin: 0 }}>{invItems.length} items in inventory.</p>
+            <div style={{ display: "flex", gap: 5 }}>
+              <button onClick={() => api.getInventory().then((d) => setInvItems(d || []))} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, cursor: "pointer" }}>🔄</button>
+              <button onClick={() => setAddingTo(addingTo === "inv" ? null : "inv")} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === "inv" ? "Cancel" : "+ Add"}</button>
+            </div>
+          </div>
+          {addingTo === "inv" && (
+            <div style={{ display: "flex", gap: 4, marginBottom: 8, padding: "8px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0", flexWrap: "wrap" }}>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name" style={{ flex: 2, minWidth: 80, padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit" }} />
+              <select value={editUnit || "Store"} onChange={(e) => setEditUnit(e.target.value)} style={{ padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11 }}>
+                <option>Store</option><option>Food</option><option>Cleaning</option><option>Packaging</option>
+              </select>
+              <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 40, padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, textAlign: "center" }} />
+              <button onClick={async () => {
+                if (!newName.trim()) return;
+                const id = (editUnit || "store").toLowerCase().replace(/[^a-z]/g,"") + "_" + newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                try {
+                  await api.addInventoryItem({ id, name: newName.trim(), category: editUnit || "Store", unit: newUnit || "Kg", threshold: 0 });
+                  const d = await api.getInventory(); setInvItems(d || []);
+                  setNewName(""); setNewUnit("Kg"); setEditUnit(""); setAddingTo(null);
+                } catch (e) { alert("Error: " + e.message); }
+              }} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Add</button>
+            </div>
+          )}
           <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>DB ID</th><th style={thS}>Name</th><th style={thS}>Category</th><th style={thS}>Unit</th><th style={thS}>Stock</th></tr></thead>
+              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>Name</th><th style={thS}>Category</th><th style={thS}>Unit</th><th style={thS}>Stock</th><th style={{ ...thS, width: 30 }}></th></tr></thead>
               <tbody>{invItems.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase())).map((item, idx) => (
                 <tr key={item.id}>
                   <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
-                  <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 9, color: "#999" }}>{item.id}</td>
-                  <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{item.name}<span style={{ fontSize: 8, color: "#CCC", marginLeft: 4 }}>{item.id}</span></td>
                   <td style={{ ...tdS, fontSize: 10, color: "#888" }}>{item.category}</td>
                   <td style={{ ...tdS, fontWeight: 600 }}>{item.unit}</td>
                   <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: Number(item.current_qty) === 0 ? "#DC2626" : "#16A34A" }}>{item.current_qty}</td>
+                  <td style={tdS}><button onClick={async () => {
+                    if (!confirm(`Delete "${item.name}"? This will remove all movement history.`)) return;
+                    try { await api.deleteInventoryItem(item.id); const d = await api.getInventory(); setInvItems(d || []); } catch (e) { alert("Error: " + e.message); }
+                  }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
                 </tr>
               ))}</tbody>
             </table>
