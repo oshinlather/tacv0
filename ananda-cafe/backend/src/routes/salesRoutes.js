@@ -609,5 +609,145 @@ router.get('/issuance-audit/:date', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// ============================================================
+// MASTER DATA API ROUTES — Add to salesRoutes.js
+// Paste at the bottom before module.exports = router;
+// ============================================================
 
+// ── GET /api/master/sections — All demand sections with items
+router.get('/master/sections', async (req, res) => {
+  try {
+    const { data: sections } = await supabase.from('demand_sections').select('*').order('sort_order');
+    const { data: items } = await supabase.from('demand_items').select('*').eq('active', true).order('sort_order');
+    const result = (sections || []).map(sec => ({
+      ...sec,
+      items: (items || []).filter(i => i.section_id === sec.id)
+    }));
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/master/raw-materials
+router.get('/master/raw-materials', async (req, res) => {
+  try {
+    const { data } = await supabase.from('raw_materials').select('*').eq('active', true).order('name');
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/master/recipes — All recipes with ingredients
+router.get('/master/recipes', async (req, res) => {
+  try {
+    const { data: recipes } = await supabase.from('bk_recipes').select('*').eq('active', true);
+    const { data: ingredients } = await supabase.from('bk_recipe_ingredients').select('*');
+    const result = {};
+    (recipes || []).forEach(r => {
+      result[r.id] = {
+        name: r.name,
+        yield: r.yield_label || `${r.yield_qty} ${r.yield_unit}`,
+        yieldQty: Number(r.yield_qty),
+        ingredients: (ingredients || []).filter(i => i.recipe_id === r.id).map(i => ({
+          rawId: i.raw_material_id,
+          qty: Number(i.qty)
+        }))
+      };
+    });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/master/demand-items — Add new demand item
+router.post('/master/demand-items', async (req, res) => {
+  try {
+    const { id, section_id, name, unit, sort_order } = req.body;
+    const { data, error } = await supabase.from('demand_items').upsert({ id, section_id, name, unit, sort_order: sort_order || 99 });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/master/demand-items/:id — Update demand item
+router.patch('/master/demand-items/:id', async (req, res) => {
+  try {
+    const { name, unit, sort_order, active } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (unit !== undefined) updates.unit = unit;
+    if (sort_order !== undefined) updates.sort_order = sort_order;
+    if (active !== undefined) updates.active = active;
+    const { error } = await supabase.from('demand_items').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/master/demand-items/:id — Soft delete
+router.delete('/master/demand-items/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('demand_items').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/master/raw-materials — Add new raw material
+router.post('/master/raw-materials', async (req, res) => {
+  try {
+    const { id, name, unit } = req.body;
+    const { error } = await supabase.from('raw_materials').upsert({ id, name, unit });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/master/raw-materials/:id — Update raw material
+router.patch('/master/raw-materials/:id', async (req, res) => {
+  try {
+    const { name, unit, active } = req.body;
+    const updates = {};
+    if (name !== undefined) updates.name = name;
+    if (unit !== undefined) updates.unit = unit;
+    if (active !== undefined) updates.active = active;
+    const { error } = await supabase.from('raw_materials').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/master/raw-materials/:id — Soft delete
+router.delete('/master/raw-materials/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('raw_materials').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/master/recipes — Add/update recipe
+router.post('/master/recipes', async (req, res) => {
+  try {
+    const { id, name, yield_qty, yield_unit, yield_label, ingredients } = req.body;
+    // Upsert recipe header
+    const { error: recErr } = await supabase.from('bk_recipes').upsert({ id, name, yield_qty, yield_unit: yield_unit || 'Kg', yield_label });
+    if (recErr) throw recErr;
+    // Replace ingredients
+    await supabase.from('bk_recipe_ingredients').delete().eq('recipe_id', id);
+    if (ingredients && ingredients.length > 0) {
+      const rows = ingredients.map(i => ({ recipe_id: id, raw_material_id: i.rawId, qty: i.qty }));
+      const { error: ingErr } = await supabase.from('bk_recipe_ingredients').insert(rows);
+      if (ingErr) throw ingErr;
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/master/recipes/:id
+router.delete('/master/recipes/:id', async (req, res) => {
+  try {
+    await supabase.from('bk_recipe_ingredients').delete().eq('recipe_id', req.params.id);
+    const { error } = await supabase.from('bk_recipes').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 module.exports = router;
