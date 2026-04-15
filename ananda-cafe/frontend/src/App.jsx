@@ -881,7 +881,7 @@ const Inventory = () => {
           const batches = total / recipe.yieldQty;
           recipe.ingredients.forEach((ing) => {
             const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
-            if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg" };
+            if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg", inv_id: raw?.inv_id || null };
             rawReq[ing.rawId].qty += ing.qty * batches;
           });
         });
@@ -982,12 +982,8 @@ const Inventory = () => {
       Object.entries(rawReq).forEach(([rawId, qty]) => {
         const raw = RAW_MATERIALS.find((r) => r.id === rawId);
         if (!raw) return;
-        // Find matching inventory item by name (fuzzy match)
-        const invItem = items.find((i) =>
-          i.name.toLowerCase() === raw.name.toLowerCase() ||
-          i.name.toLowerCase().includes(raw.name.toLowerCase()) ||
-          raw.name.toLowerCase().includes(i.name.toLowerCase())
-        );
+        // Direct inventory item lookup via inv_id (DB-mapped)
+        const invItem = raw.inv_id ? items.find((i) => i.id === raw.inv_id) : null;
         if (invItem) {
           const rounded = Math.round(qty * 100) / 100;
           newDraft[invItem.id] = rounded;
@@ -1230,7 +1226,7 @@ const Inventory = () => {
         {!stockOutLoading && stockOutData && Object.keys(stockOutData).length > 0 ? (
           <div>
             {Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
-              const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
+              const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
               const stock = invItem ? Number(invItem.current_qty) : null;
               const isLow = stock !== null && stock < item.qty;
               const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
@@ -1275,7 +1271,7 @@ const Inventory = () => {
             const item = stockOutData[id];
             if (!item) return null;
             const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
-            const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
+            const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
             return invItem && qty > 0 ? { item_id: invItem.id, quantity: qty } : null;
           }).filter(Boolean);
           if (entries.length === 0) { alert("No matching inventory items found"); return; }
@@ -1285,7 +1281,7 @@ const Inventory = () => {
             const auditEntries = entries.map(({ item_id, quantity }) => {
               const invItem = items.find((i) => i.id === item_id);
               const rawItem = Object.entries(stockOutData).find(([, v]) => {
-                const match = items.find((i) => i.name.toLowerCase() === v.name.toLowerCase() || i.name.toLowerCase().includes(v.name.toLowerCase().split(" ")[0]));
+                const match = v.inv_id ? items.find((i) => i.id === v.inv_id) : null;
                 return match?.id === item_id;
               });
               return { item_id, item_name: invItem?.name || item_id, calculated_qty: rawItem ? rawItem[1].qty : 0, issued_qty: quantity, variance: quantity - (rawItem ? rawItem[1].qty : 0), date: today() };
@@ -2550,7 +2546,7 @@ const MasterData = () => {
         api.getMasterSections(), api.getMasterRawMaterials(), api.getMasterRecipes()
       ]);
       if (sections) { DEMAND_SECTIONS.length = 0; sections.forEach((sec) => DEMAND_SECTIONS.push({ id: sec.id, titleHi: sec.title, emoji: sec.emoji || "", color: sec.color || "#1A1A1A", bg: sec.bg || "#fff", border: sec.border || "#E0E0DC", items: (sec.items || []).map((i) => ({ id: i.id, name: i.name, unit: i.unit })) })); }
-      if (rawMats) { RAW_MATERIALS.length = 0; rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit })); }
+      if (rawMats) { RAW_MATERIALS.length = 0; rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit, inv_id: r.inventory_item_id })); }
       if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
       refresh();
     } catch (e) { console.error("Reload failed:", e); }
@@ -2899,7 +2895,7 @@ export default function AnandaCafe() {
       }
       if (rawMats && rawMats.length > 0) {
         RAW_MATERIALS.length = 0;
-        rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit }));
+        rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit, inv_id: r.inventory_item_id }));
       }
       if (recipes && Object.keys(recipes).length > 0) {
         Object.keys(RECIPES).forEach((k) => delete RECIPES[k]);
