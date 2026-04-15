@@ -1152,8 +1152,8 @@ const Inventory = () => {
               const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
               const issued = issuedItems[id] || false;
               const editQty = editedQty[id];
-              const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? item.qty.toFixed(2) : item.qty);
-              const isEdited = editQty !== undefined && editQty !== (typeof item.qty === "number" ? item.qty.toFixed(2) : String(item.qty));
+              const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? Math.ceil(item.qty) : item.qty);
+              const isEdited = editQty !== undefined && Number(editQty) !== (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
               return (
                 <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : "transparent", opacity: issued ? 0.6 : 1 }}>
                   <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
@@ -1166,8 +1166,10 @@ const Inventory = () => {
                     <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
                     <div style={{ fontSize: 9, color: "#999" }}>{item.unit}</div>
                   </div>
-                  <input type="number" step="0.01" value={displayQty} onChange={(e) => setEditedQty((p) => ({ ...p, [id]: e.target.value }))} disabled={issued}
-                    style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
+                  <input type="number" inputMode="numeric" step="1" value={displayQty} onChange={(e) => setEditedQty((p) => ({ ...p, [id]: e.target.value }))} disabled={issued}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const inputs = Array.from(document.querySelectorAll("[data-stockout-input]")); const idx = inputs.indexOf(e.target); if (idx < inputs.length - 1) inputs[idx + 1].focus(); } }}
+                    data-stockout-input
+                    style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
                   <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{item.unit}</span>
                 </div>
               );
