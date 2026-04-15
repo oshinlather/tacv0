@@ -2492,9 +2492,46 @@ const MasterData = () => {
 
   useEffect(() => { api.getInventory().then((d) => setInvItems(d || [])).catch(() => {}); }, []);
 
+  const [addingTo, setAddingTo] = useState(null); // section id for adding
+  const [newName, setNewName] = useState("");
+  const [newUnit, setNewUnit] = useState("Kg");
+  const [, forceUpdate] = useState(0);
+  const refresh = () => forceUpdate((n) => n + 1);
+
+  const addItem = (sectionId) => {
+    if (!newName.trim()) return;
+    const sec = DEMAND_SECTIONS.find((s) => s.id === sectionId);
+    if (!sec) return;
+    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    if (sec.items.find((i) => i.id === id)) { alert("Item already exists"); return; }
+    sec.items.push({ id, name: newName.trim(), unit: newUnit });
+    setNewName(""); setNewUnit("Kg"); setAddingTo(null); refresh();
+  };
+
+  const deleteItem = (sectionId, itemId) => {
+    if (!confirm(`Delete "${itemId}" from ${sectionId}?`)) return;
+    const sec = DEMAND_SECTIONS.find((s) => s.id === sectionId);
+    if (sec) sec.items = sec.items.filter((i) => i.id !== itemId);
+    refresh();
+  };
+
+  const addRawMaterial = () => {
+    if (!newName.trim()) return;
+    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    if (RAW_MATERIALS.find((r) => r.id === id)) { alert("Already exists"); return; }
+    RAW_MATERIALS.push({ id, name: newName.trim(), unit: newUnit });
+    setNewName(""); setNewUnit("Kg"); setAddingTo(null); refresh();
+  };
+
+  const deleteRawMaterial = (rawId) => {
+    if (!confirm(`Delete raw material "${rawId}"?`)) return;
+    const idx = RAW_MATERIALS.findIndex((r) => r.id === rawId);
+    if (idx >= 0) RAW_MATERIALS.splice(idx, 1);
+    refresh();
+  };
   const allDemandItems = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ ...i, section: sec.id, sectionName: sec.titleHi, emoji: sec.emoji })));
-  const foodItems = DEMAND_SECTIONS.find((s) => s.id === "food")?.items || [];
   const directSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
+  const foodItems = DEMAND_SECTIONS.find((s) => s.id === "food")?.items || [];
 
   const thS = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", whiteSpace: "nowrap" };
   const tdS = { padding: "7px 10px", fontSize: 12, borderBottom: "1px solid #F0F0EC" };
@@ -2530,21 +2567,30 @@ const MasterData = () => {
       {/* ── DEMAND ITEMS TAB ── */}
       {tab === "demand" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>All items outlets can demand. Food items go to Kitchen for preparation. Others go directly to outlets.</p>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>All items outlets can demand. Food → Kitchen. Others → Direct to outlets. <strong style={{ color: "#B45309" }}>⚠️ Changes are session-only until code is redeployed.</strong></p>
           {DEMAND_SECTIONS.map((sec) => {
             const secItems = sec.items.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase()));
-            if (secItems.length === 0) return null;
+            if (secItems.length === 0 && search) return null;
             return (
               <div key={sec.id} style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: sec.color, marginBottom: 6 }}>{sec.emoji} {sec.titleHi} ({secItems.length})</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: sec.color }}>{sec.emoji} {sec.titleHi} ({sec.items.length})</span>
+                  <button onClick={() => { setAddingTo(addingTo === sec.id ? null : sec.id); setNewName(""); setNewUnit("Kg"); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === sec.id ? "Cancel" : "+ Add"}</button>
+                </div>
+                {addingTo === sec.id && (
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0" }}>
+                    <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Item name" style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                    <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+                    <button onClick={() => addItem(sec.id)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+                  </div>
+                )}
                 <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>ID</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Type</th></tr></thead>
+                    <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Type</th><th style={{ ...thS, width: 30 }}></th></tr></thead>
                     <tbody>{secItems.map((item, idx) => (
                       <tr key={item.id}>
                         <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
-                        <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#999" }}>{item.id}</td>
-                        <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{item.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{item.id}</span></td>
                         <td style={tdS}>{editId === `${sec.id}_${item.id}` ? (
                           <div style={{ display: "flex", gap: 3 }}>
                             <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, fontFamily: "inherit" }} />
@@ -2554,6 +2600,7 @@ const MasterData = () => {
                           <span onClick={() => { setEditId(`${sec.id}_${item.id}`); setEditUnit(item.unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{item.unit} ✏️</span>
                         )}</td>
                         <td style={{ ...tdS, fontSize: 10 }}>{sec.id === "food" ? <span style={{ color: "#B45309" }}>🏭 Kitchen</span> : <span style={{ color: "#2563EB" }}>🏪 Direct</span>}</td>
+                        <td style={tdS}><button onClick={() => deleteItem(sec.id, item.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
                       </tr>
                     ))}</tbody>
                   </table>
@@ -2567,17 +2614,26 @@ const MasterData = () => {
       {/* ── RAW MATERIALS TAB ── */}
       {tab === "raw" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{RAW_MATERIALS.length} raw materials used in BK recipes. These get deducted from inventory during Stock Out.</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <p style={{ fontSize: 11, color: "#888", margin: 0 }}>{RAW_MATERIALS.length} raw materials used in BK recipes.</p>
+            <button onClick={() => { setAddingTo(addingTo === "raw" ? null : "raw"); setNewName(""); setNewUnit("Kg"); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === "raw" ? "Cancel" : "+ Add"}</button>
+          </div>
+          {addingTo === "raw" && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0" }}>
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Material name" style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+              <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+              <button onClick={addRawMaterial} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+            </div>
+          )}
           <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>ID</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Used In</th></tr></thead>
+              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Used In</th><th style={{ ...thS, width: 30 }}></th></tr></thead>
               <tbody>{RAW_MATERIALS.filter((r) => !search || r.name.toLowerCase().includes(search.toLowerCase())).map((raw, idx) => {
                 const usedIn = Object.entries(RECIPES).filter(([, rec]) => rec.ingredients.some((ing) => ing.rawId === raw.id)).map(([, rec]) => rec.name);
                 return (
                   <tr key={raw.id}>
                     <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
-                    <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#999" }}>{raw.id}</td>
-                    <td style={{ ...tdS, fontWeight: 600 }}>{raw.name}</td>
+                    <td style={{ ...tdS, fontWeight: 600 }}>{raw.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{raw.id}</span></td>
                     <td style={tdS}>{editId === `raw_${raw.id}` ? (
                       <div style={{ display: "flex", gap: 3 }}>
                         <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11 }} />
@@ -2587,6 +2643,7 @@ const MasterData = () => {
                       <span onClick={() => { setEditId(`raw_${raw.id}`); setEditUnit(raw.unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{raw.unit} ✏️</span>
                     )}</td>
                     <td style={{ ...tdS, fontSize: 10, color: "#888", maxWidth: 150 }}>{usedIn.length > 0 ? usedIn.join(", ") : <span style={{ color: "#DDD" }}>—</span>}</td>
+                    <td style={tdS}><button onClick={() => deleteRawMaterial(raw.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
                   </tr>
                 );
               })}</tbody>
