@@ -70,6 +70,8 @@ const api = {
   getMovements: (item_id) => get(`/api/inventory/movements/${item_id}`),
   getTodayMovements: (date) => get("/api/inventory/movements", { date }),
   getInventorySummary: () => get("/api/inventory/summary"),
+  addInventoryItem: (data) => post("/api/inventory/items", data),
+  deleteInventoryItem: (id) => del(`/api/inventory/items/${id}`),
 
   // ── Master Data ──
   getMasterSections: () => get("/api/master/sections"),
