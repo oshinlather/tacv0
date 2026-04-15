@@ -1596,6 +1596,11 @@ const CogsDash = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
+  const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
+  const [prevCash, setPrevCash] = useState(0);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesSaving, setSalesSaving] = useState(false);
+  const [existingData, setExistingData] = useState(null);
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
@@ -1640,13 +1645,8 @@ const OutletMgr = ({ onBack }) => {
 
   // ── DAILY SALES & CASH RECONCILIATION ──
   if (screen === "daily_sales") {
-    const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
-    const [prevCash, setPrevCash] = useState(0);
-    const [salesLoading, setSalesLoading] = useState(true);
-    const [salesSaving, setSalesSaving] = useState(false);
-    const [existingData, setExistingData] = useState(null);
 
-    useEffect(() => {
+    const loadSalesData = () => {
       setSalesLoading(true);
       Promise.all([
         api.getOutletSales({ outlet_id: outlet, date: today() }).catch(() => []),
@@ -1662,7 +1662,8 @@ const OutletMgr = ({ onBack }) => {
           setPrevCash(closingCash);
         }
       }).finally(() => setSalesLoading(false));
-    }, []);
+    };
+    if (!salesLoading && !existingData && salesData.total_sale === "") loadSalesData();
 
     const n = (v) => Number(v) || 0;
     const totalSale = n(salesData.total_sale);
