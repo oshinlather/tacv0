@@ -1634,9 +1634,139 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
+
+  // ── DAILY SALES & CASH RECONCILIATION ──
+  if (screen === "daily_sales") {
+    const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
+    const [prevCash, setPrevCash] = useState(0);
+    const [salesLoading, setSalesLoading] = useState(true);
+    const [salesSaving, setSalesSaving] = useState(false);
+    const [existingData, setExistingData] = useState(null);
+
+    useEffect(() => {
+      setSalesLoading(true);
+      Promise.all([
+        api.getOutletSales({ outlet_id: outlet, date: today() }).catch(() => []),
+        api.getLatestCash(outlet, today()).catch(() => null),
+      ]).then(([sales, prev]) => {
+        if (sales && sales.length > 0) {
+          const s = sales[0];
+          setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", notes: s.notes || "" });
+          setExistingData(s);
+        }
+        if (prev) {
+          const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0);
+          setPrevCash(closingCash);
+        }
+      }).finally(() => setSalesLoading(false));
+    }, []);
+
+    const n = (v) => Number(v) || 0;
+    const totalSale = n(salesData.total_sale);
+    const deliverySale = n(salesData.swiggy_sale) + n(salesData.zomato_sale) + n(salesData.other_delivery_sale);
+    const storeSale = Math.max(0, totalSale - deliverySale);
+    const upi = n(salesData.upi_collected);
+    const cash = n(salesData.cash_collected);
+    const paymentTotal = upi + cash;
+    const paymentDiff = storeSale - paymentTotal;
+    const closingCash = prevCash + cash - n(salesData.cash_expense) - n(salesData.cash_deposited);
+
+    const submitSales = async () => {
+      setSalesSaving(true);
+      try {
+        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: outlet, notes: salesData.notes });
+        alert("✅ Daily sales saved!");
+        setScreen("home");
+      } catch (e) { alert("Error: " + e.message); }
+      finally { setSalesSaving(false); }
+    };
+
+    if (salesLoading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+    const Field = ({ label, field, prefix, placeholder }) => (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#FAFAF8", borderRadius: 10, marginBottom: 4 }}>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{label}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          {prefix && <span style={{ fontSize: 14, color: "#999" }}>{prefix}</span>}
+          <input type="number" inputMode="numeric" placeholder={placeholder || "0"} value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={{ width: 90, padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, background: "#fff" }} />
+        </div>
+      </div>
+    );
+
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>💰 Daily Sales & Cash</div><span style={{ fontSize: 11, color: "#999" }}>{today()}</span></div>
+
+      {/* Section 1: Total Sale */}
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 12, fontWeight: 700, color: "#B45309" }}>📊 Total Sale</div>
+        <div style={{ padding: "8px" }}>
+          <Field label="Total Sale (Billing)" field="total_sale" prefix="₹" />
+        </div>
+      </div>
+
+      {/* Section 2: Delivery Channels */}
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", background: "#FFF7ED", borderBottom: "1px solid #FED7AA", fontSize: 12, fontWeight: 700, color: "#EA580C" }}>🛵 Delivery Channels</div>
+        <div style={{ padding: "8px" }}>
+          <Field label="Swiggy" field="swiggy_sale" prefix="₹" />
+          <Field label="Zomato" field="zomato_sale" prefix="₹" />
+          <Field label="Other Delivery" field="other_delivery_sale" prefix="₹" />
+        </div>
+        <div style={{ padding: "8px 14px", background: "#F0FDF4", borderTop: "1px solid #BBF7D0", display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700 }}>
+          <span>🏪 Store Sale (Dine-in + Pickup)</span>
+          <span style={{ fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{storeSale}</span>
+        </div>
+      </div>
+
+      {/* Section 3: Payment Modes */}
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", fontSize: 12, fontWeight: 700, color: "#2563EB" }}>💳 Payment Modes (Store Sale)</div>
+        <div style={{ padding: "8px" }}>
+          <Field label="UPI Collected" field="upi_collected" prefix="₹" />
+          <Field label="Cash Collected" field="cash_collected" prefix="₹" />
+        </div>
+        <div style={{ padding: "8px 14px", background: paymentDiff === 0 ? "#F0FDF4" : "#FEF2F2", borderTop: `1px solid ${paymentDiff === 0 ? "#BBF7D0" : "#FECACA"}`, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 }}>
+          <span>UPI + Cash = ₹{paymentTotal}</span>
+          <span style={{ color: paymentDiff === 0 ? "#16A34A" : "#DC2626" }}>{paymentDiff === 0 ? "✅ Matches" : `⚠️ Diff: ₹${paymentDiff}`}</span>
+        </div>
+      </div>
+
+      {/* Section 4: Cash Management */}
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", background: "#FAF5FF", borderBottom: "1px solid #E9D5FF", fontSize: 12, fontWeight: 700, color: "#9333EA" }}>💵 Cash Management</div>
+        <div style={{ padding: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#F5F5F3", borderRadius: 10, marginBottom: 4 }}>
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Previous Day Cash</span>
+            <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#555" }}>₹{prevCash}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#F0FDF4", borderRadius: 10, marginBottom: 4 }}>
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>+ Today Cash Collected</span>
+            <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#16A34A" }}>₹{cash}</span>
+          </div>
+          <Field label="− Cash Expense" field="cash_expense" prefix="₹" />
+          <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense detail (veg, milk, etc.)" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", marginBottom: 4, boxSizing: "border-box" }} />
+          <Field label="− Cash Deposited" field="cash_deposited" prefix="₹" />
+        </div>
+        <div style={{ padding: "12px 14px", background: "#FFFBEB", borderTop: "1px solid #FDE68A", display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
+          <span>💰 Closing Cash with Manager</span>
+          <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 18 }}>₹{closingCash}</span>
+        </div>
+      </div>
+
+      {/* Notes */}
+      <input value={salesData.notes} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Any notes..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+
+      {/* Submit */}
+      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={submitSales} disabled={salesSaving || !totalSale} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: salesSaving || !totalSale ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: salesSaving || !totalSale ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          {salesSaving ? "⏳ Saving..." : existingData ? "💾 Update Today's Sales" : "💰 Submit Today's Sales"}
+        </button>
+      </div>
+    </div>);
+  }
 
   if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food" || sec.id === "vegetable" || sec.id === "masala" || sec.id === "grocery"); const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
