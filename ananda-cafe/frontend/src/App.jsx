@@ -2913,6 +2913,18 @@ const MasterData = () => {
                           <button onClick={async () => {
                             try {
                               await api.updateConversion({ unit_type: unitName, item_id: item.item_id, qty: Number(editUnit), notes: `1 ${unitName} = ${editUnit} ${item.base_unit}` });
+                              // If this is a Batch conversion, also update the recipe yield
+                              if (unitName === "Batch" && RECIPES[item.item_id]) {
+                                const newYield = Number(editUnit);
+                                const oldYield = RECIPES[item.item_id].yieldQty;
+                                const ratio = newYield / oldYield;
+                                // Scale all ingredient quantities proportionally
+                                const newIngredients = RECIPES[item.item_id].ingredients.map((ing) => ({ rawId: ing.rawId, qty: Math.round(ing.qty * ratio * 10000) / 10000 }));
+                                await api.saveRecipe({ id: item.item_id, name: RECIPES[item.item_id].name, yield_qty: newYield, yield_unit: "Kg", yield_label: `${newYield} Kg (1 Batch)`, ingredients: newIngredients });
+                                // Reload recipes
+                                const recipes = await api.getMasterRecipes().catch(() => null);
+                                if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
+                              }
                               const conv = await api.getConversions(); if (conv) { Object.keys(UNIT_CONVERSIONS).forEach((k) => delete UNIT_CONVERSIONS[k]); Object.assign(UNIT_CONVERSIONS, conv); }
                               setEditId(null); refresh();
                             } catch (e) { alert("Error: " + e.message); }
