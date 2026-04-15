@@ -71,6 +71,7 @@ const api = {
   getTodayMovements: (date) => get("/api/inventory/movements", { date }),
   getInventorySummary: () => get("/api/inventory/summary"),
   addInventoryItem: (data) => post("/api/inventory/items", data),
+  updateInventoryItem: (id, data) => patch(`/api/inventory/items/${id}`, data),
   deleteInventoryItem: (id) => del(`/api/inventory/items/${id}`),
 
   // ── Master Data ──
