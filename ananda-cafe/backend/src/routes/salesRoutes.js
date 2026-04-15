@@ -254,6 +254,40 @@ res.status(500).json({ error: err.message });
 });
 
 // ────────────────────────────────────────────────────────────
+// GET /api/pnl/computed/:date — Frontend getComputedPnl(date)
+// MUST be before /pnl/:date so Express doesn't match "computed" as a date
+// ────────────────────────────────────────────────────────────
+router.get('/pnl/computed/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { data: pnl, error } = await supabase
+      .from('daily_pnl')
+      .select('*')
+      .eq('pnl_date', date);
+
+    if (error) throw error;
+
+    if (pnl && pnl.length > 0) {
+      const mapped = pnl.map(row => ({
+        ...row,
+        outlet_id: row.outlet_code || row.outlet_id,
+      }));
+      return res.json({ pnl: mapped });
+    }
+
+    // Compute if not exists
+    const result = await computeDailyPnL(date);
+    const mapped = (result || []).map(row => ({
+      ...row,
+      outlet_id: row.outlet_code || row.outlet_id,
+    }));
+    res.json({ pnl: mapped });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // 3E. GET /api/pnl/:date — Daily P&L
 // ────────────────────────────────────────────────────────────
 router.get('/pnl/:date', async (req, res) => {
@@ -905,4 +939,105 @@ router.patch('/inventory/items/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// ============================================================
+// FIX: Missing routes that frontend expects (were causing 404s)
+// ============================================================
+
+// ── GET /api/sales — Frontend calls getSales(params) with query params
+// Backend had /sales/:date but frontend expects /sales?date=...&outlet=...
+router.get('/sales', async (req, res) => {
+  try {
+    const { date, outlet } = req.query;
+    if (!date) return res.status(400).json({ error: 'date query param required' });
+
+    let query = supabase
+      .from('daily_sales')
+      .select('*')
+      .eq('sale_date', date)
+      .order('item_total', { ascending: false });
+
+    if (outlet && outlet !== 'all') {
+      query = query.eq('outlet_code', outlet);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Aggregate by item
+    const itemMap = {};
+    const outletMap = {};
+    let totalOrders = new Set();
+
+    (data || []).forEach(row => {
+      if (!itemMap[row.item_name]) {
+        itemMap[row.item_name] = { item_name: row.item_name, category: row.category_name, qty: 0, revenue: 0 };
+      }
+      itemMap[row.item_name].qty += row.item_quantity;
+      itemMap[row.item_name].revenue += row.item_total;
+
+      if (!outletMap[row.outlet_code]) {
+        outletMap[row.outlet_code] = { outlet_code: row.outlet_code, outlet_name: row.outlet, orders: new Set(), revenue: 0, dine_in: 0, delivery: 0, pickup: 0 };
+      }
+      outletMap[row.outlet_code].orders.add(row.invoice_no);
+      totalOrders.add(row.invoice_no);
+    });
+
+    const orderRevenue = {};
+    (data || []).forEach(row => {
+      const key = `${row.outlet_code}-${row.invoice_no}`;
+      if (!orderRevenue[key]) {
+        orderRevenue[key] = { outlet_code: row.outlet_code, total: row.order_total, order_type: row.order_type };
+      }
+    });
+
+    Object.values(orderRevenue).forEach(order => {
+      if (outletMap[order.outlet_code]) {
+        outletMap[order.outlet_code].revenue += order.total;
+        if (order.order_type === 'Dine In') outletMap[order.outlet_code].dine_in++;
+        else if (order.order_type?.includes('Delivery')) outletMap[order.outlet_code].delivery++;
+        else if (order.order_type === 'Pick Up') outletMap[order.outlet_code].pickup++;
+      }
+    });
+
+    Object.values(outletMap).forEach(o => { o.orders = o.orders.size; });
+
+    const items = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue);
+    const outlets = Object.values(outletMap);
+
+    res.json({
+      date,
+      total_items: items.length,
+      total_orders: totalOrders.size,
+      total_revenue: items.reduce((s, i) => s + i.revenue, 0),
+      items,
+      outlets,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/recipes/petpooja — Frontend calls getRecipesPetpooja()
+// Backend had /recipes but frontend expects /recipes/petpooja
+router.get('/recipes/petpooja', async (req, res) => {
+  try {
+    const { data: recipes, error } = await supabase
+      .from('recipes')
+      .select(`
+        id, item_name, item_type, category, status,
+        recipe_ingredients (
+          id, raw_material, qty, unit, qty_kg
+        )
+      `)
+      .eq('status', 'Active')
+      .order('item_name');
+
+    if (error) throw error;
+    res.json(recipes || []);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
