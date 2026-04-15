@@ -821,6 +821,8 @@ const Inventory = () => {
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
   const [issuing, setIssuing] = useState(false);
+  const [editingItem, setEditingItem] = useState(null); // id of item being edited
+  const [editQtyVal, setEditQtyVal] = useState("");
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
   const [stockOutData, setStockOutData] = useState(null);
   const [stockOutLoading, setStockOutLoading] = useState(false);
@@ -1118,17 +1120,48 @@ const Inventory = () => {
           const qty = Number(item.current_qty);
           const isLow = item.below_threshold;
           const isOut = qty === 0;
+          const isEditing = editingItem === item.id;
           return (
-            <div key={item.id} onClick={() => loadHistory(item.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < stockFiltered.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: "transparent" }}>
-              <div style={{ flex: 1 }}>
+            <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < stockFiltered.length - 1 ? "1px solid #F0F0EC" : "none", background: isEditing ? "#FFFDF5" : "transparent" }}>
+              <div style={{ flex: 1, cursor: "pointer" }} onClick={() => !isEditing && loadHistory(item.id)}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
                 <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Min: {item.threshold} {item.unit}</div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#1A1A1A" }}>{qty}</div>
-                <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
-              </div>
-              {isLow && <div style={{ width: 8, height: 8, borderRadius: 4, background: isOut ? "#DC2626" : "#F59E0B", flexShrink: 0 }} />}
+              {isEditing ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input type="number" inputMode="numeric" autoFocus value={editQtyVal} onChange={(e) => setEditQtyVal(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") {
+                      const newQty = Number(editQtyVal);
+                      const diff = newQty - qty;
+                      if (diff !== 0) {
+                        const type = diff > 0 ? "stock_in" : "stock_out";
+                        api.stockIn ? (diff > 0 ? api.stockIn([{ item_id: item.id, quantity: Math.abs(diff) }], "correction") : api.stockOut([{ item_id: item.id, quantity: Math.abs(diff) }], "correction")) : null;
+                        load();
+                      }
+                      setEditingItem(null);
+                    } if (e.key === "Escape") setEditingItem(null); }}
+                    style={{ width: 60, padding: "5px", borderRadius: 6, border: "2px solid #B45309", fontSize: 16, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800 }} />
+                  <button onClick={async () => {
+                    const newQty = Number(editQtyVal);
+                    const diff = newQty - qty;
+                    if (diff !== 0) {
+                      try {
+                        if (diff > 0) await api.stockIn([{ item_id: item.id, quantity: Math.abs(diff) }], "correction");
+                        else await api.stockOut([{ item_id: item.id, quantity: Math.abs(diff) }], "correction");
+                        load();
+                      } catch (e) { alert("Error: " + e.message); }
+                    }
+                    setEditingItem(null);
+                  }} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                  <button onClick={() => setEditingItem(null)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 12, cursor: "pointer" }}>✕</button>
+                </div>
+              ) : (
+                <div style={{ textAlign: "right", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); setEditingItem(item.id); setEditQtyVal(String(qty)); }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isOut ? "#DC2626" : isLow ? "#B45309" : "#1A1A1A" }}>{qty}</div>
+                  <div style={{ fontSize: 10, color: "#999" }}>{item.unit}</div>
+                </div>
+              )}
+              {isLow && !isEditing && <div style={{ width: 8, height: 8, borderRadius: 4, background: isOut ? "#DC2626" : "#F59E0B", flexShrink: 0 }} />}
             </div>
           );
         })}
