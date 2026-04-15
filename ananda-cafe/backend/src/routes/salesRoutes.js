@@ -813,4 +813,66 @@ router.delete('/master/conversions', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ============================================================
+// DAILY OUTLET SALES & CASH RECONCILIATION
+// Add to salesRoutes.js before module.exports = router;
+// ============================================================
+
+// ── GET /api/outlet-sales — Get sales for a date/outlet
+router.get('/outlet-sales', async (req, res) => {
+  try {
+    const { outlet_id, date } = req.query;
+    let query = supabase.from('daily_outlet_sales').select('*');
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    if (date) query = query.eq('date', date);
+    const { data, error } = await query.order('date', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/outlet-sales/latest-cash — Get previous day closing cash for an outlet
+router.get('/outlet-sales/latest-cash', async (req, res) => {
+  try {
+    const { outlet_id, before_date } = req.query;
+    const { data, error } = await supabase.from('daily_outlet_sales')
+      .select('*')
+      .eq('outlet_id', outlet_id)
+      .lt('date', before_date)
+      .order('date', { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    res.json(data && data[0] ? data[0] : null);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/outlet-sales — Submit/update daily sales
+router.post('/outlet-sales', async (req, res) => {
+  try {
+    const { outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
+            upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
+            cash_deposited, submitted_by, notes } = req.body;
+    
+    const { data, error } = await supabase.from('daily_outlet_sales').upsert({
+      outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
+      upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
+      cash_deposited, submitted_by, notes, submitted_at: new Date().toISOString()
+    }, { onConflict: 'outlet_id,date' });
+    
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/outlet-sales/verify — Owner verifies UPI
+router.patch('/outlet-sales/verify', async (req, res) => {
+  try {
+    const { outlet_id, date, verified } = req.body;
+    const { error } = await supabase.from('daily_outlet_sales')
+      .update({ verified, verified_at: new Date().toISOString() })
+      .eq('outlet_id', outlet_id).eq('date', date);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 module.exports = router;
