@@ -34,6 +34,21 @@ const api = {
   getPnl: (params) => get("/api/pnl", params),
   upsertPnl: (data) => post("/api/pnl", data),
   getPnlSummary: (date) => get("/api/pnl/summary", { date }),
+  getComputedPnl: (date) => get(`/api/pnl/computed/${date}`),
+
+  // ── Sales ──
+  getSales: (params) => get("/api/sales", params),
+  uploadSalesCSV: (formData) => fetch(API + "/api/sales/upload", { method: "POST", body: formData }).then(r => r.json()),
+
+  // ── Issuance Audit ──
+  saveIssuanceAudit: (entries) => post("/api/issuance-audit", { entries }),
+  getIssuanceAudit: (params) => get("/api/issuance-audit", params),
+
+  // ── RM Audit ──
+  getRMAudit: (params) => get("/api/rm-audit", params),
+
+  // ── PetPooja Recipes ──
+  getRecipesPetpooja: () => get("/api/recipes/petpooja"),
 
   // ── Orders / Dashboard ──
   getOrders: (params) => get("/api/orders", params),
