@@ -702,14 +702,8 @@ const Dispatch = () => {
 
   return (
     <div id="print-dispatch">
-      {/* Compact header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🚚 Dispatch</h3>
-        <button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer" }}>🔄</button>
-      </div>
-
-      {/* Outlet pills - compact */}
-      <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+      {/* Outlet pills + refresh in one row */}
+      <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {OUTLETS.map((o) => {
           const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
           const dCount = allDone.filter((d) => d.outlet_id === o.id).length;
@@ -720,6 +714,8 @@ const Dispatch = () => {
             {o.short}
           </button>);
         })}
+        <div style={{ flex: 1 }} />
+        <button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer", flexShrink: 0 }}>🔄</button>
       </div>
 
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
