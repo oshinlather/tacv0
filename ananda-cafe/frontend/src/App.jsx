@@ -439,6 +439,42 @@ let RECIPES = {
   sevya_payasam: { name: "Sevya Payasam", yield: "2.5 Kg", yieldQty: 2.5, ingredients: [{ rawId: "desi_ghee_raw", qty: 0.01 }, { rawId: "kaju_raw", qty: 0.02 }, { rawId: "kishmish_raw", qty: 0.02 }, { rawId: "kesar_raw", qty: 0.0003 }, { rawId: "milk_raw", qty: 2.0 }, { rawId: "semiyan_raw", qty: 0.2 }, { rawId: "sugar_raw", qty: 0.3 }, { rawId: "milkmaid_raw", qty: 0.04 }, { rawId: "ilaychi_raw", qty: 0.001 }] },
 };
 
+// ─── UNIT CONVERSIONS — Custom unit to base unit mappings ─────────────────
+let UNIT_CONVERSIONS = {
+  Batch: [
+    { item_id: "dosa_batter", item_name: "Dosa Batter", qty: 18, base_unit: "Kg", notes: "1 Batch = 18 Kg" },
+    { item_id: "idli_batter", item_name: "Idli Batter", qty: 16, base_unit: "Kg", notes: "1 Batch = 16 Kg" },
+    { item_id: "vada_batter", item_name: "Vada Batter", qty: 2, base_unit: "Kg", notes: "1 Batch = 2 Kg" },
+  ],
+  Pkt: [
+    { item_id: "deggi_mirch", item_name: "Deggi Mirch", qty: 500, base_unit: "Gm", notes: "1 Pkt = 500 Gm" },
+    { item_id: "dhaniya_powder", item_name: "Dhaniya Powder", qty: 500, base_unit: "Gm", notes: "1 Pkt = 500 Gm" },
+    { item_id: "kitchen_king", item_name: "Kitchen King", qty: 100, base_unit: "Gm", notes: "1 Pkt = 100 Gm" },
+    { item_id: "chat_masala", item_name: "Chat Masala", qty: 100, base_unit: "Gm", notes: "1 Pkt = 100 Gm" },
+    { item_id: "haldi_powder", item_name: "Haldi Powder", qty: 500, base_unit: "Gm", notes: "1 Pkt = 500 Gm" },
+    { item_id: "red_chilli_powder", item_name: "Red Chilli Powder", qty: 500, base_unit: "Gm", notes: "1 Pkt = 500 Gm" },
+    { item_id: "sambhar_masala_777", item_name: "Sambhar Masala 777", qty: 200, base_unit: "Gm", notes: "1 Pkt = 200 Gm" },
+    { item_id: "amchoor_powder", item_name: "Amchoor Powder", qty: 100, base_unit: "Gm", notes: "1 Pkt = 100 Gm" },
+    { item_id: "kasturi_methi", item_name: "Kasturi Methi", qty: 100, base_unit: "Gm", notes: "1 Pkt = 100 Gm" },
+    { item_id: "filter_coffee_powder", item_name: "Filter Coffee Powder", qty: 200, base_unit: "Gm", notes: "1 Pkt = 200 Gm" },
+    { item_id: "chai_patti", item_name: "Chai Patti", qty: 250, base_unit: "Gm", notes: "1 Pkt = 250 Gm" },
+    { item_id: "papad_777", item_name: "777 Papad", qty: 200, base_unit: "Pcs", notes: "1 Pkt = 200 Pcs" },
+    { item_id: "sarf", item_name: "Surf", qty: 1, base_unit: "Kg", notes: "1 Pkt = 1 Kg" },
+  ],
+  Tin: [
+    { item_id: "fortune_refined", item_name: "Fortune Refined Oil", qty: 15, base_unit: "Ltr", notes: "1 Tin = 15 Ltr" },
+    { item_id: "desi_ghee", item_name: "Desi Ghee", qty: 15, base_unit: "Kg", notes: "1 Tin = 15 Kg" },
+  ],
+  Box: [
+    { item_id: "achar", item_name: "Achar", qty: 5, base_unit: "Kg", notes: "1 Box = 5 Kg" },
+  ],
+  Bundle: [
+    { item_id: "bio_garbage_bag", item_name: "Bio Garbage Bag", qty: 10, base_unit: "Pcs", notes: "1 Bundle = 10 Pcs" },
+    { item_id: "clean_wrap", item_name: "Clean Wrap", qty: 1, base_unit: "Roll", notes: "1 Bundle = 1 Roll" },
+    { item_id: "tape", item_name: "Tape", qty: 6, base_unit: "Pcs", notes: "1 Bundle = 6 Pcs" },
+  ],
+};
+
 const getBk = (id) => BK_ITEMS.find((b) => b.id === id)?.name || id;
 
 // ─── Table styles ───────────────────────────────────────────────────────────
@@ -2578,7 +2614,7 @@ const MasterData = () => {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto" }}>
-        {[{ id: "demand", label: "📋 Demand Items", c: "#B45309" }, { id: "raw", label: "🧪 Raw Materials", c: "#2563EB" }, { id: "recipes", label: "📖 Recipes", c: "#16A34A" }, { id: "inventory", label: "📦 Inventory SKUs", c: "#9333EA" }].map((t) => (
+        {[{ id: "demand", label: "📋 Demand Items", c: "#B45309" }, { id: "raw", label: "🧪 Raw Materials", c: "#2563EB" }, { id: "recipes", label: "📖 Recipes", c: "#16A34A" }, { id: "conversions", label: "🔄 Conversions", c: "#EA580C" }, { id: "inventory", label: "📦 Inventory SKUs", c: "#9333EA" }].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: tab === t.id ? 700 : 500, border: tab === t.id ? "none" : "1px solid #E0E0DC", background: tab === t.id ? t.c : "#fff", color: tab === t.id ? "#fff" : "#888", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{t.label}</button>
         ))}
       </div>
@@ -2705,6 +2741,67 @@ const MasterData = () => {
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* ── CONVERSIONS TAB ── */}
+      {tab === "conversions" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 12px" }}>Define what 1 custom unit equals in base units. Used for stock calculations and demand accuracy.</p>
+          {Object.entries(UNIT_CONVERSIONS).map(([unitName, items]) => (
+            <div key={unitName} style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>🔄 {unitName} ({items.length} items)</span>
+                <button onClick={() => { setAddingTo(addingTo === `conv_${unitName}` ? null : `conv_${unitName}`); setNewName(""); setNewUnit(""); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === `conv_${unitName}` ? "Cancel" : "+ Add"}</button>
+              </div>
+              {addingTo === `conv_${unitName}` && (
+                <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FED7AA", flexWrap: "wrap" }}>
+                  <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Item name" style={{ flex: 1, minWidth: 100, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                  <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Qty" type="number" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center" }} />
+                  <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} placeholder="Base unit" style={{ width: 60, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center" }} />
+                  <button onClick={() => {
+                    if (!newName.trim() || !newUnit) return;
+                    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                    UNIT_CONVERSIONS[unitName].push({ item_id: id, item_name: newName.trim(), qty: Number(newUnit), base_unit: editUnit || "Gm", notes: `1 ${unitName} = ${newUnit} ${editUnit || "Gm"}` });
+                    setNewName(""); setNewUnit(""); setEditUnit(""); setAddingTo(null); refresh();
+                  }} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+                </div>
+              )}
+              <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Item</th>
+                    <th style={{ ...thS, textAlign: "center" }}>1 {unitName} =</th>
+                    <th style={{ ...thS, textAlign: "center" }}>Base Unit</th>
+                    <th style={{ ...thS, width: 30 }}></th>
+                  </tr></thead>
+                  <tbody>{items.filter((i) => !search || i.item_name.toLowerCase().includes(search.toLowerCase())).map((item, idx) => (
+                    <tr key={item.item_id}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{item.item_id}</span></td>
+                      <td style={tdS}>{editId === `conv_${unitName}_${item.item_id}` ? (
+                        <div style={{ display: "flex", gap: 3, justifyContent: "center" }}>
+                          <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} type="number" style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 12, textAlign: "center" }} />
+                          <button onClick={() => { item.qty = Number(editUnit); item.notes = `1 ${unitName} = ${editUnit} ${item.base_unit}`; setEditId(null); refresh(); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <span onClick={() => { setEditId(`conv_${unitName}_${item.item_id}`); setEditUnit(String(item.qty)); }} style={{ cursor: "pointer", padding: "3px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309", display: "inline-block", textAlign: "center" }}>{item.qty} ✏️</span>
+                      )}</td>
+                      <td style={{ ...tdS, textAlign: "center", color: "#888", fontSize: 12 }}>{item.base_unit}</td>
+                      <td style={tdS}><button onClick={() => { if (confirm(`Remove ${item.item_name}?`)) { UNIT_CONVERSIONS[unitName] = UNIT_CONVERSIONS[unitName].filter((i) => i.item_id !== item.item_id); refresh(); } }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+          {/* Add new unit type */}
+          <div style={{ marginTop: 16, padding: "12px 14px", background: "#F5F5F3", borderRadius: 10, border: "1px solid #E0E0DC" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#888", marginBottom: 6 }}>Add new unit type</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={addingTo === "new_unit_type" ? newName : ""} onChange={(e) => { setAddingTo("new_unit_type"); setNewName(e.target.value); }} placeholder="e.g. Can, Bottle" style={{ flex: 1, padding: "8px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+              <button onClick={() => { if (!newName.trim()) return; if (UNIT_CONVERSIONS[newName.trim()]) { alert("Already exists"); return; } UNIT_CONVERSIONS[newName.trim()] = []; setNewName(""); setAddingTo(null); refresh(); }} style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: "#EA580C", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ Add Unit</button>
+            </div>
+          </div>
         </div>
       )}
 
