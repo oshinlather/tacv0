@@ -68,6 +68,10 @@ const api = {
   deleteRawMaterial: (id) => del(`/api/master/raw-materials/${id}`),
   saveRecipe: (data) => post("/api/master/recipes", data),
   deleteRecipe: (id) => del(`/api/master/recipes/${id}`),
+  getConversions: () => get("/api/master/conversions"),
+  addConversion: (data) => post("/api/master/conversions", data),
+  updateConversion: (data) => patch("/api/master/conversions", data),
+  deleteConversion: (unit_type, item_id) => del(`/api/master/conversions?unit_type=${unit_type}&item_id=${item_id}`),
 };
 
 // ── Helpers ──
