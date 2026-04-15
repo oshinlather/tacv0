@@ -1177,8 +1177,9 @@ const Inventory = () => {
           <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand</div>
         )}
       </div>
-      {/* Issue All button — deducts from inventory */}
+      {/* Issue All button — sticky at bottom */}
       {stockOutData && Object.keys(stockOutData).length > 0 && (
+        <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
         <button onClick={async () => {
           const entries = Object.entries(stockOutData).map(([id, item]) => {
             const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : item.qty;
@@ -1206,6 +1207,7 @@ const Inventory = () => {
         }} disabled={issuing} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing ? "not-allowed" : "pointer", fontFamily: "inherit", marginTop: 12 }}>
           {issuing ? "⏳ Issuing..." : `📤 Issue All (${Object.keys(stockOutData).length} items) — Deduct from Inventory`}
         </button>
+        </div>
       )}
     </>)}
   </div>);
