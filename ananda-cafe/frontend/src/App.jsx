@@ -217,15 +217,8 @@ const DEMAND_SECTIONS = [
     ]},
 ];
 
-const CLOSING_STOCK = [
-  { id: "cs_sambhar", name: "Sambhar", unit: "Kg" }, { id: "cs_red_chutney", name: "Red Chutney", unit: "Kg" },
-  { id: "cs_white_chutney", name: "White Chutney", unit: "Kg" }, { id: "cs_dosa_batter", name: "Dosa Batter", unit: "Kg" },
-  { id: "cs_idli_batter", name: "Idli Batter", unit: "Kg" }, { id: "cs_vada_batter", name: "Vada Batter", unit: "Kg" },
-  { id: "cs_rasam", name: "Rasam", unit: "L" }, { id: "cs_pineapple_halwa", name: "Pineapple Halwa", unit: "Kg" },
-  { id: "cs_coconut_crush", name: "Coconut Crush", unit: "Kg" }, { id: "cs_onion_masala", name: "Onion Masala", unit: "Kg" },
-  { id: "cs_oil", name: "Oil", unit: "L" }, { id: "cs_ghee", name: "Ghee", unit: "Kg" },
-  { id: "cs_coffee_powder", name: "Filter Coffee Powder", unit: "Kg" },
-];
+// Closing stock = all demand items (dynamic from master data)
+const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit, section: sec.id, sectionName: sec.titleHi })));
 
 // ─── STYLES ─────────────────────────────────────────────────────────────────
 const FONT = <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />;
@@ -1747,7 +1740,7 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food" || sec.id === "vegetable" || sec.id === "masala" || sec.id === "grocery"); const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
+  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food"); const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
@@ -1821,7 +1814,35 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "close") { const filled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length; const done = filled === CLOSING_STOCK.length; return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 13, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{filled}/{CLOSING_STOCK.length}</span></div><div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ <strong>Important!</strong> Fill all items. Write 0 if finished.</div><div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>{CLOSING_STOCK.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: idx < CLOSING_STOCK.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}><span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span><input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 68, padding: "8px", borderRadius: 10, border: isFilled ? "2px solid #16A34A" : "2px solid #E0E0DC", background: "#fff", fontSize: 17, textAlign: "center", fontFamily: "inherit", fontWeight: 800 }} /><span style={{ fontSize: 12, color: "#999", width: 24 }}>{item.unit}</span></div>); })}</div><button onClick={() => submit("closing")} disabled={!done} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: done ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: done ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{done ? "📊 Submit Closing Stock" : `Fill all (${CLOSING_STOCK.length - filled} remaining)`}</button></div>); }
+  if (screen === "close") { 
+    const csSections = DEMAND_SECTIONS;
+    const csActiveSec = csSections.find((s) => s.id === expSec) || csSections[0];
+    if (!expSec) setExpSec(csSections[0].id);
+    const csItems = csActiveSec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit }));
+    const allFilled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
+    const secFilled = csItems.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
+    const done = allFilled === CLOSING_STOCK.length;
+    return (<div><SavingOverlay />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{allFilled}/{CLOSING_STOCK.length}</span></div>
+      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", marginBottom: 10 }}>⚠️ Fill all items. Write 0 if finished.</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
+        {csSections.map((sec) => { const fl = sec.items.filter((i) => closing[`cs_${i.id}`] !== undefined && closing[`cs_${i.id}`] !== "").length; return (
+          <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: (expSec || csSections[0].id) === sec.id ? 700 : 500, border: (expSec || csSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || csSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || csSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+            <span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 800 }}>{fl}/{sec.items.length}</span>}
+          </button>); })}
+      </div>
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+        {csItems.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; return (
+          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < csItems.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
+            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
+            <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <span style={{ fontSize: 10, color: "#999", width: 24 }}>{item.unit}</span>
+          </div>); })}
+      </div>
+      <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={() => submit("closing")} disabled={!done} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: done ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: done ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{done ? "📊 Submit Closing Stock" : `Fill all (${CLOSING_STOCK.length - allFilled} remaining)`}</button>
+      </div>
+    </div>); }
   return null;
 };
 
