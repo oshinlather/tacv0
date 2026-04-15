@@ -2481,6 +2481,180 @@ const MonthlyInventory = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  MASTER DATA — Central item & recipe management
+// ═════════════════════════════════════════════════════════════════════════════
+const MasterData = () => {
+  const [tab, setTab] = useState("demand"); // demand, raw, recipes, inventory
+  const [search, setSearch] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editUnit, setEditUnit] = useState("");
+  const [invItems, setInvItems] = useState([]);
+
+  useEffect(() => { api.getInventory().then((d) => setInvItems(d || [])).catch(() => {}); }, []);
+
+  const allDemandItems = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ ...i, section: sec.id, sectionName: sec.titleHi, emoji: sec.emoji })));
+  const foodItems = DEMAND_SECTIONS.find((s) => s.id === "food")?.items || [];
+  const directSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
+
+  const thS = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", whiteSpace: "nowrap" };
+  const tdS = { padding: "7px 10px", fontSize: 12, borderBottom: "1px solid #F0F0EC" };
+
+  const saveUnit = (itemId, section) => {
+    const sec = DEMAND_SECTIONS.find((s) => s.id === section);
+    if (sec) {
+      const item = sec.items.find((i) => i.id === itemId);
+      if (item) item.unit = editUnit;
+    }
+    // Also update RAW_MATERIALS if it's a raw material
+    const raw = RAW_MATERIALS.find((r) => r.id === itemId || r.id === itemId + "_raw");
+    if (raw) raw.unit = editUnit;
+    setEditId(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🗂️ Master Data</h3>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto" }}>
+        {[{ id: "demand", label: "📋 Demand Items", c: "#B45309" }, { id: "raw", label: "🧪 Raw Materials", c: "#2563EB" }, { id: "recipes", label: "📖 Recipes", c: "#16A34A" }, { id: "inventory", label: "📦 Inventory SKUs", c: "#9333EA" }].map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: tab === t.id ? 700 : 500, border: tab === t.id ? "none" : "1px solid #E0E0DC", background: tab === t.id ? t.c : "#fff", color: tab === t.id ? "#fff" : "#888", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Search */}
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+
+      {/* ── DEMAND ITEMS TAB ── */}
+      {tab === "demand" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>All items outlets can demand. Food items go to Kitchen for preparation. Others go directly to outlets.</p>
+          {DEMAND_SECTIONS.map((sec) => {
+            const secItems = sec.items.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase()));
+            if (secItems.length === 0) return null;
+            return (
+              <div key={sec.id} style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: sec.color, marginBottom: 6 }}>{sec.emoji} {sec.titleHi} ({secItems.length})</div>
+                <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>ID</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Type</th></tr></thead>
+                    <tbody>{secItems.map((item, idx) => (
+                      <tr key={item.id}>
+                        <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
+                        <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#999" }}>{item.id}</td>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
+                        <td style={tdS}>{editId === `${sec.id}_${item.id}` ? (
+                          <div style={{ display: "flex", gap: 3 }}>
+                            <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, fontFamily: "inherit" }} />
+                            <button onClick={() => saveUnit(item.id, sec.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                          </div>
+                        ) : (
+                          <span onClick={() => { setEditId(`${sec.id}_${item.id}`); setEditUnit(item.unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{item.unit} ✏️</span>
+                        )}</td>
+                        <td style={{ ...tdS, fontSize: 10 }}>{sec.id === "food" ? <span style={{ color: "#B45309" }}>🏭 Kitchen</span> : <span style={{ color: "#2563EB" }}>🏪 Direct</span>}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── RAW MATERIALS TAB ── */}
+      {tab === "raw" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{RAW_MATERIALS.length} raw materials used in BK recipes. These get deducted from inventory during Stock Out.</p>
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>ID</th><th style={thS}>Name</th><th style={thS}>Unit</th><th style={thS}>Used In</th></tr></thead>
+              <tbody>{RAW_MATERIALS.filter((r) => !search || r.name.toLowerCase().includes(search.toLowerCase())).map((raw, idx) => {
+                const usedIn = Object.entries(RECIPES).filter(([, rec]) => rec.ingredients.some((ing) => ing.rawId === raw.id)).map(([, rec]) => rec.name);
+                return (
+                  <tr key={raw.id}>
+                    <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
+                    <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#999" }}>{raw.id}</td>
+                    <td style={{ ...tdS, fontWeight: 600 }}>{raw.name}</td>
+                    <td style={tdS}>{editId === `raw_${raw.id}` ? (
+                      <div style={{ display: "flex", gap: 3 }}>
+                        <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11 }} />
+                        <button onClick={() => { raw.unit = editUnit; setEditId(null); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                      </div>
+                    ) : (
+                      <span onClick={() => { setEditId(`raw_${raw.id}`); setEditUnit(raw.unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{raw.unit} ✏️</span>
+                    )}</td>
+                    <td style={{ ...tdS, fontSize: 10, color: "#888", maxWidth: 150 }}>{usedIn.length > 0 ? usedIn.join(", ") : <span style={{ color: "#DDD" }}>—</span>}</td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── RECIPES TAB ── */}
+      {tab === "recipes" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{Object.keys(RECIPES).length} recipes. Shows how demand items are converted to raw materials.</p>
+          {Object.entries(RECIPES).filter(([, r]) => !search || r.name.toLowerCase().includes(search.toLowerCase())).map(([id, recipe]) => {
+            const demandItem = foodItems.find((i) => i.id === id);
+            return (
+              <div key={id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontWeight: 700, fontSize: 13 }}>{recipe.name}</span>
+                    <span style={{ fontSize: 10, color: "#888", marginLeft: 8 }}>Demand unit: {demandItem?.unit || "?"}</span>
+                  </div>
+                  <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 600 }}>Yield: {recipe.yield}</span>
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>Raw Material</th><th style={thS}>Qty per Batch</th><th style={thS}>Unit</th></tr></thead>
+                  <tbody>{recipe.ingredients.map((ing) => {
+                    const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+                    return (
+                      <tr key={ing.rawId}>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td>
+                        <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", textAlign: "center" }}>{ing.qty}</td>
+                        <td style={{ ...tdS, color: "#888" }}>{raw?.unit || "Kg"}</td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── INVENTORY SKUs TAB ── */}
+      {tab === "inventory" && (
+        <div>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>{invItems.length} items in Supabase inventory. These are what Stock In/Out operates on.</p>
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: "#FAFAF8" }}><th style={thS}>#</th><th style={thS}>DB ID</th><th style={thS}>Name</th><th style={thS}>Category</th><th style={thS}>Unit</th><th style={thS}>Stock</th></tr></thead>
+              <tbody>{invItems.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase())).map((item, idx) => (
+                <tr key={item.id}>
+                  <td style={{ ...tdS, color: "#BBB", fontSize: 10 }}>{idx + 1}</td>
+                  <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontSize: 9, color: "#999" }}>{item.id}</td>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{item.name}</td>
+                  <td style={{ ...tdS, fontSize: 10, color: "#888" }}>{item.category}</td>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{item.unit}</td>
+                  <td style={{ ...tdS, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: Number(item.current_qty) === 0 ? "#DC2626" : "#16A34A" }}>{item.current_qty}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -2517,7 +2691,7 @@ export default function AnandaCafe() {
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
+      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -2541,7 +2715,8 @@ export default function AnandaCafe() {
     {auditDropdown && (<>
       <div onClick={() => setAuditDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
-        {[{ id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
+        {[{ id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
+          { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
           { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
@@ -2562,6 +2737,7 @@ export default function AnandaCafe() {
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
+      {ownerTab === "master" && <MasterData />}
       {ownerTab === "iss_audit" && <IssuanceAudit />}
       {ownerTab === "inv_monthly" && <MonthlyInventory />}
       {ownerTab === "dispatch" && <Dispatch />}
