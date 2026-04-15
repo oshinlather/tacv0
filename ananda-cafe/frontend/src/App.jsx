@@ -620,7 +620,7 @@ const BaseKitchen = () => {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div><h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>BK Consolidated</h3><p style={{ fontSize: 11, color: "#888", margin: 0 }}>{pendingOrders.length} pending · {issuedOrders.length} issued · {dispatchedOrders.length} done</p></div>
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          <button onClick={() => setSelDate(today())} style={{ padding: "5px 10px", borderRadius: 6, border: selDate === today() ? "2px solid #1A1A1A" : "1px solid #E0E0DC", background: selDate === today() ? "#1A1A1A" : "#fff", color: selDate === today() ? "#fff" : "#777", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Today</button>
+          <button onClick={() => setSelDate(today())} style={{ padding: "5px 10px", borderRadius: 6, border: selDate === today() ? "1px solid #BBF7D0" : "1px solid #E0E0DC", background: selDate === today() ? "#F0FDF4" : "#fff", color: selDate === today() ? "#16A34A" : "#777", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Today</button>
           <input type="date" value={selDate} onChange={(e) => setSelDate(e.target.value)} style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", color: "#777", cursor: "pointer", width: 32, background: "#fff" }} />
           <button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer" }}>🔄</button>
           <PrintBtn sectionId="print-kitchen" title="BK Challan" />
@@ -629,12 +629,12 @@ const BaseKitchen = () => {
       {selDate !== today() && <div style={{ padding: "6px 12px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10, textAlign: "center" }}>Viewing: {selDate}</div>}
       {/* Cycle + Status pills */}
       <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-        {[{ id: "morning", label: "🌅 AM", c: "#B45309" }, { id: "evening", label: "🌇 PM", c: "#2563EB" }, { id: "all", label: "All", c: "#1A1A1A" }].map((c) => (
-          <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? c.c : "#fff", color: cycle === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label}</button>
+        {[{ id: "morning", label: "🌅 AM", c: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }, { id: "evening", label: "🌇 PM", c: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" }, { id: "all", label: "All", c: "#555", bg: "#F5F5F3", border: "#E0E0DC" }].map((c) => (
+          <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? `1px solid ${c.border}` : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? c.bg : "#fff", color: cycle === c.id ? c.c : "#888", whiteSpace: "nowrap" }}>{c.label}</button>
         ))}
         <div style={{ flex: 1 }} />
-        <button onClick={() => setShowAll(false)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: !showAll ? 700 : 500, border: !showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#B45309" : "#fff", color: !showAll ? "#fff" : "#888", whiteSpace: "nowrap" }}>Pending</button>
-        <button onClick={() => setShowAll(true)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: showAll ? 700 : 500, border: showAll ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#1A1A1A" : "#fff", color: showAll ? "#fff" : "#888", whiteSpace: "nowrap" }}>All</button>
+        <button onClick={() => setShowAll(false)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: !showAll ? 700 : 500, border: !showAll ? "1px solid #FDE68A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !showAll ? "#FFFBEB" : "#fff", color: !showAll ? "#B45309" : "#888", whiteSpace: "nowrap" }}>Pending</button>
+        <button onClick={() => setShowAll(true)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: showAll ? 700 : 500, border: showAll ? "1px solid #E0E0DC" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: showAll ? "#F5F5F3" : "#fff", color: showAll ? "#555" : "#888", whiteSpace: "nowrap" }}>All</button>
       </div>
       {!showAll && pendingOrders.length === 0 && orders.length > 0 && (<div style={{ padding: "10px 14px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 12, textAlign: "center" }}>✅ All issued</div>)}
 
