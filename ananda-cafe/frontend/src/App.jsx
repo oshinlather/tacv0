@@ -2277,7 +2277,7 @@ const MonthlyInventory = () => {
   const [movements, setMovements] = useState({});
   const [loading, setLoading] = useState(true);
   const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
-  const [viewType, setViewType] = useState("out"); // out, in
+  const [viewType, setViewType] = useState("all"); // all, out, in
   const [selCat, setSelCat] = useState(null);
 
   useEffect(() => {
@@ -2301,27 +2301,43 @@ const MonthlyInventory = () => {
   const todayDay = new Date().getDate();
   const isCurrentMonth = selMonth === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
 
-  // Build grid from movements
+  // Build grid from movements — track in and out separately
   const grid = {};
   const monthlyTotals = {};
   items.forEach((item) => {
     grid[item.id] = {};
-    monthlyTotals[item.id] = 0;
-    dayNums.forEach((d) => { grid[item.id][d] = 0; });
+    monthlyTotals[item.id] = { in: 0, out: 0 };
+    dayNums.forEach((d) => { grid[item.id][d] = { in: 0, out: 0 }; });
     (movements[item.id] || []).forEach((m) => {
       const d = new Date(m.created_at);
       const day = d.getDate();
       const mMonth = d.getMonth() + 1;
       const mYear = d.getFullYear();
       if (mMonth !== month || mYear !== year) return;
-      const isOut = m.type === "stock_out";
-      const isIn = m.type === "stock_in";
-      if ((viewType === "out" && isOut) || (viewType === "in" && isIn)) {
-        grid[item.id][day] += Math.abs(m.quantity);
-        monthlyTotals[item.id] += Math.abs(m.quantity);
-      }
+      const qty = Math.abs(m.quantity);
+      if (m.type === "stock_out") { grid[item.id][day].out += qty; monthlyTotals[item.id].out += qty; }
+      if (m.type === "stock_in") { grid[item.id][day].in += qty; monthlyTotals[item.id].in += qty; }
     });
   });
+
+  const getVal = (item, day) => {
+    const g = grid[item.id]?.[day];
+    if (!g) return { display: "", color: "#EEE" };
+    if (viewType === "out") return { display: g.out || "", color: "#DC2626" };
+    if (viewType === "in") return { display: g.in || "", color: "#16A34A" };
+    // "all" view — show both
+    if (g.in > 0 && g.out > 0) return { display: `+${g.in}/-${g.out}`, color: "#B45309" };
+    if (g.in > 0) return { display: `+${g.in}`, color: "#16A34A" };
+    if (g.out > 0) return { display: `-${g.out}`, color: "#DC2626" };
+    return { display: "", color: "#EEE" };
+  };
+
+  const getMthTotal = (item) => {
+    const t = monthlyTotals[item.id];
+    if (viewType === "out") return t.out;
+    if (viewType === "in") return t.in;
+    return t.in + t.out; // all
+  };
 
   const categories = [...new Set(items.map((i) => i.category))].sort();
   const filteredItems = selCat ? items.filter((i) => i.category === selCat) : items;
@@ -2335,15 +2351,16 @@ const MonthlyInventory = () => {
         <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
           <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit" }} />
           <ExportBtn onClick={() => {
-            const headers = ["Item", "Category", "Unit", "Monthly", ...dayNums];
-            const rows = filteredItems.map((item) => [item.name, item.category, item.unit, monthlyTotals[item.id] || 0, ...dayNums.map((d) => grid[item.id]?.[d] || 0)]);
+            const headers = ["Item", "Category", "Unit", "In Total", "Out Total", ...dayNums.flatMap((d) => [`${d} In`, `${d} Out`])];
+            const rows = filteredItems.map((item) => [item.name, item.category, item.unit, monthlyTotals[item.id].in, monthlyTotals[item.id].out, ...dayNums.flatMap((d) => [grid[item.id]?.[d]?.in || 0, grid[item.id]?.[d]?.out || 0])]);
             exportCSV(headers, rows, `inventory_${viewType}_${selMonth}.csv`);
           }} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-        <button onClick={() => setViewType("out")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "out" ? 700 : 500, border: viewType === "out" ? "1px solid #FECACA" : "1px solid #E0E0DC", background: viewType === "out" ? "#FEF2F2" : "#fff", color: viewType === "out" ? "#DC2626" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
-        <button onClick={() => setViewType("in")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "in" ? 700 : 500, border: viewType === "in" ? "1px solid #BBF7D0" : "1px solid #E0E0DC", background: viewType === "in" ? "#F0FDF4" : "#fff", color: viewType === "in" ? "#16A34A" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
+        <button onClick={() => setViewType("all")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "all" ? 700 : 500, border: viewType === "all" ? "1px solid #FDE68A" : "1px solid #E0E0DC", background: viewType === "all" ? "#FFFBEB" : "#fff", color: viewType === "all" ? "#B45309" : "#888", cursor: "pointer", fontFamily: "inherit" }}>All</button>
+        <button onClick={() => setViewType("out")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "out" ? 700 : 500, border: viewType === "out" ? "1px solid #FECACA" : "1px solid #E0E0DC", background: viewType === "out" ? "#FEF2F2" : "#fff", color: viewType === "out" ? "#DC2626" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📤 Out</button>
+        <button onClick={() => setViewType("in")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "in" ? 700 : 500, border: viewType === "in" ? "1px solid #BBF7D0" : "1px solid #E0E0DC", background: viewType === "in" ? "#F0FDF4" : "#fff", color: viewType === "in" ? "#16A34A" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📥 In</button>
         <div style={{ flex: 1 }} />
         {categories.map((c) => (
           <button key={c} onClick={() => setSelCat(selCat === c ? null : c)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 10, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "1px solid #FDE68A" : "1px solid #E0E0DC", background: selCat === c ? "#FFFBEB" : "#fff", color: selCat === c ? "#B45309" : "#888", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{c}</button>
@@ -2370,10 +2387,10 @@ const MonthlyInventory = () => {
                     {item.name}
                     <span style={{ fontSize: 9, color: "#BBB", marginLeft: 4 }}>{item.unit}</span>
                   </td>
-                  <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: monthlyTotals[item.id] > 0 ? "#B45309" : "#EEE", fontSize: 11 }}>{monthlyTotals[item.id] || "—"}</td>
+                  <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: getMthTotal(item) > 0 ? "#B45309" : "#EEE", fontSize: 11 }}>{getMthTotal(item) || "—"}</td>
                   {dayNums.map((d) => {
-                    const val = grid[item.id]?.[d] || 0;
-                    return (<td key={d} style={{ padding: "6px 4px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: val > 0 ? "#1A1A1A" : "#EEE", fontWeight: val > 0 ? 600 : 400, background: isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent" }}>{val || ""}</td>);
+                    const v = getVal(item, d);
+                    return (<td key={d} style={{ padding: "6px 3px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 9, color: v.display ? v.color : "#EEE", fontWeight: v.display ? 600 : 400, background: isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent", whiteSpace: "nowrap" }}>{v.display || ""}</td>);
                   })}
                 </tr>
               ))}
