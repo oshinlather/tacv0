@@ -819,6 +819,7 @@ const Inventory = () => {
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
+  const [issuing, setIssuing] = useState(false);
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
   const [stockOutData, setStockOutData] = useState(null);
   const [stockOutLoading, setStockOutLoading] = useState(false);
@@ -1132,13 +1133,13 @@ const Inventory = () => {
     {/* ── STOCK OUT SECTION ── */}
     {invSection === "stockout" && (<>
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
-        {[{ id: "bk", label: "🏭 BK", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
+        {[{ id: "bk", label: "🏭 Kitchen", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
           <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
         ))}
       </div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Raw materials for BK" : `Direct items for ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
+          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Raw materials for Kitchen" : `Direct items for ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
           {stockOutData && Object.keys(stockOutData).length > 0 && <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 700 }}>{Object.keys(issuedItems).filter((k) => issuedItems[k]).length}/{Object.keys(stockOutData).length} issued</span>}
         </div>
         {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
@@ -1176,6 +1177,36 @@ const Inventory = () => {
           <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand</div>
         )}
       </div>
+      {/* Issue All button — deducts from inventory */}
+      {stockOutData && Object.keys(stockOutData).length > 0 && (
+        <button onClick={async () => {
+          const entries = Object.entries(stockOutData).map(([id, item]) => {
+            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : item.qty;
+            const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
+            return invItem && qty > 0 ? { item_id: invItem.id, quantity: qty } : null;
+          }).filter(Boolean);
+          if (entries.length === 0) { alert("No items to issue"); return; }
+          setIssuing(true);
+          try {
+            await api.stockOut(entries, "issuance");
+            // Save audit
+            const auditEntries = entries.map(({ item_id, quantity }) => {
+              const invItem = items.find((i) => i.id === item_id);
+              const rawItem = Object.entries(stockOutData).find(([, v]) => {
+                const match = items.find((i) => i.name.toLowerCase() === v.name.toLowerCase() || i.name.toLowerCase().includes(v.name.toLowerCase().split(" ")[0]));
+                return match?.id === item_id;
+              });
+              return { item_id, item_name: invItem?.name || item_id, calculated_qty: rawItem ? rawItem[1].qty : 0, issued_qty: quantity, variance: quantity - (rawItem ? rawItem[1].qty : 0), date: today() };
+            });
+            try { await api.saveIssuanceAudit(auditEntries); } catch (e) {}
+            alert(`✅ ${entries.length} items issued from inventory`);
+            setIssuedItems({}); setEditedQty({}); load();
+          } catch (e) { alert("Error: " + e.message); }
+          finally { setIssuing(false); }
+        }} disabled={issuing} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing ? "not-allowed" : "pointer", fontFamily: "inherit", marginTop: 12 }}>
+          {issuing ? "⏳ Issuing..." : `📤 Issue All (${Object.keys(stockOutData).length} items) — Deduct from Inventory`}
+        </button>
+      )}
     </>)}
   </div>);
 };
@@ -2496,7 +2527,7 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 BK" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "actions", label: "📋 Actions" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "actions", label: "📋 Actions" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
