@@ -1179,20 +1179,25 @@ const Inventory = () => {
           <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand</div>
         )}
       </div>
-      {/* Issue All button — sticky at bottom */}
-      {stockOutData && Object.keys(stockOutData).length > 0 && (
+      {/* Issue button — sticky at bottom, only issues ticked items */}
+      {stockOutData && Object.keys(stockOutData).length > 0 && (() => {
+        const tickedIds = Object.keys(issuedItems).filter((k) => issuedItems[k]);
+        const tickedCount = tickedIds.length;
+        return (
         <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
         <button onClick={async () => {
-          const entries = Object.entries(stockOutData).map(([id, item]) => {
-            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : item.qty;
+          if (tickedCount === 0) { alert("Tick items to issue first"); return; }
+          const entries = tickedIds.map((id) => {
+            const item = stockOutData[id];
+            if (!item) return null;
+            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
             const invItem = items.find((i) => i.name.toLowerCase() === item.name.toLowerCase() || i.name.toLowerCase().includes(item.name.toLowerCase().split(" ")[0]));
             return invItem && qty > 0 ? { item_id: invItem.id, quantity: qty } : null;
           }).filter(Boolean);
-          if (entries.length === 0) { alert("No items to issue"); return; }
+          if (entries.length === 0) { alert("No matching inventory items found"); return; }
           setIssuing(true);
           try {
             await api.stockOut(entries, "issuance");
-            // Save audit
             const auditEntries = entries.map(({ item_id, quantity }) => {
               const invItem = items.find((i) => i.id === item_id);
               const rawItem = Object.entries(stockOutData).find(([, v]) => {
@@ -1206,11 +1211,11 @@ const Inventory = () => {
             setIssuedItems({}); setEditedQty({}); load();
           } catch (e) { alert("Error: " + e.message); }
           finally { setIssuing(false); }
-        }} disabled={issuing} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing ? "not-allowed" : "pointer", fontFamily: "inherit", marginTop: 12 }}>
-          {issuing ? "⏳ Issuing..." : `📤 Issue All (${Object.keys(stockOutData).length} items) — Deduct from Inventory`}
+        }} disabled={issuing || tickedCount === 0} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing || tickedCount === 0 ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing || tickedCount === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          {issuing ? "⏳ Issuing..." : tickedCount === 0 ? "✅ Tick items to issue" : `📤 Issue ${tickedCount} items — Deduct from Inventory`}
         </button>
-        </div>
-      )}
+        </div>);
+      })()}
     </>)}
   </div>);
 };
