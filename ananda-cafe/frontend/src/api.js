@@ -56,29 +56,18 @@ const api = {
   getTodayMovements: (date) => get("/api/inventory/movements", { date }),
   getInventorySummary: () => get("/api/inventory/summary"),
 
-  // ── NEW: Sales Upload ──
-  uploadSalesCSV: (file) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    return fetchRaw("/api/sales/upload", { method: "POST", body: formData });
-  },
-  getSales: (date, outlet) => get("/api/sales/" + date, outlet && outlet !== "all" ? { outlet } : {}),
-
-  // ── NEW: Recipes (PetPooja) ──
-  getRecipesPetpooja: () => get("/api/recipes"),
-
-  // ── NEW: RM Audit ──
-  getRMAudit: (date) => get("/api/audit/" + date),
-
-  // ── NEW: Daily P&L (computed) ──
-  getComputedPnl: (date) => get("/api/pnl/" + date),
-
-  // ── NEW: BK Demand (fixed units) ──
-  getBKDemand: (date) => get("/api/bk-demand/" + date),
-
-  // ── NEW: Issuance Audit ──
-  saveIssuanceAudit: (entries) => post("/api/issuance-audit", { entries }),
-  getIssuanceAudit: (date) => get("/api/issuance-audit/" + date),
+  // ── Master Data ──
+  getMasterSections: () => get("/api/master/sections"),
+  getMasterRawMaterials: () => get("/api/master/raw-materials"),
+  getMasterRecipes: () => get("/api/master/recipes"),
+  addDemandItem: (data) => post("/api/master/demand-items", data),
+  updateDemandItem: (id, data) => patch(`/api/master/demand-items/${id}`, data),
+  deleteDemandItem: (id) => del(`/api/master/demand-items/${id}`),
+  addRawMaterial: (data) => post("/api/master/raw-materials", data),
+  updateRawMaterial: (id, data) => patch(`/api/master/raw-materials/${id}`, data),
+  deleteRawMaterial: (id) => del(`/api/master/raw-materials/${id}`),
+  saveRecipe: (data) => post("/api/master/recipes", data),
+  deleteRecipe: (id) => del(`/api/master/recipes/${id}`),
 };
 
 // ── Helpers ──
@@ -116,12 +105,11 @@ async function patch(path, body) {
   return res.json();
 }
 
-// For file uploads (no Content-Type header — browser sets multipart boundary)
-async function fetchRaw(path, options) {
-  const res = await fetch(API + path, options);
+async function del(path) {
+  const res = await fetch(API + path, { method: "DELETE" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `${options.method} ${path} failed: ${res.status}`);
+    throw new Error(err.error || `DELETE ${path} failed: ${res.status}`);
   }
   return res.json();
 }
