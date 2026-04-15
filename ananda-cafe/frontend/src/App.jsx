@@ -2270,6 +2270,122 @@ const IssuanceAudit = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  MONTHLY INVENTORY VIEW — Daily stock movements grid
+// ═════════════════════════════════════════════════════════════════════════════
+const MonthlyInventory = () => {
+  const [items, setItems] = useState([]);
+  const [movements, setMovements] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [selMonth, setSelMonth] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [viewType, setViewType] = useState("out"); // out, in
+  const [selCat, setSelCat] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getInventory().then(async (inv) => {
+      setItems(inv || []);
+      // Fetch movements for all items
+      const movMap = {};
+      const promises = (inv || []).map((item) =>
+        api.getMovements(item.id).then((mov) => { movMap[item.id] = mov || []; }).catch(() => { movMap[item.id] = []; })
+      );
+      await Promise.all(promises);
+      setMovements(movMap);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const year = parseInt(selMonth.split("-")[0]);
+  const month = parseInt(selMonth.split("-")[1]);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const dayNums = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const todayDay = new Date().getDate();
+  const isCurrentMonth = selMonth === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+
+  // Build grid from movements
+  const grid = {};
+  const monthlyTotals = {};
+  items.forEach((item) => {
+    grid[item.id] = {};
+    monthlyTotals[item.id] = 0;
+    dayNums.forEach((d) => { grid[item.id][d] = 0; });
+    (movements[item.id] || []).forEach((m) => {
+      const d = new Date(m.created_at);
+      const day = d.getDate();
+      const mMonth = d.getMonth() + 1;
+      const mYear = d.getFullYear();
+      if (mMonth !== month || mYear !== year) return;
+      const isOut = m.type === "stock_out";
+      const isIn = m.type === "stock_in";
+      if ((viewType === "out" && isOut) || (viewType === "in" && isIn)) {
+        grid[item.id][day] += Math.abs(m.quantity);
+        monthlyTotals[item.id] += Math.abs(m.quantity);
+      }
+    });
+  });
+
+  const categories = [...new Set(items.map((i) => i.category))].sort();
+  const filteredItems = selCat ? items.filter((i) => i.category === selCat) : items;
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📊 Monthly Inventory</h3>
+        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit" }} />
+          <ExportBtn onClick={() => {
+            const headers = ["Item", "Category", "Unit", "Monthly", ...dayNums];
+            const rows = filteredItems.map((item) => [item.name, item.category, item.unit, monthlyTotals[item.id] || 0, ...dayNums.map((d) => grid[item.id]?.[d] || 0)]);
+            exportCSV(headers, rows, `inventory_${viewType}_${selMonth}.csv`);
+          }} />
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
+        <button onClick={() => setViewType("out")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "out" ? 700 : 500, border: viewType === "out" ? "1px solid #FECACA" : "1px solid #E0E0DC", background: viewType === "out" ? "#FEF2F2" : "#fff", color: viewType === "out" ? "#DC2626" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📤 Stock Out</button>
+        <button onClick={() => setViewType("in")} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewType === "in" ? 700 : 500, border: viewType === "in" ? "1px solid #BBF7D0" : "1px solid #E0E0DC", background: viewType === "in" ? "#F0FDF4" : "#fff", color: viewType === "in" ? "#16A34A" : "#888", cursor: "pointer", fontFamily: "inherit" }}>📥 Stock In</button>
+        <div style={{ flex: 1 }} />
+        {categories.map((c) => (
+          <button key={c} onClick={() => setSelCat(selCat === c ? null : c)} style={{ padding: "6px 10px", borderRadius: 6, fontSize: 10, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "1px solid #FDE68A" : "1px solid #E0E0DC", background: selCat === c ? "#FFFBEB" : "#fff", color: selCat === c ? "#B45309" : "#888", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{c}</button>
+        ))}
+      </div>
+      {filteredItems.length === 0 ? (
+        <div style={{ padding: 30, textAlign: "center", color: "#999" }}>No inventory items</div>
+      ) : (
+        <div style={{ overflowX: "auto", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "100%" }}>
+            <thead>
+              <tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 120 }}>Item</th>
+                <th style={{ padding: "8px 6px", textAlign: "center", fontSize: 9, fontWeight: 700, color: "#B45309", borderBottom: "2px solid #E0E0DC", minWidth: 40 }}>MTH</th>
+                {dayNums.map((d) => (
+                  <th key={d} style={{ padding: "8px 4px", textAlign: "center", fontSize: 9, fontWeight: isCurrentMonth && d === todayDay ? 800 : 600, color: isCurrentMonth && d === todayDay ? "#1A1A1A" : "#999", borderBottom: "2px solid #E0E0DC", minWidth: 28, background: isCurrentMonth && d === todayDay ? "#FFFBEB" : "#FAFAF8" }}>{d}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.filter((item) => monthlyTotals[item.id] > 0 || true).map((item, idx) => (
+                <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={{ padding: "6px 10px", fontWeight: 600, fontSize: 11, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>
+                    {item.name}
+                    <span style={{ fontSize: 9, color: "#BBB", marginLeft: 4 }}>{item.unit}</span>
+                  </td>
+                  <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: monthlyTotals[item.id] > 0 ? "#B45309" : "#EEE", fontSize: 11 }}>{monthlyTotals[item.id] || "—"}</td>
+                  {dayNums.map((d) => {
+                    const val = grid[item.id]?.[d] || 0;
+                    return (<td key={d} style={{ padding: "6px 4px", textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: val > 0 ? "#1A1A1A" : "#EEE", fontWeight: val > 0 ? 600 : 400, background: isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent" }}>{val || ""}</td>);
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -2306,7 +2422,7 @@ export default function AnandaCafe() {
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","iss_audit","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
+      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -2332,6 +2448,7 @@ export default function AnandaCafe() {
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
+          { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
           { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
           { id: "pp_recipes", label: "🍳 PetPooja Recipes", sub: "Item-level from PetPooja" },
         ].map((t) => (
@@ -2351,6 +2468,7 @@ export default function AnandaCafe() {
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "iss_audit" && <IssuanceAudit />}
+      {ownerTab === "inv_monthly" && <MonthlyInventory />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
