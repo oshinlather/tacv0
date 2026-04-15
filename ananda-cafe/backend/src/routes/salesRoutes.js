@@ -893,4 +893,16 @@ router.delete('/inventory/items/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ── PATCH /api/inventory/items/:id — Update inventory item name/unit/category
+router.patch('/inventory/items/:id', async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.unit !== undefined) updates.unit = req.body.unit;
+    if (req.body.category !== undefined) updates.category = req.body.category;
+    const { error } = await supabase.from('inventory_items').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 module.exports = router;
