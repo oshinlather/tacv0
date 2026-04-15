@@ -1099,6 +1099,16 @@ const Inventory = () => {
 
     {/* ── INVENTORY SECTION ── */}
     {invSection === "inventory" && (<>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <ExportBtn onClick={() => {
+          const headers = ["Name", "Category", "Unit", "Current Qty", "Threshold", "Status"];
+          const rows = items.map((i) => {
+            const qty = Number(i.current_qty);
+            return [i.name, i.category, i.unit, qty, i.threshold, qty === 0 ? "Out" : i.below_threshold ? "Low" : "OK"];
+          });
+          exportCSV(headers, rows, `current_inventory_${today()}.csv`);
+        }} />
+      </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <button onClick={() => { setStockFilter("all"); }} style={{ flex: 1, background: stockFilter === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: stockFilter === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
           <div style={{ fontSize: 9, color: stockFilter === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>All</div>
@@ -2492,42 +2502,58 @@ const MasterData = () => {
 
   useEffect(() => { api.getInventory().then((d) => setInvItems(d || [])).catch(() => {}); }, []);
 
-  const [addingTo, setAddingTo] = useState(null); // section id for adding
+  const [addingTo, setAddingTo] = useState(null);
   const [newName, setNewName] = useState("");
   const [newUnit, setNewUnit] = useState("Kg");
   const [, forceUpdate] = useState(0);
   const refresh = () => forceUpdate((n) => n + 1);
 
-  const addItem = (sectionId) => {
-    if (!newName.trim()) return;
-    const sec = DEMAND_SECTIONS.find((s) => s.id === sectionId);
-    if (!sec) return;
-    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    if (sec.items.find((i) => i.id === id)) { alert("Item already exists"); return; }
-    sec.items.push({ id, name: newName.trim(), unit: newUnit });
-    setNewName(""); setNewUnit("Kg"); setAddingTo(null); refresh();
+  const reloadMaster = async () => {
+    try {
+      const [sections, rawMats, recipes] = await Promise.all([
+        api.getMasterSections(), api.getMasterRawMaterials(), api.getMasterRecipes()
+      ]);
+      if (sections) { DEMAND_SECTIONS.length = 0; sections.forEach((sec) => DEMAND_SECTIONS.push({ id: sec.id, titleHi: sec.title, emoji: sec.emoji || "", color: sec.color || "#1A1A1A", bg: sec.bg || "#fff", border: sec.border || "#E0E0DC", items: (sec.items || []).map((i) => ({ id: i.id, name: i.name, unit: i.unit })) })); }
+      if (rawMats) { RAW_MATERIALS.length = 0; rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit })); }
+      if (recipes) { Object.keys(RECIPES).forEach((k) => delete RECIPES[k]); Object.assign(RECIPES, recipes); }
+      refresh();
+    } catch (e) { console.error("Reload failed:", e); }
   };
 
-  const deleteItem = (sectionId, itemId) => {
+  const addItem = async (sectionId) => {
+    if (!newName.trim()) return;
+    const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    try {
+      await api.addDemandItem({ id, section_id: sectionId, name: newName.trim(), unit: newUnit });
+      setNewName(""); setNewUnit("Kg"); setAddingTo(null);
+      await reloadMaster();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const deleteItem = async (sectionId, itemId) => {
     if (!confirm(`Delete "${itemId}" from ${sectionId}?`)) return;
-    const sec = DEMAND_SECTIONS.find((s) => s.id === sectionId);
-    if (sec) sec.items = sec.items.filter((i) => i.id !== itemId);
-    refresh();
+    try {
+      await api.deleteDemandItem(itemId);
+      await reloadMaster();
+    } catch (e) { alert("Error: " + e.message); }
   };
 
-  const addRawMaterial = () => {
+  const addRawMaterial = async () => {
     if (!newName.trim()) return;
     const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
-    if (RAW_MATERIALS.find((r) => r.id === id)) { alert("Already exists"); return; }
-    RAW_MATERIALS.push({ id, name: newName.trim(), unit: newUnit });
-    setNewName(""); setNewUnit("Kg"); setAddingTo(null); refresh();
+    try {
+      await api.addRawMaterial({ id, name: newName.trim(), unit: newUnit });
+      setNewName(""); setNewUnit("Kg"); setAddingTo(null);
+      await reloadMaster();
+    } catch (e) { alert("Error: " + e.message); }
   };
 
-  const deleteRawMaterial = (rawId) => {
+  const deleteRawMaterial = async (rawId) => {
     if (!confirm(`Delete raw material "${rawId}"?`)) return;
-    const idx = RAW_MATERIALS.findIndex((r) => r.id === rawId);
-    if (idx >= 0) RAW_MATERIALS.splice(idx, 1);
-    refresh();
+    try {
+      await api.deleteRawMaterial(rawId);
+      await reloadMaster();
+    } catch (e) { alert("Error: " + e.message); }
   };
   const allDemandItems = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ ...i, section: sec.id, sectionName: sec.titleHi, emoji: sec.emoji })));
   const directSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
@@ -2536,15 +2562,11 @@ const MasterData = () => {
   const thS = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", whiteSpace: "nowrap" };
   const tdS = { padding: "7px 10px", fontSize: 12, borderBottom: "1px solid #F0F0EC" };
 
-  const saveUnit = (itemId, section) => {
-    const sec = DEMAND_SECTIONS.find((s) => s.id === section);
-    if (sec) {
-      const item = sec.items.find((i) => i.id === itemId);
-      if (item) item.unit = editUnit;
-    }
-    // Also update RAW_MATERIALS if it's a raw material
-    const raw = RAW_MATERIALS.find((r) => r.id === itemId || r.id === itemId + "_raw");
-    if (raw) raw.unit = editUnit;
+  const saveUnit = async (itemId, section) => {
+    try {
+      await api.updateDemandItem(itemId, { unit: editUnit });
+      await reloadMaster();
+    } catch (e) { alert("Error: " + e.message); }
     setEditId(null);
   };
 
@@ -2637,7 +2659,7 @@ const MasterData = () => {
                     <td style={tdS}>{editId === `raw_${raw.id}` ? (
                       <div style={{ display: "flex", gap: 3 }}>
                         <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11 }} />
-                        <button onClick={() => { raw.unit = editUnit; setEditId(null); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                        <button onClick={async () => { try { await api.updateRawMaterial(raw.id, { unit: editUnit }); await reloadMaster(); } catch(e) { alert(e.message); } setEditId(null); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
                       </div>
                     ) : (
                       <span onClick={() => { setEditId(`raw_${raw.id}`); setEditUnit(raw.unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{raw.unit} ✏️</span>
@@ -2737,6 +2759,41 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [storeView, setStoreView] = useState("bk");
+  const [masterLoaded, setMasterLoaded] = useState(false);
+
+  // Load master data from DB on startup — updates in-memory arrays
+  useEffect(() => {
+    Promise.all([
+      api.getMasterSections().catch(() => null),
+      api.getMasterRawMaterials().catch(() => null),
+      api.getMasterRecipes().catch(() => null),
+    ]).then(([sections, rawMats, recipes]) => {
+      if (sections && sections.length > 0) {
+        // Replace DEMAND_SECTIONS contents
+        DEMAND_SECTIONS.length = 0;
+        sections.forEach((sec) => {
+          DEMAND_SECTIONS.push({
+            id: sec.id,
+            titleHi: sec.title,
+            emoji: sec.emoji || "",
+            color: sec.color || "#1A1A1A",
+            bg: sec.bg || "#fff",
+            border: sec.border || "#E0E0DC",
+            items: (sec.items || []).map((i) => ({ id: i.id, name: i.name, unit: i.unit })),
+          });
+        });
+      }
+      if (rawMats && rawMats.length > 0) {
+        RAW_MATERIALS.length = 0;
+        rawMats.forEach((r) => RAW_MATERIALS.push({ id: r.id, name: r.name, unit: r.unit }));
+      }
+      if (recipes && Object.keys(recipes).length > 0) {
+        Object.keys(RECIPES).forEach((k) => delete RECIPES[k]);
+        Object.assign(RECIPES, recipes);
+      }
+      setMasterLoaded(true);
+    });
+  }, []);
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
