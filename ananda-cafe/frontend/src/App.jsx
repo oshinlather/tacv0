@@ -2747,23 +2747,26 @@ const MasterData = () => {
       {/* ── CONVERSIONS TAB ── */}
       {tab === "conversions" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 12px" }}>Define what 1 custom unit equals in base units. Used for stock calculations and demand accuracy.</p>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 12px" }}>Define what 1 custom unit equals in base units. Saved to database.</p>
           {Object.entries(UNIT_CONVERSIONS).map(([unitName, items]) => (
             <div key={unitName} style={{ marginBottom: 16 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "#EA580C" }}>🔄 {unitName} ({items.length} items)</span>
-                <button onClick={() => { setAddingTo(addingTo === `conv_${unitName}` ? null : `conv_${unitName}`); setNewName(""); setNewUnit(""); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === `conv_${unitName}` ? "Cancel" : "+ Add"}</button>
+                <button onClick={() => { setAddingTo(addingTo === `conv_${unitName}` ? null : `conv_${unitName}`); setNewName(""); setNewUnit(""); setEditUnit(""); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === `conv_${unitName}` ? "Cancel" : "+ Add"}</button>
               </div>
               {addingTo === `conv_${unitName}` && (
                 <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FED7AA", flexWrap: "wrap" }}>
                   <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Item name" style={{ flex: 1, minWidth: 100, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
                   <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Qty" type="number" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center" }} />
                   <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} placeholder="Base unit" style={{ width: 60, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center" }} />
-                  <button onClick={() => {
+                  <button onClick={async () => {
                     if (!newName.trim() || !newUnit) return;
                     const id = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
-                    UNIT_CONVERSIONS[unitName].push({ item_id: id, item_name: newName.trim(), qty: Number(newUnit), base_unit: editUnit || "Gm", notes: `1 ${unitName} = ${newUnit} ${editUnit || "Gm"}` });
-                    setNewName(""); setNewUnit(""); setEditUnit(""); setAddingTo(null); refresh();
+                    try {
+                      await api.addConversion({ unit_type: unitName, item_id: id, item_name: newName.trim(), qty: Number(newUnit), base_unit: editUnit || "Gm" });
+                      const conv = await api.getConversions(); if (conv) { Object.keys(UNIT_CONVERSIONS).forEach((k) => delete UNIT_CONVERSIONS[k]); Object.assign(UNIT_CONVERSIONS, conv); }
+                      setNewName(""); setNewUnit(""); setEditUnit(""); setAddingTo(null); refresh();
+                    } catch (e) { alert("Error: " + e.message); }
                   }} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
                 </div>
               )}
@@ -2775,19 +2778,32 @@ const MasterData = () => {
                     <th style={{ ...thS, textAlign: "center" }}>Base Unit</th>
                     <th style={{ ...thS, width: 30 }}></th>
                   </tr></thead>
-                  <tbody>{items.filter((i) => !search || i.item_name.toLowerCase().includes(search.toLowerCase())).map((item, idx) => (
+                  <tbody>{items.filter((i) => !search || i.item_name.toLowerCase().includes(search.toLowerCase())).map((item) => (
                     <tr key={item.item_id}>
                       <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{item.item_id}</span></td>
                       <td style={tdS}>{editId === `conv_${unitName}_${item.item_id}` ? (
                         <div style={{ display: "flex", gap: 3, justifyContent: "center" }}>
                           <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} type="number" style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 12, textAlign: "center" }} />
-                          <button onClick={() => { item.qty = Number(editUnit); item.notes = `1 ${unitName} = ${editUnit} ${item.base_unit}`; setEditId(null); refresh(); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                          <button onClick={async () => {
+                            try {
+                              await api.updateConversion({ unit_type: unitName, item_id: item.item_id, qty: Number(editUnit), notes: `1 ${unitName} = ${editUnit} ${item.base_unit}` });
+                              const conv = await api.getConversions(); if (conv) { Object.keys(UNIT_CONVERSIONS).forEach((k) => delete UNIT_CONVERSIONS[k]); Object.assign(UNIT_CONVERSIONS, conv); }
+                              setEditId(null); refresh();
+                            } catch (e) { alert("Error: " + e.message); }
+                          }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
                         </div>
                       ) : (
                         <span onClick={() => { setEditId(`conv_${unitName}_${item.item_id}`); setEditUnit(String(item.qty)); }} style={{ cursor: "pointer", padding: "3px 10px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309", display: "inline-block", textAlign: "center" }}>{item.qty} ✏️</span>
                       )}</td>
                       <td style={{ ...tdS, textAlign: "center", color: "#888", fontSize: 12 }}>{item.base_unit}</td>
-                      <td style={tdS}><button onClick={() => { if (confirm(`Remove ${item.item_name}?`)) { UNIT_CONVERSIONS[unitName] = UNIT_CONVERSIONS[unitName].filter((i) => i.item_id !== item.item_id); refresh(); } }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
+                      <td style={tdS}><button onClick={async () => {
+                        if (!confirm(`Remove ${item.item_name}?`)) return;
+                        try {
+                          await api.deleteConversion(unitName, item.item_id);
+                          const conv = await api.getConversions(); if (conv) { Object.keys(UNIT_CONVERSIONS).forEach((k) => delete UNIT_CONVERSIONS[k]); Object.assign(UNIT_CONVERSIONS, conv); }
+                          refresh();
+                        } catch (e) { alert("Error: " + e.message); }
+                      }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button></td>
                     </tr>
                   ))}</tbody>
                 </table>
@@ -2864,7 +2880,8 @@ export default function AnandaCafe() {
       api.getMasterSections().catch(() => null),
       api.getMasterRawMaterials().catch(() => null),
       api.getMasterRecipes().catch(() => null),
-    ]).then(([sections, rawMats, recipes]) => {
+      api.getConversions().catch(() => null),
+    ]).then(([sections, rawMats, recipes, conversions]) => {
       if (sections && sections.length > 0) {
         // Replace DEMAND_SECTIONS contents
         DEMAND_SECTIONS.length = 0;
@@ -2887,6 +2904,10 @@ export default function AnandaCafe() {
       if (recipes && Object.keys(recipes).length > 0) {
         Object.keys(RECIPES).forEach((k) => delete RECIPES[k]);
         Object.assign(RECIPES, recipes);
+      }
+      if (conversions && Object.keys(conversions).length > 0) {
+        Object.keys(UNIT_CONVERSIONS).forEach((k) => delete UNIT_CONVERSIONS[k]);
+        Object.assign(UNIT_CONVERSIONS, conversions);
       }
       setMasterLoaded(true);
     });
