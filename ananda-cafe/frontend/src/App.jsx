@@ -1601,6 +1601,7 @@ const OutletMgr = ({ onBack }) => {
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesSaving, setSalesSaving] = useState(false);
   const [existingData, setExistingData] = useState(null);
+  const [salesLoaded, setSalesLoaded] = useState(false);
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
@@ -1663,7 +1664,7 @@ const OutletMgr = ({ onBack }) => {
         }
       }).finally(() => setSalesLoading(false));
     };
-    if (!salesLoading && !existingData && salesData.total_sale === "") loadSalesData();
+    if (!salesLoaded) { setSalesLoaded(true); loadSalesData(); }
 
     const n = (v) => Number(v) || 0;
     const totalSale = n(salesData.total_sale);
