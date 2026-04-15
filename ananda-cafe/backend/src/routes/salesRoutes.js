@@ -751,4 +751,66 @@ router.delete('/master/recipes/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+// ============================================================
+// UNIT CONVERSIONS API ROUTES — Add to salesRoutes.js
+// Paste before module.exports = router;
+// ============================================================
+
+// ── GET /api/master/conversions — All conversions grouped by unit type
+router.get('/master/conversions', async (req, res) => {
+  try {
+    const { data } = await supabase.from('unit_conversions').select('*').eq('active', true).order('unit_type').order('item_name');
+    const grouped = {};
+    (data || []).forEach(row => {
+      if (!grouped[row.unit_type]) grouped[row.unit_type] = [];
+      grouped[row.unit_type].push({
+        item_id: row.item_id,
+        item_name: row.item_name,
+        qty: Number(row.qty),
+        base_unit: row.base_unit,
+        notes: row.notes
+      });
+    });
+    res.json(grouped);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/master/conversions — Add/update a conversion
+router.post('/master/conversions', async (req, res) => {
+  try {
+    const { unit_type, item_id, item_name, qty, base_unit, notes } = req.body;
+    const { error } = await supabase.from('unit_conversions').upsert(
+      { unit_type, item_id, item_name, qty, base_unit, notes: notes || `1 ${unit_type} = ${qty} ${base_unit}` },
+      { onConflict: 'unit_type,item_id' }
+    );
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/master/conversions/:id — Update conversion qty
+router.patch('/master/conversions', async (req, res) => {
+  try {
+    const { unit_type, item_id, qty, base_unit, notes } = req.body;
+    const updates = {};
+    if (qty !== undefined) updates.qty = qty;
+    if (base_unit !== undefined) updates.base_unit = base_unit;
+    if (notes !== undefined) updates.notes = notes;
+    const { error } = await supabase.from('unit_conversions').update(updates)
+      .eq('unit_type', unit_type).eq('item_id', item_id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/master/conversions — Soft delete
+router.delete('/master/conversions', async (req, res) => {
+  try {
+    const { unit_type, item_id } = req.query;
+    const { error } = await supabase.from('unit_conversions').update({ active: false })
+      .eq('unit_type', unit_type).eq('item_id', item_id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 module.exports = router;
