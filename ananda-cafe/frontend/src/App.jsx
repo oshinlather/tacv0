@@ -702,22 +702,22 @@ const Dispatch = () => {
 
   return (
     <div id="print-dispatch">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Dispatch Verification</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Tick each item after loading in transport</p></div>
-        <div style={{ display: "flex", gap: 6 }}><button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄</button><PrintBtn sectionId="print-dispatch" title="Dispatch Challan" /></div>
+      {/* Compact header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🚚 Dispatch</h3>
+        <button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer" }}>🔄</button>
       </div>
 
-      {/* Outlet filter pills with status - sticky, single row scrollable */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, position: "sticky", top: 96, background: "#FAF9F6", paddingTop: 8, paddingBottom: 8, zIndex: 10, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+      {/* Outlet pills - compact */}
+      <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {OUTLETS.map((o) => {
           const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
           const dCount = allDone.filter((d) => d.outlet_id === o.id).length;
           const isAllDone = pCount === 0 && dCount > 0;
-          return (<button key={o.id} onClick={() => setSelOutlet(selOutlet === o.id ? null : o.id)} style={{ padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : isAllDone ? "1px solid #BBF7D0" : pCount > 0 ? "1px solid #FDE68A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : isAllDone ? "#F0FDF4" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap", flexShrink: 0 }}>
-            {isAllDone && <span style={{ fontSize: 11 }}>✅</span>}
-            {pCount > 0 && <span style={{ width: 8, height: 8, borderRadius: 4, background: "#F59E0B", flexShrink: 0 }} />}
-            {o.name}
-            {pCount > 0 && <span style={{ padding: "1px 7px", borderRadius: 10, background: selOutlet === o.id ? "rgba(255,255,255,0.25)" : "#FFFBEB", color: selOutlet === o.id ? "#fff" : "#B45309", fontSize: 11, fontWeight: 800 }}>{pCount}</span>}
+          return (<button key={o.id} onClick={() => setSelOutlet(selOutlet === o.id ? null : o.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "1px solid #FDE68A" : isAllDone ? "1px solid #BBF7D0" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#FFFBEB" : isAllDone ? "#F0FDF4" : "#fff", color: selOutlet === o.id ? "#B45309" : "#888", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", flexShrink: 0 }}>
+            {isAllDone && <span style={{ fontSize: 9 }}>✅</span>}
+            {pCount > 0 && <span style={{ width: 6, height: 6, borderRadius: 3, background: "#F59E0B", flexShrink: 0 }} />}
+            {o.short}
           </button>);
         })}
       </div>
@@ -733,17 +733,15 @@ const Dispatch = () => {
         const categories = hasItems ? getItemsByCategory(order.items) : [];
 
         return (
-          <div key={order.id} style={{ background: "#fff", borderRadius: 14, border: `1px solid ${allChecked ? "#BBF7D0" : "#E8E8E4"}`, marginBottom: 14, overflow: "hidden" }}>
-            {/* Header */}
-            <div style={{ padding: "14px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <strong style={{ fontSize: 15 }}>{outlet?.name || order.outlet_id}</strong>
-                <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: order.type === "photo" ? "#EFF6FF" : "#FFFBEB", color: order.type === "photo" ? "#2563EB" : "#B45309" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
+          <div key={order.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${allChecked ? "#BBF7D0" : "#E8E8E4"}`, marginBottom: 10, overflow: "hidden" }}>
+            {/* Compact header */}
+            <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.short || order.outlet_id}</span>
+                <span style={{ fontSize: 10, color: "#999" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
+                <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 11, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
-                {hasItems && <div style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓ {checkedCount}/{itemEntries.length}</div>}
-              </div>
+              {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
             </div>
 
             {order.note && <div style={{ padding: "8px 18px", fontSize: 12, color: "#888", borderBottom: "1px solid #F0F0EC" }}>📝 {order.note}</div>}
