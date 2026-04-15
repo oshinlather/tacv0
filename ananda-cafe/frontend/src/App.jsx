@@ -1688,83 +1688,60 @@ const OutletMgr = ({ onBack }) => {
 
     if (salesLoading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-    const Field = ({ label, field, prefix, placeholder }) => (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#FAFAF8", borderRadius: 10, marginBottom: 4 }}>
-        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{label}</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {prefix && <span style={{ fontSize: 14, color: "#999" }}>{prefix}</span>}
-          <input type="number" inputMode="numeric" placeholder={placeholder || "0"} value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={{ width: 90, padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, background: "#fff" }} />
-        </div>
+    const R = ({ label, field, prefix }) => (
+      <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+        <span style={{ flex: 1, fontSize: 12, color: "#555" }}>{label}</span>
+        <span style={{ fontSize: 12, color: "#999" }}>{prefix}</span>
+        <input type="number" inputMode="numeric" placeholder="0" value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={{ width: 75, padding: "5px 4px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 14, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#fff" }} />
+      </div>
+    );
+    const V = ({ label, value, color }) => (
+      <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+        <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: "#555" }}>{label}</span>
+        <span style={{ fontSize: 14, fontFamily: "'JetBrains Mono'", fontWeight: 800, color: color || "#1A1A1A" }}>₹{value}</span>
       </div>
     );
 
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>💰 Daily Sales & Cash</div><span style={{ fontSize: 11, color: "#999" }}>{today()}</span></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{today()}</span></div>
 
-      {/* Section 1: Total Sale */}
-      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 12, fontWeight: 700, color: "#B45309" }}>📊 Total Sale</div>
-        <div style={{ padding: "8px" }}>
-          <Field label="Total Sale (Billing)" field="total_sale" prefix="₹" />
+      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Sales</div>
+        <R label="Total Sale (Billing)" field="total_sale" prefix="₹" />
+        <R label="Swiggy" field="swiggy_sale" prefix="₹" />
+        <R label="Zomato" field="zomato_sale" prefix="₹" />
+        <R label="Other Delivery" field="other_delivery_sale" prefix="₹" />
+        <V label="🏪 Store Sale" value={storeSale} color="#16A34A" />
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Payment (Store Sale)</div>
+        <R label="UPI Collected" field="upi_collected" prefix="₹" />
+        <R label="Cash Collected" field="cash_collected" prefix="₹" />
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 11, fontWeight: 700 }}>
+          <span>UPI+Cash = ₹{paymentTotal}</span>
+          <span style={{ color: paymentDiff === 0 ? "#16A34A" : "#DC2626" }}>{paymentDiff === 0 ? "✅ Match" : `⚠️ ₹${paymentDiff}`}</span>
         </div>
       </div>
 
-      {/* Section 2: Delivery Channels */}
-      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", background: "#FFF7ED", borderBottom: "1px solid #FED7AA", fontSize: 12, fontWeight: 700, color: "#EA580C" }}>🛵 Delivery Channels</div>
-        <div style={{ padding: "8px" }}>
-          <Field label="Swiggy" field="swiggy_sale" prefix="₹" />
-          <Field label="Zomato" field="zomato_sale" prefix="₹" />
-          <Field label="Other Delivery" field="other_delivery_sale" prefix="₹" />
-        </div>
-        <div style={{ padding: "8px 14px", background: "#F0FDF4", borderTop: "1px solid #BBF7D0", display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700 }}>
-          <span>🏪 Store Sale (Dine-in + Pickup)</span>
-          <span style={{ fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{storeSale}</span>
-        </div>
-      </div>
-
-      {/* Section 3: Payment Modes */}
-      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", fontSize: 12, fontWeight: 700, color: "#2563EB" }}>💳 Payment Modes (Store Sale)</div>
-        <div style={{ padding: "8px" }}>
-          <Field label="UPI Collected" field="upi_collected" prefix="₹" />
-          <Field label="Cash Collected" field="cash_collected" prefix="₹" />
-        </div>
-        <div style={{ padding: "8px 14px", background: paymentDiff === 0 ? "#F0FDF4" : "#FEF2F2", borderTop: `1px solid ${paymentDiff === 0 ? "#BBF7D0" : "#FECACA"}`, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 }}>
-          <span>UPI + Cash = ₹{paymentTotal}</span>
-          <span style={{ color: paymentDiff === 0 ? "#16A34A" : "#DC2626" }}>{paymentDiff === 0 ? "✅ Matches" : `⚠️ Diff: ₹${paymentDiff}`}</span>
+      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#9333EA", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Cash Management</div>
+        <V label="Previous Day Cash" value={prevCash} color="#555" />
+        <V label="+ Today Cash" value={cash} color="#16A34A" />
+        <R label="− Cash Expense" field="cash_expense" prefix="₹" />
+        <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense note..." style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 11, fontFamily: "inherit", background: "#FAFAF8", marginBottom: 2, boxSizing: "border-box" }} />
+        <R label="− Cash Deposited" field="cash_deposited" prefix="₹" />
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 4px", fontSize: 13, fontWeight: 800 }}>
+          <span>💰 Closing Cash</span>
+          <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 16 }}>₹{closingCash}</span>
         </div>
       </div>
 
-      {/* Section 4: Cash Management */}
-      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 12, overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", background: "#FAF5FF", borderBottom: "1px solid #E9D5FF", fontSize: 12, fontWeight: 700, color: "#9333EA" }}>💵 Cash Management</div>
-        <div style={{ padding: "8px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#F5F5F3", borderRadius: 10, marginBottom: 4 }}>
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>Previous Day Cash</span>
-            <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#555" }}>₹{prevCash}</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#F0FDF4", borderRadius: 10, marginBottom: 4 }}>
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>+ Today Cash Collected</span>
-            <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#16A34A" }}>₹{cash}</span>
-          </div>
-          <Field label="− Cash Expense" field="cash_expense" prefix="₹" />
-          <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense detail (veg, milk, etc.)" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", marginBottom: 4, boxSizing: "border-box" }} />
-          <Field label="− Cash Deposited" field="cash_deposited" prefix="₹" />
-        </div>
-        <div style={{ padding: "12px 14px", background: "#FFFBEB", borderTop: "1px solid #FDE68A", display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 800 }}>
-          <span>💰 Closing Cash with Manager</span>
-          <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 18 }}>₹{closingCash}</span>
-        </div>
-      </div>
+      <input value={salesData.notes} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes..." style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", marginBottom: 8, boxSizing: "border-box" }} />
 
-      {/* Notes */}
-      <input value={salesData.notes} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Any notes..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
-
-      {/* Submit */}
-      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={submitSales} disabled={salesSaving || !totalSale} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: salesSaving || !totalSale ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: salesSaving || !totalSale ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-          {salesSaving ? "⏳ Saving..." : existingData ? "💾 Update Today's Sales" : "💰 Submit Today's Sales"}
+      <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={submitSales} disabled={salesSaving || !totalSale} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: salesSaving || !totalSale ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: salesSaving || !totalSale ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          {salesSaving ? "⏳..." : existingData ? "💾 Update" : "💰 Submit Sales"}
         </button>
       </div>
     </div>);
