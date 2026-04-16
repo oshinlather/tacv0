@@ -855,6 +855,11 @@ const Inventory = () => {
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
   const [stockOutData, setStockOutData] = useState(null);
   const [stockOutLoading, setStockOutLoading] = useState(false);
+  const [extraItems, setExtraItems] = useState({}); // manually added items: { tempId: { name, qty, unit, inv_id, manual: true } }
+  const [removedItems, setRemovedItems] = useState({}); // ids removed from view: { id: true }
+  const [addItemSearch, setAddItemSearch] = useState(""); // search text for add-item panel
+  const [addItemQty, setAddItemQty] = useState(""); // qty for item being added
+  const [showAddPanel, setShowAddPanel] = useState(false);
 
   // Auto-load stock out data when view changes
   useEffect(() => {
@@ -1207,18 +1212,30 @@ const Inventory = () => {
     {invSection === "stockout" && (<>
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {[{ id: "bk", label: "🏭 Kitchen", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
-          <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+          <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); setShowAddPanel(false); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
         ))}
       </div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Raw materials for Kitchen" : `Direct items for ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
-          {stockOutData && Object.keys(stockOutData).length > 0 && <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 700 }}>{Object.keys(issuedItems).filter((k) => issuedItems[k]).length}/{Object.keys(stockOutData).length} issued</span>}
+          {(() => {
+            const mergedData = { ...(stockOutData || {}), ...extraItems };
+            const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
+            const tickedCount = visibleIds.filter((k) => issuedItems[k]).length;
+            return visibleIds.length > 0 && <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 700 }}>{tickedCount}/{visibleIds.length} issued</span>;
+          })()}
         </div>
         {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
-        {!stockOutLoading && stockOutData && Object.keys(stockOutData).length > 0 ? (
+        {!stockOutLoading && (() => {
+          const mergedData = { ...(stockOutData || {}), ...extraItems };
+          const visibleEntries = Object.entries(mergedData).filter(([k]) => !removedItems[k]);
+          if (visibleEntries.length === 0) {
+            return <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items — use + Add below to add items manually</div>;
+          }
+          return (
           <div>
-            {Object.entries(stockOutData).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
+            {visibleEntries.sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
+              const isManual = !!item.manual;
               const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
               const stock = invItem ? Number(invItem.current_qty) : null;
               const isLow = stock !== null && stock < item.qty;
@@ -1228,12 +1245,16 @@ const Inventory = () => {
               const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? Math.ceil(item.qty) : item.qty);
               const isEdited = editQty !== undefined && Number(editQty) !== (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
               return (
-                <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : "transparent", opacity: issued ? 0.6 : 1 }}>
+                <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : isManual ? "#FFF7ED" : "transparent", opacity: issued ? 0.6 : 1 }}>
                   <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
                     {issued && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, textDecoration: issued ? "line-through" : "none" }}>{item.name}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, textDecoration: issued ? "line-through" : "none", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                      <span>{item.name}</span>
+                      {isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#EA580C", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Manual</span>}
+                      {!isManual && isEdited && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#B45309", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Edited</span>}
+                    </div>
                   </div>
                   <div style={{ textAlign: "right", minWidth: 40, flexShrink: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
@@ -1244,44 +1265,128 @@ const Inventory = () => {
                     data-stockout-input
                     style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
                   <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{item.unit}</span>
+                  <button onClick={() => { setRemovedItems((p) => ({ ...p, [id]: true })); setIssuedItems((p) => { const c = { ...p }; delete c[id]; return c; }); setEditedQty((p) => { const c = { ...p }; delete c[id]; return c; }); if (isManual) { setExtraItems((p) => { const c = { ...p }; delete c[id]; return c; }); } }} title="Remove from list" style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                 </div>
               );
             })}
           </div>
-        ) : !stockOutLoading && (
-          <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No pending demand</div>
+          );
+        })()}
+        {/* + Add Item panel */}
+        {!stockOutLoading && (
+          <div style={{ borderTop: "1px solid #E8E8E4", background: "#FAFAF8" }}>
+            {!showAddPanel ? (
+              <button onClick={() => setShowAddPanel(true)} style={{ width: "100%", padding: "14px 12px", border: "none", background: "#F0FDF4", fontSize: 13, fontWeight: 700, color: "#16A34A", cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <span style={{ fontSize: 16 }}>＋</span> Add Extra Item / Override Qty
+              </button>
+            ) : (() => {
+              const q = addItemSearch.trim().toLowerCase();
+              const matches = q ? items.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 6) : [];
+              const exactMatch = matches.find((m) => m.name.toLowerCase() === q);
+              const mergedData = { ...(stockOutData || {}), ...extraItems };
+              const alreadyAdded = (invId) => Object.values(mergedData).some((v) => !removedItems[Object.keys(mergedData).find((k) => mergedData[k] === v)] && v.inv_id === invId);
+              const addFromInventory = (inv) => {
+                const tempId = `manual_${Date.now()}_${inv.id}`;
+                setExtraItems((p) => ({ ...p, [tempId]: { name: inv.name, qty: Number(addItemQty) || 1, unit: inv.unit, inv_id: inv.id, manual: true } }));
+                setAddItemSearch(""); setAddItemQty(""); setShowAddPanel(false);
+              };
+              const addAsFreeText = () => {
+                if (!addItemSearch.trim()) return;
+                const tempId = `manual_${Date.now()}_freetext`;
+                setExtraItems((p) => ({ ...p, [tempId]: { name: addItemSearch.trim(), qty: Number(addItemQty) || 1, unit: "", inv_id: null, manual: true } }));
+                setAddItemSearch(""); setAddItemQty(""); setShowAddPanel(false);
+                alert("⚠️ Added as free-text (no inventory match). Stock will NOT be deducted for this item — please add it to Inventory SKUs and re-issue.");
+              };
+              return (
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: matches.length > 0 || (q && !exactMatch) ? 8 : 0 }}>
+                    <input autoFocus value={addItemSearch} onChange={(e) => setAddItemSearch(e.target.value)} placeholder="Search inventory…" style={{ flex: 1, padding: "7px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                    <input type="number" inputMode="numeric" min="0" step="0.01" value={addItemQty} onChange={(e) => setAddItemQty(e.target.value)} placeholder="Qty" style={{ width: 60, padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }} />
+                    <button onClick={() => { setShowAddPanel(false); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                  </div>
+                  {q && matches.length > 0 && (
+                    <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E0E0DC", overflow: "hidden" }}>
+                      {matches.map((inv) => {
+                        const used = alreadyAdded(inv.id);
+                        return (
+                          <button key={inv.id} onClick={() => !used && addFromInventory(inv)} disabled={used} style={{ width: "100%", padding: "8px 10px", border: "none", borderBottom: "1px solid #F5F5F3", background: used ? "#F5F5F3" : "#fff", textAlign: "left", cursor: used ? "not-allowed" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, opacity: used ? 0.5 : 1 }}>
+                            <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{inv.name}</span>
+                            <span style={{ fontSize: 10, color: "#999" }}>{inv.category}</span>
+                            <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: Number(inv.current_qty) === 0 ? "#DC2626" : "#16A34A" }}>{inv.current_qty} {inv.unit}</span>
+                            {used && <span style={{ fontSize: 9, color: "#999" }}>added</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {q && matches.length === 0 && (
+                    <button onClick={addAsFreeText} style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px dashed #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                      + Add "{addItemSearch}" as new item (free-text — won't deduct stock)
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
         )}
       </div>
       {/* Issue button — sticky at bottom, only issues ticked items */}
-      {stockOutData && Object.keys(stockOutData).length > 0 && (() => {
-        const tickedIds = Object.keys(issuedItems).filter((k) => issuedItems[k]);
+      {(() => {
+        const mergedData = { ...(stockOutData || {}), ...extraItems };
+        const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
+        if (visibleIds.length === 0) return null;
+        const tickedIds = visibleIds.filter((k) => issuedItems[k]);
         const tickedCount = tickedIds.length;
         return (
         <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
         <button onClick={async () => {
           if (tickedCount === 0) { alert("Tick items to issue first"); return; }
-          const entries = tickedIds.map((id) => {
-            const item = stockOutData[id];
+          // Build entries + per-entry source tracking
+          const rawEntries = tickedIds.map((id) => {
+            const item = mergedData[id];
             if (!item) return null;
-            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
+            const calcQty = typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty);
+            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : calcQty;
             const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
-            return invItem && qty > 0 ? { item_id: invItem.id, quantity: qty } : null;
+            if (!invItem || qty <= 0) return null;
+            // Determine source: manual (added by user), edited (recipe qty changed), recipe (unchanged)
+            const isManual = !!item.manual;
+            const isEdited = !isManual && editedQty[id] !== undefined && Number(editedQty[id]) !== calcQty;
+            const source = isManual ? "manual" : isEdited ? "edited" : "recipe";
+            return { item_id: invItem.id, quantity: qty, _calc: calcQty, _name: invItem.name, _source: source };
           }).filter(Boolean);
-          if (entries.length === 0) { alert("No matching inventory items found"); return; }
+          if (rawEntries.length === 0) { alert("No matching inventory items found. Free-text items are skipped until added to Inventory SKUs."); return; }
+          // Warn if any free-text items were ticked but have no inv_id match
+          const skippedFreeText = tickedIds.filter((id) => {
+            const item = mergedData[id];
+            if (!item || !item.manual) return false;
+            const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
+            return !invItem;
+          });
+          if (skippedFreeText.length > 0) {
+            if (!confirm(`${skippedFreeText.length} free-text item(s) will NOT be deducted from inventory (no SKU match). Continue with the rest?`)) return;
+          }
+          const entries = rawEntries.map(({ item_id, quantity }) => ({ item_id, quantity }));
           setIssuing(true);
           try {
             await api.stockOut(entries, "issuance");
-            const auditEntries = entries.map(({ item_id, quantity }) => {
-              const invItem = items.find((i) => i.id === item_id);
-              const rawItem = Object.entries(stockOutData).find(([, v]) => {
-                const match = v.inv_id ? items.find((i) => i.id === v.inv_id) : null;
-                return match?.id === item_id;
-              });
-              return { item_id, item_name: invItem?.name || item_id, calculated_qty: rawItem ? rawItem[1].qty : 0, issued_qty: quantity, variance: quantity - (rawItem ? rawItem[1].qty : 0), date: today() };
-            });
+            const auditEntries = rawEntries.map(({ item_id, quantity, _calc, _name, _source }) => ({
+              item_id,
+              item_name: _name,
+              calculated_qty: _calc,
+              issued_qty: quantity,
+              variance: quantity - _calc,
+              source: _source,
+              date: today(),
+            }));
             try { await api.saveIssuanceAudit(auditEntries); } catch (e) {}
-            alert(`✅ ${entries.length} items issued from inventory`);
-            setIssuedItems({}); setEditedQty({}); load();
+            const manualCount = rawEntries.filter((e) => e._source === "manual").length;
+            const editedCount = rawEntries.filter((e) => e._source === "edited").length;
+            let msg = `✅ ${entries.length} items issued from inventory`;
+            if (manualCount > 0) msg += ` (${manualCount} manual)`;
+            if (editedCount > 0) msg += ` (${editedCount} edited)`;
+            alert(msg);
+            setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); load();
           } catch (e) { alert("Error: " + e.message); }
           finally { setIssuing(false); }
         }} disabled={issuing || tickedCount === 0} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing || tickedCount === 0 ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing || tickedCount === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
@@ -2434,7 +2539,8 @@ const IssuanceAudit = () => {
 
   const totalCalc = auditData.reduce((s, a) => s + (a.calculated_qty || 0), 0);
   const totalIssued = auditData.reduce((s, a) => s + (a.issued_qty || 0), 0);
-  const editsCount = auditData.filter((a) => a.variance !== 0).length;
+  const editsCount = auditData.filter((a) => a.variance !== 0 && a.source !== "manual").length;
+  const manualCount = auditData.filter((a) => a.source === "manual").length;
 
   return (
     <div>
@@ -2462,6 +2568,10 @@ const IssuanceAudit = () => {
             <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Edits Made</div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: editsCount > 0 ? "#B45309" : "#16A34A" }}>{editsCount}</div>
           </div>
+          <div style={{ flex: "1 1 100px", background: manualCount > 0 ? "#FFF7ED" : "#fff", borderRadius: 12, padding: "14px 16px", border: `1px solid ${manualCount > 0 ? "#FED7AA" : "#E8E8E4"}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Manual Adds</div>
+            <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: manualCount > 0 ? "#EA580C" : "#999" }}>{manualCount}</div>
+          </div>
           <div style={{ flex: "1 1 100px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
             <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Net Variance</div>
             <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: totalIssued > totalCalc ? "#DC2626" : "#16A34A" }}>{totalIssued > totalCalc ? "+" : ""}{(totalIssued - totalCalc).toFixed(2)}</div>
@@ -2484,22 +2594,32 @@ const IssuanceAudit = () => {
                 <th style={{ ...thS, textAlign: "right" }}>Calculated</th>
                 <th style={{ ...thS, textAlign: "right" }}>Issued</th>
                 <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+                <th style={{ ...thS, textAlign: "center" }}>Source</th>
                 <th style={{ ...thS, textAlign: "center" }}>Status</th>
               </tr></thead>
               <tbody>
                 {auditData.map((a, i) => {
-                  const isEdited = a.variance !== 0;
+                  const source = a.source || "recipe";
+                  const isManual = source === "manual";
+                  const isEdited = a.variance !== 0 && !isManual;
                   const isOver = a.variance > 0;
                   return (
-                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC", background: isEdited ? "#FFFDF5" : "transparent" }}>
+                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC", background: isManual ? "#FFF7ED" : isEdited ? "#FFFDF5" : "transparent" }}>
                       <td style={{ ...tdS, fontWeight: 600 }}>{a.item_name}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(a.calculated_qty).toFixed(2)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{isManual ? "—" : Number(a.calculated_qty).toFixed(2)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{Number(a.issued_qty).toFixed(2)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !isEdited ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
-                        {isEdited ? `${isOver ? "+" : ""}${Number(a.variance).toFixed(2)}` : "—"}
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isManual ? "#EA580C" : !isEdited ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
+                        {isManual ? "manual" : isEdited ? `${isOver ? "+" : ""}${Number(a.variance).toFixed(2)}` : "—"}
                       </td>
                       <td style={{ ...tdS, textAlign: "center" }}>
-                        {isEdited ? (
+                        <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, background: isManual ? "#FFF7ED" : isEdited ? "#FFFBEB" : "#F0FDF4", color: isManual ? "#EA580C" : isEdited ? "#B45309" : "#16A34A" }}>
+                          {isManual ? "Manual" : isEdited ? "Edited" : "Recipe"}
+                        </span>
+                      </td>
+                      <td style={{ ...tdS, textAlign: "center" }}>
+                        {isManual ? (
+                          <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: "#FFF7ED", color: "#EA580C" }}>➕ Added</span>
+                        ) : isEdited ? (
                           <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isOver ? "#FEF2F2" : "#F0FDF4", color: isOver ? "#DC2626" : "#16A34A" }}>
                             {isOver ? "⬆ Over" : "⬇ Under"}
                           </span>
