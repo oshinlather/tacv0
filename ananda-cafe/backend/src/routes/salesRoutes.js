@@ -614,6 +614,7 @@ item_name: e.item_name,
 calculated_qty: e.calculated_qty,
 issued_qty: e.issued_qty,
 variance: e.variance,
+source: e.source || 'recipe',
 audit_date: e.date || new Date().toISOString().split('T')[0],
 }));
 
@@ -1038,6 +1039,102 @@ router.get('/recipes/petpooja', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ============================================================
+// STAFF DEMANDS — Food & Dress Requests
+// ============================================================
+
+// ── GET /api/staff-demands/items — Get master staff demand items (DB-driven)
+router.get('/staff-demands/items', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('staff_demand_items')
+      .select('*')
+      .eq('active', true)
+      .order('category')
+      .order('sort_order');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/staff-demands — Get staff demands (filter by outlet, date, category)
+router.get('/staff-demands', async (req, res) => {
+  try {
+    const { outlet_id, date, category, shift } = req.query;
+    let query = supabase.from('staff_demands').select('*');
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    if (date) query = query.eq('date', date);
+    if (category) query = query.eq('category', category);
+    if (shift) query = query.eq('shift', shift);
+    const { data, error } = await query.order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/staff-demands — Submit a staff demand (food or dress)
+router.post('/staff-demands', async (req, res) => {
+  try {
+    const { outlet_id, date, shift, category, items, note, submitted_by } = req.body;
+    if (!outlet_id || !category || !items || items.length === 0) {
+      return res.status(400).json({ error: 'outlet_id, category, and items are required' });
+    }
+
+    // For food: upsert by outlet+date+shift+category (one entry per shift)
+    if (category === 'food' && shift) {
+      const { data, error } = await supabase.from('staff_demands').upsert({
+        outlet_id,
+        date: date || new Date().toISOString().split('T')[0],
+        shift,
+        category,
+        items,
+        note,
+        submitted_by: submitted_by || outlet_id,
+        submitted_at: new Date().toISOString(),
+      }, { onConflict: 'outlet_id,date,shift,category' });
+      if (error) throw error;
+      return res.json({ ok: true, type: 'upsert' });
+    }
+
+    // For dress: always insert (no upsert)
+    const { data, error } = await supabase.from('staff_demands').insert({
+      outlet_id,
+      date: date || new Date().toISOString().split('T')[0],
+      shift: shift || null,
+      category,
+      items,
+      note,
+      submitted_by: submitted_by || outlet_id,
+    });
+    if (error) throw error;
+    res.json({ ok: true, type: 'insert' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/staff-demands/items — Add new staff demand item
+router.post('/staff-demands/items', async (req, res) => {
+  try {
+    const { id, category, name, unit, input_type, options, sort_order } = req.body;
+    const { error } = await supabase.from('staff_demand_items').upsert({
+      id, category, name, unit, input_type: input_type || 'number',
+      options: options || null, sort_order: sort_order || 99,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/staff-demands/items/:id — Soft delete
+router.delete('/staff-demands/items/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('staff_demand_items')
+      .update({ active: false })
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;
