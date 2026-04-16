@@ -1261,6 +1261,21 @@ const Inventory = () => {
           })()}
         </div>
         {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {/* Smart nudge: only appears when user has pending edits or manual additions */}
+        {!stockOutLoading && (() => {
+          const editCount = Object.keys(editedQty).length;
+          const manualCount = Object.keys(extraItems).filter((k) => !removedItems[k]).length;
+          if (editCount === 0 && manualCount === 0) return null;
+          const parts = [];
+          if (editCount > 0) parts.push(`${editCount} edit${editCount > 1 ? "s" : ""}`);
+          if (manualCount > 0) parts.push(`${manualCount} added`);
+          return (
+            <div style={{ padding: "8px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 11, color: "#B45309", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>💡</span>
+              <span><strong>{parts.join(" · ")}</strong> pending — changes save only when you tap <strong>Issue</strong> below</span>
+            </div>
+          );
+        })()}
         {!stockOutLoading && (() => {
           const mergedData = { ...(stockOutData || {}), ...extraItems };
           const visibleEntries = Object.entries(mergedData).filter(([k]) => !removedItems[k]);
