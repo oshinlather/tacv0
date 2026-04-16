@@ -1852,8 +1852,27 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+
+  // ── Staff Demand State ──
+  const [staffItems, setStaffItems] = useState([]); // master items from DB
+  const [staffFood, setStaffFood] = useState({}); // { roti: 10, sabji: 2 }
+  const [staffShift, setStaffShift] = useState(() => istHour() < 14 ? "am" : "pm");
+  const [staffDress, setStaffDress] = useState([]); // [{ item: "tshirt", role: "Chef", size: "XL" }]
+  const [staffSaving, setStaffSaving] = useState(false);
+  const [staffItemsLoaded, setStaffItemsLoaded] = useState(false);
+
+  // Load staff demand items from DB once
+  useEffect(() => {
+    if (!staffItemsLoaded) {
+      api.getStaffDemandItems().then(setStaffItems).catch(() => setStaffItems([]));
+      setStaffItemsLoaded(true);
+    }
+  }, [staffItemsLoaded]);
+
+  const staffFoodItems = staffItems.filter((i) => i.category === "food");
+  const staffDressItems = staffItems.filter((i) => i.category === "dress");
   const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
   const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
@@ -2014,25 +2033,173 @@ const OutletMgr = ({ onBack }) => {
     <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🗑️ Record Wastage (${ft} items)`}</button>
   </div>); }
 
-  if (screen === "manual") { const ft = Object.values(draft).filter((v) => v > 0).length; const activeSec = DEMAND_SECTIONS.find((s) => s.id === expSec) || DEMAND_SECTIONS[0]; if (!expSec) setExpSec(DEMAND_SECTIONS[0].id); return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{ft}</span>}</div>
-    {/* Category Pills */}
+  if (screen === "manual") {
+    const ft = Object.values(draft).filter((v) => v > 0).length;
+    const staffFoodCount = Object.values(staffFood).filter((v) => v > 0).length;
+    const totalCount = ft + staffFoodCount + staffDress.length;
+    const isStaffFood = expSec === "__staff_food";
+    const isStaffDress = expSec === "__staff_dress";
+    const isRegular = !isStaffFood && !isStaffDress;
+    const activeSec = isRegular ? (DEMAND_SECTIONS.find((s) => s.id === expSec) || DEMAND_SECTIONS[0]) : null;
+    if (!expSec) setExpSec(DEMAND_SECTIONS[0].id);
+
+    const submitStaffFood = async () => {
+      if (staffFoodCount === 0) return;
+      setStaffSaving(true); setErr(null);
+      try {
+        const foodItems = Object.entries(staffFood).filter(([, q]) => q > 0).map(([item, qty]) => ({ item, qty }));
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: outlet });
+        alert(`✅ Staff food (${staffShift.toUpperCase()}) submitted — ${foodItems.length} items`);
+        setStaffFood({});
+      } catch (e) { setErr(e.message); }
+      finally { setStaffSaving(false); }
+    };
+
+    const submitStaffDress = async () => {
+      if (staffDress.length === 0) return;
+      setStaffSaving(true); setErr(null);
+      try {
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: null, category: "dress", items: staffDress, note, submitted_by: outlet });
+        alert(`✅ Dress request submitted — ${staffDress.length} items`);
+        setStaffDress([]);
+      } catch (e) { setErr(e.message); }
+      finally { setStaffSaving(false); }
+    };
+
+    const addDressRow = () => {
+      setStaffDress((p) => [...p, { item: "tshirt", role: "", size: "" }]);
+    };
+    const updateDress = (idx, field, val) => setStaffDress((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
+    const removeDress = (idx) => setStaffDress((p) => p.filter((_, i) => i !== idx));
+
+    // Get dress item config from DB
+    const tshirtConfig = staffDressItems.find((d) => d.id === "tshirt");
+    const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
+    const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
+
+    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {DEMAND_SECTIONS.map((sec) => { const fl = sec.items.filter((i) => draft[i.id] > 0).length; return (
         <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? 700 : 500, border: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? sec.color : "#fff", color: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
           <span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
+      {/* Staff Food pill */}
+      <button onClick={() => setExpSec("__staff_food")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffFood ? 700 : 500, border: isStaffFood ? "none" : "1px solid #FED7AA", cursor: "pointer", fontFamily: "inherit", background: isStaffFood ? "#D97706" : "#fff", color: isStaffFood ? "#fff" : "#D97706", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>🍛</span>Staff Food{staffFoodCount > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffFoodCount}</span>}
+      </button>
+      {/* Staff Dress pill */}
+      <button onClick={() => setExpSec("__staff_dress")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffDress ? 700 : 500, border: isStaffDress ? "none" : "1px solid #C4B5FD", cursor: "pointer", fontFamily: "inherit", background: isStaffDress ? "#7C3AED" : "#fff", color: isStaffDress ? "#fff" : "#7C3AED", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>👕</span>Staff Dress{staffDress.length > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffDress.length}</span>}
+      </button>
     </div>
-    {/* Items for selected category */}
-    <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
-      <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 18 }}>{activeSec.emoji}</span>
-        <span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span>
-        <span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length} items)</span>
+
+    {/* ── REGULAR DEMAND SECTIONS ── */}
+    {isRegular && activeSec && (<>
+      <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
+        <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>{activeSec.emoji}</span>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span>
+          <span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length} items)</span>
+        </div>
+        <div style={{ padding: "6px 12px 12px" }}>{activeSec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
       </div>
-      <div style={{ padding: "6px 12px 12px" }}>{activeSec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
-    </div>
-    <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} /><button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit ({ft} items)</button></div></div>); }
+      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} /><button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit ({ft} items)</button></div>
+    </>)}
+
+    {/* ── STAFF FOOD SECTION ── */}
+    {isStaffFood && (
+      <div>
+        {/* AM/PM shift pills */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          {["am", "pm"].map((s) => (
+            <button key={s} onClick={() => setStaffShift(s)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: staffShift === s ? "none" : "1px solid #FDE68A", background: staffShift === s ? "#D97706" : "#FFFBEB", color: staffShift === s ? "#fff" : "#B45309", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase" }}>
+              {s === "am" ? "☀️ Morning" : "🌙 Evening"}
+            </button>
+          ))}
+        </div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>🍛</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#B45309" }}>Staff Food — {staffShift === "am" ? "Morning" : "Evening"}</span>
+          </div>
+          <div style={{ padding: "10px 14px" }}>
+            {staffFoodItems.map((item) => (
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 10, background: staffFood[item.id] > 0 ? "#FFFBEB" : "#FAFAF8", marginBottom: 4 }}>
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span>
+                <input type="number" inputMode="numeric" min="0" placeholder="0" value={staffFood[item.id] || ""}
+                  onChange={(e) => setStaffFood((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+                  style={{ width: 64, padding: "8px", borderRadius: 8, border: "1px solid #FDE68A", background: "#fff", fontSize: 16, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309" }} />
+                <span style={{ fontSize: 11, color: "#999", width: 30 }}>{item.unit}</span>
+              </div>
+            ))}
+            {staffFoodItems.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No food items configured. Add via Master Data.</div>}
+          </div>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., extra roti for event)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+          <ErrBar />
+          <button onClick={submitStaffFood} disabled={staffFoodCount === 0 || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffFoodCount > 0 && !staffSaving ? "#D97706" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffFoodCount > 0 && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+            {staffSaving ? "⏳ Submitting..." : `🍛 Submit Staff Food — ${staffShift.toUpperCase()} (${staffFoodCount} items)`}
+          </button>
+        </div>
+      </div>
+    )}
+
+    {/* ── STAFF DRESS SECTION ── */}
+    {isStaffDress && (
+      <div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #C4B5FD", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #C4B5FD", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>👕</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#7C3AED" }}>Staff Dress Request</span>
+          </div>
+          <div style={{ padding: "10px 14px" }}>
+            {staffDress.length === 0 && (
+              <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items added yet. Tap "+ Add T-Shirt" below.</div>
+            )}
+            {staffDress.map((row, idx) => (
+              <div key={idx} style={{ background: "#F5F3FF", borderRadius: 12, padding: "12px 14px", marginBottom: 8, border: "1px solid #DDD6FE" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#7C3AED" }}>👕 T-Shirt #{idx + 1}</span>
+                  <button onClick={() => removeDress(idx)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Role</div>
+                    <select value={row.role} onChange={(e) => updateDress(idx, "role", e.target.value)}
+                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.role ? "#7C3AED" : "#999", cursor: "pointer" }}>
+                      <option value="">Select Role</option>
+                      {dressRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Size</div>
+                    <select value={row.size} onChange={(e) => updateDress(idx, "size", e.target.value)}
+                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.size ? "#7C3AED" : "#999", cursor: "pointer" }}>
+                      <option value="">Select Size</option>
+                      {dressSizes.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addDressRow} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px dashed #C4B5FD", background: "transparent", fontSize: 13, fontWeight: 700, color: "#7C3AED", cursor: "pointer", fontFamily: "inherit" }}>
+              + Add T-Shirt
+            </button>
+          </div>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., urgent, replacing torn)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+          <ErrBar />
+          <button onClick={submitStaffDress} disabled={staffDress.length === 0 || staffDress.some((d) => !d.role || !d.size) || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "#7C3AED" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+            {staffSaving ? "⏳ Submitting..." : staffDress.some((d) => !d.role || !d.size) ? "👕 Select Role & Size for all" : `👕 Submit Dress Request (${staffDress.length} items)`}
+          </button>
+        </div>
+      </div>
+    )}
+  </div>); }
 
   if (screen === "purchase") {
     const validItems = purchases.filter((p) => p.item.trim() && p.amount);
