@@ -96,6 +96,13 @@ const api = {
   getLatestCash: (outlet_id, before_date) => get("/api/outlet-sales/latest-cash", { outlet_id, before_date }),
   submitOutletSales: (data) => post("/api/outlet-sales", data),
   verifyOutletSales: (data) => patch("/api/outlet-sales/verify", data),
+
+  // ── Staff Demands (Food & Dress) ──
+  getStaffDemandItems: () => get("/api/staff-demands/items"),
+  getStaffDemands: (params) => get("/api/staff-demands", params),
+  submitStaffDemand: (data) => post("/api/staff-demands", data),
+  addStaffDemandItem: (data) => post("/api/staff-demands/items", data),
+  deleteStaffDemandItem: (id) => del(`/api/staff-demands/items/${id}`),
 };
 
 // ── Helpers ──
