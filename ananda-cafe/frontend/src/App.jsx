@@ -2655,6 +2655,9 @@ const MonthlyInventory = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  MASTER DATA — Central item & recipe management
 // ═════════════════════════════════════════════════════════════════════════════
+// Standard units for master data forms (dropdown options)
+const UNITS = ["Kg", "Gm", "Ltr", "Ml", "Pcs", "Pkt", "Batch", "Tin", "Box", "Bundle", "Can", "Roll", "Bunch", "Bag", "Dozen"];
+
 const MasterData = () => {
   const [tab, setTab] = useState("demand"); // demand, raw, recipes, inventory
   const [search, setSearch] = useState("");
@@ -2751,7 +2754,7 @@ const MasterData = () => {
       {/* ── DEMAND ITEMS TAB ── */}
       {tab === "demand" && (
         <div>
-          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>All items outlets can demand. Food → Kitchen. Others → Direct to outlets. <strong style={{ color: "#B45309" }}>⚠️ Changes are session-only until code is redeployed.</strong></p>
+          <p style={{ fontSize: 11, color: "#888", margin: "0 0 10px" }}>All items outlets can demand. Food → Kitchen. Others → Direct to outlets.</p>
           {DEMAND_SECTIONS.map((sec) => {
             const secItems = sec.items.filter((i) => !search || i.name.toLowerCase().includes(search.toLowerCase()));
             if (secItems.length === 0 && search) return null;
@@ -2764,7 +2767,9 @@ const MasterData = () => {
                 {addingTo === sec.id && (
                   <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0" }}>
                     <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Item name" style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-                    <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+                    <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} style={{ width: 75, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                      {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
                     <button onClick={() => addItem(sec.id)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
                   </div>
                 )}
@@ -2777,7 +2782,9 @@ const MasterData = () => {
                         <td style={{ ...tdS, fontWeight: 600 }}>{item.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{item.id}</span></td>
                         <td style={tdS}>{editId === `${sec.id}_${item.id}` ? (
                           <div style={{ display: "flex", gap: 3 }}>
-                            <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, fontFamily: "inherit" }} />
+                            <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 70, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, fontFamily: "inherit", background: "#fff" }}>
+                              {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                            </select>
                             <button onClick={() => saveUnit(item.id, sec.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
                           </div>
                         ) : (
@@ -2805,7 +2812,9 @@ const MasterData = () => {
           {addingTo === "raw" && (
             <div style={{ display: "flex", gap: 6, marginBottom: 8, padding: "8px 10px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0" }}>
               <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Material name" style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-              <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 50, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+              <select value={newUnit} onChange={(e) => setNewUnit(e.target.value)} style={{ width: 75, padding: "6px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
               <button onClick={addRawMaterial} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
             </div>
           )}
@@ -2820,7 +2829,9 @@ const MasterData = () => {
                     <td style={{ ...tdS, fontWeight: 600 }}>{raw.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{raw.id}</span></td>
                     <td style={tdS}>{editId === `raw_${raw.id}` ? (
                       <div style={{ display: "flex", gap: 3 }}>
-                        <input value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11 }} />
+                        <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 70, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, background: "#fff" }}>
+                          {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                        </select>
                         <button onClick={async () => { try { await api.updateRawMaterial(raw.id, { unit: editUnit }); await reloadMaster(); } catch(e) { alert(e.message); } setEditId(null); }} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
                       </div>
                     ) : (
@@ -3025,7 +3036,9 @@ const MasterData = () => {
               <select value={editUnit || "Store"} onChange={(e) => setEditUnit(e.target.value)} style={{ padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11 }}>
                 <option>Store</option><option>Food</option><option>Cleaning</option><option>Packaging</option>
               </select>
-              <input value={newUnit} onChange={(e) => setNewUnit(e.target.value)} placeholder="Unit" style={{ width: 40, padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, textAlign: "center" }} />
+              <select value={newUnit || "Kg"} onChange={(e) => setNewUnit(e.target.value)} style={{ width: 65, padding: "5px 4px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, background: "#fff", cursor: "pointer" }}>
+                {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
               <button onClick={async () => {
                 if (!newName.trim()) return;
                 const id = (editUnit || "store").toLowerCase().replace(/[^a-z]/g,"") + "_" + newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
@@ -3217,5 +3230,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
