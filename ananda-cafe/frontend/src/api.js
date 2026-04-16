@@ -42,10 +42,10 @@ const api = {
 
   // ── Issuance Audit ──
   saveIssuanceAudit: (entries) => post("/api/issuance-audit", { entries }),
-  getIssuanceAudit: (params) => get("/api/issuance-audit", params),
+  getIssuanceAudit: (date) => get(`/api/issuance-audit/${date}`),
 
   // ── RM Audit ──
-  getRMAudit: (params) => get("/api/rm-audit", params),
+  getRMAudit: (date) => get(`/api/audit/${date}`),
 
   // ── PetPooja Recipes ──
   getRecipesPetpooja: () => get("/api/recipes/petpooja"),
@@ -108,7 +108,9 @@ const api = {
 // ── Helpers ──
 async function get(path, params = {}) {
   const url = new URL(API + path);
-  Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null) url.searchParams.set(k, v); });
+  // Guard: if params is a string (e.g. a date), wrap it as { date: params }
+  const safeParams = typeof params === "string" ? { date: params } : params;
+  Object.entries(safeParams).forEach(([k, v]) => { if (v !== undefined && v !== null) url.searchParams.set(k, v); });
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
   return res.json();
