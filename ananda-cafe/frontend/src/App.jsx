@@ -906,10 +906,43 @@ const Inventory = () => {
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
-  const categories = [...new Set(items.map((i) => i.category))];
-  const filtered = selCat ? items.filter((i) => i.category === selCat) : items;
-  const alerts = items.filter((i) => i.below_threshold);
-  const outOfStock = items.filter((i) => Number(i.current_qty) === 0);
+  // ─── BK-prepared items: hide from Current Inventory view ───
+  // These items are PRODUCED in the base kitchen, not STORED — their "stock" is
+  // really raw material availability. Identified via demand_item_id matching
+  // any item in the food section of DEMAND_SECTIONS (DB-driven).
+  const bkPreparedIds = useMemo(() => {
+    const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+    return new Set((foodSection?.items || []).map((i) => i.id));
+  }, []);
+  // Also build a Set of BK item NAMES (normalized) as a fallback when inventory items
+  // don't have demand_item_id populated in the DB. This catches items by name match.
+  const bkPreparedNames = useMemo(() => {
+    const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+    const norm = (s) => (s || "").toLowerCase().trim().replace(/\s+/g, " ");
+    return new Set((foodSection?.items || []).map((i) => norm(i.name)));
+  }, []);
+  const isBkPrepared = (item) => {
+    // Primary: demand_item_id link
+    if (item.demand_item_id && bkPreparedIds.has(item.demand_item_id)) return true;
+    // Fallback: name match (handles DB rows without demand_item_id set)
+    const norm = (item.name || "").toLowerCase().trim().replace(/\s+/g, " ");
+    if (bkPreparedNames.has(norm)) return true;
+    // Fallback 2: id match (if inventory item id happens to match recipe key)
+    if (item.id && bkPreparedIds.has(item.id)) return true;
+    return false;
+  };
+
+  // Display-only: rename "Food" category label → "Grocery" (raw groceries, not prepared food)
+  const displayCategory = (cat) => cat === "Food" ? "Grocery" : cat;
+
+  // `items` stays unfiltered (needed for Stock Out logic which uses ALL items).
+  // `invItems` is the filtered list used ONLY by Current Inventory view.
+  const invItems = items.filter((i) => !isBkPrepared(i));
+
+  const categories = [...new Set(invItems.map((i) => displayCategory(i.category)))];
+  const filtered = selCat ? invItems.filter((i) => displayCategory(i.category) === selCat) : invItems;
+  const alerts = invItems.filter((i) => i.below_threshold);
+  const outOfStock = invItems.filter((i) => Number(i.current_qty) === 0);
 
   const submitStockIn = async () => {
     const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
@@ -1111,7 +1144,9 @@ const Inventory = () => {
   // ── MAIN STOCK VIEW ──
   const stockFiltered = (() => {
     let list = stockFilter === "low" ? alerts : stockFilter === "out" ? outOfStock : filtered;
-    if (selCat) list = list.filter((i) => i.category === selCat);
+    // selCat holds the DISPLAY label (e.g. "Grocery"), but item.category holds the raw DB value ("Food").
+    // Compare via displayCategory() so the renamed "Grocery" pill correctly matches "Food" rows.
+    if (selCat) list = list.filter((i) => displayCategory(i.category) === selCat);
     return list;
   })();
 
@@ -1132,9 +1167,9 @@ const Inventory = () => {
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <ExportBtn onClick={() => {
           const headers = ["Name", "Category", "Unit", "Current Qty", "Threshold", "Status"];
-          const rows = items.map((i) => {
+          const rows = invItems.map((i) => {
             const qty = Number(i.current_qty);
-            return [i.name, i.category, i.unit, qty, i.threshold, qty === 0 ? "Out" : i.below_threshold ? "Low" : "OK"];
+            return [i.name, displayCategory(i.category), i.unit, qty, i.threshold, qty === 0 ? "Out" : i.below_threshold ? "Low" : "OK"];
           });
           exportCSV(headers, rows, `current_inventory_${today()}.csv`);
         }} />
@@ -1142,7 +1177,7 @@ const Inventory = () => {
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <button onClick={() => { setStockFilter("all"); }} style={{ flex: 1, background: stockFilter === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: stockFilter === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
           <div style={{ fontSize: 9, color: stockFilter === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>All</div>
-          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "all" ? "#fff" : "#1A1A1A" }}>{items.length}</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: stockFilter === "all" ? "#fff" : "#1A1A1A" }}>{invItems.length}</div>
         </button>
         <button onClick={() => setStockFilter("low")} style={{ flex: 1, background: stockFilter === "low" ? "#B45309" : alerts.length > 0 ? "#FFFDF5" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: stockFilter === "low" ? "none" : `1px solid ${alerts.length > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
           <div style={{ fontSize: 9, color: stockFilter === "low" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Low</div>
@@ -1165,7 +1200,7 @@ const Inventory = () => {
             <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: idx < stockFiltered.length - 1 ? "1px solid #F0F0EC" : "none", background: isEditing ? "#FFFDF5" : "transparent" }}>
               <div style={{ flex: 1, cursor: "pointer" }} onClick={() => !isEditing && loadHistory(item.id)}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-                <div style={{ fontSize: 10, color: "#999" }}>{item.category} • Min: {item.threshold} {item.unit}</div>
+                <div style={{ fontSize: 10, color: "#999" }}>{displayCategory(item.category)} • Min: {item.threshold} {item.unit}</div>
               </div>
               {isEditing ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
