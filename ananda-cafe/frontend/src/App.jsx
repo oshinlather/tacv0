@@ -470,6 +470,40 @@ let UNIT_CONVERSIONS = {
 
 const getBk = (id) => BK_ITEMS.find((b) => b.id === id)?.name || id;
 
+// ─── UNIT CONVERSION HELPER ─────────────────────────────────────────────
+// Converts a quantity+unit to its base unit using UNIT_CONVERSIONS, with
+// standard weight/volume fallbacks (Gm→Kg, Ml→Ltr and reverse).
+// Returns { qty, unit, converted, factor } where:
+//   - qty:       amount in base units (or original if no conversion applies)
+//   - unit:      base unit (or original)
+//   - converted: true if a conversion was applied
+//   - factor:    multiplier used (1 if no conversion)
+// Example: convertToBase(2, "Batch", "dosa_batter") → { qty: 36, unit: "Kg", converted: true, factor: 18 }
+// Example: convertToBase(500, "Gm", "sugar") → { qty: 0.5, unit: "Kg", converted: true, factor: 0.001 }
+const convertToBase = (qty, unit, itemId, itemName) => {
+  if (!unit || !qty || qty === 0) return { qty: Number(qty) || 0, unit: unit || "", converted: false, factor: 1 };
+  // 1. Check custom UNIT_CONVERSIONS table first (item-specific overrides)
+  const conversions = UNIT_CONVERSIONS[unit];
+  if (conversions && Array.isArray(conversions)) {
+    const norm = (s) => (s || "").toLowerCase().trim();
+    const match = conversions.find((c) => c.item_id === itemId)
+               || conversions.find((c) => norm(c.item_name) === norm(itemName));
+    if (match) {
+      return { qty: Number(qty) * Number(match.qty), unit: match.base_unit, converted: true, factor: Number(match.qty) };
+    }
+  }
+  // 2. Standard metric normalizations (item-independent)
+  const u = String(unit).toLowerCase();
+  if (u === "gm" || u === "gram" || u === "grams" || u === "g") {
+    return { qty: Number(qty) / 1000, unit: "Kg", converted: true, factor: 0.001 };
+  }
+  if (u === "ml" || u === "milliliter" || u === "millilitre") {
+    return { qty: Number(qty) / 1000, unit: "Ltr", converted: true, factor: 0.001 };
+  }
+  // 3. No conversion
+  return { qty: Number(qty), unit, converted: false, factor: 1 };
+};
+
 // ─── Table styles ───────────────────────────────────────────────────────────
 const thS = { padding: "10px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, borderBottom: "1px solid #E8E8E4" };
 const tdS = { padding: "10px 14px" };
@@ -855,6 +889,7 @@ const Inventory = () => {
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
   const [stockOutData, setStockOutData] = useState(null);
   const [stockOutLoading, setStockOutLoading] = useState(false);
+  const [bkDemandDisplay, setBkDemandDisplay] = useState({}); // BK view only: bkId → { raw, unit, baseQty, baseUnit, converted, itemName }
   const [extraItems, setExtraItems] = useState({}); // manually added items: { tempId: { name, qty, unit, inv_id, manual: true } }
   const [removedItems, setRemovedItems] = useState({}); // ids removed from view: { id: true }
   const [addItemSearch, setAddItemSearch] = useState(""); // search text for add-item panel
@@ -867,16 +902,25 @@ const Inventory = () => {
     api.getOrders({ date: today() }).then((ordersData) => {
       const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
       if (stockOutView === "bk") {
-        // BK raw materials from recipes
+        // BK raw materials from recipes — with unit conversion support.
+        // Example: demand "2 Batch Dosa Batter" → convert to 36 Kg → then compute raw materials.
         const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
-        const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
-        const consolidated = {};
-        foodItemIds.forEach((id) => { consolidated[id] = 0; manualOrders.forEach((o) => { consolidated[id] += (o.items?.[id] || 0); }); });
+        const foodItems = foodSection?.items || [];
+        // Consolidate demand across outlets, converted to base units (Kg for BK items)
+        const consolidatedKg = {}; // bkId → total Kg demanded
+        const originalDemand = {}; // bkId → { raw: number, unit: string, converted: true/false } for UI display
+        foodItems.forEach((item) => {
+          let totalRaw = 0;
+          manualOrders.forEach((o) => { totalRaw += (o.items?.[item.id] || 0); });
+          if (totalRaw === 0) return;
+          const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
+          consolidatedKg[item.id] = conv.qty; // e.g. 36 Kg
+          originalDemand[item.id] = { raw: totalRaw, unit: item.unit, baseQty: conv.qty, baseUnit: conv.unit, converted: conv.converted, itemName: item.name };
+        });
         const rawReq = {};
-        Object.entries(consolidated).forEach(([bkId, total]) => {
-          if (total === 0) return;
+        Object.entries(consolidatedKg).forEach(([bkId, totalBaseQty]) => {
           const recipe = RECIPES[bkId]; if (!recipe) return;
-          const batches = total / recipe.yieldQty;
+          const batches = totalBaseQty / recipe.yieldQty;
           recipe.ingredients.forEach((ing) => {
             const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
             if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg", inv_id: raw?.inv_id || null };
@@ -884,8 +928,10 @@ const Inventory = () => {
           });
         });
         setStockOutData(rawReq);
+        setBkDemandDisplay(originalDemand);
       } else {
-        // Direct items for specific outlet
+        // Direct items for specific outlet — with unit conversion.
+        // Example: outlet demands "1 Tin Fortune Oil" → deduct 15 Ltr from inventory.
         const nonFoodSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
         const outletOrders = manualOrders.filter((o) => o.outlet_id === stockOutView);
         const directItems = {};
@@ -893,12 +939,26 @@ const Inventory = () => {
           nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
             const qty = o.items?.[item.id] || 0;
             if (qty > 0) {
-              if (!directItems[item.id]) directItems[item.id] = { name: item.name, qty: 0, unit: item.unit || "", category: sec.titleHi };
-              directItems[item.id].qty += qty;
+              const conv = convertToBase(qty, item.unit, item.id, item.name);
+              if (!directItems[item.id]) {
+                directItems[item.id] = {
+                  name: item.name,
+                  qty: 0,           // accumulated in BASE unit (for inventory deduction)
+                  rawQty: 0,        // accumulated in ORIGINAL unit (for display)
+                  unit: conv.unit,  // base unit
+                  rawUnit: item.unit, // original demand unit
+                  converted: conv.converted,
+                  factor: conv.factor,
+                  category: sec.titleHi,
+                };
+              }
+              directItems[item.id].qty += conv.qty;
+              directItems[item.id].rawQty += Number(qty);
             }
           }); });
         });
         setStockOutData(directItems);
+        setBkDemandDisplay({});
       }
     }).catch(() => setStockOutData(null)).finally(() => setStockOutLoading(false));
   }, [stockOutView, items]);
@@ -1261,6 +1321,30 @@ const Inventory = () => {
           })()}
         </div>
         {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {/* BK demand summary — shows what demand triggered the raw material calc (with conversions) */}
+        {!stockOutLoading && stockOutView === "bk" && Object.keys(bkDemandDisplay).length > 0 && (
+          <div style={{ padding: "10px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📋 Demand Summary</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {Object.values(bkDemandDisplay).sort((a, b) => a.itemName.localeCompare(b.itemName)).map((d, i) => (
+                <span key={i} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#fff", border: "1px solid #FDE68A", color: "#92400E" }}>
+                  <strong>{d.itemName}</strong>{" "}
+                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>{d.raw} {d.unit}</span>
+                  {d.converted && (
+                    <span style={{ color: "#B45309", fontWeight: 600 }}> → {Math.round(d.baseQty * 100) / 100} {d.baseUnit}</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Direct outlet conversion hint */}
+        {!stockOutLoading && stockOutView !== "bk" && stockOutData && Object.values(stockOutData).some((v) => v.converted) && (
+          <div style={{ padding: "8px 14px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", display: "flex", alignItems: "center", gap: 6 }}>
+            <span>🔄</span>
+            <span>Some items converted from demand unit to inventory base unit — see <strong>→</strong> arrows below</span>
+          </div>
+        )}
         {/* Smart nudge: only appears when user has pending edits or manual additions */}
         {!stockOutLoading && (() => {
           const editCount = Object.keys(editedQty).length;
@@ -1294,6 +1378,9 @@ const Inventory = () => {
               const editQty = editedQty[id];
               const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? Math.ceil(item.qty) : item.qty);
               const isEdited = editQty !== undefined && Number(editQty) !== (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
+              // Unit mismatch warning: if we converted to base unit but inventory tracks the item in a different unit,
+              // the deduction math will be wrong. Warn the user.
+              const unitMismatch = invItem && item.unit && invItem.unit && String(item.unit).toLowerCase() !== String(invItem.unit).toLowerCase();
               return (
                 <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : isManual ? "#FFF7ED" : "transparent", opacity: issued ? 0.6 : 1 }}>
                   <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
@@ -1304,7 +1391,19 @@ const Inventory = () => {
                       <span>{item.name}</span>
                       {isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#EA580C", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Manual</span>}
                       {!isManual && isEdited && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#B45309", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Edited</span>}
+                      {item.converted && !isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#2563EB", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Converted</span>}
+                      {unitMismatch && <span title={`Inventory tracks in ${invItem.unit}, not ${item.unit}. Deduction may be off.`} style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#DC2626", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3, cursor: "help" }}>⚠ Unit Mismatch</span>}
                     </div>
+                    {item.converted && !isManual && (
+                      <div style={{ fontSize: 9, color: "#2563EB", marginTop: 1, fontFamily: "'JetBrains Mono', monospace" }}>
+                        {item.rawQty} {item.rawUnit} → {Math.round(item.qty * 100) / 100} {item.unit}
+                      </div>
+                    )}
+                    {unitMismatch && (
+                      <div style={{ fontSize: 9, color: "#DC2626", marginTop: 1 }}>
+                        ⚠ Inventory unit: <strong>{invItem.unit}</strong> · demand base unit: <strong>{item.unit}</strong> — verify before issuing
+                      </div>
+                    )}
                   </div>
                   <div style={{ textAlign: "right", minWidth: 40, flexShrink: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
