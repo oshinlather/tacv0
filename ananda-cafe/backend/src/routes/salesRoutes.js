@@ -947,6 +947,40 @@ router.patch('/inventory/items/:id', async (req, res) => {
 });
 
 // ============================================================
+// DISPATCH CHALLAN — Save actual dispatched quantities
+// ============================================================
+
+// ── PATCH /api/orders/:id/dispatch — Save dispatched items and mark as fulfilled
+router.patch('/orders/:id/dispatch', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dispatch_items, dispatched_by } = req.body;
+    
+    const { error } = await supabase.from('demands').update({
+      status: 'fulfilled',
+      dispatch_items: dispatch_items || {},
+      dispatched_at: new Date().toISOString(),
+      dispatched_by: dispatched_by || null,
+    }).eq('id', id);
+    
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/orders/:id/challan — Get dispatch challan for an order
+router.get('/orders/:id/challan', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('demands')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // FIX: Missing routes that frontend expects (were causing 404s)
 // ============================================================
 
@@ -1140,6 +1174,398 @@ router.delete('/staff-demands/items/:id', async (req, res) => {
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// RATE CARD — Item prices for P&L calculation
+// ============================================================
+
+// ── GET /api/rate-card — All active rates
+router.get('/rate-card', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rate_card').select('*')
+      .eq('active', true).order('category').order('name');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/rate-card — Add/update rate
+router.post('/rate-card', async (req, res) => {
+  try {
+    const { id, name, category, unit, price } = req.body;
+    const { error } = await supabase.from('rate_card').upsert({
+      id, name, category, unit, price: price || 0, updated_at: new Date().toISOString()
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/rate-card/:id — Update price
+router.patch('/rate-card/:id', async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.price !== undefined) updates.price = req.body.price;
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.unit !== undefined) updates.unit = req.body.unit;
+    if (req.body.category !== undefined) updates.category = req.body.category;
+    updates.updated_at = new Date().toISOString();
+    const { error } = await supabase.from('rate_card').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/rate-card/:id — Soft delete
+router.delete('/rate-card/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('rate_card').update({ active: false }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// FIXED COSTS — Monthly recurring costs per outlet
+// ============================================================
+
+// ── GET /api/fixed-costs — All active fixed costs
+router.get('/fixed-costs', async (req, res) => {
+  try {
+    const { outlet_id } = req.query;
+    let query = supabase.from('fixed_costs').select('*').eq('active', true).order('outlet_id').order('cost_head');
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/fixed-costs — Add/update fixed cost
+router.post('/fixed-costs', async (req, res) => {
+  try {
+    const { outlet_id, cost_head, label, amount, category } = req.body;
+    const { error } = await supabase.from('fixed_costs').upsert({
+      outlet_id, cost_head, label, amount: amount || 0, category: category || 'fixed',
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'outlet_id,cost_head' });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/fixed-costs — Soft delete
+router.delete('/fixed-costs', async (req, res) => {
+  try {
+    const { outlet_id, cost_head } = req.query;
+    const { error } = await supabase.from('fixed_costs')
+      .update({ active: false }).eq('outlet_id', outlet_id).eq('cost_head', cost_head);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// P&L COMPUTATION — Real-time from dispatched items + rate card
+// ============================================================
+
+// ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
+router.get('/pnl/live/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { outlet } = req.query; // optional outlet filter
+
+    // 1. Get rate card
+    const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
+    const rateMap = {};
+    (rates || []).forEach(r => { rateMap[r.id] = r; });
+
+    // 2. Get dispatched orders for this date (fulfilled orders with dispatch_items)
+    let orderQuery = supabase.from('demands').select('*').eq('date', date);
+    const { data: allOrders } = await orderQuery;
+    const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
+
+    // 3. Get daily purchases for this date
+    const { data: purchases } = await supabase.from('purchases').select('*').eq('date', date);
+
+    // 4. Get outlet sales for this date
+    const { data: outletSales } = await supabase.from('daily_outlet_sales').select('*').eq('date', date);
+
+    // 5. Get fixed costs
+    const { data: fixedCosts } = await supabase.from('fixed_costs').select('*').eq('active', true);
+
+    // 6. Get days in month for daily fixed cost
+    const dateObj = new Date(date);
+    const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
+
+    // 7. Compute per-outlet P&L
+    const outletIds = ['sec23', 'sec31', 'sec56', 'elan'];
+    const pnlResults = [];
+
+    for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
+      // ── REVENUE ──
+      const sales = (outletSales || []).find(s => s.outlet_id === oid);
+      const totalSale = Number(sales?.total_sale || 0);
+      const cancelledOrders = Number(sales?.cancelled_orders || 0);
+      const complimentaryAmt = Number(sales?.complimentary_amount || 0);
+      const swiggy = Number(sales?.swiggy_sale || 0);
+      const zomato = Number(sales?.zomato_sale || 0);
+      const otherDelivery = Number(sales?.other_delivery_sale || 0);
+      const deliverySale = swiggy + zomato + otherDelivery;
+      const storeSale = Math.max(0, totalSale - deliverySale - cancelledOrders - complimentaryAmt);
+      const effectiveSale = totalSale - cancelledOrders - complimentaryAmt;
+
+      // ── VARIABLE COST (from dispatched items × rate card) ──
+      const outletOrders = orders.filter(o => o.outlet_id === oid);
+      const variableByCategory = {};
+      let totalVariableCost = 0;
+      const itemBreakdown = [];
+
+      outletOrders.forEach(order => {
+        const dispItems = order.dispatch_items || order.items || {};
+        Object.entries(dispItems).forEach(([itemId, qty]) => {
+          if (!qty || qty <= 0) return;
+          const rate = rateMap[itemId];
+          if (!rate) return;
+          const cost = Number(qty) * Number(rate.price);
+          totalVariableCost += cost;
+          const cat = rate.category || 'Other';
+          variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
+          itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: Number(qty), unit: rate.unit, rate: Number(rate.price), cost });
+        });
+      });
+
+      // ── BK SHARE (proportional base kitchen cost) ──
+      // BK costs split across outlets based on their food demand proportion
+      const bkOrders = orders.filter(o => o.outlet_id === oid);
+      let bkCost = 0;
+      // BK food items are dispatched via issuances — tracked separately in inventory_movements
+      // For now, BK cost is included in variable cost if items have rates
+
+      // ── DAILY PURCHASES ──
+      const outletPurchases = (purchases || []).filter(p => p.outlet_id === oid);
+      const dailyPurchaseTotal = outletPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+
+      // ── FIXED COSTS (daily = monthly / days in month) ──
+      const outletFixed = (fixedCosts || []).filter(f => f.outlet_id === oid);
+      const monthlyFixed = outletFixed.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+      const dailyFixedCost = Math.round(monthlyFixed / daysInMonth);
+      const fixedBreakdown = outletFixed.map(f => ({
+        cost_head: f.cost_head, label: f.label,
+        monthly: Number(f.amount), daily: Math.round(Number(f.amount) / daysInMonth)
+      }));
+
+      // ── BK FIXED COST SHARE ──
+      const bkFixed = (fixedCosts || []).filter(f => f.outlet_id === 'bk');
+      const bkMonthlyFixed = bkFixed.reduce((sum, f) => sum + Number(f.amount || 0), 0);
+      const bkDailyFixed = Math.round(bkMonthlyFixed / daysInMonth);
+      // Split BK fixed cost equally across 4 outlets
+      const bkSharePerOutlet = Math.round(bkDailyFixed / outletIds.length);
+
+      // ── TOTALS ──
+      const totalExpense = totalVariableCost + dailyFixedCost + bkSharePerOutlet + dailyPurchaseTotal;
+      const netProfit = effectiveSale - totalExpense;
+      const margin = effectiveSale > 0 ? (netProfit / effectiveSale * 100) : 0;
+
+      pnlResults.push({
+        outlet_id: oid,
+        date,
+        // Revenue
+        total_sale: totalSale,
+        delivery_sale: deliverySale,
+        store_sale: storeSale,
+        cancelled_orders: cancelledOrders,
+        complimentary: complimentaryAmt,
+        effective_sale: effectiveSale,
+        // Variable cost
+        variable_cost: Math.round(totalVariableCost),
+        variable_by_category: variableByCategory,
+        item_breakdown: itemBreakdown,
+        // Fixed cost
+        daily_fixed_cost: dailyFixedCost,
+        bk_share: bkSharePerOutlet,
+        fixed_breakdown: fixedBreakdown,
+        monthly_fixed: monthlyFixed,
+        // Purchases
+        daily_purchases: dailyPurchaseTotal,
+        // Summary
+        total_expense: Math.round(totalExpense),
+        net_profit: Math.round(netProfit),
+        margin: Math.round(margin * 10) / 10,
+        days_in_month: daysInMonth,
+      });
+    }
+
+    // Add ALL-outlets summary
+    if (!outlet || outlet === 'all') {
+      const summary = {
+        outlet_id: 'all',
+        date,
+        total_sale: pnlResults.reduce((s, r) => s + r.total_sale, 0),
+        delivery_sale: pnlResults.reduce((s, r) => s + r.delivery_sale, 0),
+        store_sale: pnlResults.reduce((s, r) => s + r.store_sale, 0),
+        cancelled_orders: pnlResults.reduce((s, r) => s + r.cancelled_orders, 0),
+        complimentary: pnlResults.reduce((s, r) => s + r.complimentary, 0),
+        effective_sale: pnlResults.reduce((s, r) => s + r.effective_sale, 0),
+        variable_cost: pnlResults.reduce((s, r) => s + r.variable_cost, 0),
+        daily_fixed_cost: pnlResults.reduce((s, r) => s + r.daily_fixed_cost, 0),
+        bk_share: pnlResults.reduce((s, r) => s + r.bk_share, 0),
+        daily_purchases: pnlResults.reduce((s, r) => s + r.daily_purchases, 0),
+        total_expense: pnlResults.reduce((s, r) => s + r.total_expense, 0),
+        net_profit: pnlResults.reduce((s, r) => s + r.net_profit, 0),
+        days_in_month: pnlResults[0]?.days_in_month || 30,
+      };
+      summary.margin = summary.effective_sale > 0 ? Math.round(summary.net_profit / summary.effective_sale * 1000) / 10 : 0;
+      pnlResults.unshift(summary);
+    }
+
+    res.json({ date, days_in_month: pnlResults[0]?.days_in_month || 30, pnl: pnlResults });
+  } catch (err) {
+    console.error('P&L computation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// DAILY STOCK USAGE — Opening, Closing, Used, Variable Cost
+// Formula: Opening = (Prev Closing - Wastage) + Dispatched
+//          Used = Opening - Today Closing
+//          Variable Cost = Used × Rate
+// ============================================================
+
+router.get('/stock-usage/:date', async (req, res) => {
+  try {
+    const { date } = req.params;
+    const { outlet } = req.query;
+
+    const prevDate = new Date(date);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = prevDate.toISOString().split('T')[0];
+
+    // 1. Rate card
+    const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
+    const rateMap = {};
+    (rates || []).forEach(r => { rateMap[r.id] = r; });
+
+    // 2. Previous day closing stock
+    const { data: prevClosing } = await supabase.from('demands')
+      .select('outlet_id, items').eq('type', 'closing').eq('date', prevDateStr);
+
+    // 3. Today closing stock
+    const { data: todayClosing } = await supabase.from('demands')
+      .select('outlet_id, items').eq('type', 'closing').eq('date', date);
+
+    // 4. Today wastage
+    const { data: todayWastage } = await supabase.from('demands')
+      .select('outlet_id, items').eq('type', 'wastage').eq('date', date);
+
+    // 5. Today dispatched
+    const { data: todayOrders } = await supabase.from('demands')
+      .select('outlet_id, items, dispatch_items, status').eq('date', date);
+    const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
+
+    // 6. Compute per outlet
+    const outletIds = ['sec23', 'sec31', 'sec56', 'elan'];
+    const results = [];
+
+    for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
+      const prevCS = (prevClosing || []).find(d => d.outlet_id === oid);
+      const prevItems = prevCS?.items || {};
+      const todayCS = (todayClosing || []).find(d => d.outlet_id === oid);
+      const todayItems = todayCS?.items || {};
+
+      // Aggregate wastage
+      const wastageItems = {};
+      (todayWastage || []).filter(d => d.outlet_id === oid).forEach(w => {
+        Object.entries(w.items || {}).forEach(([id, qty]) => {
+          wastageItems[id] = (wastageItems[id] || 0) + Number(qty);
+        });
+      });
+
+      // Aggregate dispatched
+      const dispatchedItems = {};
+      dispatched.filter(o => o.outlet_id === oid).forEach(o => {
+        const items = o.dispatch_items || o.items || {};
+        Object.entries(items).forEach(([id, qty]) => {
+          dispatchedItems[id] = (dispatchedItems[id] || 0) + Number(qty);
+        });
+      });
+
+      // All unique item IDs
+      const allIds = new Set([
+        ...Object.keys(prevItems), ...Object.keys(todayItems),
+        ...Object.keys(wastageItems), ...Object.keys(dispatchedItems),
+      ]);
+
+      const itemDetails = [];
+      let totalUsedCost = 0;
+
+      allIds.forEach(rawId => {
+        const csId = rawId.startsWith('cs_') ? rawId : `cs_${rawId}`;
+        const itemId = rawId.startsWith('cs_') ? rawId.replace('cs_', '') : rawId;
+
+        const prevQty = Number(prevItems[csId] || prevItems[rawId] || 0);
+        const wastageQty = Number(wastageItems[itemId] || 0);
+        const dispatchedQty = Number(dispatchedItems[itemId] || 0);
+        const closingQty = Number(todayItems[csId] || todayItems[rawId] || 0);
+
+        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
+        const usedQty = Math.max(0, openingQty - closingQty);
+
+        const rate = rateMap[itemId];
+        const unitPrice = rate ? Number(rate.price) : 0;
+        const usedCost = usedQty * unitPrice;
+
+        if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
+          itemDetails.push({
+            item_id: itemId, name: rate?.name || itemId, category: rate?.category || 'Other',
+            unit: rate?.unit || '', prev_closing: prevQty, wastage: wastageQty,
+            dispatched: dispatchedQty, opening: openingQty, closing: closingQty,
+            used: usedQty, rate: unitPrice, used_cost: Math.round(usedCost * 100) / 100,
+          });
+          totalUsedCost += usedCost;
+        }
+      });
+
+      const byCategory = {};
+      itemDetails.forEach(item => {
+        if (!byCategory[item.category]) byCategory[item.category] = 0;
+        byCategory[item.category] += item.used_cost;
+      });
+
+      results.push({
+        outlet_id: oid, date,
+        has_prev_closing: !!prevCS, has_today_closing: !!todayCS,
+        total_used_cost: Math.round(totalUsedCost),
+        variable_cost_by_category: byCategory,
+        items: itemDetails.sort((a, b) => b.used_cost - a.used_cost),
+      });
+    }
+
+    // ALL summary
+    if (!outlet || outlet === 'all') {
+      const summary = {
+        outlet_id: 'all', date,
+        has_prev_closing: results.every(r => r.has_prev_closing),
+        has_today_closing: results.every(r => r.has_today_closing),
+        total_used_cost: results.reduce((s, r) => s + r.total_used_cost, 0),
+        variable_cost_by_category: {},
+        items: [],
+      };
+      results.forEach(r => {
+        Object.entries(r.variable_cost_by_category).forEach(([cat, cost]) => {
+          summary.variable_cost_by_category[cat] = (summary.variable_cost_by_category[cat] || 0) + cost;
+        });
+      });
+      results.unshift(summary);
+    }
+
+    res.json({ date, outlets: results });
+  } catch (err) {
+    console.error('Stock usage error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
