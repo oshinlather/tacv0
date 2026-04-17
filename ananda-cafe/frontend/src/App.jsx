@@ -1781,15 +1781,48 @@ const Inventory = () => {
               const isManual = !!item.manual;
               const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
               const stock = invItem ? Number(invItem.current_qty) : null;
-              const isLow = stock !== null && stock < item.qty;
+
+              // Smart unit conversion: if recipe unit differs from inventory unit within same dimension,
+              // convert the qty to match inventory unit for accurate display and deduction.
+              // e.g., recipe says 0.2 Kg but inventory tracks in Gm → display 200 Gm
+              const getUnitFactor = (fromUnit, toUnit) => {
+                const f = String(fromUnit || "").toLowerCase();
+                const t = String(toUnit || "").toLowerCase();
+                if (f === t) return 1;
+                // Weight: Kg → Gm
+                if ((f === "kg") && (t === "gm" || t === "g" || t === "gram" || t === "grams")) return 1000;
+                // Weight: Gm → Kg
+                if ((f === "gm" || f === "g" || f === "gram" || f === "grams") && t === "kg") return 0.001;
+                // Volume: Ltr → Ml
+                if ((f === "ltr" || f === "liter" || f === "litre") && (t === "ml" || t === "milliliter")) return 1000;
+                // Volume: Ml → Ltr
+                if ((f === "ml" || f === "milliliter") && (t === "ltr" || t === "liter" || t === "litre")) return 0.001;
+                return 1; // incompatible or same — no conversion
+              };
+              const invUnit = invItem?.unit || item.unit;
+              const unitFactor = getUnitFactor(item.unit, invUnit);
+              const adjustedQty = typeof item.qty === "number" ? item.qty * unitFactor : item.qty;
+              const displayUnit = unitFactor !== 1 ? invUnit : item.unit;
+
+              const isLow = stock !== null && stock < adjustedQty;
               const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
               const issued = issuedItems[id] || false;
               const editQty = editedQty[id];
-              const displayQty = editQty !== undefined ? editQty : (typeof item.qty === "number" ? Math.ceil(item.qty) : item.qty);
-              const isEdited = editQty !== undefined && Number(editQty) !== (typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty));
-              // Unit mismatch warning: if we converted to base unit but inventory tracks the item in a different unit,
-              // the deduction math will be wrong. Warn the user.
-              const unitMismatch = invItem && item.unit && invItem.unit && String(item.unit).toLowerCase() !== String(invItem.unit).toLowerCase();
+              const displayQty = editQty !== undefined ? editQty : (typeof adjustedQty === "number" ? Math.ceil(adjustedQty) : adjustedQty);
+              const isEdited = editQty !== undefined && Number(editQty) !== (typeof adjustedQty === "number" ? Math.ceil(adjustedQty) : Number(adjustedQty));
+              // Unit mismatch warning: only show for truly incompatible units.
+              // Kg↔Gm and Ltr↔Ml are the same dimension — no warning needed.
+              const unitsCompatible = (a, b) => {
+                const na = String(a || "").toLowerCase();
+                const nb = String(b || "").toLowerCase();
+                if (na === nb) return true;
+                const weightUnits = new Set(["kg", "gm", "gram", "grams", "g"]);
+                const volumeUnits = new Set(["ltr", "liter", "litre", "ml", "milliliter"]);
+                if (weightUnits.has(na) && weightUnits.has(nb)) return true;
+                if (volumeUnits.has(na) && volumeUnits.has(nb)) return true;
+                return false;
+              };
+              const unitMismatch = invItem && item.unit && invItem.unit && !unitsCompatible(item.unit, invItem.unit);
               return (
                 <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : isManual ? "#FFF7ED" : "transparent", opacity: issued ? 0.6 : 1 }}>
                   <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
@@ -1816,13 +1849,13 @@ const Inventory = () => {
                   </div>
                   <div style={{ textAlign: "right", minWidth: 40, flexShrink: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
-                    <div style={{ fontSize: 9, color: "#999" }}>{item.unit}</div>
+                    <div style={{ fontSize: 9, color: "#999" }}>{displayUnit}</div>
                   </div>
                   <input type="number" inputMode="numeric" step="1" value={displayQty} onChange={(e) => setEditedQty((p) => ({ ...p, [id]: e.target.value }))} disabled={issued}
                     onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const inputs = Array.from(document.querySelectorAll("[data-stockout-input]")); const idx = inputs.indexOf(e.target); if (idx < inputs.length - 1) inputs[idx + 1].focus(); } }}
                     data-stockout-input
                     style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
-                  <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{item.unit}</span>
+                  <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{displayUnit}</span>
                   <button onClick={() => { setRemovedItems((p) => ({ ...p, [id]: true })); setIssuedItems((p) => { const c = { ...p }; delete c[id]; return c; }); setEditedQty((p) => { const c = { ...p }; delete c[id]; return c; }); if (isManual) { setExtraItems((p) => { const c = { ...p }; delete c[id]; return c; }); } }} title="Remove from list" style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
                 </div>
               );
