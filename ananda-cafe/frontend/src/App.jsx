@@ -752,18 +752,13 @@ let UNIT_CONVERSIONS = {
 const getBk = (id) => BK_ITEMS.find((b) => b.id === id)?.name || id;
 
 // ─── UNIT CONVERSION HELPER ─────────────────────────────────────────────
-// Converts a quantity+unit to its base unit using UNIT_CONVERSIONS, with
-// standard weight/volume fallbacks (Gm→Kg, Ml→Ltr and reverse).
-// Returns { qty, unit, converted, factor } where:
-//   - qty:       amount in base units (or original if no conversion applies)
-//   - unit:      base unit (or original)
-//   - converted: true if a conversion was applied
-//   - factor:    multiplier used (1 if no conversion)
-// Example: convertToBase(2, "Batch", "dosa_batter") → { qty: 36, unit: "Kg", converted: true, factor: 18 }
-// Example: convertToBase(500, "Gm", "sugar") → { qty: 0.5, unit: "Kg", converted: true, factor: 0.001 }
+// Converts a quantity+unit using ONLY the custom UNIT_CONVERSIONS table.
+// No automatic Gm→Kg or Ml→Ltr — those create false mismatches when
+// inventory tracks items in Gm/Ml (which is common for vegetables, spices).
+// Returns { qty, unit, converted, factor }
 const convertToBase = (qty, unit, itemId, itemName) => {
   if (!unit || !qty || qty === 0) return { qty: Number(qty) || 0, unit: unit || "", converted: false, factor: 1 };
-  // 1. Check custom UNIT_CONVERSIONS table first (item-specific overrides)
+  // Only check custom UNIT_CONVERSIONS (Batch, Tin, Pkt, Box, Bundle, etc.)
   const conversions = UNIT_CONVERSIONS[unit];
   if (conversions && Array.isArray(conversions)) {
     const norm = (s) => (s || "").toLowerCase().trim();
@@ -773,15 +768,7 @@ const convertToBase = (qty, unit, itemId, itemName) => {
       return { qty: Number(qty) * Number(match.qty), unit: match.base_unit, converted: true, factor: Number(match.qty) };
     }
   }
-  // 2. Standard metric normalizations (item-independent)
-  const u = String(unit).toLowerCase();
-  if (u === "gm" || u === "gram" || u === "grams" || u === "g") {
-    return { qty: Number(qty) / 1000, unit: "Kg", converted: true, factor: 0.001 };
-  }
-  if (u === "ml" || u === "milliliter" || u === "millilitre") {
-    return { qty: Number(qty) / 1000, unit: "Ltr", converted: true, factor: 0.001 };
-  }
-  // 3. No conversion
+  // No conversion — pass through as-is
   return { qty: Number(qty), unit, converted: false, factor: 1 };
 };
 
