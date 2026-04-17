@@ -54,6 +54,8 @@ const api = {
   getOrders: (params) => get("/api/orders", params),
   getConsolidated: (date) => get("/api/orders/consolidated", { date }),
   updateOrderStatus: (id, status, notes) => patch(`/api/orders/${id}/status`, { status, dispatch_notes: notes }),
+  dispatchOrder: (id, dispatch_items, dispatched_by) => patch(`/api/orders/${id}/dispatch`, { dispatch_items, dispatched_by }),
+  getChallan: (id) => get(`/api/orders/${id}/challan`),
   getDashboardSummary: (date) => get("/api/orders/dashboard-summary", { date }),
 
   // ── PetPooja ──
@@ -103,6 +105,21 @@ const api = {
   submitStaffDemand: (data) => post("/api/staff-demands", data),
   addStaffDemandItem: (data) => post("/api/staff-demands/items", data),
   deleteStaffDemandItem: (id) => del(`/api/staff-demands/items/${id}`),
+
+  // ── Rate Card ──
+  getRateCard: () => get("/api/rate-card"),
+  addRate: (data) => post("/api/rate-card", data),
+  updateRate: (id, data) => patch(`/api/rate-card/${id}`, data),
+  deleteRate: (id) => del(`/api/rate-card/${id}`),
+
+  // ── Fixed Costs ──
+  getFixedCosts: (params) => get("/api/fixed-costs", params),
+  saveFixedCost: (data) => post("/api/fixed-costs", data),
+  deleteFixedCost: (outlet_id, cost_head) => del(`/api/fixed-costs?outlet_id=${outlet_id}&cost_head=${cost_head}`),
+
+  // ── Live P&L ──
+  getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),
+  getStockUsage: (date, outlet) => get(`/api/stock-usage/${date}`, outlet ? { outlet } : {}),
 };
 
 // ── Helpers ──
