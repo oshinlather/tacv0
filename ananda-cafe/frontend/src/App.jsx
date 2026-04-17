@@ -14,6 +14,8 @@ const OUTLETS = [
   { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
 ];
 const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
+const istNow = () => { const d = new Date(); return new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); };
+const istDateAgo = (days) => { const ist = istNow(); ist.setDate(ist.getDate() - days); return ist.toISOString().split("T")[0]; };
 const istHour = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.getHours(); };
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
@@ -266,7 +268,7 @@ const DailyPnL = () => {
   const [expandSection, setExpandSection] = useState(null); // 'variable', 'fixed', 'purchase'
 
   const dateStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+    return istDateAgo(selDay);
   }, [selDay]);
 
   const [stockData, setStockData] = useState(null);
@@ -337,7 +339,7 @@ const DailyPnL = () => {
       {/* Date pills */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {Array.from({ length: 10 }, (_, i) => {
-          const dd = new Date(); dd.setDate(dd.getDate() - i);
+          const dd = istNow(); dd.setDate(dd.getDate() - i);
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
           return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
@@ -492,7 +494,7 @@ const DailyStockUsage = () => {
   const [expandCat, setExpandCat] = useState(null);
 
   const dateStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+    return istDateAgo(selDay);
   }, [selDay]);
 
   useEffect(() => {
@@ -516,7 +518,7 @@ const DailyStockUsage = () => {
       {/* Date pills */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {Array.from({ length: 10 }, (_, i) => {
-          const dd = new Date(); dd.setDate(dd.getDate() - i);
+          const dd = istNow(); dd.setDate(dd.getDate() - i);
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
           return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
@@ -3063,7 +3065,7 @@ const SalesUpload = () => {
   const [uploadResult, setUploadResult] = useState(null);
 
   const dateStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+    return istDateAgo(selDay);
   }, [selDay]);
 
   const loadSales = useCallback(() => {
@@ -3181,7 +3183,7 @@ const RMAuditPanel = () => {
   const [loading, setLoading] = useState(false);
 
   const dateStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+    return istDateAgo(selDay);
   }, [selDay]);
 
   useEffect(() => {
@@ -3622,7 +3624,7 @@ const IssuanceAudit = () => {
   const [loading, setLoading] = useState(false);
 
   const dateStr = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+    return istDateAgo(selDay);
   }, [selDay]);
 
   useEffect(() => {
