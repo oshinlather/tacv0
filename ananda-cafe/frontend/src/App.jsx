@@ -2410,9 +2410,9 @@ const OutletMgr = ({ onBack }) => {
 
     if (salesLoading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-    const numInputStyle = { width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#fff", MozAppearance: "textfield", WebkitAppearance: "none", appearance: "textfield" };
-    const R = ({ label, field, prefix }) => (
-      <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+    const numInputStyle = { width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#fff" };
+    const salesRow = (label, field, prefix) => (
+      <div key={field} style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
         <span style={{ flex: 1, fontSize: 12, color: "#555" }}>{label}</span>
         <span style={{ fontSize: 12, color: "#999" }}>{prefix}</span>
         <input type="number" inputMode="numeric" placeholder="0" value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={numInputStyle} />
@@ -2430,10 +2430,10 @@ const OutletMgr = ({ onBack }) => {
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Sales</div>
-        <R label="Total Sale (Billing)" field="total_sale" prefix="₹" />
-        <R label="Swiggy" field="swiggy_sale" prefix="₹" />
-        <R label="Zomato" field="zomato_sale" prefix="₹" />
-        <R label="Other Delivery" field="other_delivery_sale" prefix="₹" />
+        {salesRow("Total Sale (Billing)", "total_sale", "₹")}
+        {salesRow("Swiggy", "swiggy_sale", "₹")}
+        {salesRow("Zomato", "zomato_sale", "₹")}
+        {salesRow("Other Delivery", "other_delivery_sale", "₹")}
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Cancelled Orders</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
@@ -2459,8 +2459,8 @@ const OutletMgr = ({ onBack }) => {
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Payment (Store Sale)</div>
-        <R label="UPI Collected" field="upi_collected" prefix="₹" />
-        <R label="Cash Collected" field="cash_collected" prefix="₹" />
+        {salesRow("UPI Collected", "upi_collected", "₹")}
+        {salesRow("Cash Collected", "cash_collected", "₹")}
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#7C3AED" }}>− Paid by Zomato District</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
@@ -2476,9 +2476,9 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ fontSize: 10, fontWeight: 700, color: "#9333EA", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Cash Management</div>
         <V label="Previous Day Cash" value={prevCash} color="#555" />
         <V label="+ Today Cash" value={cash} color="#16A34A" />
-        <R label="− Cash Expense" field="cash_expense" prefix="₹" />
+        {salesRow("− Cash Expense", "cash_expense", "₹")}
         <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense note..." style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 11, fontFamily: "inherit", background: "#FAFAF8", marginBottom: 2, boxSizing: "border-box" }} />
-        <R label="− Cash Deposited" field="cash_deposited" prefix="₹" />
+        {salesRow("− Cash Deposited", "cash_deposited", "₹")}
         <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 4px", fontSize: 13, fontWeight: 800 }}>
           <span>💰 Closing Cash</span>
           <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 16 }}>₹{closingCash}</span>
