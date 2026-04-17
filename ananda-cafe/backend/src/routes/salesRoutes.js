@@ -947,24 +947,163 @@ router.patch('/inventory/items/:id', async (req, res) => {
 });
 
 // ============================================================
+// ORDERS — Fetch and manage demands/orders
+// ============================================================
+
+// ── GET /api/orders — Get orders/demands for a date (optionally filter by outlet)
+router.get('/orders', async (req, res) => {
+  try {
+    const { date, outlet_id, status } = req.query;
+    let query = supabase.from('demands').select('*');
+    if (date) query = query.eq('date', date);
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    if (status) query = query.eq('status', status);
+    query = query.order('submitted_at', { ascending: false });
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/orders/consolidated — Consolidated demand for a date
+router.get('/orders/consolidated', async (req, res) => {
+  try {
+    const { date } = req.query;
+    const { data, error } = await supabase.from('demands').select('*')
+      .eq('date', date || new Date().toISOString().split('T')[0])
+      .in('type', ['manual', 'photo'])
+      .in('status', ['submitted', 'received', 'issued', 'fulfilled']);
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/orders/dashboard-summary — Summary counts for live activity
+router.get('/orders/dashboard-summary', async (req, res) => {
+  try {
+    const { date } = req.query;
+    const d = date || new Date().toISOString().split('T')[0];
+
+    const [demands, purchases, issuances] = await Promise.all([
+      supabase.from('demands').select('*').eq('date', d).order('submitted_at', { ascending: false }),
+      supabase.from('purchases').select('*').eq('date', d).order('created_at', { ascending: false }),
+      supabase.from('issuances').select('*').eq('date', d).order('submitted_at', { ascending: false }),
+    ]);
+
+    const demandData = demands.data || [];
+    const purchaseData = purchases.data || [];
+    const issuanceData = issuances.data || [];
+
+    const pending = demandData.filter(d => d.status === 'submitted' || d.status === 'received');
+
+    res.json({
+      summary: {
+        total_demands: demandData.filter(d => d.type === 'manual' || d.type === 'photo').length,
+        pending_dispatch: pending.length,
+        total_issuances: issuanceData.length,
+        total_purchases: purchaseData.length,
+        purchase_amount: purchaseData.reduce((s, p) => s + Number(p.total_amount || 0), 0),
+      },
+      demands: demandData,
+      purchases: purchaseData,
+      issuances: issuanceData,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/orders/:id/status — Update order status
+router.patch('/orders/:id/status', async (req, res) => {
+  try {
+    const { status, dispatch_notes } = req.body;
+    const updates = { status };
+    if (dispatch_notes !== undefined) updates.dispatch_notes = dispatch_notes;
+    if (status === 'fulfilled') updates.dispatched_at = new Date().toISOString();
+    const { error } = await supabase.from('demands').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // DISPATCH CHALLAN — Save actual dispatched quantities
 // ============================================================
 
-// ── PATCH /api/orders/:id/dispatch — Save dispatched items and mark as fulfilled
+// ── PATCH /api/orders/:id/dispatch — Save dispatched items, mark fulfilled, auto-deduct inventory
 router.patch('/orders/:id/dispatch', async (req, res) => {
   try {
     const { id } = req.params;
     const { dispatch_items, dispatched_by } = req.body;
     
-    const { error } = await supabase.from('demands').update({
+    // 1. Get the order to check current status
+    const { data: order, error: orderErr } = await supabase.from('demands')
+      .select('*').eq('id', id).single();
+    if (orderErr) throw orderErr;
+
+    // 2. Check if stock was already deducted for this order
+    // Look for inventory_movements with reason containing this order ID
+    const { data: existingMovements } = await supabase.from('inventory_movements')
+      .select('id')
+      .eq('reason', `dispatch_${id}`)
+      .limit(1);
+    
+    const alreadyDeducted = existingMovements && existingMovements.length > 0;
+
+    // 3. Mark order as fulfilled with dispatch items
+    const { error: updateErr } = await supabase.from('demands').update({
       status: 'fulfilled',
       dispatch_items: dispatch_items || {},
       dispatched_at: new Date().toISOString(),
       dispatched_by: dispatched_by || null,
     }).eq('id', id);
-    
-    if (error) throw error;
-    res.json({ ok: true });
+    if (updateErr) throw updateErr;
+
+    // 4. Auto-deduct from inventory if not already done
+    let deducted = 0;
+    let skipped = 0;
+    if (!alreadyDeducted && dispatch_items && Object.keys(dispatch_items).length > 0) {
+      // Also check if this order was already "issued" via Stock Out (status was 'issued' before dispatch)
+      const wasIssued = order.status === 'issued';
+      
+      if (!wasIssued) {
+        // Find matching inventory items and deduct
+        const { data: invItems } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+        const invMap = {};
+        (invItems || []).forEach(inv => {
+          invMap[inv.id] = inv;
+          if (inv.demand_item_id) invMap[inv.demand_item_id] = inv;
+        });
+
+        const movements = [];
+        Object.entries(dispatch_items).forEach(([itemId, qty]) => {
+          if (!qty || qty <= 0) return;
+          // Try to find inventory item by demand_item_id match or direct id match
+          const inv = invMap[itemId];
+          if (inv) {
+            movements.push({
+              item_id: inv.id,
+              quantity: -Number(qty),
+              type: 'stock_out',
+              reason: `dispatch_${id}`,
+            });
+            deducted++;
+          } else {
+            skipped++;
+          }
+        });
+
+        if (movements.length > 0) {
+          const { error: movErr } = await supabase.from('inventory_movements').insert(movements);
+          if (movErr) console.error('Auto-deduct failed:', movErr.message);
+        }
+      }
+    }
+
+    res.json({ 
+      ok: true, 
+      auto_deducted: deducted, 
+      skipped,
+      already_deducted: alreadyDeducted || (order.status === 'issued'),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
