@@ -22,46 +22,69 @@ router.get("/", async (req, res) => {
   res.json(items);
 });
 
-// Stock In (add stock)
+// Stock In (add stock) — BATCHED
 router.post("/stock-in", async (req, res) => {
   const { items, reason, submitted_by } = req.body;
-  // items = [{ item_id, quantity }, ...]
   try {
-    for (const item of items) {
-      if (!item.item_id || !item.quantity || item.quantity <= 0) continue;
+    const validItems = items.filter(i => i.item_id && i.quantity && i.quantity > 0);
+    if (validItems.length === 0) return res.json({ success: true, count: 0 });
 
-      // Log movement
-      await supabase.from("inventory_movements").insert({
-        item_id: item.item_id, type: "stock_in", quantity: item.quantity,
-        reason: reason || "purchase", submitted_by,
-      });
+    // 1. Batch insert all movements at once
+    const movements = validItems.map(item => ({
+      item_id: item.item_id, type: "stock_in", quantity: item.quantity,
+      reason: reason || "purchase", submitted_by,
+    }));
+    await supabase.from("inventory_movements").insert(movements);
 
-      // Update current stock
-      const { data: current } = await supabase.from("inventory_stock").select("current_qty").eq("item_id", item.item_id).single();
-      const newQty = (Number(current?.current_qty) || 0) + Number(item.quantity);
-      await supabase.from("inventory_stock").upsert({ item_id: item.item_id, current_qty: newQty, last_updated: new Date().toISOString() }, { onConflict: "item_id" });
-    }
-    res.json({ success: true, count: items.length });
+    // 2. Get all current stock in one query
+    const itemIds = validItems.map(i => i.item_id);
+    const { data: currentStocks } = await supabase.from("inventory_stock")
+      .select("item_id, current_qty").in("item_id", itemIds);
+    const stockMap = {};
+    (currentStocks || []).forEach(s => { stockMap[s.item_id] = Number(s.current_qty) || 0; });
+
+    // 3. Batch upsert all stock updates
+    const upserts = validItems.map(item => ({
+      item_id: item.item_id,
+      current_qty: (stockMap[item.item_id] || 0) + Number(item.quantity),
+      last_updated: new Date().toISOString(),
+    }));
+    await supabase.from("inventory_stock").upsert(upserts, { onConflict: "item_id" });
+
+    res.json({ success: true, count: validItems.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Stock Out (remove stock)
+// Stock Out (remove stock) — BATCHED
 router.post("/stock-out", async (req, res) => {
   const { items, reason, submitted_by } = req.body;
   try {
-    for (const item of items) {
-      if (!item.item_id || !item.quantity || item.quantity <= 0) continue;
+    const validItems = items.filter(i => i.item_id && i.quantity && i.quantity > 0);
+    if (validItems.length === 0) return res.json({ success: true, count: 0 });
 
-      await supabase.from("inventory_movements").insert({
-        item_id: item.item_id, type: "stock_out", quantity: -item.quantity,
-        reason: reason || "issuance", submitted_by,
-      });
+    // 1. Batch insert all movements at once
+    const movements = validItems.map(item => ({
+      item_id: item.item_id, type: "stock_out", quantity: -item.quantity,
+      reason: reason || "issuance", submitted_by,
+    }));
+    await supabase.from("inventory_movements").insert(movements);
 
-      const { data: current } = await supabase.from("inventory_stock").select("current_qty").eq("item_id", item.item_id).single();
-      const newQty = Math.max(0, (Number(current?.current_qty) || 0) - Number(item.quantity));
-      await supabase.from("inventory_stock").upsert({ item_id: item.item_id, current_qty: newQty, last_updated: new Date().toISOString() }, { onConflict: "item_id" });
-    }
-    res.json({ success: true, count: items.length });
+    // 2. Get all current stock in one query
+    const itemIds = validItems.map(i => i.item_id);
+    const { data: currentStocks } = await supabase.from("inventory_stock")
+      .select("item_id, current_qty").in("item_id", itemIds);
+    const stockMap = {};
+    (currentStocks || []).forEach(s => { stockMap[s.item_id] = Number(s.current_qty) || 0; });
+
+    // 3. Batch upsert all stock updates
+    const upserts = validItems.map(item => ({
+      item_id: item.item_id,
+      current_qty: Math.max(0, (stockMap[item.item_id] || 0) - Number(item.quantity)),
+      last_updated: new Date().toISOString(),
+    }));
+    await supabase.from("inventory_stock").upsert(upserts, { onConflict: "item_id" });
+
+    res.json({ success: true, count: validItems.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -93,7 +116,7 @@ router.patch("/threshold/:id", async (req, res) => {
 
 // Bulk update thresholds
 router.post("/thresholds", async (req, res) => {
-  const { items } = req.body; // [{ id, threshold }, ...]
+  const { items } = req.body;
   try {
     for (const item of items) {
       await supabase.from("inventory_items").update({ threshold: Number(item.threshold) }).eq("id", item.id);
