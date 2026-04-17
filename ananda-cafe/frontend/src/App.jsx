@@ -284,17 +284,19 @@ const DailyPnL = () => {
         pnl.pnl.forEach(p => {
           const su = stock.outlets.find(s => s.outlet_id === p.outlet_id);
           if (su) {
-            // Override variable cost with stock-usage-based calculation
-            p.stock_variable_cost = su.total_used_cost;
-            p.stock_cost_by_category = su.variable_cost_by_category;
             p.has_prev_closing = su.has_prev_closing;
             p.has_today_closing = su.has_today_closing;
-            // Recalculate totals using stock-based variable cost
-            p.variable_cost = su.total_used_cost;
-            p.variable_by_category = su.variable_cost_by_category;
-            p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
-            p.net_profit = (p.effective_sale || 0) - p.total_expense;
-            p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
+            // Only override variable cost when BOTH prev closing and today closing exist
+            // Otherwise the stock usage data is incomplete and P&L from dispatched items is more accurate
+            if (su.has_prev_closing && su.has_today_closing) {
+              p.stock_variable_cost = su.total_used_cost;
+              p.stock_cost_by_category = su.variable_cost_by_category;
+              p.variable_cost = su.total_used_cost;
+              p.variable_by_category = su.variable_cost_by_category;
+              p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+              p.net_profit = (p.effective_sale || 0) - p.total_expense;
+              p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
+            }
           }
         });
       }
