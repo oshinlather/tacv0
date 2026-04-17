@@ -261,93 +261,374 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
   const [selDay, setSelDay] = useState(0);
-  const [pnlData, setPnlData] = useState([]);
+  const [pnlData, setPnlData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [expandSection, setExpandSection] = useState(null); // 'variable', 'fixed', 'purchase'
 
   const dateStr = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
   }, [selDay]);
 
-  useEffect(() => { setLoading(true); api.getComputedPnl(dateStr).then((res) => setPnlData(res?.pnl || res || [])).catch(() => setPnlData([])).finally(() => setLoading(false)); }, [dateStr]);
+  const [stockData, setStockData] = useState(null);
 
-  const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id);
-  const getData = (oid) => pnlData.find((r) => r.outlet_id === oid) || {};
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.getLivePnl(dateStr).catch(() => null),
+      api.getStockUsage(dateStr).catch(() => null),
+    ]).then(([pnl, stock]) => {
+      // Merge stock-based variable cost into P&L data
+      if (pnl?.pnl && stock?.outlets) {
+        pnl.pnl.forEach(p => {
+          const su = stock.outlets.find(s => s.outlet_id === p.outlet_id);
+          if (su) {
+            // Override variable cost with stock-usage-based calculation
+            p.stock_variable_cost = su.total_used_cost;
+            p.stock_cost_by_category = su.variable_cost_by_category;
+            p.has_prev_closing = su.has_prev_closing;
+            p.has_today_closing = su.has_today_closing;
+            // Recalculate totals using stock-based variable cost
+            p.variable_cost = su.total_used_cost;
+            p.variable_by_category = su.variable_cost_by_category;
+            p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+            p.net_profit = (p.effective_sale || 0) - p.total_expense;
+            p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
+          }
+        });
+      }
+      setPnlData(pnl);
+      setStockData(stock);
+    }).finally(() => setLoading(false));
+  }, [dateStr]);
 
-  const totals = useMemo(() => {
-    const t = {};
-    [...PNL_REVENUE, ...ALL_EXPENSES].forEach((item) => {
-      t[item.id] = outletIds.reduce((sum, oid) => sum + (Number(getData(oid)[item.id]) || 0), 0);
-    });
-    return t;
-  }, [dateStr, selOutlet, pnlData]);
+  const allPnl = pnlData?.pnl || [];
+  const currentData = selOutlet
+    ? allPnl.find((r) => r.outlet_id === selOutlet)
+    : allPnl.find((r) => r.outlet_id === "all");
+  const d = currentData || {};
 
-  const totalExpense = ALL_EXPENSES.reduce((s, e) => s + (totals[e.id] || 0), 0);
-  const netPnl = totals.effective_sale - totalExpense;
-  const pnlPct = totals.effective_sale > 0 ? (netPnl / totals.effective_sale * 100) : 0;
-  const rawPct = totals.effective_sale > 0 ? (totals.raw_material / totals.effective_sale * 100) : 0;
-  const disposalPct = totals.effective_sale > 0 ? (totals.disposal / totals.effective_sale * 100) : 0;
-  const gasPct = totals.effective_sale > 0 ? (totals.gas / totals.effective_sale * 100) : 0;
-  const elecPct = totals.effective_sale > 0 ? (totals.electricity / totals.effective_sale * 100) : 0;
-
-  const Row = ({ label, value, bold, color, bg, sub, negative }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: bg || "transparent", borderBottom: "1px solid #F0F0EC" }}>
-      <span style={{ fontSize: 13, fontWeight: bold ? 700 : 400, color: color || "#1A1A1A" }}>{label}</span>
+  const Row = ({ label, value, bold, color, bg, sub, negative, indent }) => (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: indent ? "7px 16px 7px 32px" : "10px 16px", background: bg || "transparent", borderBottom: "1px solid #F0F0EC" }}>
+      <span style={{ fontSize: indent ? 12 : 13, fontWeight: bold ? 700 : 400, color: color || (indent ? "#777" : "#1A1A1A") }}>{label}</span>
       <div style={{ textAlign: "right" }}>
-        <span style={{ fontSize: 14, fontWeight: bold ? 800 : 600, fontFamily: "'JetBrains Mono', monospace", color: negative ? "#DC2626" : (color || "#1A1A1A") }}>
-          {negative ? "-" : ""}{fmt(Math.abs(value || 0))}
+        <span style={{ fontSize: indent ? 13 : 14, fontWeight: bold ? 800 : 600, fontFamily: "'JetBrains Mono', monospace", color: negative ? "#DC2626" : (color || "#1A1A1A") }}>
+          {negative ? "−" : ""}{fmt(Math.abs(value || 0))}
         </span>
         {sub && <div style={{ fontSize: 10, color: "#999" }}>{sub}</div>}
       </div>
     </div>
   );
 
+  const SectionHeader = ({ label, bg, borderColor, color, icon, expandKey, count }) => (
+    <div onClick={() => expandKey && setExpandSection(expandSection === expandKey ? null : expandKey)}
+      style={{ padding: "10px 16px", background: bg, borderBottom: `1px solid ${borderColor}`, fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: expandKey ? "pointer" : "default" }}>
+      <span>{icon} {label}</span>
+      {expandKey && <span style={{ fontSize: 10, color: "#999" }}>{expandSection === expandKey ? "▲ collapse" : `▼ ${count || "details"}`}</span>}
+    </div>
+  );
+
   return (
     <div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Daily P&L</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Live from dispatched items × rate card + fixed costs + purchases</p>
+      </div>
+
+      {/* Date pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {Array.from({ length: 10 }, (_, i) => {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+          const dd = new Date(); dd.setDate(dd.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
           return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
       </div>
+
+      {/* Outlet pills */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
       </div>
-      <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-        {[{ l: "Effective Sale", v: fmt(totals.effective_sale), c: "#166534" }, { l: "Net P&L", v: (netPnl >= 0 ? "" : "-") + fmt(Math.abs(netPnl)), c: netPnl >= 0 ? "#16A34A" : "#DC2626" }, { l: "P&L %", v: pct(pnlPct), c: pnlPct >= 0 ? "#16A34A" : "#DC2626" }].map((s, i) => (
-          <div key={i} style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.v}</div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
+
+      {!loading && !currentData && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
+
+      {!loading && currentData && (<>
+        {/* Stock data warnings */}
+        {d.has_prev_closing === false && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>
+            ⚠️ Previous day closing stock missing — variable cost may be inaccurate
           </div>
-        ))}
-      </div>
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ padding: "10px 16px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", fontSize: 12, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.6 }}>Revenue</div>
-        {PNL_REVENUE.map((r) => <Row key={r.id} label={r.label} value={totals[r.id]} bold color={r.color} bg={r.bg} negative={r.negative} />)}
-        <div style={{ padding: "10px 16px", background: "#FEF2F2", borderBottom: "1px solid #FECACA", fontSize: 12, fontWeight: 700, color: "#991B1B", textTransform: "uppercase", letterSpacing: 0.6 }}>Fixed Expenses</div>
-        {PNL_FIXED_EXPENSES.map((e) => <Row key={e.id} label={e.label} value={totals[e.id]} />)}
-        <div style={{ padding: "10px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 12, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.6 }}>Variable / COGS Expenses</div>
-        {PNL_VARIABLE_EXPENSES.map((e) => { const val = totals[e.id] || 0; const p = totals.effective_sale > 0 ? (val / totals.effective_sale * 100) : 0; return <Row key={e.id} label={e.label} value={val} bg={e.highlight ? "#FFFDF5" : undefined} sub={e.highlight ? `${pct(p)} of sale` : undefined} />; })}
-        <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Other Expenses</div>
-        {PNL_OTHER_EXPENSES.map((e) => <Row key={e.id} label={e.label} value={totals[e.id]} />)}
-        <div style={{ borderTop: "2px solid #1A1A1A" }}>
-          <Row label="Net Expense" value={totalExpense} bold bg="#F8F8F5" />
-          <Row label="Net P&L" value={Math.abs(netPnl)} bold color={netPnl >= 0 ? "#16A34A" : "#DC2626"} bg={netPnl >= 0 ? "#F0FDF4" : "#FEF2F2"} negative={netPnl < 0} />
+        )}
+        {d.has_today_closing === false && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 12 }}>
+            ⏳ Today's closing stock not submitted — variable cost is estimated from dispatched items only
+          </div>
+        )}
+        {/* Summary Cards */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          {[
+            { l: "Effective Sale", v: d.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
+            { l: "Total Expense", v: d.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
+            { l: "Net P&L", v: d.net_profit, c: d.net_profit >= 0 ? "#16A34A" : "#DC2626", bg: d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", bc: d.net_profit >= 0 ? "#BBF7D0" : "#FECACA" },
+            { l: "Margin", v: null, display: (d.margin || 0) + "%", c: d.margin >= 0 ? "#16A34A" : "#DC2626", bg: "#fff", bc: "#E8E8E4" },
+          ].map((s, i) => (
+            <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.display || fmt(s.v || 0)}</div>
+            </div>
+          ))}
         </div>
+
+        {/* Per-outlet mini cards (when All Outlets selected) */}
+        {!selOutlet && allPnl.filter((r) => r.outlet_id !== "all").length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
+            {allPnl.filter((r) => r.outlet_id !== "all").map((r) => {
+              const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
+              return (
+                <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
+                  <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626", marginTop: 4 }}>
+                    {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
+                  </div>
+                  <div style={{ fontSize: 10, color: r.margin >= 0 ? "#16A34A" : "#DC2626", fontWeight: 600 }}>{r.margin}%</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Detailed P&L Table */}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
+          {/* REVENUE */}
+          <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" />
+          <Row label="Total Sale (Billing)" value={d.total_sale} bold color="#166534" bg="#F0FDF4" />
+          <Row label="Delivery (Swiggy + Zomato + Other)" value={d.delivery_sale} indent />
+          <Row label="Store Sale" value={d.store_sale} indent />
+          {(d.cancelled_orders > 0 || d.complimentary > 0) && <>
+            {d.cancelled_orders > 0 && <Row label="− Cancelled Orders" value={d.cancelled_orders} negative indent />}
+            {d.complimentary > 0 && <Row label="− Complimentary" value={d.complimentary} negative indent />}
+          </>}
+          <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" />
+
+          {/* VARIABLE COST */}
+          <SectionHeader label={d.has_today_closing !== false ? "Variable Cost (Used Stock × Rate)" : "Variable Cost (Dispatched × Rate)"} bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
+          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={d.has_today_closing !== false ? "Opening − Closing = Used" : "from dispatched items"} />
+          {expandSection === "variable" && d.variable_by_category && Object.entries(d.variable_by_category).sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
+            <Row key={cat} label={cat} value={cost} indent sub={d.effective_sale > 0 ? pct(cost / d.effective_sale * 100) + " of sale" : ""} />
+          ))}
+          {expandSection === "variable" && d.item_breakdown && d.item_breakdown.length > 0 && (
+            <div style={{ padding: "8px 12px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Item-wise Breakdown</div>
+              <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", fontSize: 11, borderBottom: "1px solid #F5F5F3" }}>
+                    <span style={{ color: "#555" }}>{item.name} <span style={{ color: "#BBB" }}>({item.qty} {item.unit} × ₹{item.rate})</span></span>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* DAILY PURCHASES */}
+          <SectionHeader label="Daily Purchases" bg="#EFF6FF" borderColor="#BFDBFE" color="#1D4ED8" icon="🧾" />
+          <Row label="Cash Purchases" value={d.daily_purchases} bold color="#2563EB" />
+
+          {/* FIXED COSTS */}
+          <SectionHeader label={"Fixed Costs (Monthly ÷ " + (d.days_in_month || 30) + " days)"} bg="#F5F3FF" borderColor="#DDD6FE" color="#6D28D9" icon="🏢" expandKey="fixed" count={d.fixed_breakdown?.length + " heads"} />
+          <Row label="Daily Fixed Cost" value={d.daily_fixed_cost} bold color="#7C3AED" />
+          <Row label="BK Share (¼ of Base Kitchen)" value={d.bk_share} indent />
+          {expandSection === "fixed" && d.fixed_breakdown && d.fixed_breakdown.map((f) => (
+            <Row key={f.cost_head} label={f.label} value={f.daily} indent sub={`₹${f.monthly.toLocaleString("en-IN")}/month`} />
+          ))}
+
+          {/* TOTALS */}
+          <div style={{ borderTop: "2px solid #1A1A1A" }}>
+            <Row label="Total Expense" value={d.total_expense} bold bg="#F8F8F5" />
+            <Row label="Net P&L" value={Math.abs(d.net_profit || 0)} bold
+              color={d.net_profit >= 0 ? "#16A34A" : "#DC2626"}
+              bg={d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2"}
+              negative={d.net_profit < 0}
+              sub={`${d.margin || 0}% margin`} />
+          </div>
+        </div>
+
+        {/* Cost Breakdown Bars */}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Cost as % of Sale</div>
+          {[
+            { l: "Variable (Materials)", v: d.effective_sale > 0 ? (d.variable_cost || 0) / d.effective_sale * 100 : 0, t: 35 },
+            { l: "Fixed Costs", v: d.effective_sale > 0 ? ((d.daily_fixed_cost || 0) + (d.bk_share || 0)) / d.effective_sale * 100 : 0, t: 25 },
+            { l: "Purchases", v: d.effective_sale > 0 ? (d.daily_purchases || 0) / d.effective_sale * 100 : 0, t: 5 },
+            { l: "Total Expense", v: d.effective_sale > 0 ? (d.total_expense || 0) / d.effective_sale * 100 : 0, t: 70 },
+          ].map((item) => (
+            <div key={item.l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #F0F0EC" }}>
+              <span style={{ fontSize: 13 }}>{item.l}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 80, height: 6, borderRadius: 3, background: "#EBEBEB", overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 3, background: item.v > item.t ? "#DC2626" : "#16A34A", width: `${Math.min(item.v, 100)}%` }} />
+                </div>
+                <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.v > item.t ? "#DC2626" : "#16A34A", width: 50, textAlign: "right" }}>{pct(item.v)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>)}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  DAILY STOCK USAGE — Opening, Used, Closing per outlet
+// ═════════════════════════════════════════════════════════════════════════════
+const DailyStockUsage = () => {
+  const [selOutlet, setSelOutlet] = useState(null);
+  const [selDay, setSelDay] = useState(0);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expandCat, setExpandCat] = useState(null);
+
+  const dateStr = useMemo(() => {
+    const d = new Date(); d.setDate(d.getDate() - selDay); return d.toISOString().split("T")[0];
+  }, [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getStockUsage(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const allOutlets = data?.outlets || [];
+  const current = selOutlet
+    ? allOutlets.find((r) => r.outlet_id === selOutlet)
+    : allOutlets.find((r) => r.outlet_id === "all");
+  const d = current || {};
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Daily Stock Usage</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Opening = (Prev Closing − Wastage) + Dispatched · Used = Opening − Closing</p>
       </div>
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Cost % of Effective Sale</div>
-        {[{ l: "Raw Material", v: rawPct, t: 25 }, { l: "Disposal", v: disposalPct, t: 4 }, { l: "Gas", v: gasPct, t: 4 }, { l: "Electricity", v: elecPct, t: 3 }].map((item) => (
-          <div key={item.l} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #F0F0EC" }}>
-            <span style={{ fontSize: 13 }}>{item.l}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 80, height: 6, borderRadius: 3, background: "#EBEBEB", overflow: "hidden" }}><div style={{ height: "100%", borderRadius: 3, background: item.v > item.t ? "#DC2626" : "#16A34A", width: `${Math.min(item.v * 2, 100)}%` }} /></div>
-              <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.v > item.t ? "#DC2626" : "#16A34A", width: 50, textAlign: "right" }}>{pct(item.v)}</span>
+
+      {/* Date pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 10 }, (_, i) => {
+          const dd = new Date(); dd.setDate(dd.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+      </div>
+
+      {/* Outlet pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
+        {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing stock usage...</div>}
+
+      {!loading && !current && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📦</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
+
+      {!loading && current && (<>
+        {/* Warnings */}
+        {!d.has_prev_closing && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>
+            ⚠️ Previous day closing stock not submitted — opening stock may be inaccurate
+          </div>
+        )}
+        {!d.has_today_closing && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 12 }}>
+            ⏳ Today's closing stock not submitted yet — "Used" calculation is pending
+          </div>
+        )}
+
+        {/* Summary card */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 140px", background: "#FFFBEB", borderRadius: 12, padding: "14px 16px", border: "1px solid #FDE68A", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#92400E", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Used Cost</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{fmt(d.total_used_cost || 0)}</div>
+          </div>
+        </div>
+
+        {/* Per-outlet mini cards */}
+        {!selOutlet && allOutlets.filter((r) => r.outlet_id !== "all").length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 20 }}>
+            {allOutlets.filter((r) => r.outlet_id !== "all").map((r) => {
+              const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
+              return (
+                <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{oName}</div>
+                  <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(r.total_used_cost)}</div>
+                  {!r.has_today_closing && <div style={{ fontSize: 9, color: "#B45309" }}>⏳ closing pending</div>}
+                  {!r.has_prev_closing && <div style={{ fontSize: 9, color: "#DC2626" }}>⚠ no prev closing</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Category-wise cost breakdown */}
+        {d.variable_cost_by_category && Object.keys(d.variable_cost_by_category).length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
+            <div style={{ padding: "10px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 12, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.6 }}>📊 Variable Cost by Category</div>
+            {Object.entries(d.variable_cost_by_category).sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
+              <div key={cat} onClick={() => setExpandCat(expandCat === cat ? null : cat)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", borderBottom: "1px solid #F0F0EC", cursor: selOutlet ? "pointer" : "default" }}>
+                <span style={{ fontSize: 13 }}>{cat}</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{fmt(cost)}</span>
+                  {selOutlet && <span style={{ fontSize: 10, color: "#CCC" }}>▼</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Item-level table (when specific outlet selected) */}
+        {selOutlet && d.items && d.items.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>
+              📋 Item-wise Stock ({d.items.length} items)
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={thS}>Item</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9 }}>Prev Close</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9 }}>−Wastage</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9 }}>+Dispatched</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9, color: "#2563EB" }}>Opening</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9, color: "#DC2626" }}>Closing</th>
+                  <th style={{ ...thS, textAlign: "center", fontSize: 9, color: "#B45309", fontWeight: 800 }}>Used</th>
+                  <th style={{ ...thS, textAlign: "right", fontSize: 9 }}>Rate</th>
+                  <th style={{ ...thS, textAlign: "right", fontSize: 9, color: "#B45309" }}>Cost</th>
+                </tr></thead>
+                <tbody>
+                  {(expandCat ? d.items.filter((i) => i.category === expandCat) : d.items).map((item) => (
+                    <tr key={item.item_id} style={{ borderBottom: "1px solid #F0F0EC", background: item.used > 0 ? "transparent" : "#FAFAF8" }}>
+                      <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>{item.name}<div style={{ fontSize: 9, color: "#999" }}>{item.category} · {item.unit}</div></td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 11 }}>{item.prev_closing || "—"}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 11, color: item.wastage > 0 ? "#DC2626" : "#CCC" }}>{item.wastage > 0 ? `-${item.wastage}` : "—"}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 11, color: item.dispatched > 0 ? "#16A34A" : "#CCC" }}>{item.dispatched > 0 ? `+${item.dispatched}` : "—"}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 700, color: "#2563EB" }}>{item.opening}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 700, color: "#DC2626" }}>{item.closing}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 13, fontWeight: 800, color: "#B45309" }}>{item.used}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#999" }}>₹{item.rate}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 12, fontWeight: 700, color: "#B45309" }}>{fmt(item.used_cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot><tr style={{ background: "#FFFBEB", borderTop: "2px solid #FDE68A" }}>
+                  <td colSpan={8} style={{ ...tdS, fontWeight: 800, fontSize: 13 }}>Total Variable Cost</td>
+                  <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontSize: 14, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(d.total_used_cost)}</td>
+                </tr></tfoot>
+              </table>
             </div>
           </div>
-        ))}
-      </div>
+        )}
+      </>)}
     </div>
   );
 };
@@ -718,14 +999,15 @@ const BaseKitchen = () => {
 
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  DISPATCH
+//  DISPATCH — with per-item qty editing + printable challan
 // ═════════════════════════════════════════════════════════════════════════════
 const Dispatch = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  const [checked, setChecked] = useState({});
+  const [dispatchQty, setDispatchQty] = useState({}); // { orderId: { itemId: qty } }
   const [dispatching, setDispatching] = useState(null);
-  const [selOutlet, setSelOutlet] = useState(null); // null = all
-  const [expandedCat, setExpandedCat] = useState({}); // { orderId_catId: true }
+  const [selOutlet, setSelOutlet] = useState(null);
+  const [expandedCat, setExpandedCat] = useState({});
+  const [challanOrder, setChallanOrder] = useState(null); // order to show challan for
   const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
@@ -734,14 +1016,27 @@ const Dispatch = () => {
   const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received" || o.status === "issued");
   const allDone = orders.filter((o) => o.status === "fulfilled");
 
-  const isChecked = (oid, iid) => checked[oid]?.[iid] || false;
-  const toggle = (oid, iid) => setChecked((p) => ({ ...p, [oid]: { ...(p[oid] || {}), [iid]: !isChecked(oid, iid) } }));
-  const checkAllCat = (oid, items) => { const allDone = items.every(([id]) => isChecked(oid, id)); const v = { ...(checked[oid] || {}) }; items.forEach(([id]) => { v[id] = !allDone; }); setChecked((p) => ({ ...p, [oid]: v })); };
+  const getDispQty = (oid, iid, demandedQty) => {
+    if (dispatchQty[oid]?.[iid] !== undefined) return dispatchQty[oid][iid];
+    return demandedQty; // default: full qty
+  };
+  const setDQ = (oid, iid, val) => setDispatchQty((p) => ({ ...p, [oid]: { ...(p[oid] || {}), [iid]: val } }));
   const toggleCat = (key) => setExpandedCat((p) => ({ ...p, [key]: !p[key] }));
 
-  const doDispatch = async (id) => {
-    setDispatching(id);
-    try { await api.updateOrderStatus(id, "fulfilled"); load(); } catch (e) { alert("Error: " + e.message); }
+  const doDispatch = async (order) => {
+    const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
+    const dispItems = {};
+    let hasAny = false;
+    itemEntries.forEach(([id, demandedQty]) => {
+      const actualQty = Number(getDispQty(order.id, id, demandedQty)) || 0;
+      if (actualQty > 0) { dispItems[id] = actualQty; hasAny = true; }
+    });
+    if (!hasAny) { alert("Enter at least 1 item qty to dispatch"); return; }
+    setDispatching(order.id);
+    try {
+      await api.dispatchOrder(order.id, dispItems, "store");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
     finally { setDispatching(null); }
   };
 
@@ -758,15 +1053,98 @@ const Dispatch = () => {
     return Object.entries(grouped).filter(([, g]) => g.items.length > 0);
   };
 
+  // Get item name from any section
+  const getItemName = (id) => {
+    for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.name; }
+    const bk = BK_ITEMS.find((b) => b.id === id); if (bk) return bk.name;
+    return id;
+  };
+  const getItemUnit = (id) => {
+    for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.unit; }
+    return "";
+  };
+
+  // ── CHALLAN VIEW ──
+  if (challanOrder) {
+    const order = challanOrder;
+    const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+    const demanded = order.items || {};
+    const dispatched = order.dispatch_items || demanded; // fallback for old orders without dispatch_items
+    const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
+    const categories = getItemsByCategory(demanded);
+    const dateStr = order.date || today();
+    const timeStr = order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+
+    const printChallan = () => {
+      const pw = window.open("", "_blank");
+      const rows = allIds.map((id) => {
+        const dem = demanded[id] || 0;
+        const disp = dispatched[id] || 0;
+        const short = disp < dem;
+        return `<tr style="${short ? "background:#FEF2F2" : ""}"><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${getItemName(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;color:#999;font-size:11px">${getItemUnit(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${dem}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:${short ? "#DC2626" : "#16A34A"}">${disp}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-size:11px;color:${short ? "#DC2626" : "#16A34A"}">${short ? "⬇ " + (dem - disp) + " short" : disp === dem ? "✓" : "⬆ +" + (disp - dem)}</td></tr>`;
+      }).join("");
+      pw.document.write(`<!DOCTYPE html><html><head><title>Dispatch Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">Ananda Cafe — Dispatch Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${outlet?.name || order.outlet_id}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${dateStr}</div><div style="font-size:11px;color:#BBB">${timeStr}</div></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;display:flex;justify-content:space-between;font-size:11px;color:#999"><span>Total: ${allIds.length} items</span><span>Generated: ${new Date().toLocaleString("en-IN")}</span></div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Transport</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Outlet Manager</div></div></div></body></html>`);
+      pw.document.close();
+      setTimeout(() => { pw.focus(); pw.print(); }, 400);
+    };
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <BackBtn onClick={() => setChallanOrder(null)} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>📋 Dispatch Challan</div>
+            <div style={{ fontSize: 11, color: "#999" }}>{outlet?.name} — {dateStr}</div>
+          </div>
+          <button onClick={printChallan} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🖨️ Print</button>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "center" }}>Unit</th>
+                <th style={{ ...thS, textAlign: "center" }}>Demanded</th>
+                <th style={{ ...thS, textAlign: "center" }}>Dispatched</th>
+                <th style={{ ...thS, textAlign: "center" }}>Status</th>
+              </tr></thead>
+              <tbody>
+                {allIds.map((id) => {
+                  const dem = demanded[id] || 0;
+                  const disp = dispatched[id] || 0;
+                  const isShort = disp < dem;
+                  const isOver = disp > dem;
+                  return (
+                    <tr key={id} style={{ borderBottom: "1px solid #F0F0EC", background: isShort ? "#FEF2F2" : "transparent" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{getItemName(id)}</td>
+                      <td style={{ ...tdS, textAlign: "center", color: "#999", fontSize: 11 }}>{getItemUnit(id)}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono', monospace" }}>{dem}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isShort ? "#DC2626" : "#16A34A" }}>{disp}</td>
+                      <td style={{ ...tdS, textAlign: "center" }}>
+                        <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isShort ? "#FEF2F2" : "#F0FDF4", color: isShort ? "#DC2626" : "#16A34A" }}>
+                          {isShort ? `⬇ ${dem - disp} short` : isOver ? `⬆ +${disp - dem}` : "✓ Full"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  // Count pending per outlet for pills
   const outletCounts = {};
   OUTLETS.forEach((o) => { outletCounts[o.id] = allPending.filter((d) => d.outlet_id === o.id).length; });
 
   return (
-    <div id="print-dispatch">
-      {/* Outlet pills + refresh in one row */}
+    <div>
+      {/* Outlet pills + refresh */}
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {OUTLETS.map((o) => {
           const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
@@ -784,54 +1162,63 @@ const Dispatch = () => {
 
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
 
+      {/* ── PENDING ORDERS ── */}
       {pending.map((order) => {
         const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
         const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
         const hasItems = itemEntries.length > 0;
-        const checkedCount = hasItems ? itemEntries.filter(([id]) => isChecked(order.id, id)).length : 0;
-        const allChecked = hasItems && checkedCount === itemEntries.length;
         const categories = hasItems ? getItemsByCategory(order.items) : [];
+        const filledCount = hasItems ? itemEntries.filter(([id, q]) => Number(getDispQty(order.id, id, q)) > 0).length : 0;
+        const hasShortage = hasItems && itemEntries.some(([id, q]) => Number(getDispQty(order.id, id, q)) < q);
 
         return (
-          <div key={order.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${allChecked ? "#BBF7D0" : "#E8E8E4"}`, marginBottom: 10, overflow: "hidden" }}>
-            {/* Compact header */}
+          <div key={order.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
+            {/* Header */}
             <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.short || order.outlet_id}</span>
                 <span style={{ fontSize: 10, color: "#999" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
                 <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
               </div>
-              {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
+                {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: "#888" }}>{filledCount}/{itemEntries.length}</span>}
+              </div>
             </div>
 
             {order.note && <div style={{ padding: "8px 18px", fontSize: 12, color: "#888", borderBottom: "1px solid #F0F0EC" }}>📝 {order.note}</div>}
 
-            {/* Category-wise items */}
+            {/* Category-wise items with qty editing */}
             {hasItems ? categories.map(([catId, cat]) => {
               const catKey = `${order.id}_${catId}`;
-              const isOpen = expandedCat[catKey] !== false; // default open
-              const catChecked = cat.items.filter(([id]) => isChecked(order.id, id)).length;
-              const catTotal = cat.items.length;
+              const isOpen = expandedCat[catKey] !== false;
               return (
                 <div key={catKey}>
                   <div onClick={() => toggleCat(catKey)} style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: cat.bg, borderBottom: "1px solid #F0F0EC" }}>
                     <span style={{ fontSize: 16 }}>{cat.emoji}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: cat.color }}>{cat.label}</span>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: catChecked === catTotal ? "#16A34A" : "#999" }}>{catChecked}/{catTotal}</span>
-                    <button onClick={(e) => { e.stopPropagation(); checkAllCat(order.id, cat.items); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>{catChecked === catTotal ? "✕" : "✓ All"}</button>
                     <span style={{ color: "#CCC", transform: isOpen ? "rotate(180deg)" : "", transition: "0.2s", fontSize: 12 }}>▾</span>
                   </div>
                   {isOpen && <div style={{ padding: "4px 14px 8px" }}>
+                    {/* Column headers */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", marginBottom: 4 }}>
+                      <span style={{ flex: 1, fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase", letterSpacing: 0.5 }}>Item</span>
+                      <span style={{ width: 50, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Asked</span>
+                      <span style={{ width: 56, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Send</span>
+                      <span style={{ width: 28 }} />
+                    </div>
                     {cat.items.map(([id, qty]) => {
-                      const isDone = isChecked(order.id, id);
-                      const bkItem = BK_ITEMS.find((b) => b.id === id);
+                      const dispVal = getDispQty(order.id, id, qty);
+                      const isShort = Number(dispVal) < qty;
+                      const isZero = Number(dispVal) === 0;
                       return (
-                        <div key={id} onClick={() => toggle(order.id, id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 8px", borderRadius: 10, marginBottom: 2, cursor: "pointer", background: isDone ? "#F0FDF4" : "transparent", transition: "all 0.15s" }}>
-                          <div style={{ width: 22, height: 22, borderRadius: 5, border: isDone ? "2px solid #16A34A" : "2px solid #D0D0CC", background: isDone ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                            {isDone && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
-                          </div>
-                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isDone ? "#16A34A" : "#1A1A1A", textDecoration: isDone ? "line-through" : "none" }}>{bkItem?.name || id}</span>
-                          <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: isDone ? "#16A34A" : "#B45309", minWidth: 40, textAlign: "right" }}>{qty}</span>
+                        <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10, marginBottom: 2, background: isZero ? "#FEF2F2" : isShort ? "#FFFBEB" : "transparent" }}>
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A" }}>{getItemName(id)}</span>
+                          <span style={{ width: 50, textAlign: "center", fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#888" }}>{qty}</span>
+                          <input type="number" inputMode="numeric" min="0" value={dispVal}
+                            onChange={(e) => setDQ(order.id, id, Math.max(0, Number(e.target.value) || 0))}
+                            style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: "#fff" }} />
+                          <span style={{ fontSize: 10, color: "#999", width: 28 }}>{getItemUnit(id)}</span>
                         </div>
                       );
                     })}
@@ -842,23 +1229,34 @@ const Dispatch = () => {
 
             {/* Dispatch button */}
             <div style={{ padding: "12px 18px", borderTop: "1px solid #F0F0EC" }}>
-              <button onClick={() => doDispatch(order.id)} disabled={dispatching === order.id || (hasItems && !allChecked)}
-                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-                {dispatching === order.id ? "⏳ Dispatching..." : !hasItems || allChecked ? `🚚 Dispatch to ${outlet?.name || order.outlet_id}` : `Verify ${itemEntries.length - checkedCount} more items`}
+              <button onClick={() => doDispatch(order)} disabled={dispatching === order.id}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: dispatching === order.id ? "#D0D0CC" : hasShortage ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {dispatching === order.id ? "⏳ Dispatching..." : hasShortage ? `⚠️ Dispatch Partial to ${outlet?.name}` : `🚚 Dispatch to ${outlet?.name}`}
               </button>
             </div>
           </div>
         );
       })}
 
+      {/* ── DISPATCHED TODAY ── */}
       {done.length > 0 && (<div style={{ marginTop: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>✅ Dispatched Today</div>
-        {done.map((order) => { const outlet = OUTLETS.find((o) => o.id === order.outlet_id); return (
-          <div key={order.id} style={{ background: "#F0FDF4", borderRadius: 12, border: "1px solid #BBF7D0", padding: "12px 16px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.name || order.outlet_id}</span><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: "#DCFCE7", color: "#16A34A" }}>DISPATCHED</span></div>
-            <span style={{ fontSize: 11, color: "#999" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
-          </div>
-        ); })}
+        {done.map((order) => {
+          const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+          const hasShortage = order.dispatch_items && order.items && Object.keys(order.items).some((id) => (order.dispatch_items[id] || 0) < (order.items[id] || 0));
+          return (
+            <div key={order.id} onClick={() => setChallanOrder(order)} style={{ background: hasShortage ? "#FFFBEB" : "#F0FDF4", borderRadius: 12, border: `1px solid ${hasShortage ? "#FDE68A" : "#BBF7D0"}`, padding: "12px 16px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.name || order.outlet_id}</span>
+                <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: hasShortage ? "#FDE68A" : "#DCFCE7", color: hasShortage ? "#B45309" : "#16A34A" }}>{hasShortage ? "PARTIAL" : "FULL"}</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "#999" }}>{order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                <span style={{ fontSize: 11, color: "#2563EB", fontWeight: 600 }}>📋 Challan →</span>
+              </div>
+            </div>
+          );
+        })}
       </div>)}
     </div>
   );
@@ -3557,6 +3955,201 @@ const MasterData = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  RATE CARD — Edit item prices
+// ═════════════════════════════════════════════════════════════════════════════
+const RateCardPanel = () => {
+  const [rates, setRates] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selCat, setSelCat] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [editPrice, setEditPrice] = useState("");
+
+  const load = () => { setLoading(true); api.getRateCard().then(setRates).catch(() => setRates([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const categories = [...new Set(rates.map((r) => r.category))].sort();
+  const filtered = rates.filter((r) => {
+    if (selCat && r.category !== selCat) return false;
+    if (search && !r.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const savePrice = async (id) => {
+    try {
+      await api.updateRate(id, { price: Number(editPrice) || 0 });
+      setEditId(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Rate Card</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Item prices used for P&L variable cost calculation. {rates.length} items.</p>
+      </div>
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({rates.length})</button>
+        {categories.map((c) => {
+          const cnt = rates.filter((r) => r.category === c).length;
+          return <button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c} ({cnt})</button>;
+        })}
+      </div>
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+      {!loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "center" }}>Category</th>
+                <th style={{ ...thS, textAlign: "center" }}>Unit</th>
+                <th style={{ ...thS, textAlign: "right" }}>Price (₹)</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, fontWeight: 600 }}>{r.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{r.id}</span></td>
+                    <td style={{ ...tdS, textAlign: "center", fontSize: 11, color: "#888" }}>{r.category}</td>
+                    <td style={{ ...tdS, textAlign: "center", fontSize: 11, color: "#888" }}>{r.unit}</td>
+                    <td style={{ ...tdS, textAlign: "right" }}>
+                      {editId === r.id ? (
+                        <div style={{ display: "flex", gap: 3, justifyContent: "flex-end" }}>
+                          <input type="number" autoFocus value={editPrice} onChange={(e) => setEditPrice(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") savePrice(r.id); if (e.key === "Escape") setEditId(null); }}
+                            style={{ width: 70, padding: "3px 6px", borderRadius: 4, border: "1px solid #B45309", fontSize: 13, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                          <button onClick={() => savePrice(r.id)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <span onClick={() => { setEditId(r.id); setEditPrice(String(r.price)); }} style={{ cursor: "pointer", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: r.price === 0 ? "#DC2626" : "#B45309", fontSize: 14 }}>
+                          ₹{Number(r.price).toLocaleString("en-IN")} ✏️
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No items found</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  FIXED COSTS — Monthly costs per outlet, editable
+// ═════════════════════════════════════════════════════════════════════════════
+const FixedCostsPanel = () => {
+  const [costs, setCosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selOutlet, setSelOutlet] = useState(null);
+  const [editId, setEditId] = useState(null);
+  const [editAmt, setEditAmt] = useState("");
+  const [addingTo, setAddingTo] = useState(null);
+  const [newHead, setNewHead] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [newAmt, setNewAmt] = useState("");
+
+  const load = () => { setLoading(true); api.getFixedCosts().then(setCosts).catch(() => setCosts([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const outletIds = ["bk", "sec23", "sec31", "sec56", "elan"];
+  const outletNames = { bk: "Base Kitchen", sec23: "S-23", sec31: "S-31", sec56: "S-56", elan: "ELAN" };
+  const filteredCosts = selOutlet ? costs.filter((c) => c.outlet_id === selOutlet) : costs;
+
+  // Group by outlet
+  const grouped = {};
+  filteredCosts.forEach((c) => { if (!grouped[c.outlet_id]) grouped[c.outlet_id] = []; grouped[c.outlet_id].push(c); });
+
+  const saveAmount = async (outletId, costHead) => {
+    try {
+      const item = costs.find((c) => c.outlet_id === outletId && c.cost_head === costHead);
+      await api.saveFixedCost({ outlet_id: outletId, cost_head: costHead, label: item?.label || costHead, amount: Number(editAmt) || 0 });
+      setEditId(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const addCost = async (outletId) => {
+    if (!newLabel.trim()) return;
+    const head = newHead.trim() || newLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    try {
+      await api.saveFixedCost({ outlet_id: outletId, cost_head: head, label: newLabel.trim(), amount: Number(newAmt) || 0 });
+      setNewHead(""); setNewLabel(""); setNewAmt(""); setAddingTo(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const deleteCost = async (outletId, costHead) => {
+    if (!confirm(`Delete ${costHead} for ${outletNames[outletId]}?`)) return;
+    try { await api.deleteFixedCost(outletId, costHead); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏢 Fixed Costs (Monthly)</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Monthly recurring costs per outlet. Daily P&L uses: monthly ÷ days in month.</p>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
+        {outletIds.map((oid) => {
+          const total = costs.filter((c) => c.outlet_id === oid).reduce((s, c) => s + Number(c.amount || 0), 0);
+          return <button key={oid} onClick={() => setSelOutlet(oid)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === oid ? 700 : 500, border: selOutlet === oid ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === oid ? "#1A1A1A" : "#fff", color: selOutlet === oid ? "#fff" : "#888", whiteSpace: "nowrap" }}>{outletNames[oid]} <span style={{ fontSize: 10, opacity: 0.7 }}>₹{Math.round(total / 1000)}K</span></button>;
+        })}
+      </div>
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+      {!loading && Object.entries(grouped).sort((a, b) => outletIds.indexOf(a[0]) - outletIds.indexOf(b[0])).map(([oid, items]) => {
+        const total = items.reduce((s, c) => s + Number(c.amount || 0), 0);
+        return (
+          <div key={oid} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #DDD6FE", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>{outletNames[oid] || oid}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>₹{total.toLocaleString("en-IN")}/mo</span>
+                <button onClick={() => setAddingTo(addingTo === oid ? null : oid)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === oid ? "Cancel" : "+ Add"}</button>
+              </div>
+            </div>
+            {addingTo === oid && (
+              <div style={{ display: "flex", gap: 6, padding: "8px 12px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", flexWrap: "wrap" }}>
+                <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g., Pest Control)" style={{ flex: "1 1 100px", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                <input type="number" value={newAmt} onChange={(e) => setNewAmt(e.target.value)} placeholder="₹ Monthly" style={{ width: 80, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                <button onClick={() => addCost(oid)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+              </div>
+            )}
+            {items.sort((a, b) => b.amount - a.amount).map((c) => {
+              const key = `${c.outlet_id}_${c.cost_head}`;
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #F0F0EC" }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{c.label}</span>
+                  {editId === key ? (
+                    <div style={{ display: "flex", gap: 3 }}>
+                      <input type="number" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveAmount(c.outlet_id, c.cost_head); if (e.key === "Escape") setEditId(null); }}
+                        style={{ width: 80, padding: "3px 6px", borderRadius: 4, border: "1px solid #7C3AED", fontSize: 13, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                      <button onClick={() => saveAmount(c.outlet_id, c.cost_head)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                    </div>
+                  ) : (
+                    <span onClick={() => { setEditId(key); setEditAmt(String(c.amount)); }} style={{ cursor: "pointer", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#7C3AED", fontSize: 14 }}>
+                      ₹{Number(c.amount).toLocaleString("en-IN")} ✏️
+                    </span>
+                  )}
+                  <button onClick={() => deleteCost(c.outlet_id, c.cost_head)} style={{ marginLeft: 8, padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -3631,7 +4224,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
@@ -3658,6 +4251,8 @@ export default function AnandaCafe() {
       <div onClick={() => setAuditDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
+          { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
+          { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
@@ -3676,10 +4271,14 @@ export default function AnandaCafe() {
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "cogs" && <CogsDash />}
       {ownerTab === "pnl" && <DailyPnL />}
+      {ownerTab === "stock_usage" && <DailyStockUsage />}
+      {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "master" && <MasterData />}
+      {ownerTab === "rate_card" && <RateCardPanel />}
+      {ownerTab === "fixed_costs" && <FixedCostsPanel />}
       {ownerTab === "iss_audit" && <IssuanceAudit />}
       {ownerTab === "inv_monthly" && <MonthlyInventory />}
       {ownerTab === "dispatch" && <Dispatch />}
