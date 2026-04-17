@@ -54,7 +54,7 @@ const api = {
   getOrders: (params) => get("/api/orders", params),
   getConsolidated: (date) => get("/api/orders/consolidated", { date }),
   updateOrderStatus: (id, status, notes) => patch(`/api/orders/${id}/status`, { status, dispatch_notes: notes }),
-  dispatchOrder: (id, dispatch_items, dispatched_by) => patch(`/api/orders/${id}/dispatch`, { dispatch_items, dispatched_by }),
+  dispatchOrder: (id, dispatch_items, dispatched_by, remaining_items) => patch(`/api/orders/${id}/dispatch`, { dispatch_items, dispatched_by, remaining_items }),
   getChallan: (id) => get(`/api/orders/${id}/challan`),
   getDashboardSummary: (date) => get("/api/orders/dashboard-summary", { date }),
 
