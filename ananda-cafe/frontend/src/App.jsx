@@ -1182,7 +1182,8 @@ const Dispatch = () => {
         const allChecked = hasItems && checkedCount === itemEntries.length;
 
         return (
-          <div key={order.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
+          <div key={order.id} style={{ marginBottom: 10 }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1246,14 +1247,14 @@ const Dispatch = () => {
                 </div>
               );
             }) : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
-
-            {/* Dispatch button — sticky at bottom */}
-            <div style={{ position: "sticky", bottom: 0, padding: "12px 18px", borderTop: "1px solid #F0F0EC", background: "#fff", borderRadius: "0 0 12px 12px", zIndex: 5 }}>
+          </div>
+          {/* Dispatch button — sticky at page bottom, outside overflow card */}
+          <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
               <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || checkedCount === 0}
-                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: checkedCount === 0 ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : checkedCount < itemEntries.length ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: checkedCount === 0 || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: checkedCount === 0 ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : checkedCount < itemEntries.length ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: checkedCount === 0 || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                 {dispatching === order.id ? "⏳ Dispatching..." : checkedCount === 0 ? "✅ Tick items to dispatch" : checkedCount < itemEntries.length ? `🚚 Dispatch ${checkedCount}/${itemEntries.length} items to ${outlet?.name}` : `🚚 Dispatch All to ${outlet?.name}`}
               </button>
-            </div>
+          </div>
           </div>
         );
       })}
