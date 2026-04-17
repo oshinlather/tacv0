@@ -3394,10 +3394,28 @@ const OutletRecipeManager = () => {
                   <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: opt.type === "BK Item" ? "#FFFBEB" : "#EFF6FF", color: opt.type === "BK Item" ? "#B45309" : "#2563EB", fontWeight: 700 }}>{opt.type}</span>
                 </button>
               ))}
+              {/* Free-text add at bottom of suggestions */}
+              {!matches.find((m) => m.name.toLowerCase() === iq) && (
+                <button onClick={() => {
+                  if (editIngredients.find((i) => i.raw_material.toLowerCase() === ingredientSearch.trim().toLowerCase())) return;
+                  setEditIngredients((p) => [...p, { id: null, raw_material: ingredientSearch.trim(), qty: "", unit: "gm", qty_kg: 0 }]);
+                  setIngredientSearch("");
+                }} style={{ width: "100%", padding: "10px 14px", border: "none", borderTop: "1px dashed #FDE68A", background: "#FFFDF5", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, color: "#B45309", fontSize: 12, fontWeight: 700 }}>
+                  + Add "{ingredientSearch.trim()}" as new ingredient
+                </button>
+              )}
             </div>
           )}
           {iq && matches.length === 0 && (
-            <div style={{ padding: "12px 14px", borderTop: "1px solid #E8E8E4", fontSize: 12, color: "#999", textAlign: "center" }}>No matching items found</div>
+            <div style={{ padding: "8px 14px", borderTop: "1px solid #E8E8E4" }}>
+              <button onClick={() => {
+                if (editIngredients.find((i) => i.raw_material.toLowerCase() === ingredientSearch.trim().toLowerCase())) return;
+                setEditIngredients((p) => [...p, { id: null, raw_material: ingredientSearch.trim(), qty: "", unit: "gm", qty_kg: 0 }]);
+                setIngredientSearch("");
+              }} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px dashed #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                + Add "{ingredientSearch.trim()}" as new ingredient
+              </button>
+            </div>
           )}
         </div>
 
@@ -4629,5 +4647,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
