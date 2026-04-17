@@ -1989,6 +1989,11 @@ const Inventory = () => {
             if (manualCount > 0) msg += ` (${manualCount} manual)`;
             if (editedCount > 0) msg += ` (${editedCount} edited)`;
             alert(msg);
+            // Mark all related orders as "issued" so they don't show in stock out again
+            const orderIds = [...new Set(activeOrders.map((o) => o.id))];
+            for (const oid of orderIds) {
+              try { await api.updateOrderStatus(oid, "issued"); } catch (e) { console.error("Status update failed:", e); }
+            }
             setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); load();
           } catch (e) { alert("Error: " + e.message); }
           finally { setIssuing(false); }
