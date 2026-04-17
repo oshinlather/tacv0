@@ -994,7 +994,8 @@ const Dispatch = () => {
   const [dispatching, setDispatching] = useState(null);
   const [selOutlet, setSelOutlet] = useState(null);
   const [expandedCat, setExpandedCat] = useState({});
-  const [challanOrder, setChallanOrder] = useState(null); // order to show challan for
+  const [challanOrder, setChallanOrder] = useState(null);
+  const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
   const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
@@ -1009,6 +1010,17 @@ const Dispatch = () => {
   };
   const setDQ = (oid, iid, val) => setDispatchQty((p) => ({ ...p, [oid]: { ...(p[oid] || {}), [iid]: val } }));
   const toggleCat = (key) => setExpandedCat((p) => ({ ...p, [key]: !p[key] }));
+  const isChecked = (oid, iid) => !!checkedItems[oid]?.[iid];
+  const toggleCheck = (oid, iid) => setCheckedItems((p) => ({ ...p, [oid]: { ...(p[oid] || {}), [iid]: !p[oid]?.[iid] } }));
+  const checkAllCat = (oid, catItems) => {
+    const allChecked = catItems.every(([id]) => isChecked(oid, id));
+    setCheckedItems((p) => {
+      const oCopy = { ...(p[oid] || {}) };
+      catItems.forEach(([id]) => { oCopy[id] = !allChecked; });
+      return { ...p, [oid]: oCopy };
+    });
+  };
+  const getCheckedCount = (oid, itemEntries) => itemEntries.filter(([id]) => isChecked(oid, id)).length;
 
   const doDispatch = async (order) => {
     const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
@@ -1157,6 +1169,8 @@ const Dispatch = () => {
         const categories = hasItems ? getItemsByCategory(order.items) : [];
         const filledCount = hasItems ? itemEntries.filter(([id, q]) => Number(getDispQty(order.id, id, q)) > 0).length : 0;
         const hasShortage = hasItems && itemEntries.some(([id, q]) => Number(getDispQty(order.id, id, q)) < q);
+        const checkedCount = hasItems ? getCheckedCount(order.id, itemEntries) : 0;
+        const allChecked = hasItems && checkedCount === itemEntries.length;
 
         return (
           <div key={order.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
@@ -1169,26 +1183,31 @@ const Dispatch = () => {
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
-                {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: "#888" }}>{filledCount}/{itemEntries.length}</span>}
+                {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
               </div>
             </div>
 
             {order.note && <div style={{ padding: "8px 18px", fontSize: 12, color: "#888", borderBottom: "1px solid #F0F0EC" }}>📝 {order.note}</div>}
 
-            {/* Category-wise items with qty editing */}
+            {/* Category-wise items with qty editing + verification checkboxes */}
             {hasItems ? categories.map(([catId, cat]) => {
               const catKey = `${order.id}_${catId}`;
               const isOpen = expandedCat[catKey] !== false;
+              const catChecked = cat.items.filter(([id]) => isChecked(order.id, id)).length;
+              const catTotal = cat.items.length;
               return (
                 <div key={catKey}>
                   <div onClick={() => toggleCat(catKey)} style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 8, cursor: "pointer", background: cat.bg, borderBottom: "1px solid #F0F0EC" }}>
                     <span style={{ fontSize: 16 }}>{cat.emoji}</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: cat.color }}>{cat.label}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: catChecked === catTotal ? "#16A34A" : "#999" }}>{catChecked}/{catTotal}</span>
+                    <button onClick={(e) => { e.stopPropagation(); checkAllCat(order.id, cat.items); }} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>{catChecked === catTotal ? "✕" : "✓ All"}</button>
                     <span style={{ color: "#CCC", transform: isOpen ? "rotate(180deg)" : "", transition: "0.2s", fontSize: 12 }}>▾</span>
                   </div>
                   {isOpen && <div style={{ padding: "4px 14px 8px" }}>
                     {/* Column headers */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", marginBottom: 4 }}>
+                      <span style={{ width: 24 }} />
                       <span style={{ flex: 1, fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase", letterSpacing: 0.5 }}>Item</span>
                       <span style={{ width: 50, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Asked</span>
                       <span style={{ width: 56, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Send</span>
@@ -1198,13 +1217,18 @@ const Dispatch = () => {
                       const dispVal = getDispQty(order.id, id, qty);
                       const isShort = Number(dispVal) < qty;
                       const isZero = Number(dispVal) === 0;
+                      const checked = isChecked(order.id, id);
                       return (
-                        <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10, marginBottom: 2, background: isZero ? "#FEF2F2" : isShort ? "#FFFBEB" : "transparent" }}>
-                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A" }}>{getItemName(id)}</span>
+                        <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10, marginBottom: 2, background: checked ? "#F0FDF4" : isZero ? "#FEF2F2" : isShort ? "#FFFBEB" : "transparent", opacity: checked ? 0.7 : 1 }}>
+                          <button onClick={() => toggleCheck(order.id, id)} style={{ width: 24, height: 24, borderRadius: 6, border: checked ? "2px solid #16A34A" : "2px solid #D0D0CC", background: checked ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
+                            {checked && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
+                          </button>
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A", textDecoration: checked ? "line-through" : "none" }}>{getItemName(id)}</span>
                           <span style={{ width: 50, textAlign: "center", fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#888" }}>{qty}</span>
                           <input type="number" inputMode="numeric" min="0" value={dispVal}
                             onChange={(e) => setDQ(order.id, id, Math.max(0, Number(e.target.value) || 0))}
-                            style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: "#fff" }} />
+                            disabled={checked}
+                            style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: checked ? "#F0FDF4" : "#fff" }} />
                           <span style={{ fontSize: 10, color: "#999", width: 28 }}>{getItemUnit(id)}</span>
                         </div>
                       );
@@ -1216,9 +1240,9 @@ const Dispatch = () => {
 
             {/* Dispatch button */}
             <div style={{ padding: "12px 18px", borderTop: "1px solid #F0F0EC" }}>
-              <button onClick={() => doDispatch(order)} disabled={dispatching === order.id}
-                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: dispatching === order.id ? "#D0D0CC" : hasShortage ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-                {dispatching === order.id ? "⏳ Dispatching..." : hasShortage ? `⚠️ Dispatch Partial to ${outlet?.name}` : `🚚 Dispatch to ${outlet?.name}`}
+              <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || (hasItems && !allChecked)}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : hasShortage ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {dispatching === order.id ? "⏳ Dispatching..." : !allChecked ? `Verify ${itemEntries.length - checkedCount} more items` : hasShortage ? `⚠️ Dispatch Partial to ${outlet?.name}` : `🚚 Dispatch to ${outlet?.name}`}
               </button>
             </div>
           </div>
