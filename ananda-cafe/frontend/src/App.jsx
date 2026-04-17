@@ -221,7 +221,7 @@ const DEMAND_SECTIONS = [
 const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit, section: sec.id, sectionName: sec.titleHi })));
 
 // ─── STYLES ─────────────────────────────────────────────────────────────────
-const FONT = <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />;
+const FONT = <><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" /><style dangerouslySetInnerHTML={{ __html: "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield;appearance:textfield}" }} /></>;
 const PAGE = { minHeight: "100vh", background: "#FAFAF8", fontFamily: "'Outfit', sans-serif", color: "#1A1A1A" };
 const cogsC = (p) => p <= 30 ? "#16A34A" : p <= 38 ? "#B45309" : "#DC2626";
 
@@ -2410,11 +2410,12 @@ const OutletMgr = ({ onBack }) => {
 
     if (salesLoading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
+    const numInputStyle = { width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#fff", MozAppearance: "textfield", WebkitAppearance: "none", appearance: "textfield" };
     const R = ({ label, field, prefix }) => (
       <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
         <span style={{ flex: 1, fontSize: 12, color: "#555" }}>{label}</span>
         <span style={{ fontSize: 12, color: "#999" }}>{prefix}</span>
-        <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={salesData[field]} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setSalesData((p) => ({ ...p, [field]: v })); }} style={{ width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#fff" }} />
+        <input type="number" inputMode="numeric" placeholder="0" value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={numInputStyle} />
       </div>
     );
     const V = ({ label, value, color }) => (
@@ -2436,13 +2437,13 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Cancelled Orders</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-          <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={salesData.cancelled_orders} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setSalesData((p) => ({ ...p, cancelled_orders: v })); }} style={{ width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #FECACA", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }} />
+          <input type="number" inputMode="numeric" placeholder="0" value={salesData.cancelled_orders} onChange={(e) => setSalesData((p) => ({ ...p, cancelled_orders: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626" }} />
         </div>
         <div style={{ padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
             <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Complimentary Order</span>
             <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-            <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={salesData.complimentary_amount} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setSalesData((p) => ({ ...p, complimentary_amount: v })); }} style={{ width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #FECACA", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }} />
+            <input type="number" inputMode="numeric" placeholder="0" value={salesData.complimentary_amount} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_amount: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626" }} />
           </div>
           {n(salesData.complimentary_amount) > 0 && (
             <select value={salesData.complimentary_reason} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_reason: e.target.value }))} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#FAFAF8", marginTop: 4, color: salesData.complimentary_reason ? "#1A1A1A" : "#999", cursor: "pointer" }}>
@@ -2463,7 +2464,7 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#7C3AED" }}>− Paid by Zomato District</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-          <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" value={salesData.zomato_district} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setSalesData((p) => ({ ...p, zomato_district: v })); }} style={{ width: 100, padding: "5px 8px", borderRadius: 6, border: "1px solid #C4B5FD", fontSize: 16, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#F5F3FF", color: "#7C3AED" }} />
+          <input type="number" inputMode="numeric" placeholder="0" value={salesData.zomato_district} onChange={(e) => setSalesData((p) => ({ ...p, zomato_district: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #C4B5FD", background: "#F5F3FF", color: "#7C3AED" }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 11, fontWeight: 700 }}>
           <span>UPI+Cash−Zomato = ₹{effectivePayment}</span>
