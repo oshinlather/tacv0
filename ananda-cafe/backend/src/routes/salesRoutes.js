@@ -1388,6 +1388,10 @@ router.get('/pnl/live/:date', async (req, res) => {
     const { data: allOrders } = await orderQuery;
     const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
+    // 2b. Get demand sections with items (for unit info)
+    const { data: sections } = await supabase.from('demand_sections').select('id, demand_items(id, unit)').eq('active', true);
+    const allSections = (sections || []).map(s => ({ ...s, items: s.demand_items || [] }));
+
     // 3. Get daily purchases for this date
     const { data: purchases } = await supabase.from('purchases').select('*').eq('date', date);
 
@@ -1419,10 +1423,34 @@ router.get('/pnl/live/:date', async (req, res) => {
       const effectiveSale = totalSale - cancelledOrders - complimentaryAmt;
 
       // ── VARIABLE COST (from dispatched items × rate card) ──
+      // Unit-aware: if item is dispatched in Gm but rate is per Kg, convert
       const outletOrders = orders.filter(o => o.outlet_id === oid);
       const variableByCategory = {};
       let totalVariableCost = 0;
       const itemBreakdown = [];
+
+      // Helper: get demand item unit from demands
+      const getDemandUnit = (itemId) => {
+        // Check demand_sections for item unit
+        for (const sec of (allSections || [])) {
+          const item = (sec.items || []).find(i => i.id === itemId);
+          if (item) return item.unit || null;
+        }
+        return null;
+      };
+
+      // Unit conversion factor: demand unit → rate card unit
+      const getUnitConv = (demandUnit, rateUnit) => {
+        const du = (demandUnit || '').toLowerCase();
+        const ru = (rateUnit || '').toLowerCase();
+        if (du === ru) return 1;
+        // Gm dispatched but rate is per Kg → divide by 1000
+        if ((du === 'gm' || du === 'g') && ru === 'kg') return 0.001;
+        if (du === 'kg' && (ru === 'gm' || ru === 'g')) return 1000;
+        if ((du === 'ml' || du === 'milliliter') && (ru === 'ltr' || ru === 'l')) return 0.001;
+        if ((du === 'ltr' || du === 'l') && (du === 'ml' || du === 'milliliter')) return 1000;
+        return 1;
+      };
 
       outletOrders.forEach(order => {
         const dispItems = order.dispatch_items || order.items || {};
@@ -1430,11 +1458,15 @@ router.get('/pnl/live/:date', async (req, res) => {
           if (!qty || qty <= 0) return;
           const rate = rateMap[itemId];
           if (!rate) return;
-          const cost = Number(qty) * Number(rate.price);
+          // Convert qty to rate card unit if needed
+          const demandUnit = getDemandUnit(itemId);
+          const factor = demandUnit ? getUnitConv(demandUnit, rate.unit) : 1;
+          const convertedQty = Number(qty) * factor;
+          const cost = convertedQty * Number(rate.price);
           totalVariableCost += cost;
           const cat = rate.category || 'Other';
           variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
-          itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: Number(qty), unit: rate.unit, rate: Number(rate.price), cost });
+          itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: convertedQty, unit: rate.unit, rate: Number(rate.price), cost });
         });
       });
 
