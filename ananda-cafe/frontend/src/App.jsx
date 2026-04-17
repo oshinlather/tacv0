@@ -1808,8 +1808,8 @@ const Inventory = () => {
               const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
               const issued = issuedItems[id] || false;
               const editQty = editedQty[id];
-              const displayQty = editQty !== undefined ? editQty : (typeof adjustedQty === "number" ? Math.ceil(adjustedQty) : adjustedQty);
-              const isEdited = editQty !== undefined && Number(editQty) !== (typeof adjustedQty === "number" ? Math.ceil(adjustedQty) : Number(adjustedQty));
+              const displayQty = editQty !== undefined ? editQty : (typeof adjustedQty === "number" ? Math.round(adjustedQty * 100) / 100 : adjustedQty);
+              const isEdited = editQty !== undefined && Number(editQty) !== (typeof adjustedQty === "number" ? Math.round(adjustedQty * 100) / 100 : Number(adjustedQty));
               // Unit mismatch warning: only show for truly incompatible units.
               // Kg↔Gm and Ltr↔Ml are the same dimension — no warning needed.
               const unitsCompatible = (a, b) => {
@@ -1936,7 +1936,7 @@ const Inventory = () => {
           const rawEntries = tickedIds.map((id) => {
             const item = mergedData[id];
             if (!item) return null;
-            const calcQty = typeof item.qty === "number" ? Math.ceil(item.qty) : Number(item.qty);
+            const calcQty = typeof item.qty === "number" ? Math.round(item.qty * 100) / 100 : Number(item.qty);
             const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : calcQty;
             const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
             if (!invItem || qty <= 0) return null;
