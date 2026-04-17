@@ -1029,10 +1029,11 @@ router.patch('/orders/:id/status', async (req, res) => {
 // ============================================================
 
 // ── PATCH /api/orders/:id/dispatch — Save dispatched items, mark fulfilled, auto-deduct inventory
+// Supports partial dispatch: checked items get dispatched, unchecked items create a new pending order
 router.patch('/orders/:id/dispatch', async (req, res) => {
   try {
     const { id } = req.params;
-    const { dispatch_items, dispatched_by } = req.body;
+    const { dispatch_items, dispatched_by, remaining_items } = req.body;
     
     // 1. Get the order to check current status
     const { data: order, error: orderErr } = await supabase.from('demands')
@@ -1040,7 +1041,6 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
     if (orderErr) throw orderErr;
 
     // 2. Check if stock was already deducted for this order
-    // Look for inventory_movements with reason containing this order ID
     const { data: existingMovements } = await supabase.from('inventory_movements')
       .select('id')
       .eq('reason', `dispatch_${id}`)
@@ -1057,15 +1057,30 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
     }).eq('id', id);
     if (updateErr) throw updateErr;
 
-    // 4. Auto-deduct from inventory if not already done
+    // 4. If there are remaining items, create a new pending order for them
+    let remainingOrderId = null;
+    if (remaining_items && Object.keys(remaining_items).length > 0) {
+      const { data: newOrder, error: insertErr } = await supabase.from('demands').insert({
+        outlet_id: order.outlet_id,
+        date: order.date,
+        type: order.type || 'manual',
+        status: 'submitted',
+        items: remaining_items,
+        note: `Remaining from partial dispatch (${Object.keys(dispatch_items).length} items sent)`,
+        submitted_by: order.submitted_by,
+        submitted_at: order.submitted_at,
+      }).select('id').single();
+      if (insertErr) console.error('Failed to create remaining order:', insertErr.message);
+      else remainingOrderId = newOrder?.id;
+    }
+
+    // 5. Auto-deduct from inventory if not already done
     let deducted = 0;
     let skipped = 0;
     if (!alreadyDeducted && dispatch_items && Object.keys(dispatch_items).length > 0) {
-      // Also check if this order was already "issued" via Stock Out (status was 'issued' before dispatch)
       const wasIssued = order.status === 'issued';
       
       if (!wasIssued) {
-        // Find matching inventory items and deduct
         const { data: invItems } = await supabase.from('inventory_items').select('id, name, demand_item_id');
         const invMap = {};
         (invItems || []).forEach(inv => {
@@ -1076,7 +1091,6 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
         const movements = [];
         Object.entries(dispatch_items).forEach(([itemId, qty]) => {
           if (!qty || qty <= 0) return;
-          // Try to find inventory item by demand_item_id match or direct id match
           const inv = invMap[itemId];
           if (inv) {
             movements.push({
@@ -1103,6 +1117,7 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
       auto_deducted: deducted, 
       skipped,
       already_deducted: alreadyDeducted || (order.status === 'issued'),
+      remaining_order_id: remainingOrderId,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
