@@ -1843,7 +1843,7 @@ const CogsDash = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
-  const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
+  const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesSaving, setSalesSaving] = useState(false);
@@ -1921,7 +1921,7 @@ const OutletMgr = ({ onBack }) => {
       ]).then(([sales, prev]) => {
         if (sales && sales.length > 0) {
           const s = sales[0];
-          setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", notes: s.notes || "" });
+          setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", notes: s.notes || "" });
           setExistingData(s);
         }
         if (prev) {
@@ -1935,17 +1935,21 @@ const OutletMgr = ({ onBack }) => {
     const n = (v) => Number(v) || 0;
     const totalSale = n(salesData.total_sale);
     const deliverySale = n(salesData.swiggy_sale) + n(salesData.zomato_sale) + n(salesData.other_delivery_sale);
-    const storeSale = Math.max(0, totalSale - deliverySale);
+    const cancelledOrders = n(salesData.cancelled_orders);
+    const complimentaryAmt = n(salesData.complimentary_amount);
+    const storeSale = Math.max(0, totalSale - deliverySale - cancelledOrders - complimentaryAmt);
     const upi = n(salesData.upi_collected);
     const cash = n(salesData.cash_collected);
+    const zomatoDistrict = n(salesData.zomato_district);
     const paymentTotal = upi + cash;
-    const paymentDiff = storeSale - paymentTotal;
+    const effectivePayment = paymentTotal - zomatoDistrict;
+    const paymentDiff = storeSale - effectivePayment;
     const closingCash = prevCash + cash - n(salesData.cash_expense) - n(salesData.cash_deposited);
 
     const submitSales = async () => {
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: outlet, notes: salesData.notes });
+        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: outlet, notes: salesData.notes });
         alert("✅ Daily sales saved!");
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
@@ -1969,7 +1973,7 @@ const OutletMgr = ({ onBack }) => {
     );
 
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{today()}</span></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{today()}</span></div>
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Sales</div>
@@ -1977,6 +1981,26 @@ const OutletMgr = ({ onBack }) => {
         <R label="Swiggy" field="swiggy_sale" prefix="₹" />
         <R label="Zomato" field="zomato_sale" prefix="₹" />
         <R label="Other Delivery" field="other_delivery_sale" prefix="₹" />
+        <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+          <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Cancelled Orders</span>
+          <span style={{ fontSize: 12, color: "#999" }}>₹</span>
+          <input type="number" inputMode="numeric" placeholder="0" value={salesData.cancelled_orders} onChange={(e) => setSalesData((p) => ({ ...p, cancelled_orders: e.target.value }))} style={{ width: 75, padding: "5px 4px", borderRadius: 6, border: "1px solid #FECACA", fontSize: 14, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }} />
+        </div>
+        <div style={{ padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Complimentary Order</span>
+            <span style={{ fontSize: 12, color: "#999" }}>₹</span>
+            <input type="number" inputMode="numeric" placeholder="0" value={salesData.complimentary_amount} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_amount: e.target.value }))} style={{ width: 75, padding: "5px 4px", borderRadius: 6, border: "1px solid #FECACA", fontSize: 14, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }} />
+          </div>
+          {n(salesData.complimentary_amount) > 0 && (
+            <select value={salesData.complimentary_reason} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_reason: e.target.value }))} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#FAFAF8", marginTop: 4, color: salesData.complimentary_reason ? "#1A1A1A" : "#999", cursor: "pointer" }}>
+              <option value="">Select reason...</option>
+              <option value="sir">Sir</option>
+              <option value="mam">Mam</option>
+              <option value="quality_issue">Quality Issue</option>
+            </select>
+          )}
+        </div>
         <V label="🏪 Store Sale" value={storeSale} color="#16A34A" />
       </div>
 
@@ -1984,8 +2008,13 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Payment (Store Sale)</div>
         <R label="UPI Collected" field="upi_collected" prefix="₹" />
         <R label="Cash Collected" field="cash_collected" prefix="₹" />
+        <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+          <span style={{ flex: 1, fontSize: 12, color: "#7C3AED" }}>− Paid by Zomato District</span>
+          <span style={{ fontSize: 12, color: "#999" }}>₹</span>
+          <input type="number" inputMode="numeric" placeholder="0" value={salesData.zomato_district} onChange={(e) => setSalesData((p) => ({ ...p, zomato_district: e.target.value }))} style={{ width: 75, padding: "5px 4px", borderRadius: 6, border: "1px solid #C4B5FD", fontSize: 14, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, background: "#F5F3FF", color: "#7C3AED" }} />
+        </div>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 11, fontWeight: 700 }}>
-          <span>UPI+Cash = ₹{paymentTotal}</span>
+          <span>UPI+Cash−Zomato = ₹{effectivePayment}</span>
           <span style={{ color: paymentDiff === 0 ? "#16A34A" : "#DC2626" }}>{paymentDiff === 0 ? "✅ Match" : `⚠️ ₹${paymentDiff}`}</span>
         </div>
       </div>
@@ -2574,7 +2603,7 @@ const SalesUpload = () => {
 
   const loadSales = useCallback(() => {
     setLoading(true);
-    api.getSales(dateStr).then(setSales).catch(() => setSales(null)).finally(() => setLoading(false));
+    api.getSales({ date: dateStr }).then(setSales).catch(() => setSales(null)).finally(() => setLoading(false));
   }, [dateStr]);
 
   useEffect(loadSales, [loadSales]);
