@@ -885,11 +885,16 @@ router.get('/outlet-sales/latest-cash', async (req, res) => {
 router.post('/outlet-sales', async (req, res) => {
   try {
     const { outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
+            cancelled_orders, complimentary_amount, complimentary_reason, zomato_district,
             upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
             cash_deposited, submitted_by, notes } = req.body;
     
     const { data, error } = await supabase.from('daily_outlet_sales').upsert({
       outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
+      cancelled_orders: cancelled_orders || 0,
+      complimentary_amount: complimentary_amount || 0,
+      complimentary_reason: complimentary_reason || null,
+      zomato_district: zomato_district || 0,
       upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
       cash_deposited, submitted_by, notes, submitted_at: new Date().toISOString()
     }, { onConflict: 'outlet_id,date' });
