@@ -2042,7 +2042,11 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food"); const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
+  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food");
+    // Items to hide from wastage (not relevant for disposal tracking)
+    const wastageHidden = new Set(["roasted_peanuts", "roasted_chana", "roasted_karipatta", "podi_masala"]);
+    const wastageFilterItems = (items) => items.filter((i) => !wastageHidden.has(i.id));
+    const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
@@ -2053,9 +2057,9 @@ const OutletMgr = ({ onBack }) => {
     </div>
     <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
       <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 18 }}>{activeSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length})</span>
+        <span style={{ fontSize: 18 }}>{activeSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({wastageFilterItems(activeSec.items).length})</span>
       </div>
-      <div style={{ padding: "6px 12px 12px" }}>{activeSec.items.map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
+      <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
     </div>
     <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 12px" }} />
     <ErrBar />
