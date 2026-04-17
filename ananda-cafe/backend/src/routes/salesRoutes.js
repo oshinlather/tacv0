@@ -1420,8 +1420,12 @@ router.get('/pnl/live/:date', async (req, res) => {
       const zomato = Number(sales?.zomato_sale || 0);
       const otherDelivery = Number(sales?.other_delivery_sale || 0);
       const deliverySale = swiggy + zomato + otherDelivery;
+      // Delivery platforms charge 40% commission — net delivery revenue is 60%
+      const deliveryCommission = Math.round((swiggy + zomato) * 0.4);
+      const netDeliverySale = Math.round((swiggy + zomato) * 0.6) + otherDelivery;
       const storeSale = Math.max(0, totalSale - deliverySale - cancelledOrders - complimentaryAmt);
-      const effectiveSale = totalSale - cancelledOrders - complimentaryAmt;
+      // Effective sale = store sale + 60% of (Swiggy+Zomato) + other delivery - cancelled - complimentary
+      const effectiveSale = storeSale + netDeliverySale - cancelledOrders - complimentaryAmt;
 
       // ── VARIABLE COST (from dispatched items × rate card) ──
       // Unit-aware: if item is dispatched in Gm but rate is per Kg, convert
@@ -1501,6 +1505,8 @@ router.get('/pnl/live/:date', async (req, res) => {
         // Revenue
         total_sale: totalSale,
         delivery_sale: deliverySale,
+        delivery_commission: deliveryCommission,
+        net_delivery_sale: netDeliverySale,
         store_sale: storeSale,
         cancelled_orders: cancelledOrders,
         complimentary: complimentaryAmt,
