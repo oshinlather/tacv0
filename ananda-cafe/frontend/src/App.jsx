@@ -1238,8 +1238,8 @@ const Dispatch = () => {
               );
             }) : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
 
-            {/* Dispatch button */}
-            <div style={{ padding: "12px 18px", borderTop: "1px solid #F0F0EC" }}>
+            {/* Dispatch button — sticky at bottom */}
+            <div style={{ position: "sticky", bottom: 0, padding: "12px 18px", borderTop: "1px solid #F0F0EC", background: "#fff", borderRadius: "0 0 12px 12px", zIndex: 5 }}>
               <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || (hasItems && !allChecked)}
                 style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : hasShortage ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                 {dispatching === order.id ? "⏳ Dispatching..." : !allChecked ? `Verify ${itemEntries.length - checkedCount} more items` : hasShortage ? `⚠️ Dispatch Partial to ${outlet?.name}` : `🚚 Dispatch to ${outlet?.name}`}
@@ -2503,9 +2503,11 @@ const OutletMgr = ({ onBack }) => {
       </div>
       <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
     </div>
-    <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 12px" }} />
-    <ErrBar />
-    <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🗑️ Record Wastage (${ft} items)`}</button>
+    <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+      <ErrBar />
+      <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🗑️ Record Wastage (${ft} items)`}</button>
+    </div>
   </div>); }
 
   if (screen === "manual") {
@@ -2709,8 +2711,10 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>{[{ id: "bill1", titleHi: "Bill Photo", emoji: "🧾", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }].map((s) => (<PhotoUpload key={s.id} {...s} image={billImages[s.id]} onUpload={(img) => setBillImages((p) => ({ ...p, [s.id]: img }))} onRemove={() => setBillImages((p) => { const n = { ...p }; delete n[s.id]; return n; })} />))}</div>
       {!billCount && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>⚠️ Bill photo is required!</div>}
       <ErrBar />
-      {totalAmt > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 12 }}><span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>Total</span><span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(totalAmt)}</span></div>}
-      <button onClick={submitPurchase} disabled={!canSubmit || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: canSubmit && !saving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canSubmit && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🧾 Record Purchase ${totalAmt > 0 ? `— ${fmt(totalAmt)}` : ""}`}</button>
+      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+        {totalAmt > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 8 }}><span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>Total</span><span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(totalAmt)}</span></div>}
+        <button onClick={submitPurchase} disabled={!canSubmit || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: canSubmit && !saving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canSubmit && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🧾 Record Purchase ${totalAmt > 0 ? `— ${fmt(totalAmt)}` : ""}`}</button>
+      </div>
     </div>);
   }
 
