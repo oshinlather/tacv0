@@ -1024,16 +1024,25 @@ const Dispatch = () => {
 
   const doDispatch = async (order) => {
     const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
+    // Only dispatch CHECKED items
     const dispItems = {};
+    const remainingItems = {};
     let hasAny = false;
     itemEntries.forEach(([id, demandedQty]) => {
-      const actualQty = Number(getDispQty(order.id, id, demandedQty)) || 0;
-      if (actualQty > 0) { dispItems[id] = actualQty; hasAny = true; }
+      if (isChecked(order.id, id)) {
+        const actualQty = Number(getDispQty(order.id, id, demandedQty)) || 0;
+        if (actualQty > 0) { dispItems[id] = actualQty; hasAny = true; }
+      } else {
+        // Unchecked items stay as remaining
+        remainingItems[id] = demandedQty;
+      }
     });
-    if (!hasAny) { alert("Enter at least 1 item qty to dispatch"); return; }
+    if (!hasAny) { alert("Tick at least 1 item to dispatch"); return; }
     setDispatching(order.id);
     try {
-      await api.dispatchOrder(order.id, dispItems, "store");
+      await api.dispatchOrder(order.id, dispItems, "store", remainingItems);
+      setCheckedItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
+      setDispatchQty((p) => { const c = { ...p }; delete c[order.id]; return c; });
       load();
     } catch (e) { alert("Error: " + e.message); }
     finally { setDispatching(null); }
@@ -1240,9 +1249,9 @@ const Dispatch = () => {
 
             {/* Dispatch button — sticky at bottom */}
             <div style={{ position: "sticky", bottom: 0, padding: "12px 18px", borderTop: "1px solid #F0F0EC", background: "#fff", borderRadius: "0 0 12px 12px", zIndex: 5 }}>
-              <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || (hasItems && !allChecked)}
-                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: (hasItems && !allChecked) ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : hasShortage ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: (hasItems && !allChecked) || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-                {dispatching === order.id ? "⏳ Dispatching..." : !allChecked ? `Verify ${itemEntries.length - checkedCount} more items` : hasShortage ? `⚠️ Dispatch Partial to ${outlet?.name}` : `🚚 Dispatch to ${outlet?.name}`}
+              <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || checkedCount === 0}
+                style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: checkedCount === 0 ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : checkedCount < itemEntries.length ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: checkedCount === 0 || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {dispatching === order.id ? "⏳ Dispatching..." : checkedCount === 0 ? "✅ Tick items to dispatch" : checkedCount < itemEntries.length ? `🚚 Dispatch ${checkedCount}/${itemEntries.length} items to ${outlet?.name}` : `🚚 Dispatch All to ${outlet?.name}`}
               </button>
             </div>
           </div>
