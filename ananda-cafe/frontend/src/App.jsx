@@ -410,16 +410,18 @@ const DailyPnL = () => {
           <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" />
           <Row label="Total Sale (Billing)" value={d.total_sale} bold color="#166534" bg="#F0FDF4" />
           <Row label="Delivery (Swiggy + Zomato + Other)" value={d.delivery_sale} indent />
+          {d.delivery_commission > 0 && <Row label="− Platform Commission (40%)" value={d.delivery_commission} negative indent />}
+          {d.net_delivery_sale > 0 && <Row label="Net Delivery Revenue (60%)" value={d.net_delivery_sale} indent color="#2563EB" />}
           <Row label="Store Sale" value={d.store_sale} indent />
           {(d.cancelled_orders > 0 || d.complimentary > 0) && <>
             {d.cancelled_orders > 0 && <Row label="− Cancelled Orders" value={d.cancelled_orders} negative indent />}
             {d.complimentary > 0 && <Row label="− Complimentary" value={d.complimentary} negative indent />}
           </>}
-          <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" />
+          <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
 
           {/* VARIABLE COST */}
-          <SectionHeader label={d.has_today_closing !== false ? "Variable Cost (Used Stock × Rate)" : "Variable Cost (Dispatched × Rate)"} bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
-          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={d.has_today_closing !== false ? "Opening − Closing = Used" : "from dispatched items"} />
+          <SectionHeader label={d.has_today_closing === true && d.has_prev_closing === true ? "Variable Cost (Used Stock × Rate)" : "Variable Cost (Dispatched × Rate)"} bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
+          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={d.has_today_closing === true && d.has_prev_closing === true ? "Opening − Closing = Used" : "from dispatched items"} />
           {expandSection === "variable" && d.variable_by_category && Object.entries(d.variable_by_category).sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
             <Row key={cat} label={cat} value={cost} indent sub={d.effective_sale > 0 ? pct(cost / d.effective_sale * 100) + " of sale" : ""} />
           ))}
