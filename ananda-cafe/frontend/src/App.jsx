@@ -2077,7 +2077,7 @@ const OutletMgr = ({ onBack }) => {
     if (!expSec) setExpSec(DEMAND_SECTIONS[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
-    const manualHidden = new Set(["white_chutney", "coconut"]);
+    const manualHidden = new Set(["white_chutney", "coconut", "staff_veg"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
     const submitStaffFood = async () => {
