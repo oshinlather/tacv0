@@ -1568,4 +1568,95 @@ router.get('/stock-usage/:date', async (req, res) => {
   }
 });
 
+// ============================================================
+// OUTLET RECIPE MANAGEMENT — Full CRUD for menu item recipes
+// ============================================================
+
+// ── GET /api/outlet-recipes — All recipes with ingredients and fill status
+router.get('/outlet-recipes', async (req, res) => {
+  try {
+    const { data: recipes, error } = await supabase.from('recipes')
+      .select(`id, item_name, item_type, category, status,
+        recipe_ingredients ( id, raw_material, qty, unit, qty_kg )`)
+      .eq('status', 'Active')
+      .order('category')
+      .order('item_name');
+    if (error) throw error;
+    res.json(recipes || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/outlet-recipes — Add a new menu item (no ingredients yet)
+router.post('/outlet-recipes', async (req, res) => {
+  try {
+    const { item_name, category, item_type } = req.body;
+    if (!item_name) return res.status(400).json({ error: 'item_name required' });
+    const { data, error } = await supabase.from('recipes').insert({
+      item_name, category: category || 'Other', item_type: item_type || 'veg', status: 'Active'
+    }).select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, id: data.id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/outlet-recipes/:id — Update menu item name/category
+router.patch('/outlet-recipes/:id', async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.item_name !== undefined) updates.item_name = req.body.item_name;
+    if (req.body.category !== undefined) updates.category = req.body.category;
+    if (req.body.item_type !== undefined) updates.item_type = req.body.item_type;
+    if (req.body.status !== undefined) updates.status = req.body.status;
+    const { error } = await supabase.from('recipes').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/outlet-recipes/:id — Soft delete (set status = Inactive)
+router.delete('/outlet-recipes/:id', async (req, res) => {
+  try {
+    const { error } = await supabase.from('recipes')
+      .update({ status: 'Inactive' }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/outlet-recipes/:id/ingredients — Save all ingredients for a recipe (replace)
+router.post('/outlet-recipes/:id/ingredients', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { ingredients } = req.body; // [{ raw_material, qty, unit, qty_kg }]
+    if (!ingredients) return res.status(400).json({ error: 'ingredients array required' });
+
+    // Delete existing ingredients
+    await supabase.from('recipe_ingredients').delete().eq('recipe_id', id);
+
+    // Insert new
+    if (ingredients.length > 0) {
+      const rows = ingredients.map(i => ({
+        recipe_id: id,
+        raw_material: i.raw_material,
+        qty: Number(i.qty) || 0,
+        unit: i.unit || 'gm',
+        qty_kg: Number(i.qty_kg) || (Number(i.qty) / 1000) || 0,
+      }));
+      const { error } = await supabase.from('recipe_ingredients').insert(rows);
+      if (error) throw error;
+    }
+    res.json({ ok: true, count: ingredients.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/outlet-recipes/:recipeId/ingredients/:ingredientId — Remove single ingredient
+router.delete('/outlet-recipes/:recipeId/ingredients/:ingredientId', async (req, res) => {
+  try {
+    const { error } = await supabase.from('recipe_ingredients')
+      .delete().eq('id', req.params.ingredientId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
