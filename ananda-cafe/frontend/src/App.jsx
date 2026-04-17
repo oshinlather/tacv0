@@ -3184,6 +3184,271 @@ const RMAuditPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  OUTLET RECIPE MANAGER — Store Manager fills recipes for all menu items
+//  Ingredients come from BK items (Food section) + Raw Materials
+//  All quantities in grams per serving
+// ═════════════════════════════════════════════════════════════════════════════
+const OutletRecipeManager = () => {
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selRecipe, setSelRecipe] = useState(null); // selected recipe to edit
+  const [editIngredients, setEditIngredients] = useState([]); // working copy
+  const [saving, setSaving] = useState(false);
+  const [addingItem, setAddingItem] = useState(false); // show add new menu item form
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemCategory, setNewItemCategory] = useState("Dosas");
+  const [ingredientSearch, setIngredientSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all"); // all, filled, empty
+
+  const load = () => { setLoading(true); api.getOutletRecipes().then(setRecipes).catch(() => setRecipes([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  // Build searchable ingredient list from BK items (food section) + Raw Materials
+  const ingredientOptions = useMemo(() => {
+    const opts = [];
+    // BK prepared items (from Food section of DEMAND_SECTIONS)
+    const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+    (foodSection?.items || []).forEach((item) => {
+      opts.push({ id: item.id, name: item.name, type: "BK Item", unit: "gm" });
+    });
+    // Raw materials
+    RAW_MATERIALS.forEach((r) => {
+      // Avoid duplicates if already in BK items
+      if (!opts.find((o) => o.id === r.id)) {
+        opts.push({ id: r.id, name: r.name, type: "Raw Material", unit: "gm" });
+      }
+    });
+    // Direct demand items (vegetables, masala, grocery, dairy, etc.)
+    DEMAND_SECTIONS.filter((s) => s.id !== "food").forEach((sec) => {
+      sec.items.forEach((item) => {
+        if (!opts.find((o) => o.id === item.id)) {
+          opts.push({ id: item.id, name: item.name, type: sec.titleHi, unit: "gm" });
+        }
+      });
+    });
+    return opts.sort((a, b) => a.name.localeCompare(b.name));
+  }, []);
+
+  const categories = [...new Set(recipes.map((r) => r.category))].sort();
+  const filledCount = recipes.filter((r) => r.recipe_ingredients && r.recipe_ingredients.length > 0).length;
+  const emptyCount = recipes.length - filledCount;
+
+  const filteredRecipes = recipes.filter((r) => {
+    if (search && !r.item_name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filterStatus === "filled" && (!r.recipe_ingredients || r.recipe_ingredients.length === 0)) return false;
+    if (filterStatus === "empty" && r.recipe_ingredients && r.recipe_ingredients.length > 0) return false;
+    return true;
+  });
+
+  const openRecipe = (recipe) => {
+    setSelRecipe(recipe);
+    setEditIngredients((recipe.recipe_ingredients || []).map((i) => ({
+      id: i.id, raw_material: i.raw_material, qty: i.qty, unit: i.unit || "gm", qty_kg: i.qty_kg
+    })));
+    setIngredientSearch("");
+  };
+
+  const saveIngredients = async () => {
+    if (!selRecipe) return;
+    setSaving(true);
+    try {
+      const ings = editIngredients.map((i) => ({
+        raw_material: i.raw_material,
+        qty: Number(i.qty) || 0,
+        unit: "gm",
+        qty_kg: (Number(i.qty) || 0) / 1000,
+      }));
+      await api.saveOutletRecipeIngredients(selRecipe.id, ings);
+      load();
+      setSelRecipe(null);
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const addIngredient = (opt) => {
+    if (editIngredients.find((i) => i.raw_material === opt.name)) return; // already added
+    setEditIngredients((p) => [...p, { id: null, raw_material: opt.name, qty: "", unit: "gm", qty_kg: 0 }]);
+    setIngredientSearch("");
+  };
+
+  const updateIngQty = (idx, qty) => {
+    setEditIngredients((p) => p.map((ing, i) => i === idx ? { ...ing, qty: qty, qty_kg: (Number(qty) || 0) / 1000 } : ing));
+  };
+
+  const removeIngredient = (idx) => {
+    setEditIngredients((p) => p.filter((_, i) => i !== idx));
+  };
+
+  const addMenuItem = async () => {
+    if (!newItemName.trim()) return;
+    try {
+      await api.addOutletRecipe({ item_name: newItemName.trim(), category: newItemCategory });
+      setNewItemName(""); setAddingItem(false); load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const deleteMenuItem = async (id, name) => {
+    if (!confirm(`Remove "${name}" from menu?`)) return;
+    try { await api.deleteOutletRecipe(id); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // ── RECIPE EDITOR VIEW ──
+  if (selRecipe) {
+    const iq = ingredientSearch.trim().toLowerCase();
+    const matches = iq ? ingredientOptions.filter((o) =>
+      o.name.toLowerCase().includes(iq) && !editIngredients.find((i) => i.raw_material === o.name)
+    ).slice(0, 8) : [];
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <BackBtn onClick={() => setSelRecipe(null)} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>{selRecipe.item_name}</div>
+            <div style={{ fontSize: 11, color: "#888" }}>{selRecipe.category} — {editIngredients.length} ingredients</div>
+          </div>
+        </div>
+
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>
+          ℹ️ Enter quantity in <strong>grams per serving</strong>. For example: Dosa Batter 120gm, Sambhar 80gm for one Plain Dosa.
+        </div>
+
+        {/* Current ingredients */}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</span>
+            <span style={{ fontSize: 11, color: "#999" }}>{editIngredients.length} items</span>
+          </div>
+          {editIngredients.length === 0 && (
+            <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No ingredients yet — search and add below</div>
+          )}
+          {editIngredients.map((ing, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{ing.raw_material}</span>
+              <input type="number" inputMode="numeric" min="0" placeholder="gm" value={ing.qty}
+                onChange={(e) => updateIngQty(idx, e.target.value)}
+                style={{ width: 70, padding: "6px 4px", borderRadius: 6, border: ing.qty ? "2px solid #16A34A" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: "#fff" }} />
+              <span style={{ fontSize: 10, color: "#999", width: 20 }}>gm</span>
+              <button onClick={() => removeIngredient(idx)} style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            </div>
+          ))}
+        </div>
+
+        {/* Add ingredient search */}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 14px" }}>
+            <input autoFocus value={ingredientSearch} onChange={(e) => setIngredientSearch(e.target.value)}
+              placeholder="Search BK items, raw materials, vegetables..."
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#F0FDF4", boxSizing: "border-box" }} />
+          </div>
+          {iq && matches.length > 0 && (
+            <div style={{ borderTop: "1px solid #E8E8E4", maxHeight: 250, overflowY: "auto" }}>
+              {matches.map((opt) => (
+                <button key={opt.id} onClick={() => addIngredient(opt)} style={{ width: "100%", padding: "10px 14px", border: "none", borderBottom: "1px solid #F5F5F3", background: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{opt.name}</span>
+                  <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: opt.type === "BK Item" ? "#FFFBEB" : "#EFF6FF", color: opt.type === "BK Item" ? "#B45309" : "#2563EB", fontWeight: 700 }}>{opt.type}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {iq && matches.length === 0 && (
+            <div style={{ padding: "12px 14px", borderTop: "1px solid #E8E8E4", fontSize: 12, color: "#999", textAlign: "center" }}>No matching items found</div>
+          )}
+        </div>
+
+        {/* Save button */}
+        <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+          <button onClick={saveIngredients} disabled={saving}
+            style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: saving ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+            {saving ? "⏳ Saving..." : `💾 Save Recipe (${editIngredients.filter((i) => i.qty > 0).length} ingredients)`}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── MAIN LIST VIEW ──
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading recipes...</div>;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🍳 Outlet Recipes</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Add ingredients for each menu item (qty in grams per serving)</p>
+        </div>
+        <button onClick={() => setAddingItem(!addingItem)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 12, fontWeight: 700, color: "#16A34A", cursor: "pointer", fontFamily: "inherit" }}>{addingItem ? "Cancel" : "+ Add Item"}</button>
+      </div>
+
+      {/* Add new menu item */}
+      {addingItem && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, padding: "10px 12px", background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", flexWrap: "wrap" }}>
+          <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="Item name (e.g., Medu Vada)"
+            style={{ flex: "1 1 150px", padding: "8px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
+          <select value={newItemCategory} onChange={(e) => setNewItemCategory(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+            {[...categories, "Dosas", "Idli And Vada", "Rice Items", "Beverages", "Desserts", "Snacks", "Combos", "Other"].filter((v, i, a) => a.indexOf(v) === i).sort().map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          <button onClick={addMenuItem} disabled={!newItemName.trim()} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: newItemName.trim() ? "#16A34A" : "#D0D0CC", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newItemName.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>Add</button>
+        </div>
+      )}
+
+      {/* Status filter pills */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button onClick={() => setFilterStatus("all")} style={{ flex: 1, background: filterStatus === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: filterStatus === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: filterStatus === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase" }}>All</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "all" ? "#fff" : "#1A1A1A" }}>{recipes.length}</div>
+        </button>
+        <button onClick={() => setFilterStatus("filled")} style={{ flex: 1, background: filterStatus === "filled" ? "#16A34A" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: filterStatus === "filled" ? "none" : "1px solid #BBF7D0", textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: filterStatus === "filled" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase" }}>Filled</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "filled" ? "#fff" : "#16A34A" }}>{filledCount}</div>
+        </button>
+        <button onClick={() => setFilterStatus("empty")} style={{ flex: 1, background: filterStatus === "empty" ? "#DC2626" : emptyCount > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: filterStatus === "empty" ? "none" : `1px solid ${emptyCount > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
+          <div style={{ fontSize: 9, color: filterStatus === "empty" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase" }}>Empty</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "empty" ? "#fff" : emptyCount > 0 ? "#DC2626" : "#16A34A" }}>{emptyCount}</div>
+        </button>
+      </div>
+
+      {/* Search */}
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu items..."
+        style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+
+      {/* Recipe list grouped by category */}
+      {categories.filter((cat) => filteredRecipes.some((r) => r.category === cat)).map((cat) => {
+        const catRecipes = filteredRecipes.filter((r) => r.category === cat);
+        return (
+          <div key={cat} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>{cat} ({catRecipes.length})</div>
+            <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+              {catRecipes.map((r, idx) => {
+                const hasFilled = r.recipe_ingredients && r.recipe_ingredients.length > 0;
+                return (
+                  <div key={r.id} onClick={() => openRecipe(r)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: idx < catRecipes.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: hasFilled ? "transparent" : "#FFFDF5" }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 5, background: hasFilled ? "#16A34A" : "#E0E0DC", flexShrink: 0 }} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{r.item_name}</div>
+                      {hasFilled && <div style={{ fontSize: 10, color: "#16A34A" }}>{r.recipe_ingredients.length} ingredients</div>}
+                      {!hasFilled && <div style={{ fontSize: 10, color: "#B45309" }}>⚠ No recipe — tap to add</div>}
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); deleteMenuItem(r.id, r.item_name); }} style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>×</button>
+                    <span style={{ color: "#CCC", fontSize: 12 }}>→</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      {filteredRecipes.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No items match your filter</div>}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  PETPOOJA RECIPES — from PetPooja recipe export
 // ═════════════════════════════════════════════════════════════════════════════
 const PetPoojaRecipes = () => {
@@ -4291,11 +4556,12 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "actions", label: "📋 Actions" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "🍳 Recipes" }, { id: "actions", label: "📋 Actions" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "inventory" && <Inventory />}
+      {storeView === "recipes" && <OutletRecipeManager />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData />}
     </div>
