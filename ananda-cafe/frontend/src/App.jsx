@@ -4415,6 +4415,23 @@ const FixedCostsPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  STORE RECIPES VIEW — BK + Outlet recipes in one tab
+// ═════════════════════════════════════════════════════════════════════════════
+const StoreRecipesView = () => {
+  const [tab, setTab] = useState("bk");
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <button onClick={() => setTab("bk")} style={{ flex: 1, padding: "10px", borderRadius: 10, border: tab === "bk" ? "none" : "1px solid #FDE68A", background: tab === "bk" ? "#B45309" : "#FFFBEB", color: tab === "bk" ? "#fff" : "#B45309", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🏭 BK Recipes</button>
+        <button onClick={() => setTab("outlet")} style={{ flex: 1, padding: "10px", borderRadius: 10, border: tab === "outlet" ? "none" : "1px solid #BBF7D0", background: tab === "outlet" ? "#16A34A" : "#F0FDF4", color: tab === "outlet" ? "#fff" : "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🍳 Outlet Recipes</button>
+      </div>
+      {tab === "bk" && <RecipesPanel />}
+      {tab === "outlet" && <OutletRecipeManager />}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -4561,7 +4578,7 @@ export default function AnandaCafe() {
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "inventory" && <Inventory />}
-      {storeView === "recipes" && <OutletRecipeManager />}
+      {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData />}
     </div>
