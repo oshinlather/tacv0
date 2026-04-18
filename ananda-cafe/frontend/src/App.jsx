@@ -3330,10 +3330,14 @@ const OutletRecipeManager = () => {
       }
     });
     // Direct demand items (vegetables, masala, grocery, dairy, etc.)
+    // Use actual item unit — Pkt for packaging, Pcs for countable items, gm for weight items
+    const gmUnits = new Set(["kg", "gm", "g", "gram", "grams", "ltr", "liter", "litre", "ml"]);
     DEMAND_SECTIONS.filter((s) => s.id !== "food").forEach((sec) => {
       sec.items.forEach((item) => {
         if (!opts.find((o) => o.id === item.id)) {
-          opts.push({ id: item.id, name: item.name, type: sec.titleHi, unit: "gm" });
+          const itemUnit = item.unit || "gm";
+          const useGm = gmUnits.has(itemUnit.toLowerCase());
+          opts.push({ id: item.id, name: item.name, type: sec.titleHi, unit: useGm ? "gm" : itemUnit });
         }
       });
     });
@@ -3378,7 +3382,7 @@ const OutletRecipeManager = () => {
 
   const addIngredient = (opt) => {
     if (editIngredients.find((i) => i.raw_material === opt.name)) return; // already added
-    setEditIngredients((p) => [...p, { id: null, raw_material: opt.name, qty: "", unit: "gm", qty_kg: 0 }]);
+    setEditIngredients((p) => [...p, { id: null, raw_material: opt.name, qty: "", unit: opt.unit || "gm", qty_kg: 0 }]);
     setIngredientSearch("");
   };
 
@@ -3439,7 +3443,7 @@ const OutletRecipeManager = () => {
               <input type="number" inputMode="numeric" min="0" placeholder="gm" value={ing.qty}
                 onChange={(e) => updateIngQty(idx, e.target.value)}
                 style={{ width: 70, padding: "6px 4px", borderRadius: 6, border: ing.qty ? "2px solid #16A34A" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: "#fff" }} />
-              <span style={{ fontSize: 10, color: "#999", width: 20 }}>gm</span>
+              <span style={{ fontSize: 10, color: "#999", width: 20 }}>{ing.unit || "gm"}</span>
               <button onClick={() => removeIngredient(idx)} style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
             </div>
           ))}
