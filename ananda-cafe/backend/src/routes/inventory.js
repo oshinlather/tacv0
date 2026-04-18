@@ -29,10 +29,12 @@ router.post("/stock-in", async (req, res) => {
     const validItems = items.filter(i => i.item_id && i.quantity && i.quantity > 0);
     if (validItems.length === 0) return res.json({ success: true, count: 0 });
 
-    // 1. Batch insert all movements at once
+    // 1. Batch insert all movements at once (with price data)
     const movements = validItems.map(item => ({
       item_id: item.item_id, type: "stock_in", quantity: item.quantity,
       reason: reason || "purchase", submitted_by,
+      total_price: item.total_price || null,
+      unit_price: item.unit_price || null,
     }));
     await supabase.from("inventory_movements").insert(movements);
 
