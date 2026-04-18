@@ -2306,6 +2306,7 @@ const CogsDash = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
+  const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
   const [salesLoading, setSalesLoading] = useState(false);
@@ -2315,7 +2316,7 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   // ── Staff Demand State ──
@@ -2341,6 +2342,7 @@ const OutletMgr = ({ onBack }) => {
   const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
 
   const submit = async (type) => {
+    if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
@@ -2348,9 +2350,12 @@ const OutletMgr = ({ onBack }) => {
         const e = { ...result, type: "closing", outlet, time: timeNow(), date: today() };
         setSubs((p) => [e, ...p]); setLast(e);
       } else {
-        // Create demand record
-        const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note });
-        const e = { ...result, type, outlet, time: timeNow(), date: today() };
+        // For manual demand: delivery date depends on slot
+        // Morning = next day, Evening = same day
+        const deliveryDate = type === "manual" && demandSlot === "morning" ? istDateAgo(-1) : today();
+        const slotNote = type === "manual" ? `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim() : note;
+        const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot });
+        const e = { ...result, type, outlet, time: timeNow(), date: deliveryDate };
         setSubs((p) => [e, ...p]); setLast(e);
       }
       reset(); setClosing({}); setScreen("done");
@@ -2581,6 +2586,22 @@ const OutletMgr = ({ onBack }) => {
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
     return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+
+    {/* Delivery Slot Picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      <button onClick={() => setDemandSlot("morning")} style={{ flex: 1, padding: "12px 10px", borderRadius: 12, border: demandSlot === "morning" ? "2px solid #B45309" : "1px solid #E8E8E4", background: demandSlot === "morning" ? "#FFFBEB" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+        <div style={{ fontSize: 20, marginBottom: 2 }}>🌅</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: demandSlot === "morning" ? "#B45309" : "#555" }}>Morning</div>
+        <div style={{ fontSize: 10, color: demandSlot === "morning" ? "#B45309" : "#999" }}>{istDateAgo(-1)} (Tomorrow)</div>
+      </button>
+      <button onClick={() => setDemandSlot("evening")} style={{ flex: 1, padding: "12px 10px", borderRadius: 12, border: demandSlot === "evening" ? "2px solid #2563EB" : "1px solid #E8E8E4", background: demandSlot === "evening" ? "#EFF6FF" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+        <div style={{ fontSize: 20, marginBottom: 2 }}>🌇</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: demandSlot === "evening" ? "#2563EB" : "#555" }}>Evening</div>
+        <div style={{ fontSize: 10, color: demandSlot === "evening" ? "#2563EB" : "#999" }}>{today()} (Today)</div>
+      </button>
+    </div>
+    {!demandSlot && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12, textAlign: "center" }}>⚠️ Select delivery slot first</div>}
+
     {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {DEMAND_SECTIONS.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; return (
