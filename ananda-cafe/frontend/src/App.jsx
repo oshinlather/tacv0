@@ -898,21 +898,26 @@ const BaseKitchen = () => {
   }, [selDate]);
   useEffect(load, [load]);
 
-  // Split orders into morning and evening cycles
+  // Split orders into morning and evening cycles using demand_slot field
+  // Fallback to submission time if demand_slot is not set (old orders)
   const getOrderHour = (o) => {
-    if (!o.submitted_at) return 12; // default to day
+    if (!o.submitted_at) return 12;
     const d = new Date(o.submitted_at);
     const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
     return ist.getHours();
   };
 
-  // Morning cycle = night orders (prev day 9PM-midnight + today midnight-1AM)
   const morningOrders = [
-    ...prevDayOrders.filter((o) => getOrderHour(o) >= 21), // prev day 9PM+
-    ...orders.filter((o) => getOrderHour(o) < 1),           // today before 1AM (practically midnight orders)
+    ...orders.filter((o) => o.demand_slot === "morning"),
+    // Fallback for old orders without demand_slot: night submissions
+    ...prevDayOrders.filter((o) => !o.demand_slot && getOrderHour(o) >= 21),
+    ...orders.filter((o) => !o.demand_slot && getOrderHour(o) < 1),
   ];
-  // Evening cycle = day orders (today 1AM onwards, mainly 11AM-4PM)
-  const eveningOrders = orders.filter((o) => getOrderHour(o) >= 1);
+  const eveningOrders = [
+    ...orders.filter((o) => o.demand_slot === "evening"),
+    // Fallback for old orders without demand_slot: day submissions
+    ...orders.filter((o) => !o.demand_slot && getOrderHour(o) >= 1),
+  ];
 
   const cycleOrders = cycle === "morning" ? morningOrders : cycle === "evening" ? eveningOrders : orders;
 
@@ -967,7 +972,7 @@ const BaseKitchen = () => {
       {selDate !== today() && <div style={{ padding: "6px 12px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10, textAlign: "center" }}>Viewing: {selDate}</div>}
       {/* Cycle + Status pills */}
       <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-        {[{ id: "morning", label: "🌅 AM", c: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }, { id: "evening", label: "🌇 PM", c: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" }, { id: "all", label: "All", c: "#555", bg: "#F5F5F3", border: "#E0E0DC" }].map((c) => (
+        {[{ id: "morning", label: "🌅 Morning", c: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }, { id: "evening", label: "🌇 Evening", c: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" }, { id: "all", label: "All", c: "#555", bg: "#F5F5F3", border: "#E0E0DC" }].map((c) => (
           <button key={c.id} onClick={() => setCycle(c.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: cycle === c.id ? 700 : 500, border: cycle === c.id ? `1px solid ${c.border}` : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cycle === c.id ? c.bg : "#fff", color: cycle === c.id ? c.c : "#888", whiteSpace: "nowrap" }}>{c.label}</button>
         ))}
         <div style={{ flex: 1 }} />
