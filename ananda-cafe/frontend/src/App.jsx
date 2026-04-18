@@ -2537,7 +2537,36 @@ const OutletMgr = ({ onBack }) => {
     </div>
   </div>); }
 
-  if (screen === "manual") {
+  if (screen === "manual" && !demandSlot) {
+    return (<div><SavingOverlay />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div></div>
+      <div style={{ textAlign: "center", marginBottom: 24 }}>
+        <div style={{ fontSize: 40, marginBottom: 8 }}>🕐</div>
+        <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>When do you need this?</h3>
+        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Select the delivery slot for your demand</p>
+      </div>
+      <button onClick={() => setDemandSlot("morning")} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 40 }}>🌅</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#B45309" }}>Morning Delivery</div>
+          <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>{istDateAgo(-1)} (Tomorrow)</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items will be prepared tonight & dispatched tomorrow morning</div>
+        </div>
+        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
+      </button>
+      <button onClick={() => setDemandSlot("evening")} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 40 }}>🌇</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB" }}>Evening Delivery</div>
+          <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{today()} (Today)</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items needed for today's evening shift</div>
+        </div>
+        <span style={{ color: "#2563EB", fontSize: 18 }}>→</span>
+      </button>
+    </div>);
+  }
+
+  if (screen === "manual" && demandSlot) {
     const ft = Object.values(draft).filter((v) => v > 0).length;
     const staffFoodCount = Object.values(staffFood).filter((v) => v > 0).length;
     const totalCount = ft + staffFoodCount + staffDress.length;
@@ -2585,22 +2614,7 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
-
-    {/* Delivery Slot Picker */}
-    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-      <button onClick={() => setDemandSlot("morning")} style={{ flex: 1, padding: "12px 10px", borderRadius: 12, border: demandSlot === "morning" ? "2px solid #B45309" : "1px solid #E8E8E4", background: demandSlot === "morning" ? "#FFFBEB" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-        <div style={{ fontSize: 20, marginBottom: 2 }}>🌅</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: demandSlot === "morning" ? "#B45309" : "#555" }}>Morning</div>
-        <div style={{ fontSize: 10, color: demandSlot === "morning" ? "#B45309" : "#999" }}>{istDateAgo(-1)} (Tomorrow)</div>
-      </button>
-      <button onClick={() => setDemandSlot("evening")} style={{ flex: 1, padding: "12px 10px", borderRadius: 12, border: demandSlot === "evening" ? "2px solid #2563EB" : "1px solid #E8E8E4", background: demandSlot === "evening" ? "#EFF6FF" : "#fff", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-        <div style={{ fontSize: 20, marginBottom: 2 }}>🌇</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: demandSlot === "evening" ? "#2563EB" : "#555" }}>Evening</div>
-        <div style={{ fontSize: 10, color: demandSlot === "evening" ? "#2563EB" : "#999" }}>{today()} (Today)</div>
-      </button>
-    </div>
-    {!demandSlot && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12, textAlign: "center" }}>⚠️ Select delivery slot first</div>}
+    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? istDateAgo(-1) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
