@@ -1792,4 +1792,104 @@ router.delete('/outlet-recipes/:recipeId/ingredients/:ingredientId', async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// RM ORDER CONFIG — 10-day requirement per item
+// ============================================================
+
+router.get('/rm-order-config', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rm_order_config').select('*');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/rm-order-config', async (req, res) => {
+  try {
+    const { items } = req.body;
+    if (!items || items.length === 0) return res.json({ ok: true, count: 0 });
+    const upserts = items.map(i => ({
+      item_id: i.item_id, rm_qty: Number(i.rm_qty) || 0,
+      rm_unit: i.rm_unit || null, updated_at: new Date().toISOString(),
+    }));
+    const { error } = await supabase.from('rm_order_config').upsert(upserts, { onConflict: 'item_id' });
+    if (error) throw error;
+    res.json({ ok: true, count: upserts.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/rm-order-config/suggest', async (req, res) => {
+  try {
+    const tenDaysAgo = new Date();
+    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+    const { data: movements } = await supabase.from('inventory_movements')
+      .select('item_id, quantity')
+      .eq('type', 'stock_out')
+      .gte('created_at', tenDaysAgo.toISOString());
+    const usage = {};
+    (movements || []).forEach(m => {
+      usage[m.item_id] = (usage[m.item_id] || 0) + Math.abs(Number(m.quantity));
+    });
+    res.json(usage);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// PURCHASE ORDERS — Order Challans
+// ============================================================
+
+router.get('/purchase-orders', async (req, res) => {
+  try {
+    const { status, limit } = req.query;
+    let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
+    if (status) query = query.eq('status', status);
+    if (limit) query = query.limit(Number(limit));
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/purchase-orders/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('purchase_orders')
+      .select('*').eq('id', req.params.id).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/purchase-orders', async (req, res) => {
+  try {
+    const { items, notes, created_by } = req.body;
+    const today = new Date().toISOString().split('T')[0];
+    const { data: existing } = await supabase.from('purchase_orders')
+      .select('id').eq('date', today);
+    const seq = (existing?.length || 0) + 1;
+    const orderNumber = `PO-${today}-${String(seq).padStart(3, '0')}`;
+    const totalItems = Object.keys(items || {}).length;
+    const { data, error } = await supabase.from('purchase_orders').insert({
+      order_number: orderNumber, date: today, status: 'pending',
+      items: items || {}, total_items: totalItems, notes, created_by,
+    }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/purchase-orders/:id', async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.status !== undefined) updates.status = req.body.status;
+    if (req.body.items !== undefined) updates.items = req.body.items;
+    if (req.body.received_by !== undefined) {
+      updates.received_by = req.body.received_by;
+      updates.received_at = new Date().toISOString();
+    }
+    const { error } = await supabase.from('purchase_orders').update(updates).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
