@@ -1311,6 +1311,7 @@ const Inventory = () => {
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
+  const [stockInPrices, setStockInPrices] = useState({}); // { item_id: total_price }
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
   const [issuing, setIssuing] = useState(false);
@@ -1435,10 +1436,14 @@ const Inventory = () => {
   const outOfStock = invItems.filter((i) => Number(i.current_qty) === 0);
 
   const submitStockIn = async () => {
-    const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
+    const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({
+      item_id, quantity,
+      total_price: Number(stockInPrices[item_id]) || 0,
+      unit_price: (Number(stockInPrices[item_id]) || 0) / quantity,
+    }));
     if (entries.length === 0) return;
     setSaving(true);
-    try { await api.stockIn(entries, "purchase"); setDraft({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    try { await api.stockIn(entries, "purchase"); setDraft({}); setStockInPrices({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
@@ -1563,23 +1568,34 @@ const Inventory = () => {
       {filtered.map((item) => {
         const preFilled = originalReq[item.id];
         const isEdited = preFilled !== undefined && draft[item.id] !== preFilled;
-        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: isEdited ? "#FFFBEB" : draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3, border: isEdited ? "1px solid #FDE68A" : "1px solid transparent" }}>
-          <div style={{ flex: 1 }}>
+        const qty = Number(draft[item.id]) || 0;
+        const price = Number(stockInPrices[item.id]) || 0;
+        const perUnit = qty > 0 && price > 0 ? Math.round(price / qty * 100) / 100 : 0;
+        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: isEdited ? "#FFFBEB" : draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3, border: isEdited ? "1px solid #FDE68A" : "1px solid transparent", flexWrap: isIn ? "wrap" : "nowrap" }}>
+          <div style={{ flex: 1, minWidth: isIn ? "100%" : 0 }}>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
             <div style={{ fontSize: 10, color: "#999" }}>
               Stock: {item.current_qty} {item.unit}
               {preFilled !== undefined && <span style={{ marginLeft: 6, color: "#2563EB" }}>• Calc: {preFilled}</span>}
               {isEdited && <span style={{ marginLeft: 4, color: "#B45309", fontWeight: 700 }}>✏️ edited</span>}
+              {isIn && perUnit > 0 && <span style={{ marginLeft: 6, color: "#16A34A", fontWeight: 600 }}>• ₹{perUnit}/{item.unit}</span>}
             </div>
           </div>
-          <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 70, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-          <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="Qty" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <span style={{ fontSize: 10, color: "#999", width: 24 }}>{item.unit}</span>
+            {isIn && <input type="number" inputMode="numeric" min="0" placeholder="₹" value={stockInPrices[item.id] || ""} onChange={(e) => setStockInPrices((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 70, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#16A34A", background: price > 0 ? "#F0FDF4" : "#fff" }} />}
+            {isIn && <span style={{ fontSize: 10, color: "#999", width: 8 }}>₹</span>}
+          </div>
         </div>);
       })}
       <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+      {isIn && (() => { const totalSpend = Object.entries(stockInPrices).reduce((s, [id, p]) => s + (draft[id] > 0 ? Number(p) || 0 : 0), 0); return totalSpend > 0 ? (
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#166534" }}>Total Purchase Value</span>
+          <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{totalSpend.toLocaleString("en-IN")}</span>
+        </div>) : null; })()}
       <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : isIn ? `📥 Add Stock (${count} items)` : `📤 Issue Stock (${count} items)`}</button>
-      </div>
       </div>
     </div>);
   }
