@@ -128,6 +128,15 @@ const api = {
   deleteOutletRecipe: (id) => del(`/api/outlet-recipes/${id}`),
   saveOutletRecipeIngredients: (id, ingredients) => post(`/api/outlet-recipes/${id}/ingredients`, { ingredients }),
   deleteOutletRecipeIngredient: (recipeId, ingredientId) => del(`/api/outlet-recipes/${recipeId}/ingredients/${ingredientId}`),
+  // RM Order Config
+  getRmOrderConfig: () => get("/api/rm-order-config"),
+  saveRmOrderConfig: (items) => post("/api/rm-order-config", { items }),
+  getRmUsageSuggestion: () => get("/api/rm-order-config/suggest"),
+  // Purchase Orders
+  getPurchaseOrders: (params) => get("/api/purchase-orders", params),
+  getPurchaseOrder: (id) => get(`/api/purchase-orders/${id}`),
+  createPurchaseOrder: (data) => post("/api/purchase-orders", data),
+  updatePurchaseOrder: (id, data) => patch(`/api/purchase-orders/${id}`, data),
 };
 
 // ── Helpers ──
