@@ -1312,6 +1312,14 @@ const Inventory = () => {
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [stockInPrices, setStockInPrices] = useState({}); // { item_id: total_price }
+  // RM Order Challan state
+  const [rmConfig, setRmConfig] = useState({});
+  const [usageSuggestion, setUsageSuggestion] = useState({});
+  const [rmLoading, setRmLoading] = useState(false);
+  const [challanSaving, setChallanSaving] = useState(false);
+  const [rmEditing, setRmEditing] = useState(false);
+  const [rmDraft, setRmDraft] = useState({});
+  const [pendingPOs, setPendingPOs] = useState([]);
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
   const [issuing, setIssuing] = useState(false);
@@ -1616,30 +1624,25 @@ const Inventory = () => {
   }
 
   // ── ORDER CHALLAN VIEW — RM Order based ──
-  if (view === "order_challan") {
-    const [rmConfig, setRmConfig] = useState({});
-    const [usageSuggestion, setUsageSuggestion] = useState({});
-    const [rmLoading, setRmLoading] = useState(true);
-    const [challanSaving, setChallanSaving] = useState(false);
-    const [rmEditing, setRmEditing] = useState(false);
-    const [rmDraft, setRmDraft] = useState({});
-    const [pendingOrders, setPendingOrders] = useState([]);
+  // Load RM config when entering order challan
+  useEffect(() => {
+    if (view !== "order_challan") return;
+    setRmLoading(true);
+    Promise.all([
+      api.getRmOrderConfig().catch(() => []),
+      api.getRmUsageSuggestion().catch(() => ({})),
+      api.getPurchaseOrders({ status: "pending", limit: 5 }).catch(() => []),
+    ]).then(([config, usage, orders]) => {
+      const configMap = {};
+      (config || []).forEach(c => { configMap[c.item_id] = Number(c.rm_qty) || 0; });
+      setRmConfig(configMap);
+      setRmDraft(configMap);
+      setUsageSuggestion(usage || {});
+      setPendingPOs(orders || []);
+    }).finally(() => setRmLoading(false));
+  }, [view]);
 
-    useEffect(() => {
-      setRmLoading(true);
-      Promise.all([
-        api.getRmOrderConfig().catch(() => []),
-        api.getRmUsageSuggestion().catch(() => ({})),
-        api.getPurchaseOrders({ status: "pending", limit: 5 }).catch(() => []),
-      ]).then(([config, usage, orders]) => {
-        const configMap = {};
-        (config || []).forEach(c => { configMap[c.item_id] = Number(c.rm_qty) || 0; });
-        setRmConfig(configMap);
-        setRmDraft(configMap);
-        setUsageSuggestion(usage || {});
-        setPendingOrders(orders || []);
-      }).finally(() => setRmLoading(false));
-    }, []);
+  if (view === "order_challan") {
 
     const saveRmConfig = async () => {
       const entries = Object.entries(rmDraft).filter(([, q]) => q > 0).map(([item_id, rm_qty]) => {
@@ -1762,10 +1765,10 @@ const Inventory = () => {
 
       {Object.keys(rmConfig).length > 0 && (<>
         {/* Pending orders */}
-        {pendingOrders.length > 0 && (
+        {pendingPOs.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>📋 Pending Orders</div>
-            {pendingOrders.map(po => (
+            {pendingPOs.map(po => (
               <div key={po.id} onClick={() => { setDraft({}); const poItems = po.items || {}; Object.entries(poItems).forEach(([id, item]) => { setDraft(p => ({ ...p, [id]: item.order_qty })); }); setView("stock_in"); }} style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
                 <div><div style={{ fontSize: 12, fontWeight: 700 }}>{po.order_number}</div><div style={{ fontSize: 10, color: "#999" }}>{po.total_items} items · {po.date}</div></div>
                 <span style={{ fontSize: 11, color: "#2563EB", fontWeight: 600 }}>📥 Receive →</span>
