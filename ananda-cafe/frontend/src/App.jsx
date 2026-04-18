@@ -1304,10 +1304,8 @@ const ORDER_VENDORS = [
   { id: "vegetable", label: "🥬 Vegetables", categories: ["Vegetable"], period: "daily", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0" },
   { id: "dairy", label: "🥛 Dairy", categories: ["Dairy"], period: "daily", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
   { id: "gas", label: "🔥 Gas", categories: ["Gas"], period: "daily", color: "#DC2626", bg: "#FEF2F2", border: "#FECACA" },
-  { id: "grocery", label: "🛒 Grocery", categories: ["Grocery", "Food"], period: "10day", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
-  { id: "masala", label: "🌶️ Masala", categories: ["Masala"], period: "10day", color: "#EA580C", bg: "#FFF7ED", border: "#FED7AA" },
-  { id: "packaging", label: "📦 Packaging", categories: ["Packaging"], period: "10day", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
-  { id: "cleaning", label: "🧹 Cleaning", categories: ["Cleaning"], period: "10day", color: "#0891B2", bg: "#ECFEFF", border: "#A5F3FC" },
+  { id: "grocery_masala", label: "🛒 Grocery & Masala", categories: ["Grocery", "Food", "Masala"], period: "10day", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
+  { id: "packaging_cleaning", label: "📦 Packaging & Cleaning", categories: ["Packaging", "Cleaning"], period: "10day", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
 ];
 const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCat, orderQty, setOrderQty, setView, setDraft, fmt }) => {
   const [rmConfig, setRmConfig] = useState({});
