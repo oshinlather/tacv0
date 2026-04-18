@@ -1300,6 +1300,15 @@ const Dispatch = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  ORDER CHALLAN — RM Order based, standalone component
 // ═════════════════════════════════════════════════════════════════════════════
+const ORDER_VENDORS = [
+  { id: "vegetable", label: "🥬 Vegetables", categories: ["Vegetable"], period: "daily", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0" },
+  { id: "dairy", label: "🥛 Dairy", categories: ["Dairy"], period: "daily", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  { id: "gas", label: "🔥 Gas", categories: ["Gas"], period: "daily", color: "#DC2626", bg: "#FEF2F2", border: "#FECACA" },
+  { id: "grocery", label: "🛒 Grocery", categories: ["Grocery", "Food"], period: "10day", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
+  { id: "masala", label: "🌶️ Masala", categories: ["Masala"], period: "10day", color: "#EA580C", bg: "#FFF7ED", border: "#FED7AA" },
+  { id: "packaging", label: "📦 Packaging", categories: ["Packaging"], period: "10day", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
+  { id: "cleaning", label: "🧹 Cleaning", categories: ["Cleaning"], period: "10day", color: "#0891B2", bg: "#ECFEFF", border: "#A5F3FC" },
+];
 const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCat, orderQty, setOrderQty, setView, setDraft, fmt }) => {
   const [rmConfig, setRmConfig] = useState({});
   const [usageSuggestion, setUsageSuggestion] = useState({});
@@ -1308,179 +1317,18 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   const [rmEditing, setRmEditing] = useState(false);
   const [rmDraft, setRmDraft] = useState({});
   const [pendingPOs, setPendingPOs] = useState([]);
-
-  useEffect(() => {
-    setRmLoading(true);
-    Promise.all([
-      api.getRmOrderConfig().catch(() => []),
-      api.getRmUsageSuggestion().catch(() => ({})),
-      api.getPurchaseOrders({ status: "pending", limit: 5 }).catch(() => []),
-    ]).then(([config, usage, orders]) => {
-      const configMap = {};
-      (config || []).forEach(c => { configMap[c.item_id] = Number(c.rm_qty) || 0; });
-      setRmConfig(configMap);
-      setRmDraft(configMap);
-      setUsageSuggestion(usage || {});
-      setPendingPOs(orders || []);
-    }).finally(() => setRmLoading(false));
-  }, []);
-
-  const saveRmConfig = async () => {
-    const entries = Object.entries(rmDraft).filter(([, q]) => q > 0).map(([item_id, rm_qty]) => {
-      const item = items.find(i => i.id === item_id);
-      return { item_id, rm_qty, rm_unit: item?.unit };
-    });
-    try {
-      await api.saveRmOrderConfig(entries);
-      setRmConfig({ ...rmDraft });
-      setRmEditing(false);
-      alert(`✅ Saved RM config for ${entries.length} items`);
-    } catch (e) { alert("Error: " + e.message); }
-  };
-
-  const generateChallan = async () => {
-    const challanItems = {};
-    items.forEach(item => {
-      const rmQty = Number(rmConfig[item.id]) || 0;
-      const currentQty = Number(item.current_qty) || 0;
-      const orderQtyCalc = Math.max(0, rmQty - currentQty);
-      const editedQty = Number(orderQty[item.id]);
-      const finalQty = !isNaN(editedQty) && editedQty >= 0 ? editedQty : orderQtyCalc;
-      if (finalQty > 0) {
-        challanItems[item.id] = {
-          name: item.name, unit: item.unit, category: displayCategory(item.category),
-          rm_qty: rmQty, current_stock: currentQty, order_qty: finalQty,
-        };
-      }
-    });
-    if (Object.keys(challanItems).length === 0) { alert("No items to order"); return; }
-    setChallanSaving(true);
-    try {
-      const result = await api.createPurchaseOrder({ items: challanItems, created_by: "store" });
-      alert(`✅ Order Challan ${result.order_number} created — ${Object.keys(challanItems).length} items`);
-      printChallan(result);
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setChallanSaving(false); }
-  };
-
-  const printChallan = (order) => {
-    const pw = window.open("", "_blank");
-    const orderItems = order.items || {};
-    const rows = Object.entries(orderItems).sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => (
-      `<tr><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${item.name}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;color:#888;font-size:11px">${item.category || ""}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.current_stock}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.rm_qty}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:#2563EB;font-size:16px">${item.order_qty} ${item.unit}</td></tr>`
-    )).join("");
-    pw.document.write(`<!DOCTYPE html><html><head><title>Order Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">Ananda Cafe — Order Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">${order.order_number} · ${order.date}</p></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Category</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Current Stock</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">10-Day Req</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Order Qty</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;font-size:11px;color:#999">Total: ${Object.keys(orderItems).length} items · Generated: ${new Date().toLocaleString("en-IN")}</div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Approved By</div></div></div></body></html>`);
-    pw.document.close();
-    setTimeout(() => { pw.focus(); pw.print(); }, 400);
-  };
-
-  const shareChallanWA = () => {
-    const lines = ["*🛒 Ananda Cafe — Order Challan*", `📅 ${today()}`, ""];
-    items.forEach(item => {
-      const rmQty = Number(rmConfig[item.id]) || 0;
-      const currentQty = Number(item.current_qty) || 0;
-      const orderQtyCalc = Math.max(0, rmQty - currentQty);
-      const editedQtyVal = Number(orderQty[item.id]);
-      const finalQty = !isNaN(editedQtyVal) && editedQtyVal >= 0 ? editedQtyVal : orderQtyCalc;
-      if (finalQty > 0) lines.push(`• ${item.name}: *${finalQty} ${item.unit}* (Stock: ${currentQty})`);
-    });
-    lines.push("", `Total: ${lines.filter(l => l.startsWith("•")).length} items`);
-    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
-  };
-
-  if (rmLoading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
-
-  if (rmEditing) {
-    return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setRmEditing(false)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📦 Set 1 RM Order (10-Day Requirement)</div></div>
-      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>Set the quantity needed for 10 days of operation. Last 10 days actual usage shown as suggestion.</div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
-      {items.filter(i => !selCat || displayCategory(i.category) === selCat).map((item) => {
-        const usage = Math.round((usageSuggestion[item.id] || 0) * 100) / 100;
-        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: rmDraft[item.id] > 0 ? "#EFF6FF" : "#FAFAF8", marginBottom: 3 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-            <div style={{ fontSize: 10, color: "#999" }}>Last 10d usage: <strong style={{ color: usage > 0 ? "#2563EB" : "#CCC" }}>{usage || "—"} {item.unit}</strong></div>
-          </div>
-          <input type="number" inputMode="numeric" min="0" placeholder={usage > 0 ? String(Math.ceil(usage)) : "0"} value={rmDraft[item.id] || ""} onChange={(e) => setRmDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 70, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-          <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
-        </div>);
-      })}
-      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={saveRmConfig} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>💾 Save RM Config ({Object.values(rmDraft).filter(v => v > 0).length} items)</button>
-      </div>
-    </div>);
-  }
-
-  const orderItems = items.map(item => {
-    const rmQty = Number(rmConfig[item.id]) || 0;
-    const currentQty = Number(item.current_qty) || 0;
-    const orderQtyCalc = Math.max(0, rmQty - currentQty);
-    return { ...item, rmQty, orderQtyCalc };
-  }).filter(i => i.rmQty > 0 || i.orderQtyCalc > 0 || (orderQty[i.id] > 0));
-
-  const totalOrderItems = orderItems.filter(i => {
-    const edited = Number(orderQty[i.id]);
-    return (!isNaN(edited) ? edited : i.orderQtyCalc) > 0;
-  }).length;
-
-  return (<div>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setView("stock")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📝 Order Challan</div>
-      <button onClick={() => setRmEditing(true)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 10, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>⚙️ Set RM</button>
-    </div>
-
-    {Object.keys(rmConfig).length === 0 && (
-      <div style={{ padding: "20px", textAlign: "center", background: "#FFFBEB", borderRadius: 14, border: "1px solid #FDE68A", marginBottom: 16 }}>
-        <div style={{ fontSize: 36, marginBottom: 8 }}>📦</div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#B45309", marginBottom: 4 }}>Set up 1 RM Order first</div>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 12 }}>Define 10-day requirement for each item to auto-calculate order quantities</div>
-        <button onClick={() => setRmEditing(true)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#2563EB", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>⚙️ Set RM Config</button>
-      </div>
-    )}
-
-    {Object.keys(rmConfig).length > 0 && (<>
-      {pendingPOs.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>📋 Pending Orders</div>
-          {pendingPOs.map(po => (
-            <div key={po.id} onClick={() => { setDraft({}); const poItems = po.items || {}; Object.entries(poItems).forEach(([id, item]) => { setDraft(p => ({ ...p, [id]: item.order_qty })); }); setView("stock_in"); }} style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
-              <div><div style={{ fontSize: 12, fontWeight: 700 }}>{po.order_number}</div><div style={{ fontSize: 10, color: "#999" }}>{po.total_items} items · {po.date}</div></div>
-              <span style={{ fontSize: 11, color: "#2563EB", fontWeight: 600 }}>📥 Receive →</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div style={{ padding: "8px 12px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 11, color: "#166534", marginBottom: 14, display: "flex", justifyContent: "space-between" }}>
-        <span>Order Qty = 1 RM (10-Day Req) − Current Stock</span>
-        <span style={{ fontWeight: 700 }}>{totalOrderItems} items</span>
-      </div>
-
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
-
-      {orderItems.filter(i => !selCat || displayCategory(i.category) === selCat).map((item) => {
-        const edited = Number(orderQty[item.id]);
-        const finalQty = !isNaN(edited) && edited >= 0 ? edited : item.orderQtyCalc;
-        const needsOrder = finalQty > 0;
-        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, background: needsOrder ? "#EFF6FF" : "#FAFAF8", marginBottom: 3, border: needsOrder ? "1px solid #BFDBFE" : "1px solid transparent" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-            <div style={{ fontSize: 10, color: "#999" }}>RM: <strong>{item.rmQty}</strong> − Stock: <strong style={{ color: Number(item.current_qty) === 0 ? "#DC2626" : "#888" }}>{item.current_qty}</strong> = <strong style={{ color: "#2563EB" }}>{item.orderQtyCalc}</strong> {item.unit}</div>
-          </div>
-          <input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id] ?? ""} onChange={(e) => setOrderQty((p) => ({ ...p, [item.id]: e.target.value }))}
-            style={{ width: 64, padding: "6px", borderRadius: 8, border: needsOrder ? "2px solid #2563EB" : "1px solid #E0E0DC", fontSize: 16, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 800, background: "#fff" }} />
-          <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
-        </div>);
-      })}
-
-      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-          <button onClick={shareChallanWA} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>💬 WhatsApp</button>
-          <button onClick={generateChallan} disabled={challanSaving || totalOrderItems === 0} style={{ flex: 2, padding: "12px", borderRadius: 12, border: "none", background: totalOrderItems > 0 && !challanSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: totalOrderItems > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{challanSaving ? "⏳..." : `📝 Generate Challan (${totalOrderItems} items)`}</button>
-        </div>
-      </div>
-    </>)}
-  </div>);
+  const [selVendor, setSelVendor] = useState(null);
+  useEffect(() => { setRmLoading(true); Promise.all([api.getRmOrderConfig().catch(()=>[]),api.getRmUsageSuggestion().catch(()=>({})),api.getPurchaseOrders({status:"pending",limit:10}).catch(()=>[])]).then(([config,usage,orders])=>{const m={};(config||[]).forEach(c=>{m[c.item_id]=Number(c.rm_qty)||0});setRmConfig(m);setRmDraft(m);setUsageSuggestion(usage||{});setPendingPOs(orders||[])}).finally(()=>setRmLoading(false)); }, []);
+  const getVendorItems = (v) => items.filter(i => v.categories.includes(displayCategory(i.category))).map(item => { const rmQty = Number(rmConfig[item.id]) || 0; const currentQty = Number(item.current_qty) || 0; return { ...item, rmQty, orderQtyCalc: Math.max(0, rmQty - currentQty) }; });
+  const saveRmConfig = async () => { const v = ORDER_VENDORS.find(x=>x.id===selVendor); const vi = items.filter(i=>v?.categories.includes(displayCategory(i.category))); const entries = vi.filter(i=>rmDraft[i.id]>0).map(i=>({item_id:i.id,rm_qty:rmDraft[i.id],rm_unit:i.unit})); try { await api.saveRmOrderConfig(entries); setRmConfig(p=>{const n={...p};entries.forEach(e=>{n[e.item_id]=e.rm_qty});return n}); setRmEditing(false); alert(`✅ Saved ${v?.label} — ${entries.length} items`); } catch(e){alert("Error: "+e.message)} };
+  const generateChallan = async (v) => { const vi = getVendorItems(v); const ci = {}; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)ci[item.id]={name:item.name,unit:item.unit,category:displayCategory(item.category),rm_qty:item.rmQty,current_stock:Number(item.current_qty),order_qty:fq}}); if(!Object.keys(ci).length){alert("No items");return} setChallanSaving(true); try{const r=await api.createPurchaseOrder({items:ci,notes:v.label,created_by:"store"});alert(`✅ ${v.label} Challan ${r.order_number} created`);printChallan(r,v)}catch(e){alert("Error: "+e.message)}finally{setChallanSaving(false)} };
+  const printChallan = (order, v) => { const pw=window.open("","_blank"); const oi=order.items||{}; const rows=Object.entries(oi).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([,item])=>`<tr><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${item.name}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.current_stock}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.rm_qty}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:#2563EB;font-size:16px">${item.order_qty} ${item.unit}</td></tr>`).join(""); pw.document.write(`<!DOCTYPE html><html><head><title>${v?.label} Order</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><h1 style="font-size:18px;font-weight:800">Ananda Cafe — ${v?.label} Order</h1><p style="font-size:12px;color:#888">${order.order_number} · ${order.date}</p></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Stock</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">${v?.period==="daily"?"Daily Req":"10-Day Req"}</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Order Qty</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;font-size:11px;color:#999">Total: ${Object.keys(oi).length} items</div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Vendor</div></div></div></body></html>`); pw.document.close(); setTimeout(()=>{pw.focus();pw.print()},400) };
+  const shareChallanWA = (v) => { const vi=getVendorItems(v); const lines=[`*🛒 Ananda Cafe — ${v.label} Order*`,`📅 ${today()}`,""]; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)lines.push(`• ${item.name}: *${fq} ${item.unit}*`)}); lines.push("",`Total: ${lines.filter(l=>l.startsWith("•")).length} items`); window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`,"_blank") };
+  if (rmLoading) return <div style={{textAlign:"center",padding:40,color:"#999"}}>⏳ Loading...</div>;
+  if (rmEditing && selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=items.filter(i=>v?.categories.includes(displayCategory(i.category))); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>setRmEditing(false)} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>⚙️ Set {v?.label} Requirement</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily requirement":"10-day requirement"}</div></div></div><div style={{padding:"10px 14px",borderRadius:10,background:"#EFF6FF",border:"1px solid #BFDBFE",fontSize:12,color:"#1D4ED8",marginBottom:14}}>Set qty needed for {v?.period==="daily"?"1 day":"10 days"}. Last 10d usage shown as suggestion.</div>{vi.map(item=>{const usage=Math.round((usageSuggestion[item.id]||0)*100)/100;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,background:rmDraft[item.id]>0?"#EFF6FF":"#FAFAF8",marginBottom:3}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>10d usage: <strong style={{color:usage>0?"#2563EB":"#CCC"}}>{usage||"—"}</strong>{v?.period==="daily"&&usage>0&&<span> · ~{Math.round(usage/10*100)/100}/day</span>}</div></div><input type="number" inputMode="numeric" min="0" placeholder="0" value={rmDraft[item.id]||""} onChange={e=>setRmDraft(p=>({...p,[item.id]:Math.max(0,+e.target.value||0)}))} style={{width:70,padding:"6px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:15,textAlign:"center",fontFamily:"inherit",fontWeight:700}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><button onClick={saveRmConfig} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:v?.color||"#2563EB",color:"#fff",fontWeight:800,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>💾 Save {v?.label} Config</button></div></div>); }
+  if (selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=getVendorItems(v); const tot=vi.filter(i=>{const e=Number(orderQty[i.id]);return(!isNaN(e)?e:i.orderQtyCalc)>0}).length; const hasConfig=vi.some(i=>i.rmQty>0); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>{setSelVendor(null);setOrderQty({})}} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{v?.label} Order</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily order":"10-day RM order"}</div></div><button onClick={()=>setRmEditing(true)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${v?.border}`,background:v?.bg,fontSize:10,fontWeight:700,color:v?.color,cursor:"pointer",fontFamily:"inherit"}}>⚙️ Set Req</button></div>{!hasConfig&&<div style={{padding:20,textAlign:"center",background:v?.bg,borderRadius:14,border:`1px solid ${v?.border}`,marginBottom:16}}><div style={{fontSize:36,marginBottom:8}}>📦</div><div style={{fontSize:14,fontWeight:700,color:v?.color,marginBottom:4}}>Set {v?.period==="daily"?"daily":"10-day"} requirement first</div><button onClick={()=>setRmEditing(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:v?.color,color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",marginTop:8}}>⚙️ Set Requirement</button></div>}{hasConfig&&<><div style={{padding:"8px 12px",borderRadius:10,background:"#F0FDF4",border:"1px solid #BBF7D0",fontSize:11,color:"#166534",marginBottom:14,display:"flex",justifyContent:"space-between"}}><span>Order = {v?.period==="daily"?"Daily Req":"10-Day Req"} − Stock</span><span style={{fontWeight:700}}>{tot} items</span></div>{vi.map(item=>{const e=Number(orderQty[item.id]);const fq=!isNaN(e)&&e>=0?e:item.orderQtyCalc;const need=fq>0;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:need?v?.bg:"#FAFAF8",marginBottom:3,border:need?`1px solid ${v?.border}`:"1px solid transparent"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>Req: <strong>{item.rmQty}</strong> − Stock: <strong style={{color:Number(item.current_qty)===0?"#DC2626":"#888"}}>{item.current_qty}</strong> = <strong style={{color:v?.color}}>{item.orderQtyCalc}</strong> {item.unit}</div></div><input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id]??""} onChange={e=>setOrderQty(p=>({...p,[item.id]:e.target.value}))} style={{width:64,padding:"6px",borderRadius:8,border:need?`2px solid ${v?.color}`:"1px solid #E0E0DC",fontSize:16,textAlign:"center",fontFamily:"'JetBrains Mono'",fontWeight:800,background:"#fff"}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><div style={{display:"flex",gap:8}}><button onClick={()=>shareChallanWA(v)} style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>💬 WhatsApp</button><button onClick={()=>generateChallan(v)} disabled={challanSaving||tot===0} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:tot>0&&!challanSaving?v?.color:"#D0D0CC",color:"#fff",fontWeight:800,fontSize:14,cursor:tot>0?"pointer":"not-allowed",fontFamily:"inherit"}}>{challanSaving?"⏳...":`📝 Challan (${tot})`}</button></div></div></>}</div>); }
+  const dailyV=ORDER_VENDORS.filter(v=>v.period==="daily");const rmV=ORDER_VENDORS.filter(v=>v.period==="10day");
+  return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div></div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{setDraft({});Object.entries(po.items||{}).forEach(([id,item])=>{setDraft(p=>({...p,[id]:item.order_qty}))});setView("stock_in")}} style={{padding:"10px 14px",borderRadius:10,background:"#FFFBEB",border:"1px solid #FDE68A",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><div><div style={{fontSize:13,fontWeight:700}}>{po.order_number}</div><div style={{fontSize:10,color:"#999"}}>{po.total_items} items · {po.notes||""} · {po.date}</div></div><span style={{fontSize:11,color:"#2563EB",fontWeight:600}}>📥 Receive →</span></div>)}</div>}<div style={{fontSize:12,fontWeight:700,color:"#16A34A",marginBottom:8}}>🔄 Daily Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8,marginBottom:20}}>{dailyV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📦 10-Day RM Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:8}}>{rmV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div></div>);
 };
 
 const Inventory = () => {
