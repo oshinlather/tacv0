@@ -2333,6 +2333,8 @@ const CogsDash = () => {
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
+  const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
+  const [draftId, setDraftId] = useState(null); // DB id of the draft demand record
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
   const [salesLoading, setSalesLoading] = useState(false);
@@ -2342,7 +2344,7 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   // ── Staff Demand State ──
@@ -2376,13 +2378,18 @@ const OutletMgr = ({ onBack }) => {
         const e = { ...result, type: "closing", outlet, time: timeNow(), date: today() };
         setSubs((p) => [e, ...p]); setLast(e);
       } else {
-        // For manual demand: delivery date depends on slot
-        // Morning = next day, Evening = same day
         const deliveryDate = type === "manual" && demandSlot === "morning" ? istDateAgo(-1) : today();
         const slotNote = type === "manual" ? `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim() : note;
-        const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot });
-        const e = { ...result, type, outlet, time: timeNow(), date: deliveryDate };
-        setSubs((p) => [e, ...p]); setLast(e);
+        if (type === "manual" && draftId) {
+          await api.updateDemandDraft(draftId, { items: draft });
+          await api.updateOrderStatus(draftId, "submitted");
+          const e = { id: draftId, type, outlet, time: timeNow(), date: deliveryDate };
+          setSubs((p) => [e, ...p]); setLast(e);
+        } else {
+          const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot });
+          const e = { ...result, type, outlet, time: timeNow(), date: deliveryDate };
+          setSubs((p) => [e, ...p]); setLast(e);
+        }
       }
       reset(); setClosing({}); setScreen("done");
     } catch (error) {
@@ -2606,6 +2613,46 @@ const OutletMgr = ({ onBack }) => {
     const manualHidden = new Set(["white_chutney", "coconut", "staff_veg"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
+    // Save current category items to DB as draft
+    const saveCategory = async (secId) => {
+      const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
+      const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}]`;
+      try {
+        if (draftId) {
+          // Update existing draft with new items merged
+          await api.updateDemandDraft(draftId, { items: draft });
+        } else {
+          // Create new draft
+          const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, status: "draft" });
+          if (result?.id) setDraftId(result.id);
+        }
+        setSavedSections((p) => ({ ...p, [secId]: true }));
+        // Auto-advance to next unsaved category
+        const currentIdx = DEMAND_SECTIONS.findIndex((s) => s.id === secId);
+        const nextUnsaved = DEMAND_SECTIONS.slice(currentIdx + 1).find((s) => !savedSections[s.id]);
+        if (nextUnsaved) setExpSec(nextUnsaved.id);
+      } catch (e) { alert("Save failed: " + e.message); }
+    };
+
+    // Load existing draft when entering manual demand
+    useEffect(() => {
+      if (!demandSlot || !outlet) return;
+      const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
+      api.getOrders({ date: deliveryDate, outlet_id: outlet }).then((orders) => {
+        const existingDraft = orders.find((o) => o.type === "manual" && (o.status === "draft" || o.status === "submitted") && o.demand_slot === demandSlot);
+        if (existingDraft && existingDraft.items) {
+          setDraft(existingDraft.items);
+          setDraftId(existingDraft.id);
+          // Mark sections as saved based on which have items
+          const saved = {};
+          DEMAND_SECTIONS.forEach((sec) => {
+            if (sec.items.some((i) => existingDraft.items[i.id] > 0)) saved[sec.id] = true;
+          });
+          setSavedSections(saved);
+        }
+      }).catch(() => {});
+    }, [demandSlot, outlet]);
+
     const submitStaffFood = async () => {
       if (staffFoodCount === 0) return;
       setStaffSaving(true); setErr(null);
@@ -2644,9 +2691,9 @@ const OutletMgr = ({ onBack }) => {
 
     {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
-      {DEMAND_SECTIONS.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; return (
-        <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? 700 : 500, border: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? sec.color : "#fff", color: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
-          <span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
+      {DEMAND_SECTIONS.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; const isSaved = savedSections[sec.id]; return (
+        <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? 700 : 500, border: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+          {isSaved && <span style={{ fontSize: 10 }}>✅</span>}<span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
       {/* Staff Food pill */}
@@ -2666,10 +2713,26 @@ const OutletMgr = ({ onBack }) => {
           <span style={{ fontSize: 18 }}>{activeSec.emoji}</span>
           <span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span>
           <span style={{ fontSize: 11, color: "#999" }}>({filterManualItems(activeSec.items).length} items)</span>
+          {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅ Saved</span>}
         </div>
         <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
+        {/* Save category button */}
+        <button onClick={() => saveCategory(activeSec.id)} style={{ width: "100%", padding: "12px", border: "none", borderTop: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          {savedSections[activeSec.id] ? `✅ ${activeSec.titleHi} Saved — Update` : `💾 Save ${activeSec.titleHi} & Next →`}
+        </button>
       </div>
-      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} /><button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit ({ft} items)</button></div>
+      {/* Submit All sticky button */}
+      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+          {DEMAND_SECTIONS.map((sec) => {
+            const isSaved = savedSections[sec.id];
+            const hasFilled = filterManualItems(sec.items).some((i) => draft[i.id] > 0);
+            return <div key={sec.id} style={{ flex: 1, height: 4, borderRadius: 2, background: isSaved ? "#16A34A" : hasFilled ? "#FDE68A" : "#E0E0DC" }} />;
+          })}
+        </div>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+        <button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit All ({ft} items)</button>
+      </div>
     </>)}
 
     {/* ── STAFF FOOD SECTION ── */}
