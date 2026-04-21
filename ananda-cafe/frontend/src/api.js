@@ -10,6 +10,7 @@ const api = {
   // ── Demands ──
   getDemands: (params) => get("/api/demands", params),
   createDemand: (data) => post("/api/demands", data),
+  updateDemandDraft: (id, data) => patch(`/api/demands/${id}/draft`, data),
   uploadDemandPhoto: (demandId, section, base64) =>
     post(`/api/demands/${demandId}/photos`, { section, base64 }),
 
