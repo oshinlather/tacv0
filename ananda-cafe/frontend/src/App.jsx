@@ -7,6 +7,10 @@ import api from "./api";
    ═══════════════════════════════════════════════════════════════════════════ */
 
 // ─── SHARED DATA ────────────────────────────────────────────────────────────
+// Global user ref — set by AnandaCafe on login, read by child components
+let _currentUser = null;
+const getCurrentUser = () => _currentUser;
+
 const OUTLETS = [
   { id: "sec23", name: "Sector 23", short: "S-23" },
   { id: "sec31", name: "Sector 31", short: "S-31" },
@@ -373,8 +377,8 @@ const OrderDispatchHistory = () => {
               <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
               <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
               <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>
-                📤 Submitted: {toIST(d.submitted_at)}
-                {d.dispatched_at && <span> · 🚚 Dispatched: {toIST(d.dispatched_at)}</span>}
+                📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong style={{ color: "#888" }}>{d.submitted_by}</strong></span>}
+                {d.dispatched_at && <span> · 🚚 {toIST(d.dispatched_at)}{d.dispatched_by && <span> by <strong style={{ color: "#888" }}>{d.dispatched_by}</strong></span>}</span>}
               </div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: statusBg, color: statusColor }}>{d.status}</span>
@@ -409,7 +413,7 @@ const OrderDispatchHistory = () => {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{po.order_number}</div>
               <div style={{ fontSize: 11, color: "#999" }}>{po.date} · {po.notes || ""} · {po.total_items} items</div>
-              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 Created: {toIST(po.created_at)}{po.received_at && <span> · 📥 Received: {toIST(po.received_at)}</span>}</div>
+              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 {toIST(po.created_at)}{po.created_by && <span> by <strong style={{ color: "#888" }}>{po.created_by}</strong></span>}{po.received_at && <span> · 📥 {toIST(po.received_at)}{po.received_by && <span> by <strong style={{ color: "#888" }}>{po.received_by}</strong></span>}</span>}</div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: po.status === "pending" ? "#FFFBEB" : po.status === "received" ? "#F0FDF4" : "#F5F5F3", color: po.status === "pending" ? "#B45309" : po.status === "received" ? "#16A34A" : "#888" }}>{po.status}</span>
             <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
@@ -453,7 +457,7 @@ const OrderDispatchHistory = () => {
             <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
           </div>
           {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-            <div style={{ fontSize: 10, color: "#999", marginTop: 6, marginBottom: 4 }}>📤 Submitted: {toIST(d.submitted_at)} · 🚚 Dispatched: {toIST(d.dispatched_at)}</div>
+            <div style={{ fontSize: 10, color: "#999", marginTop: 6, marginBottom: 4 }}>📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong>{d.submitted_by}</strong></span>} · 🚚 {toIST(d.dispatched_at)}{d.dispatched_by && <span> by <strong>{d.dispatched_by}</strong></span>}</div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
@@ -1359,7 +1363,7 @@ const Dispatch = () => {
     if (!hasAny) { alert("Tick at least 1 item to dispatch"); return; }
     setDispatching(order.id);
     try {
-      await api.dispatchOrder(order.id, dispItems, "store", remainingItems);
+      await api.dispatchOrder(order.id, dispItems, getCurrentUser()?.name || "store", remainingItems);
       setCheckedItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
       setDispatchQty((p) => { const c = { ...p }; delete c[order.id]; return c; });
       load();
@@ -1627,7 +1631,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   useEffect(() => { setRmLoading(true); Promise.all([api.getRmOrderConfig().catch(()=>[]),api.getRmUsageSuggestion().catch(()=>({})),api.getPurchaseOrders({status:"pending",limit:10}).catch(()=>[])]).then(([config,usage,orders])=>{const m={};(config||[]).forEach(c=>{m[c.item_id]=Number(c.rm_qty)||0});setRmConfig(m);setRmDraft(m);setUsageSuggestion(usage||{});setPendingPOs(orders||[])}).finally(()=>setRmLoading(false)); }, []);
   const getVendorItems = (v) => items.filter(i => v.categories.includes(displayCategory(i.category))).map(item => { const rmQty = Number(rmConfig[item.id]) || 0; const currentQty = Number(item.current_qty) || 0; return { ...item, rmQty, orderQtyCalc: Math.max(0, rmQty - currentQty) }; });
   const saveRmConfig = async () => { const v = ORDER_VENDORS.find(x=>x.id===selVendor); const vi = items.filter(i=>v?.categories.includes(displayCategory(i.category))); const entries = vi.filter(i=>rmDraft[i.id]>0).map(i=>({item_id:i.id,rm_qty:rmDraft[i.id],rm_unit:i.unit})); try { await api.saveRmOrderConfig(entries); setRmConfig(p=>{const n={...p};entries.forEach(e=>{n[e.item_id]=e.rm_qty});return n}); setRmEditing(false); alert(`✅ Saved ${v?.label} — ${entries.length} items`); } catch(e){alert("Error: "+e.message)} };
-  const generateChallan = async (v) => { const vi = getVendorItems(v); const ci = {}; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)ci[item.id]={name:item.name,unit:item.unit,category:displayCategory(item.category),rm_qty:item.rmQty,current_stock:Number(item.current_qty),order_qty:fq}}); if(!Object.keys(ci).length){alert("No items");return} setChallanSaving(true); try{const r=await api.createPurchaseOrder({items:ci,notes:v.label,created_by:"store"});alert(`✅ ${v.label} Challan ${r.order_number} created`);printChallan(r,v)}catch(e){alert("Error: "+e.message)}finally{setChallanSaving(false)} };
+  const generateChallan = async (v) => { const vi = getVendorItems(v); const ci = {}; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)ci[item.id]={name:item.name,unit:item.unit,category:displayCategory(item.category),rm_qty:item.rmQty,current_stock:Number(item.current_qty),order_qty:fq}}); if(!Object.keys(ci).length){alert("No items");return} setChallanSaving(true); try{const r=await api.createPurchaseOrder({items:ci,notes:v.label,created_by:getCurrentUser()?.name||"store"});alert(`✅ ${v.label} Challan ${r.order_number} created`);printChallan(r,v)}catch(e){alert("Error: "+e.message)}finally{setChallanSaving(false)} };
   const printChallan = (order, v) => { const pw=window.open("","_blank"); const oi=order.items||{}; const rows=Object.entries(oi).sort((a,b)=>a[1].name.localeCompare(b[1].name)).map(([,item])=>`<tr><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${item.name}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.current_stock}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${item.rm_qty}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:#2563EB;font-size:16px">${item.order_qty} ${item.unit}</td></tr>`).join(""); pw.document.write(`<!DOCTYPE html><html><head><title>${v?.label} Order</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><h1 style="font-size:18px;font-weight:800">Ananda Cafe — ${v?.label} Order</h1><p style="font-size:12px;color:#888">${order.order_number} · ${order.date}</p></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Stock</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">${v?.period==="daily"?"Daily Req":"10-Day Req"}</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;border-bottom:2px solid #DDD">Order Qty</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;font-size:11px;color:#999">Total: ${Object.keys(oi).length} items</div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Vendor</div></div></div></body></html>`); pw.document.close(); setTimeout(()=>{pw.focus();pw.print()},400) };
   const shareChallanWA = (v) => { const vi=getVendorItems(v); const lines=[`*🛒 Ananda Cafe — ${v.label} Order*`,`📅 ${today()}`,""]; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)lines.push(`• ${item.name}: *${fq} ${item.unit}*`)}); lines.push("",`Total: ${lines.filter(l=>l.startsWith("•")).length} items`); window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`,"_blank") };
   if (rmLoading) return <div style={{textAlign:"center",padding:40,color:"#999"}}>⏳ Loading...</div>;
@@ -1779,7 +1783,7 @@ const Inventory = () => {
     }));
     if (entries.length === 0) return;
     setSaving(true);
-    try { await api.stockIn(entries, "purchase"); setDraft({}); setStockInPrices({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    try { await api.stockIn(entries, "purchase", getCurrentUser()?.name); setDraft({}); setStockInPrices({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
@@ -2704,7 +2708,7 @@ const OutletMgr = ({ onBack }) => {
           const e = { id: draftId, type, outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
         } else {
-          const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot });
+          const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
           const e = { ...result, type, outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
         }
@@ -2768,7 +2772,7 @@ const OutletMgr = ({ onBack }) => {
     const submitSales = async () => {
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: outlet, notes: salesData.notes });
+        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
         alert("✅ Daily sales saved!");
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
@@ -2941,7 +2945,7 @@ const OutletMgr = ({ onBack }) => {
           await api.updateDemandDraft(draftId, { items: draft });
         } else {
           // Create new draft
-          const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, status: "draft" });
+          const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, status: "draft", submitted_by: getCurrentUser()?.name || outlet });
           if (result?.id) setDraftId(result.id);
         }
         setSavedSections((p) => ({ ...p, [secId]: true }));
@@ -2957,7 +2961,7 @@ const OutletMgr = ({ onBack }) => {
       setStaffSaving(true); setErr(null);
       try {
         const foodItems = Object.entries(staffFood).filter(([, q]) => q > 0).map(([item, qty]) => ({ item, qty }));
-        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: outlet });
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: getCurrentUser()?.name || outlet });
         alert(`✅ Staff food (${staffShift.toUpperCase()}) submitted — ${foodItems.length} items`);
         setStaffFood({});
       } catch (e) { setErr(e.message); }
@@ -2968,7 +2972,7 @@ const OutletMgr = ({ onBack }) => {
       if (staffDress.length === 0) return;
       setStaffSaving(true); setErr(null);
       try {
-        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: null, category: "dress", items: staffDress, note, submitted_by: outlet });
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: null, category: "dress", items: staffDress, note, submitted_by: getCurrentUser()?.name || outlet });
         alert(`✅ Dress request submitted — ${staffDress.length} items`);
         setStaffDress([]);
       } catch (e) { setErr(e.message); }
@@ -4953,7 +4957,7 @@ const StoreRecipesView = () => {
 export default function AnandaCafe() {
   // Auth state
   const [currentUser, setCurrentUser] = useState(() => {
-    try { const u = localStorage.getItem("ananda_user"); return u ? JSON.parse(u) : null; } catch (e) { return null; }
+    try { const u = localStorage.getItem("ananda_user"); if (u) { _currentUser = JSON.parse(u); return _currentUser; } } catch (e) {} return null;
   });
   const [loginPhone, setLoginPhone] = useState("");
   const [loginPin, setLoginPin] = useState("");
@@ -4966,13 +4970,14 @@ export default function AnandaCafe() {
     try {
       const user = await api.login(loginPhone, loginPin);
       localStorage.setItem("ananda_user", JSON.stringify(user));
+      _currentUser = user;
       setCurrentUser(user);
       setLoginPhone(""); setLoginPin("");
     } catch (e) { setLoginErr(e.message || "Login failed"); }
     finally { setLoginLoading(false); }
   };
 
-  const doLogout = () => { localStorage.removeItem("ananda_user"); setCurrentUser(null); };
+  const doLogout = () => { localStorage.removeItem("ananda_user"); _currentUser = null; setCurrentUser(null); };
 
   // Check URL for role parameter: ?role=outlet or ?role=store or ?role=owner
   const [urlRole] = useState(() => {
