@@ -3736,10 +3736,10 @@ const SalesUpload = () => {
           </div>
         )}
         
-        <label style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "10px 24px", borderRadius: 10, cursor: "pointer", fontSize: 14 }}>
+        <input id="csv-upload" type="file" accept=".csv,.CSV" onChange={handleFile} style={{ display: "none" }} />
+        <button onClick={() => document.getElementById("csv-upload").click()} style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 14, border: "none", fontFamily: "inherit" }}>
           📁 Choose CSV File
-          <input type="file" accept=".csv" onChange={handleFile} style={{ display: "none" }} />
-        </label>
+        </button>
         {uploadResult && (
           <div style={{ marginTop: 12, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: uploadResult.ok ? "#F0FDF4" : "#FEF2F2",
@@ -5355,11 +5355,12 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "recipes", label: "🍳 Recipes" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "recipes", label: "🍳 Recipes" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "inventory" && <Inventory />}
+      {storeView === "sales" && <SalesUpload />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData />}
