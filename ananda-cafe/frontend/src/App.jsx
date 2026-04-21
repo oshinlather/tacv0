@@ -1907,22 +1907,17 @@ const Inventory = () => {
         const qty = Number(draft[item.id]) || 0;
         const price = Number(stockInPrices[item.id]) || 0;
         const perUnit = qty > 0 && price > 0 ? Math.round(price / qty * 100) / 100 : 0;
-        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: isEdited ? "#FFFBEB" : draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3, border: isEdited ? "1px solid #FDE68A" : "1px solid transparent", flexWrap: isIn ? "wrap" : "nowrap" }}>
-          <div style={{ flex: 1, minWidth: isIn ? "100%" : 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+        return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 10, background: isEdited ? "#FFFBEB" : draft[item.id] > 0 ? (isIn ? "#F0FDF4" : "#FEF2F2") : "#FAFAF8", marginBottom: 3, border: isEdited ? "1px solid #FDE68A" : "1px solid transparent" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
             <div style={{ fontSize: 10, color: "#999" }}>
-              Stock: {item.current_qty} {item.unit}
-              {preFilled !== undefined && <span style={{ marginLeft: 6, color: "#2563EB" }}>• Calc: {preFilled}</span>}
-              {isEdited && <span style={{ marginLeft: 4, color: "#B45309", fontWeight: 700 }}>✏️ edited</span>}
-              {isIn && perUnit > 0 && <span style={{ marginLeft: 6, color: "#16A34A", fontWeight: 600 }}>• ₹{perUnit}/{item.unit}</span>}
+              {item.current_qty} {item.unit}
+              {isIn && perUnit > 0 && <span style={{ color: "#16A34A", fontWeight: 600 }}> · ₹{perUnit}/{item.unit}</span>}
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="Qty" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-            <span style={{ fontSize: 10, color: "#999", width: 24 }}>{item.unit}</span>
-            {isIn && <input type="number" inputMode="numeric" min="0" placeholder="₹" value={stockInPrices[item.id] || ""} onChange={(e) => setStockInPrices((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 70, padding: "6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#16A34A", background: price > 0 ? "#F0FDF4" : "#fff" }} />}
-            {isIn && <span style={{ fontSize: 10, color: "#999", width: 8 }}>₹</span>}
-          </div>
+          <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 52, padding: "6px 4px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+          <span style={{ fontSize: 9, color: "#999", width: 20 }}>{item.unit}</span>
+          {isIn && <input type="number" inputMode="numeric" min="0" placeholder="₹" value={stockInPrices[item.id] || ""} onChange={(e) => setStockInPrices((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#16A34A", background: price > 0 ? "#F0FDF4" : "#fff" }} />}
         </div>);
       })}
       <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
