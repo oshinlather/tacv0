@@ -265,44 +265,30 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 //  ORDER & DISPATCH HISTORY — Last 30 days
 // ═════════════════════════════════════════════════════════════════════════════
 const OrderDispatchHistory = () => {
-  const [historyTab, setHistoryTab] = useState("orders"); // orders, dispatches
+  const [historyTab, setHistoryTab] = useState("demands"); // demands, orders, dispatches
   const [challans, setChallans] = useState([]);
+  const [demands, setDemands] = useState([]);
   const [dispatches, setDispatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const outletName = (id) => OUTLETS.find(o => o.id === id)?.name || id;
+  const r2 = (n) => Math.round(Number(n) * 100) / 100;
+  const itemLabel = (id) => id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
 
   useEffect(() => {
     setLoading(true);
+    const thirtyDaysAgo = istDateAgo(30);
     Promise.all([
       api.getChallanHistory().catch(() => []),
       api.getDispatchHistory().catch(() => []),
-    ]).then(([c, d]) => {
+      api.getOrders({ from: thirtyDaysAgo }).catch(() => []),
+    ]).then(([c, disp, dem]) => {
       setChallans(c || []);
-      setDispatches(d || []);
+      setDispatches(disp || []);
+      // Filter demands: manual type, submitted/issued/fulfilled, last 30 days
+      setDemands((dem || []).filter(d => d.type === "manual" && d.status !== "draft").sort((a, b) => (b.submitted_at || b.date || "").localeCompare(a.submitted_at || a.date || "")));
     }).finally(() => setLoading(false));
   }, []);
-
-  const exportChallanCSV = () => {
-    const rows = [["Order #", "Date", "Status", "Vendor", "Item", "Unit", "RM Req", "Stock", "Order Qty"]];
-    challans.forEach(po => {
-      Object.entries(po.items || {}).forEach(([id, item]) => {
-        rows.push([po.order_number, po.date, po.status, po.notes || "", item.name, item.unit, item.rm_qty, item.current_stock, item.order_qty]);
-      });
-    });
-    downloadCSV(rows, "order_challans_history.csv");
-  };
-
-  const exportDispatchCSV = () => {
-    const rows = [["Date", "Outlet", "Slot", "Status", "Item ID", "Qty"]];
-    dispatches.forEach(d => {
-      const items = d.dispatch_items || d.items || {};
-      Object.entries(items).forEach(([id, qty]) => {
-        rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, id, qty]);
-      });
-    });
-    downloadCSV(rows, "dispatch_challans_history.csv");
-  };
 
   const downloadCSV = (rows, filename) => {
     const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -312,37 +298,110 @@ const OrderDispatchHistory = () => {
     URL.revokeObjectURL(url);
   };
 
+  const exportDemandCSV = () => {
+    const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
+    demands.forEach(d => {
+      Object.entries(d.items || {}).forEach(([id, qty]) => {
+        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
+      });
+    });
+    downloadCSV(rows, "demand_challans_history.csv");
+  };
+
+  const exportChallanCSV = () => {
+    const rows = [["Order #", "Date", "Status", "Vendor", "Item", "Unit", "Req", "Stock", "Order Qty"]];
+    challans.forEach(po => {
+      Object.entries(po.items || {}).forEach(([id, item]) => {
+        rows.push([po.order_number, po.date, po.status, po.notes || "", item.name, item.unit, item.rm_qty, item.current_stock, r2(item.order_qty)]);
+      });
+    });
+    downloadCSV(rows, "order_challans_history.csv");
+  };
+
+  const exportDispatchCSV = () => {
+    const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
+    dispatches.forEach(d => {
+      const items = d.dispatch_items || d.items || {};
+      Object.entries(items).forEach(([id, qty]) => {
+        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
+      });
+    });
+    downloadCSV(rows, "dispatch_challans_history.csv");
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading history...</div>;
 
+  const tabs = [
+    { id: "demands", label: "📋 Demand", count: demands.length },
+    { id: "orders", label: "🛒 Order", count: challans.length },
+    { id: "dispatches", label: "🚚 Dispatch", count: dispatches.length },
+  ];
+  const exportFn = historyTab === "demands" ? exportDemandCSV : historyTab === "orders" ? exportChallanCSV : exportDispatchCSV;
+  const exportLabel = historyTab === "demands" ? "Demand Challans" : historyTab === "orders" ? "Order Challans" : "Dispatch Challans";
+
   return (<div>
-    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Order & Dispatch History</h3>
-    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-      {[{ id: "orders", label: "📝 Order Challans", count: challans.length }, { id: "dispatches", label: "🚚 Dispatches", count: dispatches.length }].map(t => (
-        <button key={t.id} onClick={() => setHistoryTab(t.id)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{t.label} ({t.count})</button>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Order & Dispatch History (30 days)</h3>
+    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => { setHistoryTab(t.id); setExpandedId(null); }} style={{ flex: 1, padding: "10px 6px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{t.label} ({t.count})</button>
       ))}
     </div>
 
-    {/* Export button */}
-    <button onClick={historyTab === "orders" ? exportChallanCSV : exportDispatchCSV} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
-      📥 Export CSV — {historyTab === "orders" ? "Order Challans" : "Dispatches"}
+    <button onClick={exportFn} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
+      📥 Export CSV — {exportLabel}
     </button>
 
-    {/* Order Challans */}
+    {/* ── DEMAND CHALLANS (outlet manual demands) ── */}
+    {historyTab === "demands" && (<>
+      {demands.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No demands in last 30 days</div>}
+      {demands.map(d => {
+        const isExp = expandedId === d.id;
+        const itemList = Object.entries(d.items || {}).filter(([, q]) => q > 0);
+        const statusColor = d.status === "submitted" ? "#B45309" : d.status === "issued" ? "#2563EB" : d.status === "fulfilled" ? "#16A34A" : "#888";
+        const statusBg = d.status === "submitted" ? "#FFFBEB" : d.status === "issued" ? "#EFF6FF" : d.status === "fulfilled" ? "#F0FDF4" : "#F5F5F3";
+        return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
+            </div>
+            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: statusBg, color: statusColor }}>{d.status}</span>
+            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
+          </div>
+          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
+              </tr></thead>
+              <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
+                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
+                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
+        </div>);
+      })}
+    </>)}
+
+    {/* ── ORDER CHALLANS (purchase orders for inventory) ── */}
     {historyTab === "orders" && (<>
       {challans.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No order challans in last 30 days</div>}
       {challans.map(po => {
-        const isExpanded = expandedId === po.id;
+        const isExp = expandedId === po.id;
         const itemList = Object.entries(po.items || {});
         return (<div key={po.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExpanded ? null : po.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <div onClick={() => setExpandedId(isExp ? null : po.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{po.order_number}</div>
               <div style={{ fontSize: 11, color: "#999" }}>{po.date} · {po.notes || ""} · {po.total_items} items</div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: po.status === "pending" ? "#FFFBEB" : po.status === "received" ? "#F0FDF4" : "#F5F5F3", color: po.status === "pending" ? "#B45309" : po.status === "received" ? "#16A34A" : "#888" }}>{po.status}</span>
-            <span style={{ color: "#CCC" }}>{isExpanded ? "▲" : "▼"}</span>
+            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
           </div>
-          {isExpanded && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
@@ -353,9 +412,9 @@ const OrderDispatchHistory = () => {
               <tbody>{itemList.sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => (
                 <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
                   <td style={{ padding: "6px 8px", fontWeight: 600 }}>{item.name}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.current_stock}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{r2(item.current_stock)}</td>
                   <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.rm_qty}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{item.order_qty} {item.unit}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(item.order_qty)} {item.unit}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -364,23 +423,23 @@ const OrderDispatchHistory = () => {
       })}
     </>)}
 
-    {/* Dispatch History */}
+    {/* ── DISPATCH CHALLANS ── */}
     {historyTab === "dispatches" && (<>
       {dispatches.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No dispatches in last 30 days</div>}
       {dispatches.map(d => {
-        const isExpanded = expandedId === d.id;
+        const isExp = expandedId === d.id;
         const items = d.dispatch_items || d.items || {};
         const itemList = Object.entries(items).filter(([, q]) => q > 0);
         return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExpanded ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
-              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {itemList.length} items</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>✅ Dispatched</span>
-            <span style={{ color: "#CCC" }}>{isExpanded ? "▲" : "▼"}</span>
+            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
           </div>
-          {isExpanded && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
@@ -388,8 +447,8 @@ const OrderDispatchHistory = () => {
               </tr></thead>
               <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
                 <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{qty}</td>
+                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
                 </tr>
               ))}</tbody>
             </table>
