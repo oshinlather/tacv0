@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import api from "./api";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -3689,6 +3689,7 @@ const SalesUpload = () => {
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadDate, setUploadDate] = useState(today());
   const [useCustomDate, setUseCustomDate] = useState(false);
+  const fileRef = useRef(null);
 
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
@@ -3736,8 +3737,8 @@ const SalesUpload = () => {
           </div>
         )}
         
-        <input id="csv-upload" type="file" accept=".csv,.CSV,.txt,text/csv,text/plain,application/vnd.ms-excel" onChange={handleFile} style={{ display: "none" }} />
-        <button onClick={() => document.getElementById("csv-upload").click()} style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 14, border: "none", fontFamily: "inherit" }}>
+        <input ref={fileRef} type="file" accept="*/*" onChange={handleFile} style={{ display: "none" }} />
+        <button onClick={() => fileRef.current?.click()} style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 14, border: "none", fontFamily: "inherit" }}>
           📁 Choose CSV File
         </button>
         {uploadResult && (
