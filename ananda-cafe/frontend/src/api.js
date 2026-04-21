@@ -65,8 +65,8 @@ const api = {
 
   // ── Inventory ──
   getInventory: (params) => get("/api/inventory", params),
-  stockIn: (items, reason) => post("/api/inventory/stock-in", { items, reason }),
-  stockOut: (items, reason) => post("/api/inventory/stock-out", { items, reason }),
+  stockIn: (items, reason, submitted_by) => post("/api/inventory/stock-in", { items, reason, submitted_by }),
+  stockOut: (items, reason, submitted_by) => post("/api/inventory/stock-out", { items, reason, submitted_by }),
   adjustStock: (item_id, new_qty, reason) => post("/api/inventory/adjust", { item_id, new_qty, reason }),
   updateThreshold: (id, threshold) => patch(`/api/inventory/threshold/${id}`, { threshold }),
   bulkUpdateThresholds: (items) => post("/api/inventory/thresholds", { items }),
