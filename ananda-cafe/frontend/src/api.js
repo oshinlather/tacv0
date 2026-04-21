@@ -39,7 +39,12 @@ const api = {
 
   // ── Sales ──
   getSales: (params) => get("/api/sales", params),
-  uploadSalesCSV: (formData) => fetch(API + "/api/sales/upload", { method: "POST", body: formData }).then(r => r.json()),
+  uploadSalesCSV: (file, date) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (date) formData.append("date", date);
+    return fetch(API + "/api/sales/upload", { method: "POST", body: formData }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
+  },
 
   // ── Issuance Audit ──
   saveIssuanceAudit: (entries) => post("/api/issuance-audit", { entries }),
