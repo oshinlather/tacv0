@@ -4981,39 +4981,12 @@ export default function AnandaCafe() {
     return null;
   });
 
-  // Login screen
-  if (!currentUser) return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 400, margin: "0 auto", padding: "60px 20px" }}>
-    <div style={{ textAlign: "center", marginBottom: 32 }}>
-      <div style={{ fontSize: 56, marginBottom: 8 }}>🍽️</div>
-      <h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1>
-      <p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>
-    </div>
-    <div style={{ background: "#fff", borderRadius: 18, border: "1px solid #E8E8E4", padding: "28px 24px" }}>
-      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, textAlign: "center" }}>Login</div>
-      <input type="tel" inputMode="numeric" placeholder="Phone Number" value={loginPhone} onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box", textAlign: "center", letterSpacing: 2 }} />
-      <input type="tel" inputMode="numeric" placeholder="4-digit PIN" value={loginPin} onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(e) => e.key === "Enter" && doLogin()}
-        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 24, fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, marginBottom: 14, boxSizing: "border-box", textAlign: "center", letterSpacing: 12 }} />
-      {loginErr && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12, textAlign: "center" }}>❌ {loginErr}</div>}
-      <button onClick={doLogin} disabled={loginLoading || loginPhone.length < 10 || loginPin.length < 4}
-        style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: loginPhone.length >= 10 && loginPin.length >= 4 && !loginLoading ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: loginPhone.length >= 10 && loginPin.length >= 4 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-        {loginLoading ? "⏳ Logging in..." : "Login →"}
-      </button>
-    </div>
-  </div></div>);
-
   const [app, setApp] = useState(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const role = params.get("role");
       if (role === "outlet" || role === "store" || role === "owner") return role;
     } catch (e) {}
-    // Auto-route based on user role
-    if (currentUser) {
-      if (currentUser.role === "owner") return "owner";
-      if (currentUser.role === "store_mgr") return "store";
-      if (currentUser.role === "outlet_mgr") return "outlet";
-    }
     return "launcher";
   });
   const [ownerTab, setOwnerTab] = useState("pnl");
@@ -5021,6 +4994,15 @@ export default function AnandaCafe() {
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [storeView, setStoreView] = useState("bk");
   const [masterLoaded, setMasterLoaded] = useState(false);
+
+  // Auto-route when user logs in
+  useEffect(() => {
+    if (currentUser && app === "launcher") {
+      if (currentUser.role === "owner") setApp("owner");
+      else if (currentUser.role === "store_mgr") setApp("store");
+      else if (currentUser.role === "outlet_mgr") setApp("outlet");
+    }
+  }, [currentUser]);
 
   // Load master data from DB on startup — updates in-memory arrays
   useEffect(() => {
@@ -5060,6 +5042,27 @@ export default function AnandaCafe() {
       setMasterLoaded(true);
     });
   }, []);
+
+  // Login screen
+  if (!currentUser) return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 400, margin: "0 auto", padding: "60px 20px" }}>
+    <div style={{ textAlign: "center", marginBottom: 32 }}>
+      <div style={{ fontSize: 56, marginBottom: 8 }}>🍽️</div>
+      <h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1>
+      <p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>
+    </div>
+    <div style={{ background: "#fff", borderRadius: 18, border: "1px solid #E8E8E4", padding: "28px 24px" }}>
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, textAlign: "center" }}>Login</div>
+      <input type="tel" inputMode="numeric" placeholder="Phone Number" value={loginPhone} onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box", textAlign: "center", letterSpacing: 2 }} />
+      <input type="tel" inputMode="numeric" placeholder="4-digit PIN" value={loginPin} onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(e) => e.key === "Enter" && doLogin()}
+        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 24, fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, marginBottom: 14, boxSizing: "border-box", textAlign: "center", letterSpacing: 12 }} />
+      {loginErr && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12, textAlign: "center" }}>❌ {loginErr}</div>}
+      <button onClick={doLogin} disabled={loginLoading || loginPhone.length < 10 || loginPin.length < 4}
+        style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: loginPhone.length >= 10 && loginPin.length >= 4 && !loginLoading ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: loginPhone.length >= 10 && loginPin.length >= 4 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+        {loginLoading ? "⏳ Logging in..." : "Login →"}
+      </button>
+    </div>
+  </div></div>);
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
