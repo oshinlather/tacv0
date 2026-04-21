@@ -220,7 +220,8 @@ const DEMAND_SECTIONS = [
 ];
 
 // Closing stock = all demand items (dynamic from master data)
-const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit, section: sec.id, sectionName: sec.titleHi })));
+const CLOSING_HIDDEN = new Set(["plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
+const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.filter((i) => !CLOSING_HIDDEN.has(i.id)).map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit, section: sec.id, sectionName: sec.titleHi })));
 
 // ─── STYLES ─────────────────────────────────────────────────────────────────
 const FONT = <><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" /><style dangerouslySetInnerHTML={{ __html: "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield;appearance:textfield}" }} /></>;
@@ -2628,7 +2629,7 @@ const OutletMgr = ({ onBack }) => {
     if (!expSec) setExpSec(DEMAND_SECTIONS[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
-    const manualHidden = new Set(["white_chutney", "coconut", "staff_veg"]);
+    const manualHidden = new Set(["white_chutney", "coconut", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
     // Save current category items to DB as draft
