@@ -1912,7 +1912,8 @@ const Inventory = () => {
             <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
             <div style={{ fontSize: 10, color: "#999" }}>
               {item.current_qty} {item.unit}
-              {isIn && perUnit > 0 && <span style={{ color: "#16A34A", fontWeight: 600 }}> · ₹{perUnit}/{item.unit}</span>}
+              {item.last_unit_price > 0 && <span style={{ color: "#888" }}> · ₹{Math.round(item.last_unit_price * 100) / 100}/{item.unit}</span>}
+              {isIn && perUnit > 0 && <span style={{ color: "#16A34A", fontWeight: 600 }}> → ₹{perUnit}/{item.unit}</span>}
             </div>
           </div>
           <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 52, padding: "6px 4px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
