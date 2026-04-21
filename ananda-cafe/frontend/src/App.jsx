@@ -274,6 +274,14 @@ const OrderDispatchHistory = () => {
   const outletName = (id) => OUTLETS.find(o => o.id === id)?.name || id;
   const r2 = (n) => Math.round(Number(n) * 100) / 100;
   const itemLabel = (id) => id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+  const toIST = (ts) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
+    const h = ist.getHours(), m = ist.getMinutes();
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -364,6 +372,10 @@ const OrderDispatchHistory = () => {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
               <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
+              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>
+                📤 Submitted: {toIST(d.submitted_at)}
+                {d.dispatched_at && <span> · 🚚 Dispatched: {toIST(d.dispatched_at)}</span>}
+              </div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: statusBg, color: statusColor }}>{d.status}</span>
             <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
@@ -397,6 +409,7 @@ const OrderDispatchHistory = () => {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{po.order_number}</div>
               <div style={{ fontSize: 11, color: "#999" }}>{po.date} · {po.notes || ""} · {po.total_items} items</div>
+              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 Created: {toIST(po.created_at)}{po.received_at && <span> · 📥 Received: {toIST(po.received_at)}</span>}</div>
             </div>
             <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: po.status === "pending" ? "#FFFBEB" : po.status === "received" ? "#F0FDF4" : "#F5F5F3", color: po.status === "pending" ? "#B45309" : po.status === "received" ? "#16A34A" : "#888" }}>{po.status}</span>
             <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
@@ -440,6 +453,7 @@ const OrderDispatchHistory = () => {
             <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
           </div>
           {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+            <div style={{ fontSize: 10, color: "#999", marginTop: 6, marginBottom: 4 }}>📤 Submitted: {toIST(d.submitted_at)} · 🚚 Dispatched: {toIST(d.dispatched_at)}</div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
