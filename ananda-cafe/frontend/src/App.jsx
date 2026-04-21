@@ -2335,6 +2335,24 @@ const OutletMgr = ({ onBack }) => {
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
   const [draftId, setDraftId] = useState(null); // DB id of the draft demand record
+
+  // Load existing draft when demandSlot is selected
+  useEffect(() => {
+    if (!demandSlot || !outlet) return;
+    const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
+    api.getOrders({ date: deliveryDate, outlet_id: outlet }).then((orders) => {
+      const existingDraft = orders.find((o) => o.type === "manual" && (o.status === "draft" || o.status === "submitted") && o.demand_slot === demandSlot);
+      if (existingDraft && existingDraft.items) {
+        setDraft(existingDraft.items);
+        setDraftId(existingDraft.id);
+        const saved = {};
+        DEMAND_SECTIONS.forEach((sec) => {
+          if (sec.items.some((i) => existingDraft.items[i.id] > 0)) saved[sec.id] = true;
+        });
+        setSavedSections(saved);
+      }
+    }).catch(() => {});
+  }, [demandSlot, outlet]);
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
   const [salesLoading, setSalesLoading] = useState(false);
@@ -2633,25 +2651,6 @@ const OutletMgr = ({ onBack }) => {
         if (nextUnsaved) setExpSec(nextUnsaved.id);
       } catch (e) { alert("Save failed: " + e.message); }
     };
-
-    // Load existing draft when entering manual demand
-    useEffect(() => {
-      if (!demandSlot || !outlet) return;
-      const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
-      api.getOrders({ date: deliveryDate, outlet_id: outlet }).then((orders) => {
-        const existingDraft = orders.find((o) => o.type === "manual" && (o.status === "draft" || o.status === "submitted") && o.demand_slot === demandSlot);
-        if (existingDraft && existingDraft.items) {
-          setDraft(existingDraft.items);
-          setDraftId(existingDraft.id);
-          // Mark sections as saved based on which have items
-          const saved = {};
-          DEMAND_SECTIONS.forEach((sec) => {
-            if (sec.items.some((i) => existingDraft.items[i.id] > 0)) saved[sec.id] = true;
-          });
-          setSavedSections(saved);
-        }
-      }).catch(() => {});
-    }, [demandSlot, outlet]);
 
     const submitStaffFood = async () => {
       if (staffFoodCount === 0) return;
