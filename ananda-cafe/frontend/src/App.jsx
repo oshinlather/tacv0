@@ -1753,13 +1753,9 @@ const Inventory = () => {
     return new Set((foodSection?.items || []).map((i) => norm(i.name)));
   }, []);
   const isBkPrepared = (item) => {
-    // Primary: demand_item_id link
+    // Only filter items that are explicitly linked to a BK food demand item via demand_item_id
+    // Do NOT use id or name matching — it incorrectly filters raw materials like roasted_chana
     if (item.demand_item_id && bkPreparedIds.has(item.demand_item_id)) return true;
-    // Fallback: name match (handles DB rows without demand_item_id set)
-    const norm = (item.name || "").toLowerCase().trim().replace(/\s+/g, " ");
-    if (bkPreparedNames.has(norm)) return true;
-    // Fallback 2: id match (if inventory item id happens to match recipe key)
-    if (item.id && bkPreparedIds.has(item.id)) return true;
     return false;
   };
 
