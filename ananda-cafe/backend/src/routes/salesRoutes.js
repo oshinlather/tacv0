@@ -946,6 +946,18 @@ router.patch('/inventory/items/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/demands/:id/draft — Update draft demand items
+router.patch('/demands/:id/draft', async (req, res) => {
+  try {
+    const { items } = req.body;
+    const { error } = await supabase.from('demands').update({
+      items: items || {},
+    }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================
 // ORDERS — Fetch and manage demands/orders
 // ============================================================
