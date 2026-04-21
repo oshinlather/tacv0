@@ -1804,6 +1804,36 @@ router.delete('/outlet-recipes/:recipeId/ingredients/:ingredientId', async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/history/challans — Order challans last 30 days
+router.get('/history/challans', async (req, res) => {
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const { data, error } = await supabase.from('purchase_orders')
+      .select('*')
+      .gte('created_at', thirtyDaysAgo.toISOString())
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/history/dispatches — Dispatched demands last 30 days
+router.get('/history/dispatches', async (req, res) => {
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const { data, error } = await supabase.from('demands')
+      .select('*')
+      .eq('type', 'manual')
+      .eq('status', 'fulfilled')
+      .gte('dispatched_at', thirtyDaysAgo.toISOString())
+      .order('dispatched_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================
 // RM ORDER CONFIG — 10-day requirement per item
 // ============================================================
