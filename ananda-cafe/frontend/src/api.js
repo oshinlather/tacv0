@@ -138,6 +138,9 @@ const api = {
   getPurchaseOrder: (id) => get(`/api/purchase-orders/${id}`),
   createPurchaseOrder: (data) => post("/api/purchase-orders", data),
   updatePurchaseOrder: (id, data) => patch(`/api/purchase-orders/${id}`, data),
+  // History
+  getChallanHistory: () => get("/api/history/challans"),
+  getDispatchHistory: () => get("/api/history/dispatches"),
 };
 
 // ── Helpers ──
