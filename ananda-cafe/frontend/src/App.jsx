@@ -2715,12 +2715,8 @@ const OutletMgr = ({ onBack }) => {
           {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅ Saved</span>}
         </div>
         <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
-        {/* Save category button */}
-        <button onClick={() => saveCategory(activeSec.id)} style={{ width: "100%", padding: "12px", border: "none", borderTop: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-          {savedSections[activeSec.id] ? `✅ ${activeSec.titleHi} Saved — Update` : `💾 Save ${activeSec.titleHi} & Next →`}
-        </button>
       </div>
-      {/* Submit All sticky button */}
+      {/* Sticky footer — Save + Submit side by side */}
       <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
           {DEMAND_SECTIONS.map((sec) => {
@@ -2729,8 +2725,13 @@ const OutletMgr = ({ onBack }) => {
             return <div key={sec.id} style={{ flex: 1, height: 4, borderRadius: 2, background: isSaved ? "#16A34A" : hasFilled ? "#FDE68A" : "#E0E0DC" }} />;
           })}
         </div>
-        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
-        <button onClick={() => submit("manual")} disabled={ft === 0} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit All ({ft} items)</button>
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => saveCategory(activeSec.id)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+            {savedSections[activeSec.id] ? "✅ Update" : "💾 Save"}
+          </button>
+          <button onClick={() => submit("manual")} disabled={ft === 0} style={{ flex: 2, padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit All ({ft})</button>
+        </div>
       </div>
     </>)}
 
