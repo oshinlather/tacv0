@@ -261,6 +261,145 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 // ═════════════════════════════════════════════════════════════════════════════
 //  DAILY P&L (matches user's Excel exactly)
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+//  ORDER & DISPATCH HISTORY — Last 30 days
+// ═════════════════════════════════════════════════════════════════════════════
+const OrderDispatchHistory = () => {
+  const [historyTab, setHistoryTab] = useState("orders"); // orders, dispatches
+  const [challans, setChallans] = useState([]);
+  const [dispatches, setDispatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState(null);
+  const outletName = (id) => OUTLETS.find(o => o.id === id)?.name || id;
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.getChallanHistory().catch(() => []),
+      api.getDispatchHistory().catch(() => []),
+    ]).then(([c, d]) => {
+      setChallans(c || []);
+      setDispatches(d || []);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  const exportChallanCSV = () => {
+    const rows = [["Order #", "Date", "Status", "Vendor", "Item", "Unit", "RM Req", "Stock", "Order Qty"]];
+    challans.forEach(po => {
+      Object.entries(po.items || {}).forEach(([id, item]) => {
+        rows.push([po.order_number, po.date, po.status, po.notes || "", item.name, item.unit, item.rm_qty, item.current_stock, item.order_qty]);
+      });
+    });
+    downloadCSV(rows, "order_challans_history.csv");
+  };
+
+  const exportDispatchCSV = () => {
+    const rows = [["Date", "Outlet", "Slot", "Status", "Item ID", "Qty"]];
+    dispatches.forEach(d => {
+      const items = d.dispatch_items || d.items || {};
+      Object.entries(items).forEach(([id, qty]) => {
+        rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, id, qty]);
+      });
+    });
+    downloadCSV(rows, "dispatch_challans_history.csv");
+  };
+
+  const downloadCSV = (rows, filename) => {
+    const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading history...</div>;
+
+  return (<div>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Order & Dispatch History</h3>
+    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      {[{ id: "orders", label: "📝 Order Challans", count: challans.length }, { id: "dispatches", label: "🚚 Dispatches", count: dispatches.length }].map(t => (
+        <button key={t.id} onClick={() => setHistoryTab(t.id)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{t.label} ({t.count})</button>
+      ))}
+    </div>
+
+    {/* Export button */}
+    <button onClick={historyTab === "orders" ? exportChallanCSV : exportDispatchCSV} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+      📥 Export CSV — {historyTab === "orders" ? "Order Challans" : "Dispatches"}
+    </button>
+
+    {/* Order Challans */}
+    {historyTab === "orders" && (<>
+      {challans.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No order challans in last 30 days</div>}
+      {challans.map(po => {
+        const isExpanded = expandedId === po.id;
+        const itemList = Object.entries(po.items || {});
+        return (<div key={po.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setExpandedId(isExpanded ? null : po.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{po.order_number}</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{po.date} · {po.notes || ""} · {po.total_items} items</div>
+            </div>
+            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: po.status === "pending" ? "#FFFBEB" : po.status === "received" ? "#F0FDF4" : "#F5F5F3", color: po.status === "pending" ? "#B45309" : po.status === "received" ? "#16A34A" : "#888" }}>{po.status}</span>
+            <span style={{ color: "#CCC" }}>{isExpanded ? "▲" : "▼"}</span>
+          </div>
+          {isExpanded && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Stock</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Req</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Order Qty</th>
+              </tr></thead>
+              <tbody>{itemList.sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => (
+                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
+                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{item.name}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.current_stock}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.rm_qty}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{item.order_qty} {item.unit}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
+        </div>);
+      })}
+    </>)}
+
+    {/* Dispatch History */}
+    {historyTab === "dispatches" && (<>
+      {dispatches.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No dispatches in last 30 days</div>}
+      {dispatches.map(d => {
+        const isExpanded = expandedId === d.id;
+        const items = d.dispatch_items || d.items || {};
+        const itemList = Object.entries(items).filter(([, q]) => q > 0);
+        return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setExpandedId(isExpanded ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {itemList.length} items</div>
+            </div>
+            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>✅ Dispatched</span>
+            <span style={{ color: "#CCC" }}>{isExpanded ? "▲" : "▼"}</span>
+          </div>
+          {isExpanded && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
+              </tr></thead>
+              <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
+                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
+                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{qty}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
+        </div>);
+      })}
+    </>)}
+  </div>);
+};
+
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
   const [selDay, setSelDay] = useState(0);
@@ -4724,7 +4863,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
     </div>
@@ -4737,6 +4876,7 @@ export default function AnandaCafe() {
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
           { id: "activity", label: "🔴 Live Activity", sub: "Real-time submissions" },
           { id: "orders", label: "📋 Orders", sub: "All outlet orders today" },
+          { id: "history", label: "📜 History", sub: "Order & Dispatch challans (30 days)" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -4784,6 +4924,7 @@ export default function AnandaCafe() {
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
       {ownerTab === "pp_recipes" && <PetPoojaRecipes />}
+      {ownerTab === "history" && <OrderDispatchHistory />}
     </div>
   </div>);
 
