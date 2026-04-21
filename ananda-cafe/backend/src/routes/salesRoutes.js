@@ -989,7 +989,9 @@ router.patch('/auth/users/:id', async (req, res) => {
     if (req.body.role !== undefined) updates.role = req.body.role;
     if (req.body.outlet_id !== undefined) updates.outlet_id = req.body.outlet_id;
     if (req.body.active !== undefined) updates.active = req.body.active;
-    if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
+    if (req.body.pin) updates.pin = req.body.pin;
+    if (req.body.pin) updates.pin = req.body.pin;
+    else if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
     const { data, error } = await supabase.from('app_users').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(data);
