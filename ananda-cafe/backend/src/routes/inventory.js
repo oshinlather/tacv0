@@ -11,11 +11,32 @@ router.get("/", async (req, res) => {
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
+  // Fetch latest purchase price for each item
+  const { data: latestPrices } = await supabase.from("inventory_movements")
+    .select("item_id, unit_price, total_price, quantity, created_at")
+    .eq("type", "stock_in")
+    .not("unit_price", "is", null)
+    .order("created_at", { ascending: false });
+  
+  const priceMap = {};
+  (latestPrices || []).forEach(m => {
+    if (!priceMap[m.item_id]) {
+      priceMap[m.item_id] = {
+        unit_price: Number(m.unit_price) || 0,
+        last_purchase_qty: Number(m.quantity) || 0,
+        last_purchase_total: Number(m.total_price) || 0,
+      };
+    }
+  });
+
   let items = (data || []).map((item) => ({
     ...item,
     current_qty: item.inventory_stock?.[0]?.current_qty || item.inventory_stock?.current_qty || 0,
     last_updated: item.inventory_stock?.[0]?.last_updated || item.inventory_stock?.last_updated || null,
     below_threshold: (item.inventory_stock?.[0]?.current_qty || item.inventory_stock?.current_qty || 0) <= item.threshold,
+    last_unit_price: priceMap[item.id]?.unit_price || null,
+    last_purchase_qty: priceMap[item.id]?.last_purchase_qty || null,
+    last_purchase_total: priceMap[item.id]?.last_purchase_total || null,
   }));
 
   if (below_threshold === "true") items = items.filter((i) => i.below_threshold);
