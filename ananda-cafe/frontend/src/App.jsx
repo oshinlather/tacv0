@@ -2623,21 +2623,109 @@ const SALES = genSales();
 const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC = { d: 0, a: 0 }; const items = []; MENU_ITEMS.forEach((m) => { const q = s[m.id], c = ITEM_COST[m.id]; const dr = q.d * m.price.d, ar = q.a * m.price.a, dc = q.d * c, ac = q.a * c; tR.d += dr; tR.a += ar; tC.d += dc; tC.a += ac; items.push({ id: m.id, name: m.name, dI: { q: q.d, r: dr, c: dc, cogs: dr > 0 ? dc / dr * 100 : 0 }, ag: { q: q.a, r: ar, c: ac, cogs: ar > 0 ? ac / ar * 100 : 0 }, t: { q: q.d + q.a, r: dr + ar, c: dc + ac, cogs: (dr + ar) > 0 ? (dc + ac) / (dr + ar) * 100 : 0 } }); }); const tRev = tR.d + tR.a, tCost = tC.d + tC.a; return { rev: tR, cost: tC, tRev, tCost, cogs: tRev > 0 ? tCost / tRev * 100 : 0, cogsDi: tR.d > 0 ? tC.d / tR.d * 100 : 0, cogsAg: tR.a > 0 ? tC.a / tR.a * 100 : 0, items: items.sort((a, b) => b.t.r - a.t.r) }; };
 
 const CogsDash = () => {
-  const [sel, setSel] = useState(null);
-  const all = useMemo(() => { const m = {}; OUTLETS.forEach((o) => { m[o.id] = compOutlet(o.id); }); return m; }, []);
-  const grand = useMemo(() => { let r = 0, c = 0; Object.values(all).forEach((m) => { r += m.tRev; c += m.tCost; }); return { r, c, cogs: r > 0 ? c / r * 100 : 0 }; }, [all]);
-  if (sel) { const sm = all[sel], so = OUTLETS.find((o) => o.id === sel); return (<div>
-    <button onClick={() => setSel(null)} style={{ display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #E0E0DC", background: "#fff", borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, color: "#666", cursor: "pointer", marginBottom: 16, fontFamily: "inherit" }}>← All Outlets</button>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}><h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>{so.name}</h3><div style={{ marginLeft: "auto", fontSize: 26, fontWeight: 800, color: cogsC(sm.cogs), fontFamily: "'JetBrains Mono'" }}>{pct(sm.cogs)}</div></div>
-    <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>{[{ l: "Dine-In", cogs: sm.cogsDi, r: sm.rev.d }, { l: "Swiggy/Zomato", cogs: sm.cogsAg, r: sm.rev.a }].map((ch) => (<div key={ch.l} style={{ flex: 1, background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#888", marginBottom: 8 }}>{ch.l}</div><div style={{ display: "flex", justifyContent: "space-between" }}><div><div style={{ fontSize: 10, color: "#BBB" }}>Revenue</div><div style={{ fontSize: 14, fontWeight: 700, fontFamily: "mono" }}>{fmt(ch.r)}</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 10, color: "#BBB" }}>COGS</div><div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: cogsC(ch.cogs) }}>{pct(ch.cogs)}</div></div></div></div>))}</div>
-    <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", padding: "8px 14px", background: "#FAFAF8", borderBottom: "1px solid #E8E8E4", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase" }}><div>Item</div><div style={{ textAlign: "center" }}>Qty</div><div style={{ textAlign: "center" }}>Dine-In</div><div style={{ textAlign: "center" }}>Aggr.</div><div style={{ textAlign: "center" }}>COGS%</div></div>
-      {sm.items.map((it) => (<div key={it.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", padding: "9px 14px", borderBottom: "1px solid #F0F0EC", background: it.t.cogs > 38 ? "#FEF2F2" : "transparent", fontSize: 12.5 }}><div style={{ fontWeight: 600 }}>{it.t.cogs > 38 && "⚑ "}{it.name}</div><div style={{ textAlign: "center", color: "#888", fontFamily: "mono" }}>{it.t.q}</div><div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: cogsC(it.dI.cogs) }}>{it.dI.q > 0 ? pct(it.dI.cogs) : "—"}</div><div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: cogsC(it.ag.cogs) }}>{it.ag.q > 0 ? pct(it.ag.cogs) : "—"}</div><div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 13, color: cogsC(it.t.cogs) }}>{pct(it.t.cogs)}</div></div>))}
-    </div>
-  </div>); }
+  const [selDay, setSelDay] = useState(0);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.getSales({ date: dateStr }).catch(() => null),
+      api.getLivePnl(dateStr).catch(() => null),
+    ]).then(([sales, pnl]) => {
+      setData({ sales, pnl: pnl?.pnl || [] });
+    }).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const pnlAll = data?.pnl || [];
+  const salesData = data?.sales || {};
+
+  // Per-outlet summary from P&L
+  const outletData = OUTLETS.map(o => {
+    const p = pnlAll.find(r => r.outlet_id === o.id);
+    return {
+      ...o,
+      revenue: p?.effective_sale || 0,
+      variableCost: p?.variable_cost || 0,
+      cogs: p?.effective_sale > 0 ? (p?.variable_cost || 0) / p.effective_sale * 100 : 0,
+    };
+  });
+  const totalRevenue = outletData.reduce((s, o) => s + o.revenue, 0);
+  const totalCost = outletData.reduce((s, o) => s + o.variableCost, 0);
+  const totalCogs = totalRevenue > 0 ? totalCost / totalRevenue * 100 : 0;
+
   return (<div>
-    <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20, background: "#E8E8E4" }}>{[{ l: "Revenue", v: fmt(grand.r) }, { l: "Food Cost", v: fmt(grand.c), c: cogsC(grand.cogs) }, { l: "COGS %", v: pct(grand.cogs), c: cogsC(grand.cogs) }].map((s, i) => (<div key={i} style={{ flex: 1, background: "#fff", padding: "14px", textAlign: "center" }}><div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div><div style={{ fontSize: 22, fontWeight: 800, color: s.c || "#1A1A1A", fontFamily: "'JetBrains Mono'" }}>{s.v}</div></div>))}</div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{OUTLETS.map((o) => { const m = all[o.id], c = cogsC(m.cogs); return (<div key={o.id} onClick={() => setSel(o.id)} style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", border: "1px solid #E8E8E4", cursor: "pointer", position: "relative" }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div><div style={{ fontSize: 24, fontWeight: 800, color: c, fontFamily: "'JetBrains Mono'", lineHeight: 1 }}>{pct(m.cogs)}</div></div><div style={{ height: 5, borderRadius: 3, background: "#EBEBEB", marginBottom: 12, overflow: "hidden" }}><div style={{ height: "100%", borderRadius: 3, background: c, width: `${Math.min(m.cogs * 2, 100)}%` }} /></div><div style={{ display: "flex", gap: 8 }}><div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>DINE-IN</div><div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: cogsC(m.cogsDi) }}>{pct(m.cogsDi)}</div></div><div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>AGGREGATOR</div><div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: cogsC(m.cogsAg) }}>{pct(m.cogsAg)}</div></div></div><div style={{ position: "absolute", bottom: 6, right: 14, fontSize: 11, color: "#CCC" }}>details →</div></div>); })}</div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      {Array.from({ length: 10 }, (_, i) => {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+        return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+      })}
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+    {!loading && <>
+      <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20, background: "#E8E8E4" }}>
+        {[{ l: "Revenue", v: fmt(totalRevenue) }, { l: "Material Cost", v: fmt(totalCost), c: "#B45309" }, { l: "Cost %", v: pct(totalCogs), c: cogsC(totalCogs) }].map((s, i) => (
+          <div key={i} style={{ flex: 1, background: "#fff", padding: "14px", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: s.c || "#1A1A1A", fontFamily: "'JetBrains Mono'" }}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+        {outletData.map(o => {
+          const c = cogsC(o.cogs);
+          return (<div key={o.id} style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", border: "1px solid #E8E8E4" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: c, fontFamily: "'JetBrains Mono'", lineHeight: 1 }}>{pct(o.cogs)}</div>
+            </div>
+            <div style={{ height: 5, borderRadius: 3, background: "#EBEBEB", marginBottom: 12, overflow: "hidden" }}>
+              <div style={{ height: "100%", borderRadius: 3, background: c, width: `${Math.min(o.cogs * 2, 100)}%` }} />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}>
+                <div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>REVENUE</div>
+                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{fmt(o.revenue)}</div>
+              </div>
+              <div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}>
+                <div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>COST</div>
+                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(o.variableCost)}</div>
+              </div>
+            </div>
+          </div>);
+        })}
+      </div>
+
+      {/* Item-wise sales from PetPooja */}
+      {salesData.items && salesData.items.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", fontWeight: 700, fontSize: 14 }}>📋 Item-wise Sales — {dateStr}</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th><th style={thS}>Category</th>
+                <th style={{ ...thS, textAlign: "right" }}>Qty</th>
+                <th style={{ ...thS, textAlign: "right" }}>Revenue</th>
+              </tr></thead>
+              <tbody>{salesData.items.map((item, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}</td>
+                  <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{item.qty}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmt(item.revenue)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>}
   </div>);
 };
 
@@ -3720,10 +3808,14 @@ const SalesUpload = () => {
 
   return (
     <div>
-      <div style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 24, textAlign: "center", marginBottom: 20 }}>
+      <div 
+        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
+        onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
+        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleFile({ target: { files: [file] } }); }}
+        style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 24, textAlign: "center", marginBottom: 20 }}>
         <div style={{ fontSize: 32, marginBottom: 8 }}>📤</div>
         <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>Upload PetPooja Daily Sales</h3>
-        <p style={{ color: "#999", fontSize: 13, margin: "0 0 12px" }}>CSV format: Order Summary Item Report</p>
+        <p style={{ color: "#999", fontSize: 13, margin: "0 0 12px" }}>Drag & drop CSV here, or choose file below</p>
         
         {/* Date override toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14 }}>
