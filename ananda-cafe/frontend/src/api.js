@@ -141,6 +141,11 @@ const api = {
   // History
   getChallanHistory: () => get("/api/history/challans"),
   getDispatchHistory: () => get("/api/history/dispatches"),
+  // Auth
+  login: (phone, pin) => post("/api/auth/login", { phone, pin }),
+  getUsers: () => get("/api/auth/users"),
+  createUser: (data) => post("/api/auth/users", data),
+  updateUser: (id, data) => patch(`/api/auth/users/${id}`, data),
 };
 
 // ── Helpers ──
