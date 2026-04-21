@@ -473,6 +473,90 @@ const OrderDispatchHistory = () => {
   </div>);
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  USERS MANAGEMENT
+// ═════════════════════════════════════════════════════════════════════════════
+const UsersPanel = () => {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newRole, setNewRole] = useState("outlet_mgr");
+  const [newOutlet, setNewOutlet] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = () => { api.getUsers().then(setUsers).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const addUser = async () => {
+    if (!newName || !newPhone) { alert("Name and phone required"); return; }
+    setSaving(true);
+    try {
+      await api.createUser({ name: newName, phone: newPhone, role: newRole, outlet_id: newOutlet || null });
+      setNewName(""); setNewPhone(""); setNewRole("outlet_mgr"); setNewOutlet(""); setShowAdd(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const resetPin = async (id) => {
+    if (!confirm("Reset PIN? New PIN will be generated.")) return;
+    try {
+      const u = await api.updateUser(id, { reset_pin: true });
+      alert(`New PIN: ${u.pin}`);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const toggleActive = async (id, active) => {
+    try { await api.updateUser(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : "🏪 Outlet";
+  const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>👥 Users ({users.length})</h3>
+      <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add User</button>
+    </div>
+
+    {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
+      <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+      <input type="tel" placeholder="Phone (10 digits)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }].map(r => (
+          <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
+        ))}
+      </div>
+      {newRole === "outlet_mgr" && <select value={newOutlet} onChange={(e) => setNewOutlet(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+        <option value="">Select Outlet</option>
+        {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>}
+      <button onClick={addUser} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Create User (PIN auto-generated)"}</button>
+    </div>}
+
+    {users.map(u => (
+      <div key={u.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 8, opacity: u.active ? 1 : 0.5 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{u.name}</div>
+            <div style={{ fontSize: 12, color: "#888" }}>{u.phone} · {roleLabel(u.role)}{u.outlet_id && ` · ${outletLabel(u.outlet_id)}`}</div>
+          </div>
+          <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4 }}>{u.pin}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={() => resetPin(u.id)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🔄 Reset PIN</button>
+          <button onClick={() => toggleActive(u.id, u.active)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: `1px solid ${u.active ? "#FECACA" : "#BBF7D0"}`, background: u.active ? "#FEF2F2" : "#F0FDF4", color: u.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{u.active ? "🚫 Disable" : "✅ Enable"}</button>
+        </div>
+      </div>
+    ))}
+  </div>);
+};
+
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
   const [selDay, setSelDay] = useState(0);
@@ -4864,6 +4948,29 @@ const StoreRecipesView = () => {
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
+  // Auth state
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { const u = localStorage.getItem("ananda_user"); return u ? JSON.parse(u) : null; } catch (e) { return null; }
+  });
+  const [loginPhone, setLoginPhone] = useState("");
+  const [loginPin, setLoginPin] = useState("");
+  const [loginErr, setLoginErr] = useState(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  const doLogin = async () => {
+    if (!loginPhone || !loginPin) { setLoginErr("Enter phone and PIN"); return; }
+    setLoginLoading(true); setLoginErr(null);
+    try {
+      const user = await api.login(loginPhone, loginPin);
+      localStorage.setItem("ananda_user", JSON.stringify(user));
+      setCurrentUser(user);
+      setLoginPhone(""); setLoginPin("");
+    } catch (e) { setLoginErr(e.message || "Login failed"); }
+    finally { setLoginLoading(false); }
+  };
+
+  const doLogout = () => { localStorage.removeItem("ananda_user"); setCurrentUser(null); };
+
   // Check URL for role parameter: ?role=outlet or ?role=store or ?role=owner
   const [urlRole] = useState(() => {
     try {
@@ -4874,12 +4981,39 @@ export default function AnandaCafe() {
     return null;
   });
 
+  // Login screen
+  if (!currentUser) return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 400, margin: "0 auto", padding: "60px 20px" }}>
+    <div style={{ textAlign: "center", marginBottom: 32 }}>
+      <div style={{ fontSize: 56, marginBottom: 8 }}>🍽️</div>
+      <h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1>
+      <p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>
+    </div>
+    <div style={{ background: "#fff", borderRadius: 18, border: "1px solid #E8E8E4", padding: "28px 24px" }}>
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, textAlign: "center" }}>Login</div>
+      <input type="tel" inputMode="numeric" placeholder="Phone Number" value={loginPhone} onChange={(e) => setLoginPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
+        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box", textAlign: "center", letterSpacing: 2 }} />
+      <input type="tel" inputMode="numeric" placeholder="4-digit PIN" value={loginPin} onChange={(e) => setLoginPin(e.target.value.replace(/\D/g, "").slice(0, 4))} onKeyDown={(e) => e.key === "Enter" && doLogin()}
+        style={{ width: "100%", padding: "14px 16px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 24, fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, marginBottom: 14, boxSizing: "border-box", textAlign: "center", letterSpacing: 12 }} />
+      {loginErr && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12, textAlign: "center" }}>❌ {loginErr}</div>}
+      <button onClick={doLogin} disabled={loginLoading || loginPhone.length < 10 || loginPin.length < 4}
+        style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: loginPhone.length >= 10 && loginPin.length >= 4 && !loginLoading ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: loginPhone.length >= 10 && loginPin.length >= 4 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+        {loginLoading ? "⏳ Logging in..." : "Login →"}
+      </button>
+    </div>
+  </div></div>);
+
   const [app, setApp] = useState(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const role = params.get("role");
       if (role === "outlet" || role === "store" || role === "owner") return role;
     } catch (e) {}
+    // Auto-route based on user role
+    if (currentUser) {
+      if (currentUser.role === "owner") return "owner";
+      if (currentUser.role === "store_mgr") return "store";
+      if (currentUser.role === "outlet_mgr") return "outlet";
+    }
     return "launcher";
   });
   const [ownerTab, setOwnerTab] = useState("pnl");
@@ -4927,17 +5061,17 @@ export default function AnandaCafe() {
     });
   }, []);
 
-  if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p></div>
+  if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><div style={{ fontSize: 48, marginBottom: 8 }}>🍽️</div><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", sub: "COGS, Daily P&L, Red Flags", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff", subC: "rgba(255,255,255,0.6)" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Daily demand challan & closing stock", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }, { id: "store", icon: "📦", title: "Store Manager (BK)", sub: "Ration store issuance records", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4", subC: "#888" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div><div style={{ fontSize: 13, color: a.subC }}>{a.sub}</div></div></button>))}
   </div></div>);
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
+      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -4965,6 +5099,7 @@ export default function AnandaCafe() {
         {[{ id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
+          { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
@@ -4998,6 +5133,7 @@ export default function AnandaCafe() {
       {ownerTab === "recipes" && <RecipesPanel />}
       {ownerTab === "pp_recipes" && <PetPoojaRecipes />}
       {ownerTab === "history" && <OrderDispatchHistory />}
+      {ownerTab === "users" && <UsersPanel />}
     </div>
   </div>);
 
