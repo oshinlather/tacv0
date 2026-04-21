@@ -31,6 +31,7 @@ router.post('/sales/upload', upload.single('file'), async (req, res) => {
 try {
 if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+const overrideDate = req.body.date || null; // Optional: override date from form
 const rows = [];
 const stream = Readable.from(req.file.buffer.toString());
 
@@ -38,8 +39,8 @@ await new Promise((resolve, reject) => {
 stream
 .pipe(csv())
 .on('data', (row) => {
-// Extract date from first row's date field
-const saleDate = row.date ? row.date.split(' ')[0] : null;
+// Extract date from CSV or use override
+const saleDate = overrideDate || (row.date ? row.date.split(' ')[0] : null);
 if (!saleDate || !row.item_name) return;
 
 rows.push({
