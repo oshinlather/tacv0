@@ -3225,6 +3225,165 @@ const OutletMgr = ({ onBack }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  STORE MANAGER
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+//  BK DEMAND — Base Kitchen daily requirements (staff food, cleaning, etc.)
+// ═════════════════════════════════════════════════════════════════════════════
+const BK_DEMAND_SECTIONS = [
+  { id: "bk_veg", title: "🥬 Vegetables", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0", items: [
+    { id: "bk_tomato", name: "Tomato", unit: "Kg" },
+    { id: "bk_ginger", name: "Ginger", unit: "Kg" },
+    { id: "bk_garlic", name: "Garlic", unit: "Kg" },
+    { id: "bk_coriander", name: "Coriander Leaves", unit: "Gm" },
+    { id: "bk_onion", name: "Onion", unit: "Kg" },
+  ]},
+  { id: "bk_grocery", title: "🛒 Grocery", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A", items: [
+    { id: "bk_chhole", name: "Chhole", unit: "Kg" },
+    { id: "bk_milk", name: "Milk", unit: "Ltr" },
+    { id: "bk_mustard_oil", name: "Mustard Oil", unit: "Ltr" },
+    { id: "bk_rajma", name: "Rajma", unit: "Kg" },
+    { id: "bk_besan", name: "Besan", unit: "Kg" },
+    { id: "bk_curd", name: "Curd", unit: "Kg" },
+    { id: "bk_salt", name: "Salt", unit: "Kg" },
+    { id: "bk_garam_masala", name: "Garam Masala", unit: "Gm" },
+    { id: "bk_jeera", name: "Jeera", unit: "Gm" },
+    { id: "bk_black_pepper", name: "Black Pepper", unit: "Gm" },
+    { id: "bk_haldi", name: "Haldi Powder", unit: "Gm" },
+    { id: "bk_refined_oil", name: "Refined Oil", unit: "Ltr" },
+    { id: "bk_desi_ghee", name: "Desi Ghee", unit: "Kg" },
+    { id: "bk_soya_badi", name: "Soya Badi", unit: "Kg" },
+    { id: "bk_chana_dal", name: "Chana Dal", unit: "Kg" },
+    { id: "bk_arhar_dal", name: "Arhar Dal", unit: "Kg" },
+  ]},
+  { id: "bk_cleaning", title: "🧹 Cleaning", color: "#0891B2", bg: "#ECFEFF", border: "#A5F3FC", items: [
+    { id: "bk_sarf", name: "Sarf", unit: "Kg" },
+    { id: "bk_juna", name: "Juna", unit: "Pcs" },
+    { id: "bk_bartan_sabun", name: "Bartan Dhone Ka Sabun", unit: "Pcs" },
+    { id: "bk_phenyl", name: "Phenyl", unit: "Ltr" },
+    { id: "bk_duster", name: "Duster", unit: "Pcs" },
+    { id: "bk_pochha", name: "Pochha", unit: "Pcs" },
+    { id: "bk_wiper", name: "Wiper", unit: "Pcs" },
+    { id: "bk_sheek_jhadu", name: "Sheek Jhadu", unit: "Pcs" },
+    { id: "bk_fool_jhadu", name: "Fool Jhadu", unit: "Pcs" },
+    { id: "bk_supli", name: "Supli", unit: "Pcs" },
+    { id: "bk_kitchen_wipes", name: "Kitchen Wipes", unit: "Pkt" },
+  ]},
+  { id: "bk_packaging", title: "📦 Packaging", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", items: [
+    { id: "bk_poly_16x20", name: "16×20 Polythene", unit: "Pkt" },
+    { id: "bk_poly_13x16", name: "13×16 Polythene", unit: "Pkt" },
+    { id: "bk_bio_garbage", name: "Bio Garbage", unit: "Pkt" },
+    { id: "bk_clean_wrap", name: "Clean Wrap", unit: "Pcs" },
+  ]},
+  { id: "bk_maintenance", title: "🔧 Maintenance", color: "#DC2626", bg: "#FEF2F2", border: "#FECACA", items: [] },
+];
+
+const BKDemandForm = () => {
+  const [draft, setDraft] = useState({});
+  const [expSec, setExpSec] = useState(BK_DEMAND_SECTIONS[0].id);
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
+  const [savedSections, setSavedSections] = useState({});
+  const [draftId, setDraftId] = useState(null);
+
+  const activeSec = BK_DEMAND_SECTIONS.find(s => s.id === expSec) || BK_DEMAND_SECTIONS[0];
+  const ft = Object.values(draft).filter(v => v > 0).length;
+
+  // Load existing BK draft
+  useEffect(() => {
+    api.getOrders({ date: today(), outlet_id: "bk" }).then((orders) => {
+      const existing = orders.find(o => o.type === "bk_demand" && (o.status === "draft" || o.status === "submitted"));
+      if (existing?.items) {
+        setDraft(existing.items);
+        setDraftId(existing.id);
+        const saved = {};
+        BK_DEMAND_SECTIONS.forEach(sec => {
+          if (sec.items.some(i => existing.items[i.id] > 0)) saved[sec.id] = true;
+        });
+        setSavedSections(saved);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const saveCategory = async (secId) => {
+    try {
+      if (draftId) {
+        await api.updateDemandDraft(draftId, { items: draft });
+      } else {
+        const result = await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", status: "draft", submitted_by: getCurrentUser()?.name || "bk" });
+        if (result?.id) setDraftId(result.id);
+      }
+      setSavedSections(p => ({ ...p, [secId]: true }));
+      const currentIdx = BK_DEMAND_SECTIONS.findIndex(s => s.id === secId);
+      const nextUnsaved = BK_DEMAND_SECTIONS.slice(currentIdx + 1).find(s => s.items.length > 0 && !savedSections[s.id]);
+      if (nextUnsaved) setExpSec(nextUnsaved.id);
+    } catch (e) { alert("Save failed: " + e.message); }
+  };
+
+  const submitAll = async () => {
+    if (ft === 0) return;
+    setSaving(true);
+    try {
+      if (draftId) {
+        await api.updateDemandDraft(draftId, { items: draft });
+        await api.updateOrderStatus(draftId, "submitted");
+      } else {
+        await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", submitted_by: getCurrentUser()?.name || "bk" });
+      }
+      alert(`✅ BK Demand submitted — ${ft} items`);
+      setDraft({}); setSavedSections({}); setDraftId(null); setNote("");
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (<div>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>🏭 BK Daily Demand</h3>
+    {/* Category pills */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+      {BK_DEMAND_SECTIONS.filter(s => s.items.length > 0).map(sec => {
+        const fl = sec.items.filter(i => draft[i.id] > 0).length;
+        const isSaved = savedSections[sec.id];
+        return (<button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 12px", borderRadius: 10, fontSize: 11, fontWeight: expSec === sec.id ? 700 : 500, border: expSec === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: expSec === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: expSec === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
+          {isSaved && <span style={{ fontSize: 9 }}>✅</span>}{sec.title}{fl > 0 && <span style={{ padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 800 }}>{fl}</span>}
+        </button>);
+      })}
+    </div>
+    {/* Items */}
+    <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: activeSec.color }}>{activeSec.title}</span>
+        <span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length} items)</span>
+        {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅</span>}
+      </div>
+      <div style={{ padding: "6px 12px 12px" }}>
+        {activeSec.items.map(item => (
+          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}>
+            <span style={{ flex: 1, fontSize: 13 }}>{item.name}</span>
+            <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={e => setDraft(p => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+              style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+    {/* Footer */}
+    <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+        {BK_DEMAND_SECTIONS.filter(s => s.items.length > 0).map(sec => {
+          const isSaved = savedSections[sec.id];
+          const hasFilled = sec.items.some(i => draft[i.id] > 0);
+          return <div key={sec.id} style={{ flex: 1, height: 4, borderRadius: 2, background: isSaved ? "#16A34A" : hasFilled ? "#FDE68A" : "#E0E0DC" }} />;
+        })}
+      </div>
+      <input value={note} onChange={e => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => saveCategory(activeSec.id)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+          {savedSections[activeSec.id] ? "✅ Update" : "💾 Save"}
+        </button>
+        <button onClick={submitAll} disabled={ft === 0 || saving} style={{ flex: 2, padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : `✅ Submit All (${ft})`}</button>
+      </div>
+    </div>
+  </div>);
+};
+
 const StoreMgr = ({ onBack }) => {
   const [screen, setScreen] = useState("home");
   // Issuance state
@@ -3339,6 +3498,15 @@ const StoreMgr = ({ onBack }) => {
         </div>
       </button>
 
+      {/* BK Daily Demand */}
+      <button onClick={() => setScreen("bk_demand")} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: "1.5px solid #BBF7D0", background: "linear-gradient(135deg, #F0FDF4, #ECFDF5)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ fontSize: 34 }}>🏭</div>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>BK Daily Demand</div>
+          <div style={{ fontSize: 12, color: "#888" }}>Staff food, cleaning & maintenance needs</div>
+        </div>
+      </button>
+
       {/* Daily Purchases */}
       <button onClick={() => { resetPurchase(); setScreen("purchase"); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: "1.5px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ fontSize: 34 }}>🧾</div>
@@ -3366,6 +3534,13 @@ const StoreMgr = ({ onBack }) => {
   );
 
   // ── ISSUANCE ──
+  if (screen === "bk_demand") return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🏭 BK Daily Demand</div></div>
+      <BKDemandForm />
+    </div>
+  );
+
   if (screen === "issuance") {
     const uc = Object.values(issueImages).filter(Boolean).length;
     return (<div><SavingOverlay />
