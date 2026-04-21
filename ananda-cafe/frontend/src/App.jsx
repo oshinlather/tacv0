@@ -2565,7 +2565,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food");
     // Items to hide from wastage (not relevant for disposal tracking)
-    const wastageHidden = new Set(["roasted_peanuts", "roasted_chana", "roasted_karipatta", "podi_masala"]);
+    const wastageHidden = new Set(["roasted_peanuts", "roasted_chana", "roasted_karipatta", "podi_masala", "upma_sooji"]);
     const wastageFilterItems = (items) => items.filter((i) => !wastageHidden.has(i.id));
     const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
