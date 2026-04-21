@@ -485,6 +485,8 @@ const UsersPanel = () => {
   const [newRole, setNewRole] = useState("outlet_mgr");
   const [newOutlet, setNewOutlet] = useState("");
   const [saving, setSaving] = useState(false);
+  const [editPinId, setEditPinId] = useState(null);
+  const [editPinVal, setEditPinVal] = useState("");
 
   const load = () => { api.getUsers().then(setUsers).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -500,11 +502,11 @@ const UsersPanel = () => {
     finally { setSaving(false); }
   };
 
-  const resetPin = async (id) => {
-    if (!confirm("Reset PIN? New PIN will be generated.")) return;
+  const savePin = async (id) => {
+    if (editPinVal.length !== 4) { alert("PIN must be 4 digits"); return; }
     try {
-      const u = await api.updateUser(id, { reset_pin: true });
-      alert(`New PIN: ${u.pin}`);
+      await api.updateUser(id, { reset_pin: false, pin: editPinVal });
+      setEditPinId(null); setEditPinVal("");
       load();
     } catch (e) { alert("Error: " + e.message); }
   };
@@ -546,10 +548,19 @@ const UsersPanel = () => {
             <div style={{ fontSize: 14, fontWeight: 700 }}>{u.name}</div>
             <div style={{ fontSize: 12, color: "#888" }}>{u.phone} · {roleLabel(u.role)}{u.outlet_id && ` · ${outletLabel(u.outlet_id)}`}</div>
           </div>
-          <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4 }}>{u.pin}</span>
+          {editPinId === u.id ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="tel" inputMode="numeric" value={editPinVal} onChange={(e) => setEditPinVal(e.target.value.replace(/\D/g, "").slice(0, 4))} autoFocus
+                style={{ width: 70, fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", textAlign: "center", letterSpacing: 4, padding: "4px", borderRadius: 6, border: "2px solid #2563EB", color: "#2563EB" }} />
+              <button onClick={() => savePin(u.id)} disabled={editPinVal.length !== 4} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: editPinVal.length === 4 ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 700, fontSize: 11, cursor: editPinVal.length === 4 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✓</button>
+              <button onClick={() => { setEditPinId(null); setEditPinVal(""); }} style={{ padding: "4px 8px", borderRadius: 6, border: "none", background: "#F5F5F3", color: "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+            </div>
+          ) : (
+            <span onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4, cursor: "pointer" }} title="Tap to edit PIN">{u.pin}</span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button onClick={() => resetPin(u.id)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🔄 Reset PIN</button>
+          <button onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Change PIN</button>
           <button onClick={() => toggleActive(u.id, u.active)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: `1px solid ${u.active ? "#FECACA" : "#BBF7D0"}`, background: u.active ? "#FEF2F2" : "#F0FDF4", color: u.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{u.active ? "🚫 Disable" : "✅ Enable"}</button>
         </div>
       </div>
