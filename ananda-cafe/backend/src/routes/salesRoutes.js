@@ -965,12 +965,14 @@ router.patch('/demands/:id/draft', async (req, res) => {
 // ── GET /api/orders — Get orders/demands for a date (optionally filter by outlet)
 router.get('/orders', async (req, res) => {
   try {
-    const { date, outlet_id, status } = req.query;
+    const { date, outlet_id, status, from } = req.query;
     let query = supabase.from('demands').select('*');
     if (date) query = query.eq('date', date);
+    if (from) query = query.gte('date', from);
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
     if (status) query = query.eq('status', status);
     query = query.order('submitted_at', { ascending: false });
+    if (from && !date) query = query.limit(500);
     const { data, error } = await query;
     if (error) throw error;
     res.json(data || []);
