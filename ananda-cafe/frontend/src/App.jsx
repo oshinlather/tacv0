@@ -550,7 +550,7 @@ const UsersPanel = () => {
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>{u.name}</div>
-            <div style={{ fontSize: 12, color: "#888" }}>{u.phone} · {roleLabel(u.role)}{u.outlet_id && ` · ${outletLabel(u.outlet_id)}`}</div>
+            <div style={{ fontSize: 12, color: "#888" }}>{u.phone} · {roleLabel(u.role)}</div>
           </div>
           {editPinId === u.id ? (
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -563,6 +563,16 @@ const UsersPanel = () => {
             <span onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4, cursor: "pointer" }} title="Tap to edit PIN">{u.pin}</span>
           )}
         </div>
+        {/* Outlet assignment for outlet managers */}
+        {u.role === "outlet_mgr" && (
+          <div style={{ marginTop: 8 }}>
+            <select value={u.outlet_id || ""} onChange={async (e) => { try { await api.updateUser(u.id, { outlet_id: e.target.value || null }); load(); } catch (err) { alert("Error: " + err.message); } }}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: u.outlet_id ? "#1A1A1A" : "#999", fontWeight: 600 }}>
+              <option value="">No outlet assigned</option>
+              {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <button onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Change PIN</button>
           <button onClick={() => toggleActive(u.id, u.active)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: `1px solid ${u.active ? "#FECACA" : "#BBF7D0"}`, background: u.active ? "#FEF2F2" : "#F0FDF4", color: u.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{u.active ? "🚫 Disable" : "✅ Enable"}</button>
