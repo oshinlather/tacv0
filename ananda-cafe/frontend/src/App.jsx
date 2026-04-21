@@ -3488,16 +3488,6 @@ const StoreMgr = ({ onBack }) => {
         {todaySubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#EFF6FF", color: "#2563EB", fontSize: 11, fontWeight: 700 }}>{todaySubs.length} entries</span>}
       </div>
 
-      {/* Store Issuance */}
-      <button onClick={() => { resetIssuance(); setScreen("issuance"); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: "1.5px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
-        <div style={{ fontSize: 34 }}>📋</div>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 800 }}>Store Issuance</div>
-          <div style={{ fontSize: 12, color: "#888" }}>Record items taken out of store</div>
-          {todayIssuances.length > 0 && <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", marginTop: 3 }}>✅ {todayIssuances.length} issued today</div>}
-        </div>
-      </button>
-
       {/* BK Daily Demand */}
       <button onClick={() => setScreen("bk_demand")} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: "1.5px solid #BBF7D0", background: "linear-gradient(135deg, #F0FDF4, #ECFDF5)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ fontSize: 34 }}>🏭</div>
