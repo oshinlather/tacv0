@@ -3737,10 +3737,10 @@ const SalesUpload = () => {
           </div>
         )}
         
-        <input ref={fileRef} type="file" accept="*/*" onChange={handleFile} style={{ display: "none" }} />
-        <button onClick={() => fileRef.current?.click()} style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 14, border: "none", fontFamily: "inherit" }}>
-          📁 Choose CSV File
-        </button>
+        <div style={{ marginTop: 8 }}>
+          <input type="file" onChange={handleFile} ref={fileRef}
+            style={{ fontSize: 14, fontFamily: "inherit", cursor: "pointer" }} />
+        </div>
         {uploadResult && (
           <div style={{ marginTop: 12, padding: "8px 16px", borderRadius: 8, fontSize: 13, fontWeight: 600,
             background: uploadResult.ok ? "#F0FDF4" : "#FEF2F2",
