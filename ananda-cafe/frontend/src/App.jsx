@@ -3736,7 +3736,7 @@ const SalesUpload = () => {
           </div>
         )}
         
-        <input id="csv-upload" type="file" accept=".csv,.CSV" onChange={handleFile} style={{ display: "none" }} />
+        <input id="csv-upload" type="file" accept=".csv,.CSV,.txt,text/csv,text/plain,application/vnd.ms-excel" onChange={handleFile} style={{ display: "none" }} />
         <button onClick={() => document.getElementById("csv-upload").click()} style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "12px 28px", borderRadius: 10, cursor: "pointer", fontSize: 14, border: "none", fontFamily: "inherit" }}>
           📁 Choose CSV File
         </button>
