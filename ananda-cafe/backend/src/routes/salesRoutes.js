@@ -946,6 +946,56 @@ router.patch('/inventory/items/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// AUTH — Phone + PIN login
+// ============================================================
+
+router.post('/auth/login', async (req, res) => {
+  try {
+    const { phone, pin } = req.body;
+    if (!phone || !pin) return res.status(400).json({ error: "Phone and PIN required" });
+    const { data, error } = await supabase.from('app_users')
+      .select('*').eq('phone', phone).eq('active', true).single();
+    if (error || !data) return res.status(401).json({ error: "User not found" });
+    if (data.pin !== pin) return res.status(401).json({ error: "Incorrect PIN" });
+    res.json({ id: data.id, name: data.name, phone: data.phone, role: data.role, outlet_id: data.outlet_id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/auth/users', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('app_users').select('*').order('name');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/auth/users', async (req, res) => {
+  try {
+    const { name, phone, role, outlet_id } = req.body;
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    const { data, error } = await supabase.from('app_users')
+      .insert({ name, phone, pin, role: role || 'outlet_mgr', outlet_id: outlet_id || null })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/auth/users/:id', async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.name !== undefined) updates.name = req.body.name;
+    if (req.body.role !== undefined) updates.role = req.body.role;
+    if (req.body.outlet_id !== undefined) updates.outlet_id = req.body.outlet_id;
+    if (req.body.active !== undefined) updates.active = req.body.active;
+    if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
+    const { data, error } = await supabase.from('app_users').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── PATCH /api/demands/:id/draft — Update draft demand items
 router.patch('/demands/:id/draft', async (req, res) => {
   try {
