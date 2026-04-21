@@ -3687,6 +3687,8 @@ const SalesUpload = () => {
   const [sales, setSales] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
+  const [uploadDate, setUploadDate] = useState(today());
+  const [useCustomDate, setUseCustomDate] = useState(false);
 
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
@@ -3704,13 +3706,15 @@ const SalesUpload = () => {
     if (!file) return;
     setLoading(true);
     try {
-      const result = await api.uploadSalesCSV(file);
+      const dateToUse = useCustomDate ? uploadDate : null;
+      const result = await api.uploadSalesCSV(file, dateToUse);
       setUploadResult({ ok: true, msg: `✅ Uploaded ${result.rows_inserted} rows for ${result.date}` });
       loadSales();
     } catch (err) {
       setUploadResult({ ok: false, msg: `❌ ${err.message}` });
       setLoading(false);
     }
+    e.target.value = "";
   };
 
   return (
@@ -3718,7 +3722,20 @@ const SalesUpload = () => {
       <div style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 24, textAlign: "center", marginBottom: 20 }}>
         <div style={{ fontSize: 32, marginBottom: 8 }}>📤</div>
         <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>Upload PetPooja Daily Sales</h3>
-        <p style={{ color: "#999", fontSize: 13, margin: "0 0 16px" }}>CSV format: Order Summary Item Report</p>
+        <p style={{ color: "#999", fontSize: 13, margin: "0 0 12px" }}>CSV format: Order Summary Item Report</p>
+        
+        {/* Date override toggle */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14 }}>
+          <button onClick={() => setUseCustomDate(false)} style={{ padding: "6px 14px", borderRadius: 8, border: !useCustomDate ? "none" : "1px solid #E0E0DC", background: !useCustomDate ? "#1A1A1A" : "#fff", color: !useCustomDate ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Auto-detect date</button>
+          <button onClick={() => setUseCustomDate(true)} style={{ padding: "6px 14px", borderRadius: 8, border: useCustomDate ? "none" : "1px solid #E0E0DC", background: useCustomDate ? "#B45309" : "#fff", color: useCustomDate ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Custom date</button>
+        </div>
+        {useCustomDate && (
+          <div style={{ marginBottom: 14 }}>
+            <input type="date" value={uploadDate} onChange={(e) => setUploadDate(e.target.value)} style={{ padding: "10px 16px", borderRadius: 10, border: "2px solid #B45309", fontSize: 16, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, textAlign: "center", color: "#B45309" }} />
+            <div style={{ fontSize: 11, color: "#B45309", marginTop: 4, fontWeight: 600 }}>All rows will be saved under this date</div>
+          </div>
+        )}
+        
         <label style={{ display: "inline-block", background: "#B45309", color: "#fff", fontWeight: 800, padding: "10px 24px", borderRadius: 10, cursor: "pointer", fontSize: 14 }}>
           📁 Choose CSV File
           <input type="file" accept=".csv" onChange={handleFile} style={{ display: "none" }} />
