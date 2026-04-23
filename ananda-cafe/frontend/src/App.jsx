@@ -241,11 +241,14 @@ const DatePicker = ({ value, onChange }) => {
   const days = Array.from({ length: 4 }, (_, i) => {
     const d = istDateAgo(i);
     const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
-    return { d, label };
+    return { d, label, showDate: i <= 1 };
   });
   return (<div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
     {days.map(dy => (
-      <button key={dy.d} onClick={() => onChange(dy.d)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: value === dy.d ? 700 : 500, border: value === dy.d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: value === dy.d ? "#1A1A1A" : "#fff", color: value === dy.d ? "#fff" : "#888" }}>{dy.label}</button>
+      <button key={dy.d} onClick={() => onChange(dy.d)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: value === dy.d ? 700 : 500, border: value === dy.d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: value === dy.d ? "#1A1A1A" : "#fff", color: value === dy.d ? "#fff" : "#888", lineHeight: 1.3 }}>
+        {dy.label}
+        {dy.showDate && <div style={{ fontSize: 9, opacity: 0.6, marginTop: 1 }}>{dy.d.slice(5)}</div>}
+      </button>
     ))}
   </div>);
 };
