@@ -1043,7 +1043,7 @@ router.post('/demands', async (req, res) => {
 // ── POST /api/purchases — Create cash purchase
 router.post('/purchases', async (req, res) => {
   try {
-    const { items, payment_mode, note, outlet_id, submitted_by } = req.body;
+    const { items, payment_mode, note, outlet_id, submitted_by, date } = req.body;
     const totalAmount = (items || []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
     const record = {
       outlet_id: outlet_id || 'bk',
@@ -1052,7 +1052,7 @@ router.post('/purchases', async (req, res) => {
       payment_mode: payment_mode || 'cash',
       note: note || null,
       submitted_by: submitted_by || null,
-      date: new Date().toISOString().split('T')[0],
+      date: date || new Date().toISOString().split('T')[0],
     };
     const { data, error } = await supabase.from('purchases').insert(record).select('*').single();
     if (error) throw error;
