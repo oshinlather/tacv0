@@ -1562,6 +1562,34 @@ router.get('/pnl/live/:date', async (req, res) => {
     const dateObj = new Date(date);
     const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
 
+    // 6b. Get BK recipes for food cost calculation
+    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
+    const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+    // Get inventory items for mapping raw_material_id → rate_card id
+    const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+    const invByName = {};
+    (invItemsList || []).forEach(i => { invByName[i.name?.toLowerCase()] = i.id; invByName[i.id] = i.id; });
+    
+    const bkRecipeMap = {};
+    (bkRecipes || []).forEach(r => {
+      const ings = (bkIngredients || []).filter(i => i.recipe_id === r.id);
+      bkRecipeMap[r.id] = { 
+        ...r, 
+        yieldQty: Number(r.yield_qty) || 1, 
+        ingredients: ings.map(i => {
+          // Try to find rate card item: raw_material_id might be inventory item id or name
+          const rmId = i.raw_material_id || i.raw_material;
+          const invId = invByName[rmId] || invByName[rmId?.toLowerCase()] || rmId;
+          return { rawId: rmId, inv_id: invId, qty: Number(i.qty) || 0, unit: i.unit || 'Kg' };
+        })
+      };
+    });
+
+    // Helper: get demand item display name
+    const demandItemNameMap = {};
+    (demandItemsRaw || []).forEach(i => { demandItemNameMap[i.id] = i.name || i.id; });
+    const getDemandItemName = (id) => demandItemNameMap[id] || id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
     // 7. Compute per-outlet P&L
     const outletIds = ['sec23', 'sec31', 'sec56', 'elan'];
     const pnlResults = [];
@@ -1610,16 +1638,48 @@ router.get('/pnl/live/:date', async (req, res) => {
         Object.entries(dispItems).forEach(([itemId, qty]) => {
           if (!qty || qty <= 0) return;
           const rate = rateMap[itemId];
-          if (!rate) return;
-          // Convert qty to rate card unit if needed
-          const demandUnit = getDemandUnit(itemId);
-          const factor = demandUnit ? getUnitConv(demandUnit, rate.unit) : 1;
-          const convertedQty = Number(qty) * factor;
-          const cost = convertedQty * Number(rate.price);
-          totalVariableCost += cost;
-          const cat = rate.category || 'Other';
-          variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
-          itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: convertedQty, unit: rate.unit, rate: Number(rate.price), cost });
+          if (rate) {
+            // Direct rate card item (vegetables, packaging, gas, dairy, etc.)
+            const demandUnit = getDemandUnit(itemId);
+            const factor = demandUnit ? getUnitConv(demandUnit, rate.unit) : 1;
+            const convertedQty = Number(qty) * factor;
+            const cost = convertedQty * Number(rate.price);
+            totalVariableCost += cost;
+            const cat = rate.category || 'Other';
+            variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
+            itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: convertedQty, unit: rate.unit, rate: Number(rate.price), cost });
+          } else {
+            // BK prepared item (sambhar, dosa_batter, etc.) — no direct rate
+            // Explode into raw materials via BK recipes and price them
+            const recipe = bkRecipeMap[itemId];
+            if (recipe && recipe.ingredients) {
+              // qty is in Kg (or Batch converted to Kg)
+              const demandUnit = getDemandUnit(itemId);
+              let qtyKg = Number(qty);
+              // If demand unit is Batch, convert to Kg using recipe yield
+              if (demandUnit && demandUnit.toLowerCase() === 'batch' && recipe.yieldQty) {
+                qtyKg = Number(qty) * recipe.yieldQty;
+              }
+              const batches = recipe.yieldQty > 0 ? qtyKg / recipe.yieldQty : 0;
+              let itemCost = 0;
+              recipe.ingredients.forEach(ing => {
+                const ingRate = rateMap[ing.inv_id || ing.rawId];
+                if (ingRate) {
+                  const ingQty = ing.qty * batches; // qty per batch × batches
+                  // Convert ingredient unit to rate card unit
+                  const ingFactor = getUnitConv(ing.unit || 'kg', ingRate.unit);
+                  const ingCost = ingQty * ingFactor * Number(ingRate.price);
+                  itemCost += ingCost;
+                }
+              });
+              if (itemCost > 0) {
+                totalVariableCost += itemCost;
+                const cat = 'BK Food';
+                variableByCategory[cat] = (variableByCategory[cat] || 0) + itemCost;
+                itemBreakdown.push({ item_id: itemId, name: getDemandItemName(itemId) || itemId, category: cat, qty: qtyKg, unit: 'Kg', rate: Math.round(itemCost / qtyKg * 100) / 100, cost: itemCost });
+              }
+            }
+          }
         });
       });
 
