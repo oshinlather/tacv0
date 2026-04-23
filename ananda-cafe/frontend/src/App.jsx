@@ -15,8 +15,9 @@ const OUTLETS = [
   { id: "sec23", name: "Sector 23", short: "S-23" },
   { id: "sec31", name: "Sector 31", short: "S-31" },
   { id: "sec56", name: "Sector 56", short: "S-56" },
-  { id: "elan", name: "Elan (Franchise)", short: "ELAN" },
+  { id: "elan", name: "Elan (Franchise)", short: "ELAN", franchise: true },
 ];
+const OWN_OUTLETS = OUTLETS.filter(o => !o.franchise);
 const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
 const istNow = () => { const d = new Date(); return new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); };
 const istDateAgo = (days) => { const ist = istNow(); ist.setDate(ist.getDate() - days); return ist.toISOString().split("T")[0]; };
@@ -636,7 +637,7 @@ const CashHisab = () => {
 
   useEffect(load, [load]);
 
-  const outletCollections = OUTLETS.map(o => {
+  const outletCollections = OWN_OUTLETS.map(o => {
     const s = outletSalesData[o.id];
     const cashDeposited = s ? Number(s.cash_deposited) || 0 : 0;
     return { ...o, amount: cashDeposited, from: s?.submitted_by || "—" };
@@ -751,7 +752,7 @@ const CashLedger = () => {
   };
 
   const totals = {};
-  OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getCashDeposited(d, o.id) || 0), 0); });
+  OWN_OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getCashDeposited(d, o.id) || 0), 0); });
   const totalFromOutlets = Object.values(totals).reduce((s, v) => s + v, 0);
   const totalToOwner = dates.reduce((s, d) => s + (getOwnerHandover(d) || 0), 0);
 
@@ -785,22 +786,22 @@ const CashLedger = () => {
 
     {/* Daily breakdown */}
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "8px 6px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 9, fontWeight: 700, color: "#888" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "8px 6px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 9, fontWeight: 700, color: "#888" }}>
         <div>Date</div>
-        {OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center" }}>{o.short}</div>)}
+        {OWN_OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center" }}>{o.short}</div>)}
         <div style={{ textAlign: "center" }}>Total</div>
         <div style={{ textAlign: "center", color: "#2563EB" }}>→ Owner</div>
       </div>
       {dates.filter(d => d <= today()).map(d => {
         const dayNum = d.slice(8, 10);
-        const dayTotals = OUTLETS.map(o => getCashDeposited(d, o.id));
+        const dayTotals = OWN_OUTLETS.map(o => getCashDeposited(d, o.id));
         const dayTotal = dayTotals.reduce((s, v) => s + (v || 0), 0);
         const toOwner = getOwnerHandover(d);
         return (
-          <div key={d} style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "7px 6px", borderBottom: "1px solid #F0F0EC", alignItems: "center", fontSize: 11 }}>
+          <div key={d} style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "7px 6px", borderBottom: "1px solid #F0F0EC", alignItems: "center", fontSize: 11 }}>
             <div style={{ fontWeight: 700 }}>{dayNum}</div>
             {dayTotals.map((amt, i) => (
-              <div key={OUTLETS[i].id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 600, color: amt ? "#16A34A" : "#E0E0DC" }}>
+              <div key={OWN_OUTLETS[i].id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 600, color: amt ? "#16A34A" : "#E0E0DC" }}>
                 {amt ? `₹${(amt/1000).toFixed(1)}k` : "—"}
               </div>
             ))}
@@ -814,9 +815,9 @@ const CashLedger = () => {
         );
       })}
       {/* Monthly total row */}
-      <div style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "10px 6px", background: "#FAFAF8", borderTop: "2px solid #E8E8E4", fontSize: 11, fontWeight: 800 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "10px 6px", background: "#FAFAF8", borderTop: "2px solid #E8E8E4", fontSize: 11, fontWeight: 800 }}>
         <div>Total</div>
-        {OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#16A34A" }}>{totals[o.id] > 0 ? `₹${(totals[o.id]/1000).toFixed(1)}k` : "—"}</div>)}
+        {OWN_OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#16A34A" }}>{totals[o.id] > 0 ? `₹${(totals[o.id]/1000).toFixed(1)}k` : "—"}</div>)}
         <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>₹{(totalFromOutlets/1000).toFixed(1)}k</div>
         <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#2563EB" }}>₹{(totalToOwner/1000).toFixed(1)}k</div>
       </div>
@@ -888,7 +889,7 @@ const PaytmRecon = () => {
 
     {/* Outlet pills */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
-      {OUTLETS.map(o => (
+      {OWN_OUTLETS.map(o => (
         <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{o.short}</button>
       ))}
     </div>
