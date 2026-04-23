@@ -1700,6 +1700,11 @@ const Inventory = () => {
     setStockOutLoading(true);
     api.getOrders({ date: today() }).then((ordersData) => {
       const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
+      const issuedOrdersList = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
+      
+      // Build completedItems from issued orders
+      const completed = {};
+      
       if (stockOutView === "bk") {
         // BK raw materials from recipes — with unit conversion support.
         // Example: demand "2 Batch Dosa Batter" → convert to 36 Kg → then compute raw materials.
@@ -1728,6 +1733,24 @@ const Inventory = () => {
         });
         setStockOutData(rawReq);
         setBkDemandDisplay(originalDemand);
+        // Mark items from issued orders as completed
+        if (issuedOrdersList.length > 0) {
+          const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
+          const issuedConsolidatedKg = {};
+          (foodSection?.items || []).forEach((item) => {
+            let totalRaw = 0;
+            issuedOrdersList.forEach((o) => { totalRaw += (o.items?.[item.id] || 0); });
+            if (totalRaw === 0) return;
+            const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
+            issuedConsolidatedKg[item.id] = conv.qty;
+          });
+          Object.entries(issuedConsolidatedKg).forEach(([bkId, totalBaseQty]) => {
+            const recipe = RECIPES[bkId]; if (!recipe) return;
+            const batches = totalBaseQty / recipe.yieldQty;
+            recipe.ingredients.forEach((ing) => { completed[ing.rawId] = true; });
+          });
+        }
+        setCompletedItems(completed);
       } else {
         // Direct items for specific outlet — with unit conversion.
         // Example: outlet demands "1 Tin Fortune Oil" → deduct 15 Ltr from inventory.
@@ -1758,6 +1781,16 @@ const Inventory = () => {
         });
         setStockOutData(directItems);
         setBkDemandDisplay({});
+        // Mark items from issued orders for this outlet as completed
+        const issuedOutletOrders = issuedOrdersList.filter((o) => o.outlet_id === stockOutView);
+        if (issuedOutletOrders.length > 0) {
+          issuedOutletOrders.forEach((o) => {
+            nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
+              if ((o.items?.[item.id] || 0) > 0) completed[item.id] = true;
+            }); });
+          });
+        }
+        setCompletedItems(completed);
       }
     }).catch(() => setStockOutData(null)).finally(() => setStockOutLoading(false));
   }, [stockOutView, items]);
@@ -1844,11 +1877,13 @@ const Inventory = () => {
   const loadSmartStockOut = async () => {
     try {
       const ordersData = await api.getOrders({ date: today() });
-      // Only use pending orders (not issued, not dispatched)
+      // Pending orders (need to be issued)
       const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
+      // Already issued orders (show as struck through)
+      const issuedOrders = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
 
-      if (pendingOrders.length === 0) {
-        alert("No pending demands to issue. All demands have been issued or dispatched.");
+      if (pendingOrders.length === 0 && issuedOrders.length === 0) {
+        alert("No demands for today.");
         return;
       }
 
@@ -1884,6 +1919,29 @@ const Inventory = () => {
       setOriginalReq(newOriginal);
       setRawReqData(rawReq);
       setIssuedForOrders(pendingOrders.map((o) => o.id));
+      
+      // Calculate already-issued raw materials from issued orders (for strikethrough)
+      const alreadyIssued = {};
+      if (issuedOrders.length > 0) {
+        const issuedConsolidated = {};
+        BK_ITEMS.forEach((bk) => {
+          issuedConsolidated[bk.id] = { total: 0 };
+          issuedOrders.forEach((o) => { issuedConsolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+        });
+        Object.entries(issuedConsolidated).forEach(([bkId, data]) => {
+          const recipe = RECIPES[bkId];
+          if (!recipe || data.total === 0) return;
+          const batches = data.total / recipe.yieldQty;
+          recipe.ingredients.forEach((ing) => {
+            const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+            if (!raw) return;
+            const invItem = raw.inv_id ? items.find((i) => i.id === raw.inv_id) : null;
+            if (invItem) alreadyIssued[ing.rawId] = true;
+          });
+        });
+      }
+      setCompletedItems(alreadyIssued);
+      
       setView("stock_out");
     } catch (e) {
       alert("Failed to load requisition: " + e.message);
