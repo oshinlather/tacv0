@@ -237,6 +237,19 @@ const BackBtn = ({ onClick }) => (
   <button onClick={onClick} style={{ width: 36, height: 36, borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontSize: 17, display: "flex", alignItems: "center", justifyContent: "center", color: "#888", flexShrink: 0, fontFamily: "inherit" }}>←</button>
 );
 
+const DatePicker = ({ value, onChange }) => {
+  const days = Array.from({ length: 4 }, (_, i) => {
+    const d = istDateAgo(i);
+    const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
+    return { d, label };
+  });
+  return (<div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+    {days.map(dy => (
+      <button key={dy.d} onClick={() => onChange(dy.d)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: value === dy.d ? 700 : 500, border: value === dy.d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: value === dy.d ? "#1A1A1A" : "#fff", color: value === dy.d ? "#fff" : "#888" }}>{dy.label}</button>
+    ))}
+  </div>);
+};
+
 const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUpload, onRemove }) => {
   const uid = `cam-${secId}`;
   if (image) return (
@@ -2734,6 +2747,7 @@ const CogsDash = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
+  const [selectedDate, setSelectedDate] = useState(today()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
@@ -2746,7 +2760,7 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   // ── Staff Demand State ──
@@ -2777,17 +2791,16 @@ const OutletMgr = ({ onBack }) => {
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
-        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing });
-        const e = { ...result, type: "closing", outlet, time: timeNow(), date: today() };
+        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing, date: selectedDate });
+        const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
         setSubs((p) => [e, ...p]); setLast(e);
-        alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${today()}\n📊 ${Object.keys(closing).length} items`);
+        alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(closing).length} items`);
       } else if (type === "wastage") {
-        const deliveryDate = today();
-        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, note: note || "", date: deliveryDate, submitted_by: getCurrentUser()?.name || outlet });
-        const e = { ...result, type: "wastage", outlet, time: timeNow(), date: deliveryDate };
+        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, note: note || "", date: selectedDate, submitted_by: getCurrentUser()?.name || outlet });
+        const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
         setSubs((p) => [e, ...p]); setLast(e);
         const wastageCount = Object.values(draft).filter(v => v > 0).length;
-        alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n🗑️ ${wastageCount} items`);
+        alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
       } else {
         const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
         const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
@@ -2976,6 +2989,7 @@ const OutletMgr = ({ onBack }) => {
     const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
+    <DatePicker value={selectedDate} onChange={setSelectedDate} />
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {wastageSections.map((sec) => { const fl = sec.items.filter((i) => draft[i.id] > 0).length; return (
         <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || wastageSections[0].id) === sec.id ? 700 : 500, border: (expSec || wastageSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || wastageSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || wastageSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
@@ -3233,7 +3247,7 @@ const OutletMgr = ({ onBack }) => {
       setSaving(true); setErr(null);
       try {
         const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor }));
-        const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet });
+        const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
         // Photo upload — non-blocking, don't fail purchase if photo fails
         for (const [label, base64] of Object.entries(billImages)) { 
           if (base64) { try { await api.uploadPurchasePhoto(result.id, base64, label); } catch (e) { console.log("Photo upload skipped:", e.message); } }
@@ -3245,6 +3259,7 @@ const OutletMgr = ({ onBack }) => {
     };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div>{totalAmt > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalAmt)}</span>}</div>
+      <DatePicker value={selectedDate} onChange={setSelectedDate} />
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Items Purchased</div>
       {purchases.map((row, idx) => (<div key={idx} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input value={row.item} onChange={(e) => updatePurchase(idx, "item", e.target.value)} placeholder="Item name" style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 600 }} />{purchases.length > 1 && <button onClick={() => removePurchaseRow(idx)} style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 16, cursor: "pointer" }}>✕</button>}</div>
@@ -3275,6 +3290,7 @@ const OutletMgr = ({ onBack }) => {
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{allFilled}/{CLOSING_STOCK.length}</span></div>
       <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", marginBottom: 10 }}>⚠️ Fill all items. Write 0 if finished.</div>
+      <DatePicker value={selectedDate} onChange={setSelectedDate} />
       <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
         {csSections.map((sec) => { const fl = sec.items.filter((i) => closing[`cs_${i.id}`] !== undefined && closing[`cs_${i.id}`] !== "").length; return (
           <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: (expSec || csSections[0].id) === sec.id ? 700 : 500, border: (expSec || csSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || csSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || csSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
