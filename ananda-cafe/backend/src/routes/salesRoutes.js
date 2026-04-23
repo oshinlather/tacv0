@@ -1040,23 +1040,38 @@ router.post('/demands', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── POST /api/purchases — Create cash purchase
+// ── POST /api/purchases — Create cash purchase (flexible schema)
 router.post('/purchases', async (req, res) => {
   try {
     const { items, payment_mode, note, outlet_id, submitted_by, date } = req.body;
     const totalAmount = (items || []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+    
+    // Try to insert with all fields — gracefully handle missing columns
     const record = {
       outlet_id: outlet_id || 'bk',
-      items: items || [],
       total_amount: totalAmount,
       payment_mode: payment_mode || 'cash',
       note: note || null,
       submitted_by: submitted_by || null,
       date: date || new Date().toISOString().split('T')[0],
     };
-    const { data, error } = await supabase.from('purchases').insert(record).select('*').single();
-    if (error) throw error;
-    res.json(data);
+    
+    // Try with items column first, fallback without it
+    let result;
+    const { data: d1, error: e1 } = await supabase.from('purchases').insert({ ...record, items: items || [] }).select('*').single();
+    if (e1 && e1.message.includes("items")) {
+      // items column doesn't exist — store items in note as JSON string
+      record.note = JSON.stringify({ items: items || [], note: note || "" });
+      const { data: d2, error: e2 } = await supabase.from('purchases').insert(record).select('*').single();
+      if (e2) throw e2;
+      result = d2;
+    } else if (e1) {
+      throw e1;
+    } else {
+      result = d1;
+    }
+    
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1570,6 +1585,33 @@ router.get('/pnl/live/:date', async (req, res) => {
     const invByName = {};
     (invItemsList || []).forEach(i => { invByName[i.name?.toLowerCase()] = i.id; invByName[i.id] = i.id; });
     
+    // Build mapping: raw_material_id → rate_card id (handles _raw suffix, name matching)
+    const rawToRateMap = {};
+    const rateByName = {};
+    (rates || []).forEach(r => { rateByName[r.name?.toLowerCase().trim()] = r.id; });
+    const invNameToRate = {};
+    (invItemsList || []).forEach(i => { 
+      // If inventory item has a rate card entry, map it
+      if (rateMap[i.id]) invNameToRate[i.name?.toLowerCase().trim()] = i.id;
+    });
+    
+    const findRateId = (rmId) => {
+      if (rateMap[rmId]) return rmId;
+      // Strip _raw suffix
+      const stripped = rmId.replace(/_raw$/, '');
+      if (rateMap[stripped]) return stripped;
+      // Try common variations
+      const variations = [stripped, stripped + 's', stripped.replace(/_/g, ' ')];
+      for (const v of variations) {
+        if (rateMap[v]) return v;
+        if (rateByName[v]) return rateByName[v];
+      }
+      // Try inventory name match
+      const invItem = (invItemsList || []).find(i => i.id === rmId || i.id === stripped);
+      if (invItem && rateMap[invItem.id]) return invItem.id;
+      return null;
+    };
+
     const bkRecipeMap = {};
     (bkRecipes || []).forEach(r => {
       const ings = (bkIngredients || []).filter(i => i.recipe_id === r.id);
@@ -1663,10 +1705,11 @@ router.get('/pnl/live/:date', async (req, res) => {
               const batches = recipe.yieldQty > 0 ? qtyKg / recipe.yieldQty : 0;
               let itemCost = 0;
               recipe.ingredients.forEach(ing => {
-                const ingRate = rateMap[ing.inv_id || ing.rawId];
+                const rmId = ing.inv_id || ing.rawId;
+                const rateId = findRateId(rmId);
+                const ingRate = rateId ? rateMap[rateId] : null;
                 if (ingRate) {
-                  const ingQty = ing.qty * batches; // qty per batch × batches
-                  // Convert ingredient unit to rate card unit
+                  const ingQty = ing.qty * batches;
                   const ingFactor = getUnitConv(ing.unit || 'kg', ingRate.unit);
                   const ingCost = ingQty * ingFactor * Number(ingRate.price);
                   itemCost += ingCost;
