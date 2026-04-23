@@ -2092,7 +2092,7 @@ router.get('/cash-handovers', async (req, res) => {
     const { month, date, from_role, to_role } = req.query;
     let query = supabase.from('cash_handovers').select('*').order('date', { ascending: false });
     if (date) query = query.eq('date', date);
-    if (month) { query = query.gte('date', `${month}-01`).lte('date', `${month}-31`); }
+    if (month) { const lastDay = new Date(Number(month.slice(0,4)), Number(month.slice(5,7)), 0).getDate(); query = query.gte('date', `${month}-01`).lte('date', `${month}-${String(lastDay).padStart(2,'0')}`); }
     if (from_role) query = query.eq('from_role', from_role);
     if (to_role) query = query.eq('to_role', to_role);
     if (!date && !month) query = query.limit(100);
@@ -2122,8 +2122,11 @@ router.post('/cash-handovers', async (req, res) => {
 router.get('/paytm-actuals', async (req, res) => {
   try {
     const { month } = req.query; // YYYY-MM
-    const startDate = month ? `${month}-01` : new Date().toISOString().slice(0, 8) + '01';
-    const endDate = month ? `${month}-31` : new Date().toISOString().slice(0, 10);
+    const year = Number((month || today().slice(0, 7)).slice(0, 4));
+    const mon = Number((month || today().slice(0, 7)).slice(5, 7));
+    const startDate = `${month || today().slice(0, 7)}-01`;
+    const lastDay = new Date(year, mon, 0).getDate(); // correct last day of month
+    const endDate = `${month || today().slice(0, 7)}-${String(lastDay).padStart(2, '0')}`;
     const { data, error } = await supabase.from('paytm_actuals').select('*')
       .gte('date', startDate).lte('date', endDate).order('date');
     if (error) throw error;
