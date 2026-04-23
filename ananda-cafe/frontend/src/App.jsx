@@ -1679,7 +1679,8 @@ const Inventory = () => {
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [stockInPrices, setStockInPrices] = useState({}); // { item_id: total_price }
-  const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false }
+  const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false } — ticked for current issue
+  const [completedItems, setCompletedItems] = useState({}); // { rawId: true } — already issued, show as done
   const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
   const [issuing, setIssuing] = useState(false);
   const [editingItem, setEditingItem] = useState(null); // id of item being edited
@@ -2095,7 +2096,8 @@ const Inventory = () => {
             const mergedData = { ...(stockOutData || {}), ...extraItems };
             const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
             const tickedCount = visibleIds.filter((k) => issuedItems[k]).length;
-            return visibleIds.length > 0 && <span style={{ fontSize: 11, color: "#16A34A", fontWeight: 700 }}>{tickedCount}/{visibleIds.length} issued</span>;
+            const completedCount = Object.keys(completedItems).filter(k => completedItems[k] && mergedData[k]).length;
+            return visibleIds.length > 0 && <span style={{ fontSize: 11, color: completedCount > 0 ? "#16A34A" : "#DC2626", fontWeight: 700 }}>{completedCount}/{visibleIds.length} issued</span>;
           })()}
         </div>
         {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
@@ -2192,6 +2194,14 @@ const Inventory = () => {
                 return false;
               };
               const unitMismatch = invItem && item.unit && invItem.unit && !unitsCompatible(item.unit, invItem.unit);
+              const isDone = completedItems[id];
+              if (isDone) return (
+                <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: "#F0FDF4", opacity: 0.4 }}>
+                  <span style={{ width: 24, height: 24, borderRadius: 6, background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span></span>
+                  <div style={{ flex: 1 }}><div style={{ fontSize: 12, fontWeight: 600, textDecoration: "line-through", color: "#999" }}>{item.name}</div></div>
+                  <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>ISSUED</span>
+                </div>
+              );
               return (
                 <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : isManual ? "#FFF7ED" : "transparent", opacity: issued ? 0.6 : 1 }}>
                   <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
@@ -2346,12 +2356,18 @@ const Inventory = () => {
             if (manualCount > 0) msg += ` (${manualCount} manual)`;
             if (editedCount > 0) msg += ` (${editedCount} edited)`;
             alert(msg);
+            // Mark issued items as completed (strikethrough)
+            setCompletedItems(p => {
+              const c = { ...p };
+              tickedIds.forEach(id => { c[id] = true; });
+              return c;
+            });
             // Mark all related orders as "issued" so they don't show in stock out again
             const orderIds = issuedForOrders || [];
             for (const oid of orderIds) {
               try { await api.updateOrderStatus(oid, "issued"); } catch (e) { console.error("Status update failed:", e); }
             }
-            setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); load();
+            setIssuedItems({}); setEditedQty({}); load();
           } catch (e) { alert("Error: " + e.message); }
           finally { setIssuing(false); }
         }} disabled={issuing || tickedCount === 0} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing || tickedCount === 0 ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing || tickedCount === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
