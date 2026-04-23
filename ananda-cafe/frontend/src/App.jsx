@@ -1551,7 +1551,12 @@ const LiveActivity = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletOrders = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  useEffect(() => { api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); }, []);
+  useEffect(() => { 
+    const tomorrow = istDateAgo(-1);
+    Promise.all([api.getOrders({ date: today() }), api.getOrders({ date: tomorrow })]).then(([t, tm]) => {
+      setOrders([...(t || []), ...(tm || []).filter(d => d.demand_slot === "morning")]);
+    }).catch(() => setOrders([])).finally(() => setLoading(false)); 
+  }, []);
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-orders">
@@ -1706,7 +1711,13 @@ const Dispatch = () => {
   const [expandedCat, setExpandedCat] = useState({});
   const [challanOrder, setChallanOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
-  const load = () => { setLoading(true); api.getOrders({ date: today() }).then(setOrders).catch(() => setOrders([])).finally(() => setLoading(false)); };
+  const load = () => { 
+    setLoading(true); 
+    const tomorrow = istDateAgo(-1);
+    Promise.all([api.getOrders({ date: today() }), api.getOrders({ date: tomorrow })]).then(([t, tm]) => {
+      setOrders([...(t || []), ...(tm || []).filter(d => d.demand_slot === "morning")]);
+    }).catch(() => setOrders([])).finally(() => setLoading(false)); 
+  };
   useEffect(load, []);
 
   const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet));
@@ -2062,7 +2073,16 @@ const Inventory = () => {
   // Auto-load stock out data when view changes
   useEffect(() => {
     setStockOutLoading(true);
-    api.getOrders({ date: today() }).then((ordersData) => {
+    const tomorrow = istDateAgo(-1);
+    Promise.all([
+      api.getOrders({ date: today() }),
+      api.getOrders({ date: tomorrow }),
+    ]).then(([todayOrders, tomorrowOrders]) => {
+      // Combine: today's orders + tomorrow morning demands
+      const ordersData = [
+        ...(todayOrders || []),
+        ...(tomorrowOrders || []).filter(d => d.demand_slot === "morning"),
+      ];
       const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
       const issuedOrdersList = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
       
@@ -2252,10 +2272,16 @@ const Inventory = () => {
   // Load raw material requisition from BK — PENDING orders only
   const loadSmartStockOut = async () => {
     try {
-      const ordersData = await api.getOrders({ date: today() });
-      // Pending orders (need to be issued)
+      const tomorrow = istDateAgo(-1);
+      const [todayOrders, tomorrowOrders] = await Promise.all([
+        api.getOrders({ date: today() }),
+        api.getOrders({ date: tomorrow }),
+      ]);
+      const ordersData = [
+        ...(todayOrders || []),
+        ...(tomorrowOrders || []).filter(d => d.demand_slot === "morning"),
+      ];
       const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
-      // Already issued orders (show as struck through)
       const issuedOrders = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
 
       if (pendingOrders.length === 0 && issuedOrders.length === 0) {
@@ -5958,5 +5984,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
