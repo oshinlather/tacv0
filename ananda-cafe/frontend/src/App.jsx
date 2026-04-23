@@ -611,15 +611,24 @@ const CashHisab = () => {
   const [ownerNote, setOwnerNote] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [outletSalesData, setOutletSalesData] = useState({});
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
   const userName = getCurrentUser()?.name || "Store Manager";
 
   const load = useCallback(() => {
     setLoading(true);
-    api.getCashHandovers({ date: dateStr }).then(data => {
-      setHandovers(data || []);
-      const toOwner = (data || []).find(h => h.from_role === "store" && h.to_role === "owner" && h.date === dateStr);
+    Promise.all([
+      api.getCashHandovers({ date: dateStr }).catch(() => []),
+      // Fetch outlet sales to get cash_deposited amounts
+      api.getOutletSales({ date: dateStr }).catch(() => []),
+    ]).then(([ho, sales]) => {
+      setHandovers(ho || []);
+      // Build outlet collections from daily_outlet_sales cash_deposited
+      const salesMap = {};
+      (sales || []).forEach(s => { salesMap[s.outlet_id] = s; });
+      setOutletSalesData(salesMap);
+      const toOwner = (ho || []).find(h => h.from_role === "store" && h.to_role === "owner" && h.date === dateStr);
       if (toOwner) { setOwnerHandover(String(toOwner.amount)); setOwnerNote(toOwner.note || ""); }
       else { setOwnerHandover(""); setOwnerNote(""); }
     }).finally(() => setLoading(false));
@@ -628,8 +637,9 @@ const CashHisab = () => {
   useEffect(load, [load]);
 
   const outletCollections = OUTLETS.map(o => {
-    const h = handovers.find(h => h.outlet_id === o.id && h.from_role === "outlet" && h.date === dateStr);
-    return { ...o, amount: h ? Number(h.amount) : 0, from: h?.from_name || "—", time: h?.created_at };
+    const s = outletSalesData[o.id];
+    const cashDeposited = s ? Number(s.cash_deposited) || 0 : 0;
+    return { ...o, amount: cashDeposited, from: s?.submitted_by || "—" };
   });
 
   const totalCollected = outletCollections.reduce((s, o) => s + o.amount, 0);
@@ -701,6 +711,7 @@ const CashHisab = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const CashLedger = () => {
   const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [outletSales, setOutletSales] = useState([]);
   const [handovers, setHandovers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -709,12 +720,23 @@ const CashLedger = () => {
 
   useEffect(() => {
     setLoading(true);
-    api.getCashHandovers({ month }).then(data => setHandovers(data || [])).finally(() => setLoading(false));
+    Promise.all([
+      // Fetch all outlet sales for the month to get cash_deposited
+      Promise.all(dates.map(d => api.getOutletSales({ date: d }).catch(() => []))),
+      api.getCashHandovers({ month }).catch(() => []),
+    ]).then(([salesArr, ho]) => {
+      const allSales = [];
+      salesArr.forEach((dayData, i) => {
+        (dayData || []).forEach(s => { allSales.push({ ...s, date: dates[i] }); });
+      });
+      setOutletSales(allSales);
+      setHandovers(ho || []);
+    }).finally(() => setLoading(false));
   }, [month]);
 
-  const getOutletHandover = (date, outletId) => {
-    const h = handovers.find(h => h.date === date && h.outlet_id === outletId && h.from_role === "outlet");
-    return h ? Number(h.amount) : null;
+  const getCashDeposited = (date, outletId) => {
+    const s = outletSales.find(s => s.date === date && s.outlet_id === outletId);
+    return s ? Number(s.cash_deposited) || 0 : null;
   };
 
   const getOwnerHandover = (date) => {
@@ -722,9 +744,8 @@ const CashLedger = () => {
     return h ? Number(h.amount) : null;
   };
 
-  // Monthly totals
   const totals = {};
-  OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getOutletHandover(d, o.id) || 0), 0); });
+  OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getCashDeposited(d, o.id) || 0), 0); });
   const totalFromOutlets = Object.values(totals).reduce((s, v) => s + v, 0);
   const totalToOwner = dates.reduce((s, d) => s + (getOwnerHandover(d) || 0), 0);
 
@@ -766,7 +787,7 @@ const CashLedger = () => {
       </div>
       {dates.filter(d => d <= today()).map(d => {
         const dayNum = d.slice(8, 10);
-        const dayTotals = OUTLETS.map(o => getOutletHandover(d, o.id));
+        const dayTotals = OUTLETS.map(o => getCashDeposited(d, o.id));
         const dayTotal = dayTotals.reduce((s, v) => s + (v || 0), 0);
         const toOwner = getOwnerHandover(d);
         return (
