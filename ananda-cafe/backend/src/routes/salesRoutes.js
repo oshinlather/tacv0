@@ -2084,6 +2084,38 @@ router.get('/history/dispatches', async (req, res) => {
 });
 
 // ============================================================
+// CASH HANDOVER TRACKING
+// ============================================================
+
+router.get('/cash-handovers', async (req, res) => {
+  try {
+    const { month, date, from_role, to_role } = req.query;
+    let query = supabase.from('cash_handovers').select('*').order('date', { ascending: false });
+    if (date) query = query.eq('date', date);
+    if (month) { query = query.gte('date', `${month}-01`).lte('date', `${month}-31`); }
+    if (from_role) query = query.eq('from_role', from_role);
+    if (to_role) query = query.eq('to_role', to_role);
+    if (!date && !month) query = query.limit(100);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/cash-handovers', async (req, res) => {
+  try {
+    const { date, from_role, from_name, to_role, to_name, outlet_id, amount, note } = req.body;
+    if (!date || !amount) return res.status(400).json({ error: "Date and amount required" });
+    const { data, error } = await supabase.from('cash_handovers')
+      .upsert({ date, from_role, from_name, to_role, to_name, outlet_id: outlet_id || null, amount: Number(amount), note },
+        { onConflict: 'date,outlet_id,from_role' })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // PAYTM RECONCILIATION
 // ============================================================
 
