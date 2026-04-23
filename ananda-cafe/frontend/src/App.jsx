@@ -3373,10 +3373,10 @@ const OutletMgr = ({ onBack }) => {
     const csItems = csActiveSec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit }));
     const allFilled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const secFilled = csItems.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
-    const done = allFilled === CLOSING_STOCK.length;
+    const canSubmit = allFilled > 0;
     return (<div><SavingOverlay />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: done ? "#16A34A" : "#B45309" }}>{allFilled}/{CLOSING_STOCK.length}</span></div>
-      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", marginBottom: 10 }}>⚠️ Fill all items. Write 0 if finished.</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
+      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>Fill items you have in stock. Skip items that are zero or not applicable.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
       <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
         {csSections.map((sec) => { const fl = sec.items.filter((i) => closing[`cs_${i.id}`] !== undefined && closing[`cs_${i.id}`] !== "").length; return (
@@ -3393,7 +3393,7 @@ const OutletMgr = ({ onBack }) => {
           </div>); })}
       </div>
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={() => submit("closing")} disabled={!done} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: done ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: done ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{done ? "📊 Submit Closing Stock" : `Fill all (${CLOSING_STOCK.length - allFilled} remaining)`}</button>
+        <button onClick={() => submit("closing")} disabled={!canSubmit} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: canSubmit ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{canSubmit ? `📊 Submit Closing Stock (${allFilled} items)` : "Fill at least 1 item"}</button>
       </div>
     </div>); }
   return null;
