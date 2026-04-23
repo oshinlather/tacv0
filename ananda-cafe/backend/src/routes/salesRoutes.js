@@ -573,24 +573,41 @@ rmTotals[key].should_consume += ing.qty_kg * qty;
 });
 });
 
-// TODO: Get actual issued from your issuance table
-// const { data: issuances } = await supabase
-//   .from('issuances')
-//   .select('item_name, quantity')
-//   .eq('date', date);
-//
-// Match issuances to rmTotals to calculate variance
+// Get actual issued from inventory_movements (stock_out for this date)
+const { data: movements } = await supabase.from('inventory_movements')
+  .select('item_id, quantity')
+  .eq('type', 'stock_out')
+  .gte('created_at', `${date}T00:00:00`)
+  .lt('created_at', `${date}T23:59:59`);
 
-const auditRows = Object.values(rmTotals).map(rm => ({
-audit_date: date,
-outlet_code: null,
-raw_material: rm.raw_material,
-unit: rm.unit,
-should_consume: Math.round(rm.should_consume * 10000) / 10000,
-actual_issued: null,  // Fill from issuance data
-variance: null,
-variance_pct: null,
-}));
+// Also get inventory item names for matching
+const { data: invItems } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+
+// Build actual issued map by item name (matching RM audit raw_material names)
+const actualMap = {};
+(movements || []).forEach(m => {
+  const invItem = (invItems || []).find(i => i.id === m.item_id);
+  if (invItem) {
+    const name = invItem.name;
+    actualMap[name] = (actualMap[name] || 0) + Math.abs(Number(m.quantity));
+  }
+});
+
+const auditRows = Object.values(rmTotals).map(rm => {
+  const actual = actualMap[rm.raw_material] || null;
+  const variance = actual != null ? Math.round((actual - rm.should_consume) * 10000) / 10000 : null;
+  const variancePct = actual != null && rm.should_consume > 0 ? Math.round((variance / rm.should_consume) * 1000) / 10 : null;
+  return {
+    audit_date: date,
+    outlet_code: null,
+    raw_material: rm.raw_material,
+    unit: rm.unit,
+    should_consume: Math.round(rm.should_consume * 10000) / 10000,
+    actual_issued: actual != null ? Math.round(actual * 10000) / 10000 : null,
+    variance: variance,
+    variance_pct: variancePct,
+  };
+});
 
 // Save to DB
 await supabase.from('rm_audit').delete().eq('audit_date', date);
@@ -997,6 +1014,78 @@ router.patch('/auth/users/:id', async (req, res) => {
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/demands — Create demand (robust version, handles all types)
+router.post('/demands', async (req, res) => {
+  try {
+    const { outlet_id, type, items, note, date, demand_slot, submitted_by, status } = req.body;
+    if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
+    
+    const record = {
+      outlet_id,
+      type,
+      items: items || {},
+      note: note || null,
+      date: date || new Date().toISOString().split('T')[0],
+      demand_slot: demand_slot || null,
+      submitted_by: submitted_by || null,
+      status: status || 'submitted',
+      submitted_at: new Date().toISOString(),
+    };
+    
+    const { data, error } = await supabase.from('demands').insert(record).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/purchases — Create cash purchase
+router.post('/purchases', async (req, res) => {
+  try {
+    const { items, payment_mode, note, outlet_id, submitted_by } = req.body;
+    const totalAmount = (items || []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+    const record = {
+      outlet_id: outlet_id || 'bk',
+      items: items || [],
+      total_amount: totalAmount,
+      payment_mode: payment_mode || 'cash',
+      note: note || null,
+      submitted_by: submitted_by || null,
+      date: new Date().toISOString().split('T')[0],
+    };
+    const { data, error } = await supabase.from('purchases').insert(record).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/purchases/:id/photos — Upload purchase bill photo (skip if no bucket)
+router.post('/purchases/:id/photos', async (req, res) => {
+  try {
+    const { base64, label } = req.body;
+    if (!base64) return res.json({ ok: true, skipped: true });
+    
+    // Try to upload, but don't fail if bucket doesn't exist
+    const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    const filename = `${req.params.id}/${label || 'bill'}_${Date.now()}.jpg`;
+    
+    const { error } = await supabase.storage.from('bills').upload(filename, buffer, {
+      contentType: 'image/jpeg', upsert: true,
+    });
+    
+    if (error) {
+      console.log('Photo upload skipped (bucket may not exist):', error.message);
+      return res.json({ ok: true, skipped: true, reason: error.message });
+    }
+    
+    const { data: urlData } = supabase.storage.from('bills').getPublicUrl(filename);
+    res.json({ ok: true, url: urlData?.publicUrl });
+  } catch (e) {
+    // Don't fail the whole purchase just because photo upload failed
+    console.log('Photo upload error (non-fatal):', e.message);
+    res.json({ ok: true, skipped: true, reason: e.message });
+  }
 });
 
 // ── PATCH /api/demands/:id/draft — Update draft demand items
