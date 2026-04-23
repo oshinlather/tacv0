@@ -847,7 +847,9 @@ const PaytmRecon = () => {
   const totalReported = dates.reduce((s, d) => s + (reported[d] || 0), 0);
   const totalDiff = totalActual - totalReported;
 
-  return (<div>
+  return (<div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)" }}>
+    {/* Sticky header */}
+    <div style={{ flexShrink: 0 }}>
     <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💳 Paytm Reconciliation</h3>
 
     {/* Month picker */}
@@ -864,11 +866,9 @@ const PaytmRecon = () => {
       ))}
     </div>
 
-    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-
     {!loading && <>
       {/* Totals row */}
-      <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 16, background: "#E8E8E4" }}>
+      <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 12, background: "#E8E8E4" }}>
         <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
           <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Actual Paytm</div>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB", fontFamily: "'JetBrains Mono'" }}>{fmt(totalActual)}</div>
@@ -882,8 +882,14 @@ const PaytmRecon = () => {
           <div style={{ fontSize: 18, fontWeight: 800, color: totalDiff >= 0 ? "#16A34A" : "#DC2626", fontFamily: "'JetBrains Mono'" }}>{totalDiff >= 0 ? "+" : ""}{fmt(totalDiff)}</div>
         </div>
       </div>
+      </>}
+      </div>
+      {/* End sticky header */}
 
-      {/* Daily rows */}
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+      {/* Scrollable daily rows */}
+      {!loading && <div style={{ flex: 1, overflow: "auto" }}>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         {/* Header */}
         <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 80px", padding: "8px 10px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 10, fontWeight: 700, color: "#888" }}>
@@ -921,7 +927,7 @@ const PaytmRecon = () => {
           );
         })}
       </div>
-    </>}
+    </div>}
   </div>);
 };
 
