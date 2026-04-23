@@ -2084,6 +2084,33 @@ router.get('/history/dispatches', async (req, res) => {
 });
 
 // ============================================================
+// PAYTM RECONCILIATION
+// ============================================================
+
+router.get('/paytm-actuals', async (req, res) => {
+  try {
+    const { month } = req.query; // YYYY-MM
+    const startDate = month ? `${month}-01` : new Date().toISOString().slice(0, 8) + '01';
+    const endDate = month ? `${month}-31` : new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('paytm_actuals').select('*')
+      .gte('date', startDate).lte('date', endDate).order('date');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/paytm-actuals', async (req, res) => {
+  try {
+    const { date, outlet_id, actual_amount } = req.body;
+    const { data, error } = await supabase.from('paytm_actuals')
+      .upsert({ date, outlet_id, actual_amount: Number(actual_amount) || 0 }, { onConflict: 'date,outlet_id' })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // RM ORDER CONFIG — 10-day requirement per item
 // ============================================================
 
