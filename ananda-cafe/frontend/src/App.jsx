@@ -2803,7 +2803,8 @@ const OutletMgr = ({ onBack }) => {
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
-    if (type === "manual" && ft === 0) { alert("Please fill at least 1 item"); return; }
+    const filledCount = Object.values(draft).filter(v => v > 0).length;
+    if (type === "manual" && filledCount === 0) { alert("Please fill at least 1 item"); return; }
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
@@ -2823,7 +2824,7 @@ const OutletMgr = ({ onBack }) => {
         const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
         const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
         setSubs((p) => [e, ...p]); setLast(e);
-        alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${ft} items`);
+        alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
       }
       reset(); setClosing({}); setScreen("done");
     } catch (error) {
