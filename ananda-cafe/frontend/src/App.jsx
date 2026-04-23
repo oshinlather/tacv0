@@ -2773,23 +2773,35 @@ const OutletMgr = ({ onBack }) => {
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
+    if (type === "manual" && ft === 0) { alert("Please fill at least 1 item"); return; }
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
         const result = await api.submitClosingStock({ outlet_id: outlet, items: closing });
         const e = { ...result, type: "closing", outlet, time: timeNow(), date: today() };
         setSubs((p) => [e, ...p]); setLast(e);
-      } else {
-        const deliveryDate = type === "manual" && demandSlot === "morning" ? istDateAgo(-1) : today();
-        const slotNote = type === "manual" ? `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim() : note;
-        // Always create a fresh demand — simple and reliable
-        const result = await api.createDemand({ outlet_id: outlet, type, items: (type === "manual" || type === "wastage") ? draft : {}, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
-        const e = { ...result, type, outlet, time: timeNow(), date: deliveryDate };
+        alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${today()}\n📊 ${Object.keys(closing).length} items`);
+      } else if (type === "wastage") {
+        const deliveryDate = today();
+        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, note: note || "", date: deliveryDate, submitted_by: getCurrentUser()?.name || outlet });
+        const e = { ...result, type: "wastage", outlet, time: timeNow(), date: deliveryDate };
         setSubs((p) => [e, ...p]); setLast(e);
+        const wastageCount = Object.values(draft).filter(v => v > 0).length;
+        alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n🗑️ ${wastageCount} items`);
+      } else {
+        const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
+        const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
+        const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
+        const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
+        setSubs((p) => [e, ...p]); setLast(e);
+        alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${ft} items`);
       }
       reset(); setClosing({}); setScreen("done");
     } catch (error) {
-      setErr(error.message || "Failed to submit. Check internet connection.");
+      const errMsg = error.message || "Failed to submit";
+      setErr(errMsg);
+      alert(`❌ Submission failed!\n\n${errMsg}\n\nPlease check your internet connection and try again.`);
+      console.error("Submit error:", error);
     } finally { setSaving(false); }
   };
 
@@ -2797,17 +2809,22 @@ const OutletMgr = ({ onBack }) => {
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div><div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Please wait</div></div></div> : null;
 
-  if (screen === "pick") {
-    const user = getCurrentUser();
-    // If outlet manager with assigned outlet, skip picker
-    if (user?.outlet_id && user?.role === "outlet_mgr") {
-      const assignedOutlet = OUTLETS.find(o => o.id === user.outlet_id);
-      if (assignedOutlet) {
-        setOutlet(user.outlet_id);
-        setScreen("home");
-        return null;
+  // Auto-select outlet for assigned outlet managers
+  useEffect(() => {
+    if (screen === "pick") {
+      const user = getCurrentUser();
+      if (user?.outlet_id && user?.role === "outlet_mgr") {
+        const assignedOutlet = OUTLETS.find(o => o.id === user.outlet_id);
+        if (assignedOutlet) {
+          setOutlet(user.outlet_id);
+          setScreen("home");
+        }
       }
     }
+  }, [screen]);
+
+  if (screen === "pick") {
+    const user = getCurrentUser();
     return (<div><div style={{ textAlign: "center", marginBottom: 30 }}><div style={{ fontSize: 40, marginBottom: 6 }}>🍽️</div><h2 style={{ fontSize: 20, fontWeight: 800, margin: 0 }}>Select Outlet</h2>{user && <p style={{ fontSize: 12, color: "#888", marginTop: 4 }}>👤 {user.name}</p>}</div>{OUTLETS.map((o) => (<button key={o.id} onClick={() => { setOutlet(o.id); setScreen("home"); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 14, border: "1px solid #E8E8E4", background: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 12, marginBottom: 8, color: "#1A1A1A" }}><span style={{ fontSize: 24 }}>🏪</span><span style={{ flex: 1 }}>{o.name}</span><span style={{ color: "#CCC" }}>→</span></button>))}{onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 12, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}</div>);
   }
 
@@ -3211,16 +3228,20 @@ const OutletMgr = ({ onBack }) => {
     const validItems = purchases.filter((p) => p.item.trim() && p.amount);
     const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
     const billCount = Object.values(billImages).filter(Boolean).length;
-    const canSubmit = validItems.length > 0 && billCount > 0;
+    const canSubmit = validItems.length > 0;
     const submitPurchase = async () => {
       setSaving(true); setErr(null);
       try {
         const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor }));
-        const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote });
-        for (const [label, base64] of Object.entries(billImages)) { if (base64) await api.uploadPurchasePhoto(result.id, base64, label); }
+        const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet });
+        // Photo upload — non-blocking, don't fail purchase if photo fails
+        for (const [label, base64] of Object.entries(billImages)) { 
+          if (base64) { try { await api.uploadPurchasePhoto(result.id, base64, label); } catch (e) { console.log("Photo upload skipped:", e.message); } }
+        }
+        alert(`✅ Purchase recorded!\n\n💰 ₹${totalAmt.toLocaleString("en-IN")}\n📦 ${validItems.length} items\n🏪 ${oData?.name}`);
         const e = { ...result, type: "purchase", outlet, totalAmount: totalAmt, paymentMode, time: timeNow(), date: today() };
         setSubs((p) => [e, ...p]); setLast(e); resetPurchase(); setScreen("done");
-      } catch (error) { setErr(error.message); } finally { setSaving(false); }
+      } catch (error) { setErr(error.message); alert(`❌ Purchase failed: ${error.message}`); } finally { setSaving(false); }
     };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div>{totalAmt > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalAmt)}</span>}</div>
@@ -3357,33 +3378,20 @@ const BKDemandForm = () => {
   }, []);
 
   const saveCategory = async (secId) => {
-    try {
-      if (draftId) {
-        await api.updateDemandDraft(draftId, { items: draft });
-      } else {
-        const result = await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", status: "draft", submitted_by: getCurrentUser()?.name || "bk" });
-        if (result?.id) setDraftId(result.id);
-      }
-      setSavedSections(p => ({ ...p, [secId]: true }));
-      const currentIdx = BK_DEMAND_SECTIONS.findIndex(s => s.id === secId);
-      const nextUnsaved = BK_DEMAND_SECTIONS.slice(currentIdx + 1).find(s => s.items.length > 0 && !savedSections[s.id]);
-      if (nextUnsaved) setExpSec(nextUnsaved.id);
-    } catch (e) { alert("Save failed: " + e.message); }
+    setSavedSections(p => ({ ...p, [secId]: true }));
+    const currentIdx = BK_DEMAND_SECTIONS.findIndex(s => s.id === secId);
+    const nextUnsaved = BK_DEMAND_SECTIONS.slice(currentIdx + 1).find(s => s.items.length > 0 && !savedSections[s.id]);
+    if (nextUnsaved) setExpSec(nextUnsaved.id);
   };
 
   const submitAll = async () => {
     if (ft === 0) return;
     setSaving(true);
     try {
-      if (draftId) {
-        await api.updateDemandDraft(draftId, { items: draft });
-        await api.updateOrderStatus(draftId, "submitted");
-      } else {
-        await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", submitted_by: getCurrentUser()?.name || "bk" });
-      }
-      alert(`✅ BK Demand submitted — ${ft} items`);
+      await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", submitted_by: getCurrentUser()?.name || "bk" });
+      alert(`✅ BK Demand submitted!\n\n🏭 Base Kitchen\n📅 ${today()}\n📦 ${ft} items`);
       setDraft({}); setSavedSections({}); setDraftId(null); setNote("");
-    } catch (e) { alert("Error: " + e.message); }
+    } catch (e) { alert(`❌ Failed: ${e.message}`); }
     finally { setSaving(false); }
   };
 
