@@ -3371,7 +3371,7 @@ const OutletMgr = ({ onBack }) => {
     const csSections = DEMAND_SECTIONS;
     const csActiveSec = csSections.find((s) => s.id === expSec) || csSections[0];
     if (!expSec) setExpSec(csSections[0].id);
-    const csItems = csActiveSec.items.map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit }));
+    const csItems = csActiveSec.items.filter((i) => !CLOSING_HIDDEN.has(i.id)).map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit }));
     const allFilled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const secFilled = csItems.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const canSubmit = allFilled > 0;
