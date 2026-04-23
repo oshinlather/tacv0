@@ -2942,8 +2942,8 @@ const OutletMgr = ({ onBack }) => {
     const loadSalesData = () => {
       setSalesLoading(true);
       Promise.all([
-        api.getOutletSales({ outlet_id: outlet, date: today() }).catch(() => []),
-        api.getLatestCash(outlet, today()).catch(() => null),
+        api.getOutletSales({ outlet_id: outlet, date: selectedDate }).catch(() => []),
+        api.getLatestCash(outlet, selectedDate).catch(() => null),
       ]).then(([sales, prev]) => {
         if (sales && sales.length > 0) {
           const s = sales[0];
@@ -2975,8 +2975,8 @@ const OutletMgr = ({ onBack }) => {
     const submitSales = async () => {
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: today(), total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
-        alert("✅ Daily sales saved!");
+        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
+        alert(`✅ Daily sales saved!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}`);
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
       finally { setSalesSaving(false); }
@@ -3000,7 +3000,8 @@ const OutletMgr = ({ onBack }) => {
     );
 
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{today()}</span></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{selectedDate}</span></div>
+      <DatePicker value={selectedDate} onChange={(d) => { setSelectedDate(d); setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); }} />
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Sales</div>
