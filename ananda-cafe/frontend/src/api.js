@@ -149,6 +149,9 @@ const api = {
   // Paytm Reconciliation
   getPaytmActuals: (month) => get("/api/paytm-actuals", { month }),
   savePaytmActual: (date, outlet_id, actual_amount) => post("/api/paytm-actuals", { date, outlet_id, actual_amount }),
+  // Cash Handovers
+  getCashHandovers: (params) => get("/api/cash-handovers", params),
+  saveCashHandover: (data) => post("/api/cash-handovers", data),
   // Auth
   login: (phone, pin) => post("/api/auth/login", { phone, pin }),
   getUsers: () => get("/api/auth/users"),
