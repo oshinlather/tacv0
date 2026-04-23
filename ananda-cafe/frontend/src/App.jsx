@@ -5131,7 +5131,7 @@ const MonthlyInventory = () => {
 // Standard units for master data forms (dropdown options)
 const UNITS = ["Kg", "Gm", "Ltr", "Ml", "Pcs", "Pkt", "Batch", "Tin", "Box", "Bundle", "Can", "Roll", "Bunch", "Bag", "Dozen"];
 
-const MasterData = () => {
+const MasterData = ({ hideRecipes }) => {
   const [tab, setTab] = useState("demand"); // demand, raw, recipes, inventory
   const [search, setSearch] = useState("");
   const [editId, setEditId] = useState(null);
@@ -5216,7 +5216,7 @@ const MasterData = () => {
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto" }}>
-        {[{ id: "demand", label: "📋 Demand Items", c: "#B45309" }, { id: "raw", label: "🧪 Raw Materials", c: "#2563EB" }, { id: "recipes", label: "📖 Recipes", c: "#16A34A" }, { id: "conversions", label: "🔄 Conversions", c: "#EA580C" }, { id: "inventory", label: "📦 Inventory SKUs", c: "#9333EA" }].map((t) => (
+        {[{ id: "demand", label: "📋 Demand Items", c: "#B45309" }, { id: "raw", label: "🧪 Raw Materials", c: "#2563EB" }, { id: "recipes", label: "📖 Recipes", c: "#16A34A" }, { id: "conversions", label: "🔄 Conversions", c: "#EA580C" }, { id: "inventory", label: "📦 Inventory SKUs", c: "#9333EA" }].filter(t => !(hideRecipes && t.id === "recipes")).map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: tab === t.id ? 700 : 500, border: tab === t.id ? "none" : "1px solid #E0E0DC", background: tab === t.id ? t.c : "#fff", color: tab === t.id ? "#fff" : "#888", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{t.label}</button>
         ))}
       </div>
@@ -5979,7 +5979,7 @@ export default function AnandaCafe() {
       {storeView === "cash" && <CashHisab />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
-      {storeView === "master" && <MasterData />}
+      {storeView === "master" && <MasterData hideRecipes />}
     </div>
   </div>);
   return null;
