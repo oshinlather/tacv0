@@ -1595,18 +1595,20 @@ router.get('/pnl/live/:date', async (req, res) => {
       if (rateMap[i.id]) invNameToRate[i.name?.toLowerCase().trim()] = i.id;
     });
     
+    // Known ID mappings for recipe ingredients → rate card
+    const KNOWN_MAPPINGS = {
+      'coriander_raw': 'coriander_leaves',
+      'urad_daal': 'urad_dal',
+      'sona_masoori_raw': 'sona_masoori_rice',
+    };
+    
     const findRateId = (rmId) => {
       if (rateMap[rmId]) return rmId;
-      // Strip _raw suffix
+      if (KNOWN_MAPPINGS[rmId] && rateMap[KNOWN_MAPPINGS[rmId]]) return KNOWN_MAPPINGS[rmId];
       const stripped = rmId.replace(/_raw$/, '');
       if (rateMap[stripped]) return stripped;
-      // Try common variations
-      const variations = [stripped, stripped + 's', stripped.replace(/_/g, ' ')];
-      for (const v of variations) {
-        if (rateMap[v]) return v;
-        if (rateByName[v]) return rateByName[v];
-      }
-      // Try inventory name match
+      if (KNOWN_MAPPINGS[stripped] && rateMap[KNOWN_MAPPINGS[stripped]]) return KNOWN_MAPPINGS[stripped];
+      // Try inventory item lookup
       const invItem = (invItemsList || []).find(i => i.id === rmId || i.id === stripped);
       if (invItem && rateMap[invItem.id]) return invItem.id;
       return null;
