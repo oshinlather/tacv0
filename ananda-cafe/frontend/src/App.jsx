@@ -1731,13 +1731,10 @@ const Inventory = () => {
             rawReq[ing.rawId].qty += ing.qty * batches;
           });
         });
-        setStockOutData(rawReq);
-        setBkDemandDisplay(originalDemand);
-        // Mark items from issued orders as completed
+        // Also add items from ISSUED orders into rawReq (for display as struck through)
         if (issuedOrdersList.length > 0) {
-          const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
           const issuedConsolidatedKg = {};
-          (foodSection?.items || []).forEach((item) => {
+          foodItems.forEach((item) => {
             let totalRaw = 0;
             issuedOrdersList.forEach((o) => { totalRaw += (o.items?.[item.id] || 0); });
             if (totalRaw === 0) return;
@@ -1747,10 +1744,17 @@ const Inventory = () => {
           Object.entries(issuedConsolidatedKg).forEach(([bkId, totalBaseQty]) => {
             const recipe = RECIPES[bkId]; if (!recipe) return;
             const batches = totalBaseQty / recipe.yieldQty;
-            recipe.ingredients.forEach((ing) => { completed[ing.rawId] = true; });
+            recipe.ingredients.forEach((ing) => {
+              const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+              if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg", inv_id: raw?.inv_id || null };
+              // Don't add qty — these are already issued, just need to show in the list
+              completed[ing.rawId] = true;
+            });
           });
         }
         setCompletedItems(completed);
+        setStockOutData(rawReq);
+        setBkDemandDisplay(originalDemand);
       } else {
         // Direct items for specific outlet — with unit conversion.
         // Example: outlet demands "1 Tin Fortune Oil" → deduct 15 Ltr from inventory.
@@ -1781,14 +1785,22 @@ const Inventory = () => {
         });
         setStockOutData(directItems);
         setBkDemandDisplay({});
-        // Mark items from issued orders for this outlet as completed
+        // Add items from issued orders for this outlet (for strikethrough display)
         const issuedOutletOrders = issuedOrdersList.filter((o) => o.outlet_id === stockOutView);
         if (issuedOutletOrders.length > 0) {
           issuedOutletOrders.forEach((o) => {
             nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
-              if ((o.items?.[item.id] || 0) > 0) completed[item.id] = true;
+              const qty = o.items?.[item.id] || 0;
+              if (qty > 0) {
+                const conv = convertToBase(qty, item.unit, item.id, item.name);
+                if (!directItems[item.id]) {
+                  directItems[item.id] = { name: item.name, qty: 0, rawQty: 0, unit: conv.unit, rawUnit: item.unit, converted: conv.converted, factor: conv.factor, category: sec.titleHi };
+                }
+                completed[item.id] = true;
+              }
             }); });
           });
+          setStockOutData({ ...directItems }); // re-set with issued items included
         }
         setCompletedItems(completed);
       }
