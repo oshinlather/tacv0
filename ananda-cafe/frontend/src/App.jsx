@@ -689,6 +689,12 @@ const CashHisab = () => {
     </div>
 
     {/* Handover to Owner */}
+    {handedToOwner > 0 && (
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "#EFF6FF", borderRadius: 12, border: "1px solid #BFDBFE", marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#1D4ED8" }}>Available Cash (Collected − Handed Over)</span>
+        <span style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: pending > 0 ? "#B45309" : "#16A34A" }}>₹{pending.toLocaleString("en-IN")}</span>
+      </div>
+    )}
     <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 8 }}>📤 Handover to Owner</div>
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px" }}>
       <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
