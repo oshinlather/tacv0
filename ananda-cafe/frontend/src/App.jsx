@@ -601,6 +601,202 @@ const UsersPanel = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  PAYTM RECONCILIATION — Monthly sheet with actuals vs reported
 // ═════════════════════════════════════════════════════════════════════════════
+// ═════════════════════════════════════════════════════════════════════════════
+//  CASH HISAB — Store Manager: collect from outlets + handover to owner
+// ═════════════════════════════════════════════════════════════════════════════
+const CashHisab = () => {
+  const [selDay, setSelDay] = useState(0);
+  const [handovers, setHandovers] = useState([]);
+  const [ownerHandover, setOwnerHandover] = useState("");
+  const [ownerNote, setOwnerNote] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  const userName = getCurrentUser()?.name || "Store Manager";
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getCashHandovers({ date: dateStr }).then(data => {
+      setHandovers(data || []);
+      const toOwner = (data || []).find(h => h.from_role === "store" && h.to_role === "owner" && h.date === dateStr);
+      if (toOwner) { setOwnerHandover(String(toOwner.amount)); setOwnerNote(toOwner.note || ""); }
+      else { setOwnerHandover(""); setOwnerNote(""); }
+    }).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  useEffect(load, [load]);
+
+  const outletCollections = OUTLETS.map(o => {
+    const h = handovers.find(h => h.outlet_id === o.id && h.from_role === "outlet" && h.date === dateStr);
+    return { ...o, amount: h ? Number(h.amount) : 0, from: h?.from_name || "—", time: h?.created_at };
+  });
+
+  const totalCollected = outletCollections.reduce((s, o) => s + o.amount, 0);
+  const handedToOwner = Number(ownerHandover) || 0;
+  const pending = totalCollected - handedToOwner;
+
+  const saveOwnerHandover = async () => {
+    setSaving(true);
+    try {
+      await api.saveCashHandover({ date: dateStr, from_role: "store", from_name: userName, to_role: "owner", to_name: "Owner", amount: ownerHandover, note: ownerNote });
+      alert(`✅ Handover to Owner recorded!\n\n📅 ${dateStr}\n💰 ₹${Number(ownerHandover).toLocaleString("en-IN")}`);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (<div>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💵 Cash Hisab</h3>
+    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      {Array.from({ length: 5 }, (_, i) => {
+        const d = istDateAgo(i);
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
+        return (<button key={i} onClick={() => setSelDay(i)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", lineHeight: 1.3 }}>{label}{i <= 1 && <div style={{ fontSize: 9, opacity: 0.6 }}>{d.slice(5)}</div>}</button>);
+      })}
+    </div>
+
+    {/* Collections from outlets */}
+    <div style={{ fontSize: 12, fontWeight: 700, color: "#16A34A", marginBottom: 8 }}>📥 Collections from Outlets</div>
+    {outletCollections.map(o => (
+      <div key={o.id} style={{ display: "flex", alignItems: "center", padding: "12px 14px", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 6 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
+          <div style={{ fontSize: 10, color: "#999" }}>{o.amount > 0 ? `by ${o.from}` : "Not received yet"}</div>
+        </div>
+        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: o.amount > 0 ? "#16A34A" : "#DDD" }}>
+          {o.amount > 0 ? `₹${o.amount.toLocaleString("en-IN")}` : "—"}
+        </div>
+      </div>
+    ))}
+
+    {/* Total collected */}
+    <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "#F0FDF4", borderRadius: 12, border: "1px solid #BBF7D0", marginTop: 10, marginBottom: 20 }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>Total Collected</span>
+      <span style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{totalCollected.toLocaleString("en-IN")}</span>
+    </div>
+
+    {/* Handover to Owner */}
+    <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 8 }}>📤 Handover to Owner</div>
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 20 }}>₹</span>
+        <input type="number" inputMode="numeric" placeholder="Amount" value={ownerHandover} onChange={e => setOwnerHandover(e.target.value)}
+          style={{ flex: 1, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, fontFamily: "'JetBrains Mono'", fontWeight: 800, textAlign: "center" }} />
+      </div>
+      <input placeholder="Note (optional)" value={ownerNote} onChange={e => setOwnerNote(e.target.value)}
+        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+      <button onClick={saveOwnerHandover} disabled={!ownerHandover || saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: ownerHandover ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ownerHandover ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+        {saving ? "⏳..." : `📤 Record Handover to Owner — ₹${Number(ownerHandover || 0).toLocaleString("en-IN")}`}
+      </button>
+      {pending > 0 && handedToOwner > 0 && <div style={{ marginTop: 8, fontSize: 11, color: "#DC2626", textAlign: "center" }}>⚠️ Pending: ₹{pending.toLocaleString("en-IN")} not handed over</div>}
+    </div>
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  CASH LEDGER — Owner: full visibility of cash flow
+// ═════════════════════════════════════════════════════════════════════════════
+const CashLedger = () => {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [handovers, setHandovers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getCashHandovers({ month }).then(data => setHandovers(data || [])).finally(() => setLoading(false));
+  }, [month]);
+
+  const getOutletHandover = (date, outletId) => {
+    const h = handovers.find(h => h.date === date && h.outlet_id === outletId && h.from_role === "outlet");
+    return h ? Number(h.amount) : null;
+  };
+
+  const getOwnerHandover = (date) => {
+    const h = handovers.find(h => h.date === date && h.from_role === "store" && h.to_role === "owner");
+    return h ? Number(h.amount) : null;
+  };
+
+  // Monthly totals
+  const totals = {};
+  OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getOutletHandover(d, o.id) || 0), 0); });
+  const totalFromOutlets = Object.values(totals).reduce((s, v) => s + v, 0);
+  const totalToOwner = dates.reduce((s, d) => s + (getOwnerHandover(d) || 0), 0);
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (<div>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💵 Cash Ledger</h3>
+
+    {/* Month picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {/* Monthly totals */}
+    <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 16, background: "#E8E8E4" }}>
+      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>From Outlets</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#16A34A", fontFamily: "'JetBrains Mono'" }}>{fmt(totalFromOutlets)}</div>
+      </div>
+      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>To Owner</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB", fontFamily: "'JetBrains Mono'" }}>{fmt(totalToOwner)}</div>
+      </div>
+      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Pending</div>
+        <div style={{ fontSize: 18, fontWeight: 800, color: totalFromOutlets - totalToOwner > 0 ? "#DC2626" : "#16A34A", fontFamily: "'JetBrains Mono'" }}>{fmt(totalFromOutlets - totalToOwner)}</div>
+      </div>
+    </div>
+
+    {/* Daily breakdown */}
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+      <div style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "8px 6px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 9, fontWeight: 700, color: "#888" }}>
+        <div>Date</div>
+        {OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center" }}>{o.short}</div>)}
+        <div style={{ textAlign: "center" }}>Total</div>
+        <div style={{ textAlign: "center", color: "#2563EB" }}>→ Owner</div>
+      </div>
+      {dates.filter(d => d <= today()).map(d => {
+        const dayNum = d.slice(8, 10);
+        const dayTotals = OUTLETS.map(o => getOutletHandover(d, o.id));
+        const dayTotal = dayTotals.reduce((s, v) => s + (v || 0), 0);
+        const toOwner = getOwnerHandover(d);
+        return (
+          <div key={d} style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "7px 6px", borderBottom: "1px solid #F0F0EC", alignItems: "center", fontSize: 11 }}>
+            <div style={{ fontWeight: 700 }}>{dayNum}</div>
+            {dayTotals.map((amt, i) => (
+              <div key={OUTLETS[i].id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 600, color: amt ? "#16A34A" : "#E0E0DC" }}>
+                {amt ? `₹${(amt/1000).toFixed(1)}k` : "—"}
+              </div>
+            ))}
+            <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 700, color: dayTotal > 0 ? "#1A1A1A" : "#E0E0DC" }}>
+              {dayTotal > 0 ? `₹${(dayTotal/1000).toFixed(1)}k` : "—"}
+            </div>
+            <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 700, color: toOwner ? "#2563EB" : "#E0E0DC" }}>
+              {toOwner ? `₹${(toOwner/1000).toFixed(1)}k` : "—"}
+            </div>
+          </div>
+        );
+      })}
+      {/* Monthly total row */}
+      <div style={{ display: "grid", gridTemplateColumns: `50px ${OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "10px 6px", background: "#FAFAF8", borderTop: "2px solid #E8E8E4", fontSize: 11, fontWeight: 800 }}>
+        <div>Total</div>
+        {OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#16A34A" }}>{totals[o.id] > 0 ? `₹${(totals[o.id]/1000).toFixed(1)}k` : "—"}</div>)}
+        <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>₹{(totalFromOutlets/1000).toFixed(1)}k</div>
+        <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#2563EB" }}>₹{(totalToOwner/1000).toFixed(1)}k</div>
+      </div>
+    </div>
+  </div>);
+};
+
 const PaytmRecon = () => {
   const [month, setMonth] = useState(() => today().slice(0, 7)); // YYYY-MM
   const [actuals, setActuals] = useState([]);
@@ -3066,7 +3262,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "cash_handover", icon: "💵", t: "Cash Handover", sub: "Hand over cash to Store Manager", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -3201,6 +3397,59 @@ const OutletMgr = ({ onBack }) => {
           {salesSaving ? "⏳..." : existingData ? "💾 Update" : "💰 Submit Sales"}
         </button>
       </div>
+    </div>);
+  }
+
+  if (screen === "cash_handover") {
+    const [chAmount, setChAmount] = useState("");
+    const [chNote, setChNote] = useState("");
+    const [chSaving, setChSaving] = useState(false);
+    const [chHistory, setChHistory] = useState([]);
+    
+    useEffect(() => {
+      api.getCashHandovers({ from_role: "outlet" }).then(data => {
+        setChHistory((data || []).filter(h => h.outlet_id === outlet).slice(0, 10));
+      }).catch(() => {});
+    }, []);
+
+    const submitHandover = async () => {
+      if (!chAmount) return;
+      setChSaving(true);
+      try {
+        await api.saveCashHandover({ date: selectedDate, from_role: "outlet", from_name: getCurrentUser()?.name || outlet, to_role: "store", to_name: "Store Manager", outlet_id: outlet, amount: chAmount, note: chNote });
+        alert(`✅ Cash handover recorded!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n💰 ₹${Number(chAmount).toLocaleString("en-IN")}`);
+        setScreen("done");
+      } catch (e) { alert("Error: " + e.message); }
+      finally { setChSaving(false); }
+    };
+
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>💵 Cash Handover</div></div>
+      <DatePicker value={selectedDate} onChange={setSelectedDate} />
+      
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "20px", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: "#166534" }}>Amount handing over to Store Manager</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+          <span style={{ fontSize: 24, fontWeight: 800 }}>₹</span>
+          <input type="number" inputMode="numeric" placeholder="0" value={chAmount} onChange={e => setChAmount(e.target.value)}
+            style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 28, fontFamily: "'JetBrains Mono'", fontWeight: 800, textAlign: "center" }} />
+        </div>
+        <input placeholder="Note (optional)" value={chNote} onChange={e => setChNote(e.target.value)}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
+        <button onClick={submitHandover} disabled={!chAmount || chSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: chAmount ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: chAmount ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {chSaving ? "⏳..." : `💵 Record Handover — ₹${Number(chAmount || 0).toLocaleString("en-IN")}`}
+        </button>
+      </div>
+
+      {chHistory.length > 0 && <>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 8 }}>Recent Handovers</div>
+        {chHistory.map(h => (
+          <div key={h.id} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", marginBottom: 4 }}>
+            <div><div style={{ fontSize: 12, fontWeight: 600 }}>{h.date}</div><div style={{ fontSize: 10, color: "#999" }}>{h.from_name}</div></div>
+            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{Number(h.amount).toLocaleString("en-IN")}</div>
+          </div>
+        ))}
+      </>}
     </div>);
   }
 
@@ -5588,7 +5837,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
@@ -5637,6 +5886,7 @@ export default function AnandaCafe() {
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "cogs" && <CogsDash />}
       {ownerTab === "paytm" && <PaytmRecon />}
+      {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
@@ -5660,12 +5910,13 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={urlRole ? null : () => setApp("launcher")} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe</div></div></div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "recipes", label: "🍳 Recipes" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "recipes", label: "🍳 Recipes" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "inventory" && <Inventory />}
       {storeView === "sales" && <SalesUpload />}
+      {storeView === "cash" && <CashHisab />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData />}
