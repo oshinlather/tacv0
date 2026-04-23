@@ -598,6 +598,137 @@ const UsersPanel = () => {
   </div>);
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  PAYTM RECONCILIATION — Monthly sheet with actuals vs reported
+// ═════════════════════════════════════════════════════════════════════════════
+const PaytmRecon = () => {
+  const [month, setMonth] = useState(() => today().slice(0, 7)); // YYYY-MM
+  const [actuals, setActuals] = useState([]);
+  const [reported, setReported] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selOutlet, setSelOutlet] = useState("sec23");
+  const [editCell, setEditCell] = useState(null); // "YYYY-MM-DD"
+  const [editVal, setEditVal] = useState("");
+
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.getPaytmActuals(month).catch(() => []),
+      // Fetch reported UPI for each outlet for the month
+      Promise.all(dates.map(d => api.getOutletSales({ outlet_id: selOutlet, date: d }).catch(() => []))),
+    ]).then(([act, salesArr]) => {
+      setActuals(act || []);
+      const rep = {};
+      salesArr.forEach((sales, i) => {
+        const s = (sales || []).find(s => s.outlet_id === selOutlet);
+        if (s) rep[dates[i]] = Number(s.upi_collected) || 0;
+      });
+      setReported(rep);
+    }).finally(() => setLoading(false));
+  }, [month, selOutlet]);
+
+  const saveActual = async (date) => {
+    try {
+      await api.savePaytmActual(date, selOutlet, editVal);
+      setActuals(p => {
+        const existing = p.findIndex(a => a.date === date && a.outlet_id === selOutlet);
+        if (existing >= 0) { const n = [...p]; n[existing] = { ...n[existing], actual_amount: Number(editVal) }; return n; }
+        return [...p, { date, outlet_id: selOutlet, actual_amount: Number(editVal) }];
+      });
+      setEditCell(null); setEditVal("");
+    } catch (e) { alert("Save failed: " + e.message); }
+  };
+
+  const getActual = (date) => {
+    const a = actuals.find(a => a.date === date && a.outlet_id === selOutlet);
+    return a ? Number(a.actual_amount) : null;
+  };
+
+  const totalActual = dates.reduce((s, d) => s + (getActual(d) || 0), 0);
+  const totalReported = dates.reduce((s, d) => s + (reported[d] || 0), 0);
+  const totalDiff = totalActual - totalReported;
+
+  return (<div>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💳 Paytm Reconciliation</h3>
+
+    {/* Month picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {/* Outlet pills */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
+      {OUTLETS.map(o => (
+        <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{o.short}</button>
+      ))}
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+    {!loading && <>
+      {/* Totals row */}
+      <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 16, background: "#E8E8E4" }}>
+        <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Actual Paytm</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB", fontFamily: "'JetBrains Mono'" }}>{fmt(totalActual)}</div>
+        </div>
+        <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Reported UPI</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalReported)}</div>
+        </div>
+        <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
+          <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Difference</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: totalDiff >= 0 ? "#16A34A" : "#DC2626", fontFamily: "'JetBrains Mono'" }}>{totalDiff >= 0 ? "+" : ""}{fmt(totalDiff)}</div>
+        </div>
+      </div>
+
+      {/* Daily rows */}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 80px", padding: "8px 10px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 10, fontWeight: 700, color: "#888" }}>
+          <div>Date</div><div style={{ textAlign: "center" }}>Actual</div><div style={{ textAlign: "center" }}>Reported</div><div style={{ textAlign: "right" }}>Diff</div>
+        </div>
+        {dates.map(d => {
+          const actual = getActual(d);
+          const rep = reported[d] || 0;
+          const diff = actual != null ? actual - rep : null;
+          const isEditing = editCell === d;
+          const dayNum = Number(d.slice(8, 10));
+          const dayName = new Date(d).toLocaleDateString("en", { weekday: "short" });
+          const isFuture = d > today();
+          return (
+            <div key={d} style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 80px", padding: "8px 10px", borderBottom: "1px solid #F0F0EC", alignItems: "center", background: isFuture ? "#FAFAF8" : "transparent", opacity: isFuture ? 0.4 : 1 }}>
+              <div style={{ fontSize: 12 }}><strong>{dayNum}</strong> <span style={{ fontSize: 10, color: "#999" }}>{dayName}</span></div>
+              <div style={{ textAlign: "center" }}>
+                {isEditing ? (
+                  <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                    <input type="number" inputMode="numeric" value={editVal} onChange={e => setEditVal(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && saveActual(d)}
+                      style={{ width: 70, padding: "4px", borderRadius: 6, border: "2px solid #2563EB", fontSize: 13, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                    <button onClick={() => saveActual(d)} style={{ padding: "4px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                  </div>
+                ) : (
+                  <span onClick={() => { if (!isFuture) { setEditCell(d); setEditVal(actual != null ? String(actual) : ""); } }} style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: actual != null ? "#2563EB" : "#DDD", cursor: isFuture ? "default" : "pointer", padding: "2px 8px", borderRadius: 4, background: actual != null ? "#EFF6FF" : "transparent" }}>
+                    {actual != null ? fmt(actual) : "—"}
+                  </span>
+                )}
+              </div>
+              <div style={{ textAlign: "center", fontSize: 13, fontFamily: "'JetBrains Mono'", color: "#888" }}>{rep > 0 ? fmt(rep) : "—"}</div>
+              <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: diff == null ? "#DDD" : diff >= 0 ? "#16A34A" : "#DC2626" }}>
+                {diff != null ? (diff >= 0 ? "+" : "") + fmt(diff) : "—"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>}
+  </div>);
+};
+
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
   const [selDay, setSelDay] = useState(0);
@@ -5457,7 +5588,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
@@ -5505,6 +5636,7 @@ export default function AnandaCafe() {
       {ownerTab === "activity" && <LiveActivity />}
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "cogs" && <CogsDash />}
+      {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
