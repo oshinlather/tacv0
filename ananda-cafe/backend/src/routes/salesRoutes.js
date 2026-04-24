@@ -2089,7 +2089,10 @@ router.get('/stock-usage/:date', async (req, res) => {
 
       results.push({
         outlet_id: oid, date,
-        has_prev_closing: !!prevCS, has_today_closing: !!todayCS,
+        has_prev_closing: true, // treat missing as zero
+        has_today_closing: true, // treat missing as zero
+        prev_closing_submitted: !!prevCS,
+        today_closing_submitted: !!todayCS,
         total_used_cost: Math.round(totalUsedCost),
         variable_cost_by_category: byCategory,
         items: itemDetails.sort((a, b) => b.used_cost - a.used_cost),
@@ -2100,8 +2103,10 @@ router.get('/stock-usage/:date', async (req, res) => {
     if (!outlet || outlet === 'all') {
       const summary = {
         outlet_id: 'all', date,
-        has_prev_closing: results.every(r => r.has_prev_closing),
-        has_today_closing: results.every(r => r.has_today_closing),
+        has_prev_closing: true,
+        has_today_closing: true,
+        prev_closing_submitted: results.every(r => r.prev_closing_submitted),
+        today_closing_submitted: results.every(r => r.today_closing_submitted),
         total_used_cost: results.reduce((s, r) => s + r.total_used_cost, 0),
         variable_cost_by_category: {},
         items: [],
