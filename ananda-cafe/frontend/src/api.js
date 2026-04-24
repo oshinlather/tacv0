@@ -174,6 +174,10 @@ const api = {
   // Cash Handovers
   getCashHandovers: (params) => get("/api/cash-handovers", params),
   saveCashHandover: (data) => post("/api/cash-handovers", data),
+  // Qty Corrections (owner edit of dispatched item qty)
+  editOrderItemQty: (demand_id, item_id, new_qty, reason) =>
+    patch(`/api/orders/${demand_id}/item/${item_id}`, { new_qty, reason }),
+  getCorrections: (params) => get("/api/corrections", params),
   // Auth
   login: (phone, pin) => post("/api/auth/login", { phone, pin }),
   getUsers: () => get("/api/auth/users"),
