@@ -3069,16 +3069,16 @@ const RecipesPanel = () => {
   const [rateCard, setRateCard] = useState([]);
   const [costingLoading, setCostingLoading] = useState(false);
 
-  // Load rate card when switching to costing view
+  // Load rate card for costing calculations
   useEffect(() => {
-    if (viewMode === "costing" && rateCard.length === 0) {
+    if (rateCard.length === 0) {
       setCostingLoading(true);
       api.getRateCard()
         .then(r => setRateCard(r || []))
         .catch(() => setRateCard([]))
         .finally(() => setCostingLoading(false));
     }
-  }, [viewMode]);
+  }, []);
 
   // Build rate map for costing: { item_id: { name, price, unit } }
   const rateMap = useMemo(() => {
@@ -3453,16 +3453,43 @@ const RecipesPanel = () => {
           </div>
           <span style={{ padding: "3px 10px", borderRadius: 6, background: editMode ? "#FFFBEB" : "#EFF6FF", color: editMode ? "#B45309" : "#2563EB", fontSize: 11, fontWeight: 700 }}>{editMode ? "EDITING" : "STANDARD"}</span>
         </div>
+        {/* Show batch total + per kg cost */}
+        {(() => {
+          const costed = computeRecipeCost(sel);
+          const costMap = {};
+          if (costed) costed.ingredients.forEach(ing => { costMap[ing.rawId] = ing; });
+          return (<>
+            {costed && (
+              <div style={{ display: "flex", gap: 12, marginBottom: 12, marginTop: 8 }}>
+                <div style={{ flex: 1, background: "#FFFBEB", borderRadius: 10, padding: "10px 14px", border: "1px solid #FDE68A" }}>
+                  <div style={{ fontSize: 9, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Batch Cost</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(costed.totalCost)}</div>
+                </div>
+                <div style={{ flex: 1, background: "#F0FDF4", borderRadius: 10, padding: "10px 14px", border: "1px solid #BBF7D0" }}>
+                  <div style={{ fontSize: 9, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Cost / Kg</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{Math.round(costed.costPerKg)}</div>
+                </div>
+                {costed.hasUnpriced && (
+                  <div style={{ flex: 1, background: "#FEF2F2", borderRadius: 10, padding: "10px 14px", border: "1px solid #FECACA" }}>
+                    <div style={{ fontSize: 9, color: "#DC2626", fontWeight: 700 }}>⚠️ INCOMPLETE</div>
+                    <div style={{ fontSize: 11, color: "#991B1B", marginTop: 2 }}>Some ingredients missing from rate card</div>
+                  </div>
+                )}
+              </div>
+            )}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead><tr style={{ background: "#FAFAF8" }}>
             <th style={thS}>Raw Material</th><th style={thS}>Qty / Batch</th><th style={thS}>Unit</th>
+            <th style={{ ...thS, textAlign: "right" }}>Rate</th>
+            <th style={{ ...thS, textAlign: "right" }}>Cost</th>
             {editMode && <th style={{ ...thS, width: 40 }}></th>}
           </tr></thead>
           <tbody>
             {recipe.ingredients.map((ing, idx) => {
               const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+              const ingCost = costMap[ing.rawId];
               return (
-                <tr key={idx} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                <tr key={idx} style={{ borderBottom: "1px solid #F0F0EC", background: ingCost && !ingCost.hasRate ? "#FEF2F2" : "transparent" }}>
                   <td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td>
                   <td style={tdS}>
                     {editMode ? (
@@ -3472,6 +3499,12 @@ const RecipesPanel = () => {
                     )}
                   </td>
                   <td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit || ""}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: ingCost?.hasRate ? "#555" : "#DC2626" }}>
+                    {ingCost?.hasRate ? `₹${ingCost.rate}/${ingCost.rateUnit}` : "—"}
+                  </td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>
+                    {ingCost?.hasRate ? `₹${Math.round(ingCost.cost * 100) / 100}` : "—"}
+                  </td>
                   {editMode && (
                     <td style={tdS}>
                       <button onClick={() => removeIngredient(idx)} style={{ padding: "2px 8px", borderRadius: 4, border: "none", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
@@ -3480,8 +3513,20 @@ const RecipesPanel = () => {
                 </tr>
               );
             })}
+            {costed && (
+              <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E8E8E4" }}>
+                <td style={{ ...tdS, fontWeight: 800, fontSize: 13 }}>Total (1 batch)</td>
+                <td style={tdS}></td>
+                <td style={tdS}></td>
+                <td style={tdS}></td>
+                <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309", fontSize: 14 }}>₹{Math.round(costed.totalCost)}</td>
+                {editMode && <td style={tdS}></td>}
+              </tr>
+            )}
           </tbody>
         </table>
+          </>);
+        })()}
         {editMode && (
           <div style={{ marginTop: 14, padding: "14px", background: "#FAFAF8", borderRadius: 10, border: "1px dashed #E0E0DC" }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 8 }}>+ Add Ingredient</div>
