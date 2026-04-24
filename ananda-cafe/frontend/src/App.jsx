@@ -1013,13 +1013,13 @@ const DailyPnL = () => {
   // Save an owner qty correction for a single item, then reload P&L
   const saveQtyEdit = async () => {
     if (!editItem) return;
-    if (!editItem.demand_id) { alert("Cannot edit: this item is missing a demand reference. Please check with support."); return; }
+    if (!selOutlet) { alert("Please select a specific outlet first"); return; }
     const newQty = Number(editItem.value);
     if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity"); return; }
     if (!editItem.reason) { alert("Please pick a reason for the change"); return; }
     setEditSaving(true);
     try {
-      await api.editOrderItemQty(editItem.demand_id, editItem.item_id, newQty, editItem.reason);
+      await api.editItemQty(selOutlet, dateStr, editItem.item_id, newQty, editItem.reason);
       setEditItem(null);
       await fetchPnl();
     } catch (e) {
