@@ -76,7 +76,6 @@ const DEMAND_SECTIONS = [
     items: [
       { id: "sambhar", name: "Sambhar", unit: "Kg" },
       { id: "red_chutney", name: "Red Chutney", unit: "Kg" },
-      { id: "coconut_crush", name: "Coconut Crush", unit: "Kg" },
       { id: "pineapple_halwa", name: "Pineapple Halwa", unit: "Kg" },
       { id: "podi_masala", name: "Podi Masala", unit: "Kg" },
       { id: "vada_batter", name: "Vada Batter", unit: "Kg" },
