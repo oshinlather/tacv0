@@ -969,6 +969,7 @@ const DailyPnL = () => {
   // Owner qty-correction edit state: { demand_id, item_id, value, reason }
   const [editItem, setEditItem] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [expandedCats, setExpandedCats] = useState({});
 
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
@@ -1146,78 +1147,98 @@ const DailyPnL = () => {
           {/* VARIABLE COST */}
           <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
           <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"} />
-          {expandSection === "variable" && d.variable_by_category && Object.entries(d.variable_by_category).sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
-            <Row key={cat} label={cat} value={cost} indent sub={d.effective_sale > 0 ? pct(cost / d.effective_sale * 100) + " of sale" : ""} />
-          ))}
           {expandSection === "variable" && ((d.stock_items && d.stock_items.length > 0) || (d.item_breakdown && d.item_breakdown.length > 0)) && (() => {
             const items = d.stock_items && d.stock_items.length > 0 ? d.stock_items : d.item_breakdown || [];
             const isStockBased = d.stock_items && d.stock_items.length > 0;
+
+            // Group items by category
+            const grouped = {};
+            items.forEach((item, origIdx) => {
+              const cat = item.category || 'Other';
+              if (!grouped[cat]) grouped[cat] = { items: [], total: 0 };
+              grouped[cat].items.push({ ...item, _origIdx: origIdx });
+              grouped[cat].total += (isStockBased ? item.used_cost : item.cost) || 0;
+            });
+            const sortedCats = Object.entries(grouped).sort((a, b) => b[1].total - a[1].total);
+
             return (
-            <div style={{ padding: "8px 12px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Item-wise Breakdown {isStockBased ? "(consumed)" : "(dispatched)"}</span>
-                <span style={{ fontSize: 9, fontWeight: 500, color: "#BBB", textTransform: "none", letterSpacing: 0 }}>tap ✏️ to fix qty</span>
-              </div>
-              <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                {items.sort((a, b) => (b.used_cost || b.cost || 0) - (a.used_cost || a.cost || 0)).map((item, i) => {
-                  const isEditing = editItem && editItem._idx === i;
-                  const displayQty = isStockBased ? item.used : (item.raw_qty != null ? item.raw_qty : item.qty);
-                  const displayCost = isStockBased ? item.used_cost : item.cost;
-                  const displayRate = item.rate;
-                  const displayUnit = item.unit || '';
-                  if (isEditing) {
-                    return (
-                      <div key={i} style={{ padding: "8px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, marginBottom: 4 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {editItem.name || item.name}</div>
-                        {isStockBased && (
-                          <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
-                            Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
-                          </div>
-                        )}
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
-                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{displayQty} {displayUnit}</span>
-                        </div>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
-                          <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
-                            onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
-                            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
-                          <span style={{ fontSize: 11, color: "#888" }}>{displayUnit}</span>
-                        </div>
-                        <select value={editItem.reason} onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
-                          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
-                          <option value="">-- Reason --</option>
-                          <option value="unit_error">Unit error (kg vs g etc.)</option>
-                          <option value="typo">Typo</option>
-                          <option value="genuine_correction">Genuine correction</option>
-                          <option value="other">Other</option>
-                        </select>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button onClick={saveQtyEdit} disabled={editSaving}
-                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-                            {editSaving ? "⏳ Saving..." : "💾 Save"}</button>
-                          <button onClick={() => setEditItem(null)} disabled={editSaving}
-                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                        </div>
-                      </div>
-                    );
-                  }
-                  return (
-                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", fontSize: 11, borderBottom: "1px solid #F5F5F3", alignItems: "center" }}>
-                      <span style={{ color: "#555", flex: 1 }}>
-                        {item.name} <span style={{ color: "#BBB" }}>({displayQty} {displayUnit} × ₹{displayRate})</span>
+            <div style={{ borderBottom: "1px solid #F0F0EC" }}>
+              {sortedCats.map(([cat, group]) => {
+                const isExpanded = !!expandedCats[cat];
+                const sortedItems = group.items.sort((a, b) => ((isStockBased ? b.used_cost : b.cost) || 0) - ((isStockBased ? a.used_cost : a.cost) || 0));
+                return (
+                  <div key={cat}>
+                    {/* Category header — tappable */}
+                    <div onClick={() => setExpandedCats(prev => ({ ...prev, [cat]: !prev[cat] }))}
+                      style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", background: isExpanded ? "#FFFDF5" : "#FAFAF8", borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
+                        {isExpanded ? "▼" : "▶"} {cat} <span style={{ color: "#BBB", fontWeight: 400, fontSize: 11 }}>({group.items.length})</span>
                       </span>
-                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6 }}>{fmt(displayCost)}</span>
-                      <button
-                        onClick={() => setEditItem({ _idx: i, demand_id: item.demand_id || null, item_id: item.item_id, value: String(displayQty), reason: "", name: item.name, unit: displayUnit })}
-                        title="Edit quantity"
-                        style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
-                      >✏️</button>
+                      <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</span>
                     </div>
-                  );
-                })}
-              </div>
+                    {/* Expanded items */}
+                    {isExpanded && sortedItems.map((item, i) => {
+                      const globalIdx = item._origIdx;
+                      const isEditing = editItem && editItem._idx === globalIdx;
+                      const displayQty = isStockBased ? item.used : (item.raw_qty != null ? item.raw_qty : item.qty);
+                      const displayCost = isStockBased ? item.used_cost : item.cost;
+                      const displayRate = item.rate;
+                      const displayUnit = item.unit || '';
+                      if (isEditing) {
+                        return (
+                          <div key={globalIdx} style={{ padding: "8px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {editItem.name || item.name}</div>
+                            {isStockBased && (
+                              <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+                                Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
+                              </div>
+                            )}
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
+                              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{displayQty} {displayUnit}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
+                              <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
+                                onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
+                                style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                              <span style={{ fontSize: 11, color: "#888" }}>{displayUnit}</span>
+                            </div>
+                            <select value={editItem.reason} onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
+                              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+                              <option value="">-- Reason --</option>
+                              <option value="unit_error">Unit error (kg vs g etc.)</option>
+                              <option value="typo">Typo</option>
+                              <option value="genuine_correction">Genuine correction</option>
+                              <option value="other">Other</option>
+                            </select>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button onClick={saveQtyEdit} disabled={editSaving}
+                                style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                {editSaving ? "⏳ Saving..." : "💾 Save"}</button>
+                              <button onClick={() => setEditItem(null)} disabled={editSaving}
+                                style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div key={globalIdx} style={{ display: "flex", justifyContent: "space-between", padding: "5px 16px 5px 32px", fontSize: 11, borderBottom: "1px solid #F5F5F3", alignItems: "center", background: "#fff" }}>
+                          <span style={{ color: "#555", flex: 1 }}>
+                            {item.name} <span style={{ color: "#BBB" }}>({displayQty} {displayUnit} × ₹{displayRate})</span>
+                          </span>
+                          <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6, fontSize: 11 }}>{fmt(displayCost)}</span>
+                          <button
+                            onClick={() => setEditItem({ _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id, value: String(displayQty), reason: "", name: item.name, unit: displayUnit })}
+                            title="Edit quantity"
+                            style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
+                          >✏️</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
             </div>
             );
           })()}
@@ -3044,6 +3065,99 @@ const RecipesPanel = () => {
   const [newIngUnit, setNewIngUnit] = useState("Kg");
   const [saved, setSaved] = useState(false);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [viewMode, setViewMode] = useState("manage"); // "manage" or "costing"
+  const [rateCard, setRateCard] = useState([]);
+  const [costingLoading, setCostingLoading] = useState(false);
+
+  // Load rate card when switching to costing view
+  useEffect(() => {
+    if (viewMode === "costing" && rateCard.length === 0) {
+      setCostingLoading(true);
+      api.getRateCard()
+        .then(r => setRateCard(r || []))
+        .catch(() => setRateCard([]))
+        .finally(() => setCostingLoading(false));
+    }
+  }, [viewMode]);
+
+  // Build rate map for costing: { item_id: { name, price, unit } }
+  const rateMap = useMemo(() => {
+    const m = {};
+    rateCard.forEach(r => { m[r.id] = r; });
+    return m;
+  }, [rateCard]);
+
+  // Unit conversion
+  const getUnitConv = (fromUnit, toUnit) => {
+    const f = (fromUnit || '').toLowerCase();
+    const t = (toUnit || '').toLowerCase();
+    if (f === t) return 1;
+    if ((f === 'gm' || f === 'g' || f === 'gram') && t === 'kg') return 0.001;
+    if (f === 'kg' && (t === 'gm' || t === 'g' || t === 'gram')) return 1000;
+    if (f === 'ml' && (t === 'ltr' || t === 'l')) return 0.001;
+    if ((f === 'ltr' || f === 'l') && t === 'ml') return 1000;
+    return 1;
+  };
+
+  // Compute cost for a single recipe
+  const computeRecipeCost = (recipeKey) => {
+    const recipe = RECIPES[recipeKey];
+    if (!recipe) return null;
+    let totalCost = 0;
+    let hasUnpriced = false;
+    const ingredients = (recipe.ingredients || []).map(ing => {
+      const rawMat = RAW_MATERIALS.find(r => r.id === ing.rawId);
+      const rawName = rawMat?.name || ing.rawId;
+      const rawUnit = rawMat?.unit || 'Kg';
+
+      // Try to find rate card entry — match by rawId or by inventory mapping
+      let rate = rateMap[ing.rawId];
+      if (!rate) {
+        // Try finding by name match
+        rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
+      }
+
+      let ingCost = 0;
+      if (rate) {
+        const factor = getUnitConv(rawUnit, rate.unit);
+        ingCost = ing.qty * factor * Number(rate.price);
+      } else {
+        hasUnpriced = true;
+      }
+
+      totalCost += ingCost;
+      return {
+        rawId: ing.rawId,
+        name: rawName,
+        qty: ing.qty,
+        unit: rawUnit,
+        rate: rate ? Number(rate.price) : null,
+        rateUnit: rate?.unit || null,
+        cost: ingCost,
+        hasRate: !!rate,
+      };
+    });
+
+    const yieldQty = recipe.yieldQty || 1;
+    const costPerKg = yieldQty > 0 ? totalCost / yieldQty : 0;
+
+    return {
+      key: recipeKey,
+      name: recipe.name,
+      yield: recipe.yield,
+      yieldQty,
+      totalCost,
+      costPerKg,
+      hasUnpriced,
+      ingredients,
+    };
+  };
+
+  // Compute all recipe costs
+  const allCosts = useMemo(() => {
+    if (rateCard.length === 0) return [];
+    return Object.keys(RECIPES).map(computeRecipeCost).filter(Boolean).sort((a, b) => b.costPerKg - a.costPerKg);
+  }, [rateCard]);
 
   const recipe = editRecipes[sel];
 
@@ -3199,6 +3313,109 @@ const RecipesPanel = () => {
 
   return (
     <div id="print-recipes">
+      {/* Toggle: Manage vs Costing */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, background: "#F5F5F3", borderRadius: 10, padding: 3 }}>
+        <button onClick={() => setViewMode("manage")} style={{ flex: 1, padding: "8px 14px", borderRadius: 8, border: "none", background: viewMode === "manage" ? "#1A1A1A" : "transparent", color: viewMode === "manage" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>📖 Manage Recipes</button>
+        <button onClick={() => setViewMode("costing")} style={{ flex: 1, padding: "8px 14px", borderRadius: 8, border: "none", background: viewMode === "costing" ? "#1A1A1A" : "transparent", color: viewMode === "costing" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>💰 Recipe Costing</button>
+      </div>
+
+      {/* ── COSTING VIEW ── */}
+      {viewMode === "costing" && (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 BK Recipe Costing</h3>
+            <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Cost per batch and per kg based on recipe ingredients × rate card prices</p>
+          </div>
+
+          {costingLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading rate card...</div>}
+
+          {!costingLoading && allCosts.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No recipes or rate card not loaded</div>
+          )}
+
+          {!costingLoading && allCosts.length > 0 && (
+            <div>
+              {/* Summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10, marginBottom: 20 }}>
+                {allCosts.map(r => (
+                  <div key={r.key} onClick={() => setSel(r.key)}
+                    style={{ background: sel === r.key ? "#FFFBEB" : "#fff", border: sel === r.key ? "2px solid #F59E0B" : "1px solid #E8E8E4", borderRadius: 12, padding: "14px", cursor: "pointer", transition: "all 0.15s" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{r.name}</div>
+                    <div style={{ fontSize: 10, color: "#999", marginBottom: 8 }}>Yield: {r.yield}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <div>
+                        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Per Batch</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(r.totalCost)}</div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Per Kg</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#1A1A1A" }}>₹{Math.round(r.costPerKg)}</div>
+                      </div>
+                    </div>
+                    {r.hasUnpriced && <div style={{ fontSize: 9, color: "#DC2626", marginTop: 6, fontWeight: 600 }}>⚠️ Some ingredients missing from rate card</div>}
+                  </div>
+                ))}
+              </div>
+
+              {/* Selected recipe detail */}
+              {(() => {
+                const detail = allCosts.find(r => r.key === sel);
+                if (!detail) return null;
+                return (
+                  <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+                    <div style={{ padding: "14px 18px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontSize: 16, fontWeight: 800 }}>{detail.name}</div>
+                          <div style={{ fontSize: 11, color: "#888" }}>Yield: {detail.yield} · {detail.ingredients.length} ingredients</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 22, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(detail.totalCost)}</div>
+                          <div style={{ fontSize: 11, color: "#888" }}>₹{Math.round(detail.costPerKg)}/Kg</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ padding: "8px 0" }}>
+                      {/* Header */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 50px 80px 90px", gap: 8, padding: "6px 18px", fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, borderBottom: "1px solid #F0F0EC" }}>
+                        <span>Ingredient</span>
+                        <span style={{ textAlign: "right" }}>Qty</span>
+                        <span>Unit</span>
+                        <span style={{ textAlign: "right" }}>Rate</span>
+                        <span style={{ textAlign: "right" }}>Cost</span>
+                      </div>
+                      {detail.ingredients.sort((a, b) => b.cost - a.cost).map((ing, i) => (
+                        <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 70px 50px 80px 90px", gap: 8, padding: "8px 18px", fontSize: 12, borderBottom: "1px solid #F5F5F3", alignItems: "center", background: !ing.hasRate ? "#FEF2F2" : "transparent" }}>
+                          <span style={{ fontWeight: 600 }}>{ing.name}</span>
+                          <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{ing.qty}</span>
+                          <span style={{ color: "#888", fontSize: 11 }}>{ing.unit}</span>
+                          <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", color: ing.hasRate ? "#555" : "#DC2626" }}>
+                            {ing.hasRate ? `₹${ing.rate}/${ing.rateUnit}` : "no rate"}
+                          </span>
+                          <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>
+                            {ing.hasRate ? `₹${Math.round(ing.cost * 100) / 100}` : "—"}
+                          </span>
+                        </div>
+                      ))}
+                      {/* Total row */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 50px 80px 90px", gap: 8, padding: "10px 18px", fontSize: 13, fontWeight: 800, borderTop: "2px solid #E8E8E4", background: "#FAFAF8" }}>
+                        <span>Total (1 batch)</span>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(detail.totalCost)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── MANAGE VIEW (existing) ── */}
+      {viewMode === "manage" && <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Recipe Management</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>Standard recipes for raw material calculations and audit</p></div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -3284,6 +3501,7 @@ const RecipesPanel = () => {
         )}
         {!editMode && <div style={{ marginTop: 14, padding: "10px 14px", background: "#FAFAF8", borderRadius: 8, fontSize: 12, color: "#888" }}>Click "Edit" to modify quantities or add new ingredients. Changes affect all raw material requisitions.</div>}
       </div>
+      </>}
     </div>
   );
 };
