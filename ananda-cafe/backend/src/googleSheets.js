@@ -1,7 +1,7 @@
 // googleSheets.js — Auto-write outlet submissions to Google Sheets
 const { google } = require('googleapis');
 
-const SCOPES = ['https://www.googleapis.com/auth/spreadsheets'];
+const SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive'];
 const SHEET_NAMES = {
   sec23: 'Sector 23',
   sec31: 'Sector 31',
