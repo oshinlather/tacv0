@@ -1013,6 +1013,7 @@ const DailyPnL = () => {
   // Save an owner qty correction for a single item, then reload P&L
   const saveQtyEdit = async () => {
     if (!editItem) return;
+    if (!editItem.demand_id) { alert("Cannot edit: this item is missing a demand reference. Please check with support."); return; }
     const newQty = Number(editItem.value);
     if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity"); return; }
     if (!editItem.reason) { alert("Please pick a reason for the change"); return; }
@@ -1156,22 +1157,15 @@ const DailyPnL = () => {
               </div>
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
                 {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => {
-                  if (i === 0 && typeof window !== 'undefined' && !window.__loggedItemShape) {
-                    // TEMP DEBUG: logs once per page load so we can see what fields arrive
-                    window.__loggedItemShape = true;
-                    console.log('🔍 First item_breakdown entry:', item);
-                    console.log('🔍 Has demand_id?', !!item.demand_id, 'Value:', item.demand_id);
-                    console.log('🔍 selOutlet:', selOutlet);
-                  }
                   const isEditing = editItem && editItem.demand_id === item.demand_id && editItem.item_id === item.item_id;
-                  const canEdit = selOutlet && item.demand_id; // only per-outlet view, and only rate-card items
+                  const canEdit = !!selOutlet;
                   if (isEditing) {
                     return (
                       <div key={i} style={{ padding: "8px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, marginBottom: 4 }}>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {item.name}</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {editItem.name || item.name}</div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                           <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
-                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{item.raw_qty} {item.raw_unit}</span>
+                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{item.raw_qty != null ? item.raw_qty : item.qty} {editItem.unit || item.unit}</span>
                         </div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                           <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
@@ -1184,7 +1178,7 @@ const DailyPnL = () => {
                             onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
                             style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}
                           />
-                          <span style={{ fontSize: 11, color: "#888" }}>{item.raw_unit}</span>
+                          <span style={{ fontSize: 11, color: "#888" }}>{editItem.unit || item.unit}</span>
                         </div>
                         <select
                           value={editItem.reason}
@@ -1220,7 +1214,7 @@ const DailyPnL = () => {
                       <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: canEdit ? 6 : 0 }}>{fmt(item.cost)}</span>
                       {canEdit && (
                         <button
-                          onClick={() => setEditItem({ demand_id: item.demand_id, item_id: item.item_id, value: String(item.raw_qty), reason: "" })}
+                          onClick={() => setEditItem({ demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
                           title="Edit quantity"
                           style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}
                         >✏️</button>
