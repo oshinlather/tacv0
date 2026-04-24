@@ -1211,14 +1211,12 @@ const DailyPnL = () => {
                       <span style={{ color: "#555", flex: 1 }}>
                         {item.name} <span style={{ color: "#BBB" }}>({item.qty} {item.unit} × ₹{item.rate})</span>
                       </span>
-                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: canEdit ? 6 : 0 }}>{fmt(item.cost)}</span>
-                      {canEdit && (
-                        <button
-                          onClick={() => setEditItem({ demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
-                          title="Edit quantity"
-                          style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}
-                        >✏️</button>
-                      )}
+                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6 }}>{fmt(item.cost)}</span>
+                      <button
+                        onClick={() => setEditItem({ demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
+                        title="Edit quantity"
+                        style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
+                      >✏️</button>
                     </div>
                   );
                 })}
