@@ -2097,10 +2097,11 @@ router.get('/history/dispatches', async (req, res) => {
 // ============================================================
 router.get('/sheets/setup', async (req, res) => {
   try {
-    if (!sheetsHelper) return res.status(400).json({ error: 'Google Sheets module not available' });
-    const id = await sheetsHelper.getSpreadsheetId(supabase);
-    if (!id) return res.status(500).json({ error: 'Failed to create spreadsheet' });
-    res.json({ spreadsheet_id: id, url: `https://docs.google.com/spreadsheets/d/${id}` });
+    if (!sheetsHelper) {
+      return res.status(400).json({ error: 'Google Sheets module not available' });
+    }
+    const results = await sheetsHelper.setupAllOutlets(supabase);
+    res.json({ outlets: results });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
