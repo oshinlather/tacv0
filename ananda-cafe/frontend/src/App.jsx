@@ -1157,7 +1157,7 @@ const DailyPnL = () => {
               </div>
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
                 {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => {
-                  const isEditing = editItem && editItem.demand_id === item.demand_id && editItem.item_id === item.item_id;
+                  const isEditing = editItem && editItem._idx === i;
                   const canEdit = !!selOutlet;
                   if (isEditing) {
                     return (
@@ -1213,7 +1213,7 @@ const DailyPnL = () => {
                       </span>
                       <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6 }}>{fmt(item.cost)}</span>
                       <button
-                        onClick={() => setEditItem({ demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
+                        onClick={() => setEditItem({ _idx: i, demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
                         title="Edit quantity"
                         style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
                       >✏️</button>
