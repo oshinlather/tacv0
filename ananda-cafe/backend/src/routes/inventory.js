@@ -2,9 +2,17 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
+const { requireRole } = require("./authGuards");
+
+// All inventory operations are BK/store operations — restricted to owner + store_mgr.
+// Tiny helper to keep each route terse.
+async function gate(req, res) {
+  return await requireRole(req, res, "owner", "store_mgr");
+}
 
 // Get all inventory items with current stock + threshold status
 router.get("/", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { category, below_threshold } = req.query;
   let query = supabase.from("inventory_items").select("*, inventory_stock(current_qty, last_updated)").order("category").order("name");
   if (category) query = query.eq("category", category);
@@ -45,6 +53,7 @@ router.get("/", async (req, res) => {
 
 // Stock In (add stock) — BATCHED
 router.post("/stock-in", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { items, reason, submitted_by } = req.body;
   try {
     const validItems = items.filter(i => i.item_id && i.quantity && i.quantity > 0);
@@ -80,6 +89,7 @@ router.post("/stock-in", async (req, res) => {
 
 // Stock Out (remove stock) — BATCHED
 router.post("/stock-out", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { items, reason, submitted_by } = req.body;
   try {
     const validItems = items.filter(i => i.item_id && i.quantity && i.quantity > 0);
@@ -102,7 +112,7 @@ router.post("/stock-out", async (req, res) => {
     // 3. Batch upsert all stock updates
     const upserts = validItems.map(item => ({
       item_id: item.item_id,
-      current_qty: Math.max(0, (stockMap[item.item_id] || 0) - Number(item.quantity)),
+      current_qty: (stockMap[item.item_id] || 0) - Number(item.quantity),
       last_updated: new Date().toISOString(),
     }));
     await supabase.from("inventory_stock").upsert(upserts, { onConflict: "item_id" });
@@ -111,74 +121,71 @@ router.post("/stock-out", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Adjustment (set exact quantity)
 router.post("/adjust", async (req, res) => {
-  const { item_id, new_qty, reason, submitted_by } = req.body;
-  try {
-    const { data: current } = await supabase.from("inventory_stock").select("current_qty").eq("item_id", item_id).single();
-    const diff = Number(new_qty) - (Number(current?.current_qty) || 0);
+  if (!await gate(req, res)) return;
+  const { item_id, new_qty, reason } = req.body;
+  const { data: current } = await supabase.from("inventory_stock").select("current_qty").eq("item_id", item_id).single();
+  const oldQty = Number(current?.current_qty) || 0;
+  const delta = Number(new_qty) - oldQty;
 
-    await supabase.from("inventory_movements").insert({
-      item_id, type: "adjustment", quantity: diff,
-      reason: reason || "manual_adjustment", submitted_by,
-    });
-
-    await supabase.from("inventory_stock").upsert({ item_id, current_qty: Number(new_qty), last_updated: new Date().toISOString() }, { onConflict: "item_id" });
-    res.json({ success: true, item_id, new_qty });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  await supabase.from("inventory_movements").insert({ item_id, type: "adjust", quantity: delta, reason: reason || "manual adjustment" });
+  await supabase.from("inventory_stock").upsert({ item_id, current_qty: new_qty, last_updated: new Date().toISOString() }, { onConflict: "item_id" });
+  res.json({ success: true, old_qty: oldQty, new_qty, delta });
 });
 
-// Update threshold for an item
 router.patch("/threshold/:id", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { id } = req.params;
   const { threshold } = req.body;
-  const { data, error } = await supabase.from("inventory_items").update({ threshold: Number(threshold) }).eq("id", id).select().single();
+  const { data, error } = await supabase.from("inventory_items").update({ threshold }).eq("id", id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Bulk update thresholds
 router.post("/thresholds", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { items } = req.body;
   try {
-    for (const item of items) {
-      await supabase.from("inventory_items").update({ threshold: Number(item.threshold) }).eq("id", item.id);
+    for (const { id, threshold } of items) {
+      await supabase.from("inventory_items").update({ threshold }).eq("id", id);
     }
     res.json({ success: true, count: items.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Get movement history for an item
 router.get("/movements/:id", async (req, res) => {
-  const { id } = req.params;
-  const { limit = 50 } = req.query;
-  const { data, error } = await supabase.from("inventory_movements").select("*").eq("item_id", id).order("created_at", { ascending: false }).limit(limit);
+  if (!await gate(req, res)) return;
+  const { data, error } = await supabase.from("inventory_movements").select("*").eq("item_id", req.params.id).order("created_at", { ascending: false }).limit(100);
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Get all movements for today
 router.get("/movements", async (req, res) => {
-  const { date, limit = 100 } = req.query;
-  const targetDate = date || todayIST();
-  const { data, error } = await supabase.from("inventory_movements").select("*").gte("created_at", targetDate + "T00:00:00").lte("created_at", targetDate + "T23:59:59").order("created_at", { ascending: false }).limit(limit);
+  if (!await gate(req, res)) return;
+  const { date } = req.query;
+  let query = supabase.from("inventory_movements").select("*, inventory_items(name, unit)").order("created_at", { ascending: false }).limit(500);
+  if (date) {
+    const start = `${date}T00:00:00+05:30`;
+    const end = `${date}T23:59:59+05:30`;
+    query = query.gte("created_at", start).lte("created_at", end);
+  }
+  const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Summary - alerts count, total items, etc.
+// Summary — owner only (financial data across entire store)
 router.get("/summary", async (req, res) => {
-  const { data: items } = await supabase.from("inventory_items").select("*, inventory_stock(current_qty)");
-  const total = items?.length || 0;
-  const belowThreshold = (items || []).filter((i) => {
+  if (!await gate(req, res)) return;
+  const { data, error } = await supabase.from("inventory_items").select("*, inventory_stock(current_qty)");
+  if (error) return res.status(500).json({ error: error.message });
+  const summary = { total_items: data.length, below_threshold: 0, out_of_stock: 0 };
+  data.forEach((i) => {
     const qty = i.inventory_stock?.[0]?.current_qty || i.inventory_stock?.current_qty || 0;
-    return qty <= i.threshold;
-  }).length;
-  const outOfStock = (items || []).filter((i) => {
-    const qty = i.inventory_stock?.[0]?.current_qty || i.inventory_stock?.current_qty || 0;
-    return qty === 0;
-  }).length;
-  res.json({ total, below_threshold: belowThreshold, out_of_stock: outOfStock });
+    if (qty === 0) summary.out_of_stock++;
+    else if (qty <= i.threshold) summary.below_threshold++;
+  });
+  res.json(summary);
 });
 
 module.exports = router;
