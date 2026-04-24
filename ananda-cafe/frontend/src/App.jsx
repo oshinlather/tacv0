@@ -3116,6 +3116,35 @@ const RecipesPanel = () => {
     return 1;
   };
 
+  // Complete raw material → rate card mapping
+  const rawToRate = {
+    amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
+    chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
+    coriander_raw: 'coriander_leaves', curry_leaves_raw: 'curry_leaves',
+    deggi_mirch_raw: 'deggi_mirch', desi_ghee_raw: 'desi_ghee',
+    dhaniya_whole_raw: 'dhaniya_whole', drumstick_raw: 'drumstick',
+    fortune_refined_raw: 'fortune_refined', garam_masala_raw: 'garam_masala',
+    garlic_raw: 'garlic', ginger_raw: 'ginger', golden_sela_rice: 'golden_sela_rice',
+    green_chilli_raw: 'green_chillies', gur_raw: 'gur',
+    haldi_raw: 'haldi_powder', hing_raw: 'hing_powder',
+    ilaychi_raw: 'ilaychi', imli_raw: 'imli',
+    jeera_raw: 'jeera', kaju_raw: 'kaju', kali_mirch_raw: 'kali_mirch',
+    kesar_raw: 'kesar', kishmish_raw: 'kishmish',
+    meetha_soda_raw: 'meetha_soda', methi_dana_raw: 'methi_dana',
+    milk_raw: 'milk', milkmaid_raw: 'milkmaid', mint_raw: 'mint',
+    mustard_raw: 'mustard_seeds', onions_raw: 'onions',
+    peanuts_raw: 'peanuts', petha_raw: 'petha', pineapple_raw: 'pineapple',
+    poha_raw: 'poha', red_chilli_powder_raw: 'red_chilli_powder',
+    rice_powder_raw: 'rice_powder', roasted_chana_raw: 'roasted_chana',
+    roasted_karipatta_raw: 'roasted_karipatta', roasted_peanuts_raw: 'roasted_peanuts',
+    safed_til_raw: 'safed_til', salt_raw: 'salt',
+    sambhar_masala_raw: 'sambhar_masala_777', semiyan_raw: 'semiyan',
+    sona_masoori_raw: 'sona_masoori_rice', sugar_raw: 'sugar',
+    tadka_raw: 'tadka', tomatoes_raw: 'tomatoes',
+    upma_sooji_raw: 'upma_sooji', urad_daal: 'urad_daal_whole',
+    whole_red_chilli_raw: 'whole_red_chilli',
+  };
+
   // Compute cost for a single recipe
   const computeRecipeCost = (recipeKey) => {
     const recipe = RECIPES[recipeKey];
@@ -3127,12 +3156,14 @@ const RecipesPanel = () => {
       const rawName = rawMat?.name || ing.rawId;
       const rawUnit = rawMat?.unit || 'Kg';
 
-      // Try to find rate card entry — match by rawId or by inventory mapping
+      // Try to find rate card entry using the mapping chain
       let rate = rateMap[ing.rawId];
+      if (!rate && rawToRate[ing.rawId]) rate = rateMap[rawToRate[ing.rawId]];
       if (!rate) {
-        // Try finding by name match
-        rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
+        const stripped = ing.rawId.replace(/_raw$/, '');
+        rate = rateMap[stripped];
       }
+      if (!rate) rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
 
       let ingCost = 0;
       if (rate) {
