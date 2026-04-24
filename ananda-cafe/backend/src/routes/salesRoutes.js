@@ -2197,13 +2197,23 @@ router.get('/stock-usage/:date', async (req, res) => {
 
         const convertedUsed = usedQty * convFactor;
         const usedCost = convertedUsed * unitPrice;
+        // Display unit should be the base unit after conversion (e.g., Kg not Batch)
+        const displayUnit = convFactor !== 1 ? (conv ? conv.baseUnit : itemUnit) : itemUnit;
 
         if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
           itemDetails.push({
             item_id: itemId, name: itemName, category: itemCategory,
-            unit: itemUnit, prev_closing: prevQty, wastage: wastageQty,
-            dispatched: dispatchedQty, opening: openingQty, closing: closingQty,
-            used: usedQty, rate: Math.round(unitPrice * 100) / 100, 
+            unit: displayUnit,
+            demand_unit: demandUnit,
+            prev_closing: prevQty, wastage: wastageQty,
+            dispatched: dispatchedQty, 
+            dispatched_converted: dispatchedQty * convFactor,
+            opening: openingQty * convFactor, 
+            closing: closingQty,
+            used: Math.round(convertedUsed * 1000) / 1000,
+            used_raw: usedQty,
+            conv_factor: convFactor,
+            rate: Math.round(unitPrice * 100) / 100, 
             used_cost: Math.round(usedCost * 100) / 100,
           });
           totalUsedCost += usedCost;
