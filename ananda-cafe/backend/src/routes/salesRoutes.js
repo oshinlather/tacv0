@@ -1868,9 +1868,35 @@ router.get('/pnl/live/:date', async (req, res) => {
           if (!qty || qty <= 0) return;
 
           // Check if this is a BK prepared item FIRST (before rate card)
+          // BUT: if item has a direct rate card entry, use that instead of recipe
+          // (e.g., roasted_chana has rate ₹120/Kg — use it, don't explode recipe)
+          // Recipe pricing only for items that DON'T have a rate card entry (sambhar, dosa_batter)
+          const rate = rateMap[itemId];
           const recipe = bkRecipeMap[itemId];
-          if (recipe && recipe.ingredients) {
-            // BK prepared item — price using recipe cost per kg
+
+          if (rate) {
+            // Direct rate card item — use rate card price
+            const demandUnit = getDemandUnit(itemId);
+            const factor = demandUnit ? getUnitConv(demandUnit, rate.unit, itemId) : 1;
+            const convertedQty = Number(qty) * factor;
+            const cost = convertedQty * Number(rate.price);
+            totalVariableCost += cost;
+            const cat = rate.category || 'Food';
+            variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
+            itemBreakdown.push({
+              demand_id: order.id,
+              raw_qty: Number(qty),
+              raw_unit: demandUnit || rate.unit,
+              item_id: itemId,
+              name: rate.name,
+              category: cat,
+              qty: convertedQty,
+              unit: rate.unit,
+              rate: Number(rate.price),
+              cost,
+            });
+          } else if (recipe && recipe.ingredients) {
+            // BK prepared item with NO rate card — price using recipe cost per Kg
             const demandUnit = getDemandUnit(itemId);
             let qtyKg = Number(qty);
             // Use unit_conversions table for Batch→Kg (e.g., 1 Batch dosa_batter = 9 Kg)
@@ -1909,30 +1935,6 @@ router.get('/pnl/live/:date', async (req, res) => {
                 unit: 'Kg',
                 rate: Math.round(itemCost / qtyKg * 100) / 100,
                 cost: itemCost,
-              });
-            }
-          } else {
-            // Direct rate card item (butter, cheese, gas, vegetables, packaging, etc.)
-            const rate = rateMap[itemId];
-            if (rate) {
-              const demandUnit = getDemandUnit(itemId);
-              const factor = demandUnit ? getUnitConv(demandUnit, rate.unit, itemId) : 1;
-              const convertedQty = Number(qty) * factor;
-              const cost = convertedQty * Number(rate.price);
-              totalVariableCost += cost;
-              const cat = rate.category || 'Other';
-              variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
-              itemBreakdown.push({
-                demand_id: order.id,
-                raw_qty: Number(qty),
-                raw_unit: demandUnit || rate.unit,
-                item_id: itemId,
-                name: rate.name,
-                category: cat,
-                qty: convertedQty,
-                unit: rate.unit,
-                rate: Number(rate.price),
-                cost,
               });
             }
           }
@@ -2225,8 +2227,14 @@ router.get('/stock-usage/:date', async (req, res) => {
         let itemCategory = 'Other';
         let itemUnit = '';
 
-        if (bkRecipe) {
-          // BK prep item — price via recipe cost per Kg
+        if (rate) {
+          // Direct rate card item — use rate card price
+          unitPrice = Number(rate.price);
+          itemName = rate.name;
+          itemCategory = rate.category || 'Other';
+          itemUnit = rate.unit || '';
+        } else if (bkRecipe) {
+          // BK prep item with NO rate card — price via recipe cost per Kg
           unitPrice = bkRecipe.costPerKg;
           itemName = bkRecipe.name;
           itemCategory = 'Food';
