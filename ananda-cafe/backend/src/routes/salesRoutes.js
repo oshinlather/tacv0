@@ -2015,7 +2015,7 @@ router.get('/stock-usage/:date', async (req, res) => {
     (rates || []).forEach(r => { rateMap[r.id] = r; });
 
     // 1b. BK Recipes — for pricing BK prep items via recipe cost
-    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*').eq('active', true);
+    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
     const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
     const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
     const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
