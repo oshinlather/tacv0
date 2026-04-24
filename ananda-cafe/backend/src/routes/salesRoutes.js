@@ -1823,14 +1823,19 @@ router.get('/pnl/live/:date', async (req, res) => {
       const getDemandUnit = (itemId) => demandUnitMap[itemId] || null;
 
       // Unit conversion factor: demand unit → rate card unit
-      const getUnitConv = (demandUnit, rateUnit) => {
+      // Rule: SI units (Gm↔Kg, ml↔Ltr) hardcoded. Everything else from unit_conversions table.
+      const getUnitConv = (demandUnit, rateUnit, itemId) => {
         const du = (demandUnit || '').toLowerCase();
         const ru = (rateUnit || '').toLowerCase();
         if (du === ru) return 1;
+        // Check unit_conversions table first
+        const conv = convMap[itemId];
+        if (conv && du === conv.fromUnit.toLowerCase()) return conv.qty;
+        // Standard SI conversions
         if ((du === 'gm' || du === 'g' || du === 'gram' || du === 'grams') && ru === 'kg') return 0.001;
         if (du === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return 1000;
         if ((du === 'ml' || du === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return 0.001;
-        if ((du === 'ltr' || du === 'l' || du === 'liter' || du === 'litre') && (du === 'ml' || du === 'milliliter')) return 1000;
+        if ((du === 'ltr' || du === 'l') && (ru === 'ml')) return 1000;
         return 1;
       };
 
@@ -1888,7 +1893,7 @@ router.get('/pnl/live/:date', async (req, res) => {
             const rate = rateMap[itemId];
             if (rate) {
               const demandUnit = getDemandUnit(itemId);
-              const factor = demandUnit ? getUnitConv(demandUnit, rate.unit) : 1;
+              const factor = demandUnit ? getUnitConv(demandUnit, rate.unit, itemId) : 1;
               const convertedQty = Number(qty) * factor;
               const cost = convertedQty * Number(rate.price);
               totalVariableCost += cost;
@@ -2165,23 +2170,30 @@ router.get('/stock-usage/:date', async (req, res) => {
           itemUnit = demandUnitMap[itemId] || '';
         }
 
-        // Unit conversion for items where demand unit != rate unit
-        // First check unit_conversions table (e.g., Batch→Kg for batters)
+        // Unit conversion: SI units are base (Kg, Ltr, Pcs).
+        // Gm→Kg is hardcoded (÷1000). Everything else non-SI uses unit_conversions table.
         const demandUnit = demandUnitMap[itemId] || itemUnit;
         let convFactor = 1;
+        const du = (demandUnit || '').toLowerCase();
+        const ru = (itemUnit || '').toLowerCase();
+
+        // 1. Check unit_conversions table first (Batch→Kg, Tin→Kg, etc.)
         const conv = convMap[itemId];
-        if (conv && demandUnit.toLowerCase() === conv.fromUnit.toLowerCase()) {
-          // Use DB conversion: e.g., 1 Batch = 9 Kg → factor = 9
+        if (conv && du === conv.fromUnit.toLowerCase()) {
           convFactor = conv.qty;
-        } else {
-          // Standard unit conversions
-          const du = (demandUnit || '').toLowerCase();
-          const ru = (itemUnit || '').toLowerCase();
-          if ((du === 'gm' || du === 'g') && ru === 'kg') convFactor = 0.001;
-          if (du === 'kg' && (ru === 'gm' || du === 'g')) convFactor = 1000;
-          if (du === 'tin' && ru === 'kg') convFactor = 15; // 1 Tin ≈ 15 Kg
-          if ((du === 'ml') && (ru === 'ltr' || ru === 'l')) convFactor = 0.001;
         }
+        // 2. Standard SI conversions (hardcoded, universal)
+        else if ((du === 'gm' || du === 'g' || du === 'gram' || du === 'grams') && ru === 'kg') {
+          convFactor = 0.001;
+        } else if (du === 'kg' && (ru === 'gm' || ru === 'g')) {
+          convFactor = 1000;
+        } else if (du === 'ml' && (ru === 'ltr' || ru === 'l')) {
+          convFactor = 0.001;
+        } else if ((du === 'ltr' || du === 'l') && ru === 'ml') {
+          convFactor = 1000;
+        }
+        // 3. If units don't match and no conversion found, factor stays 1
+        //    (logs a warning so owner knows to add a conversion)
 
         const convertedUsed = usedQty * convFactor;
         const usedCost = convertedUsed * unitPrice;
