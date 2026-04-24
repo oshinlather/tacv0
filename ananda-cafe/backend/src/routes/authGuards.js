@@ -18,7 +18,7 @@
 // logged-in user's UUID. We look them up fresh from the DB (no trust in the
 // header alone — the DB is the source of truth for role + active status).
 
-const supabase = require('./supabase');
+const supabase = require('../supabase');
 
 // In-memory cache to avoid hitting Supabase on every request.
 // Invalidated after 30s per user. Keeps role changes fresh-ish without the
