@@ -1,13 +1,15 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
+const { requireOwner } = require("./authGuards");
 
 // PetPooja API config
 const PETPOOJA_API_KEY = process.env.PETPOOJA_API_KEY;
 const RESTAURANT_IDS = (process.env.PETPOOJA_RESTAURANT_IDS || "").split(",").filter(Boolean);
 
-// Manual trigger to sync today's sales from PetPooja
+// Manual trigger to sync today's sales from PetPooja — owner only
 router.post("/sync", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   if (!PETPOOJA_API_KEY) {
     return res.status(400).json({ error: "PetPooja API key not configured. Contact your PetPooja account manager to get API access." });
   }
@@ -16,21 +18,6 @@ router.post("/sync", async (req, res) => {
   const targetDate = date || new Date().toISOString().split("T")[0];
 
   // TODO: Replace with actual PetPooja API call when you have the keys
-  // The PetPooja API typically provides:
-  // - Item-wise sales (quantity + revenue)
-  // - Order type (dine-in vs delivery)
-  // - Payment breakdown
-  // - Online commission data
-  //
-  // Example API call structure (update when you get docs from PetPooja):
-  //
-  // const response = await fetch('https://api.petpooja.com/v2/sales/summary', {
-  //   headers: { 'Authorization': `Bearer ${PETPOOJA_API_KEY}` },
-  //   method: 'POST',
-  //   body: JSON.stringify({ restaurant_id: restaurantId, date: targetDate })
-  // });
-  // const salesData = await response.json();
-
   res.json({
     message: "PetPooja sync placeholder — configure API keys to enable",
     date: targetDate,
@@ -44,8 +31,9 @@ router.post("/sync", async (req, res) => {
   });
 });
 
-// Get sync status
+// Get sync status — owner only
 router.get("/status", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const configured = !!PETPOOJA_API_KEY;
   const { data: lastSync } = await supabase
     .from("petpooja_sync")
