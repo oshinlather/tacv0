@@ -1,77 +1,60 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
-const { todayIST } = require("../helpers");
+const { requireRole } = require("./authGuards");
 
-// Get all orders (with optional filters)
+// Order management is BK/store responsibility. Owner + store_mgr.
+// NOTE: Most of these routes are shadowed by salesRoutes.js (which also has guards),
+// but we guard here too as defense-in-depth in case route mounting order changes.
+async function gate(req, res) {
+  return await requireRole(req, res, "owner", "store_mgr");
+}
+
 router.get("/", async (req, res) => {
-  const { outlet_id, date, status, limit = 50 } = req.query;
-  let query = supabase.from("demands").select("*").order("submitted_at", { ascending: false }).limit(limit);
+  if (!await gate(req, res)) return;
+  const { outlet_id, status, date, limit = 50 } = req.query;
+  let query = supabase.from("orders").select("*, outlets(name)").order("created_at", { ascending: false }).limit(limit);
   if (outlet_id) query = query.eq("outlet_id", outlet_id);
-  if (date) query = query.eq("date", date);
   if (status) query = query.eq("status", status);
+  if (date) query = query.eq("date", date);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Get today's consolidated view (all outlets combined)
 router.get("/consolidated", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { date } = req.query;
-  const targetDate = date || todayIST();
-  const { data, error } = await supabase
-    .from("demands")
-    .select("*")
-    .eq("date", targetDate)
-    .eq("type", "manual");
+  const { data, error } = await supabase.from("orders").select("*, outlets(name)").eq("date", date).in("status", ["pending", "dispatched"]);
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ date: targetDate, orders: data });
+  const consolidated = {};
+  (data || []).forEach((order) => {
+    Object.entries(order.items || {}).forEach(([id, item]) => {
+      if (!consolidated[id]) consolidated[id] = { ...item, total: 0, outlets: [] };
+      consolidated[id].total += Number(item.qty) || 0;
+      consolidated[id].outlets.push({ outlet: order.outlets?.name, qty: item.qty });
+    });
+  });
+  res.json({ date, items: Object.values(consolidated) });
 });
 
-// Update order status (for dispatch)
 router.patch("/:id/status", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { id } = req.params;
-  const { status } = req.body;
-  const { data, error } = await supabase
-    .from("demands")
-    .update({ status })
-    .eq("id", id)
-    .select()
-    .single();
+  const { status, dispatch_notes } = req.body;
+  const { data, error } = await supabase.from("orders").update({ status, dispatch_notes, updated_at: new Date().toISOString() }).eq("id", id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Dashboard summary - all activity for a date
 router.get("/dashboard-summary", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { date } = req.query;
-  const targetDate = date || todayIST();
-
-  // Fetch all data in parallel
-  const [demands, closingStocks, issuances, purchases] = await Promise.all([
-    supabase.from("demands").select("*, demand_photos(*)").eq("date", targetDate),
-    supabase.from("closing_stocks").select("*").eq("date", targetDate),
-    supabase.from("issuances").select("*, issuance_photos(*)").eq("date", targetDate),
-    supabase.from("purchases").select("*, purchase_items(*), purchase_photos(*)").eq("date", targetDate),
-  ]);
-
-  res.json({
-    date: targetDate,
-    demands: demands.data || [],
-    closing_stocks: closingStocks.data || [],
-    issuances: issuances.data || [],
-    purchases: purchases.data || [],
-    summary: {
-      total_demands: (demands.data || []).length,
-      outlets_ordered: [...new Set((demands.data || []).map(d => d.outlet_id))].length,
-      pending_dispatch: (demands.data || []).filter(d => d.status === "submitted" || d.status === "received").length,
-      dispatched: (demands.data || []).filter(d => d.status === "fulfilled").length,
-      total_issuances: (issuances.data || []).length,
-      total_purchases: (purchases.data || []).length,
-      purchase_amount: (purchases.data || []).reduce((s, p) => s + Number(p.total_amount || 0), 0),
-      closing_stock_submitted: (closingStocks.data || []).length,
-    }
-  });
+  const { data, error } = await supabase.from("orders").select("status").eq("date", date);
+  if (error) return res.status(500).json({ error: error.message });
+  const counts = { pending: 0, dispatched: 0, received: 0 };
+  (data || []).forEach((o) => { counts[o.status] = (counts[o.status] || 0) + 1; });
+  res.json({ date, counts, total: data.length });
 });
 
 module.exports = router;
