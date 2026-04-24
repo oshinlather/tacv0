@@ -2198,23 +2198,25 @@ router.get('/stock-usage/:date', async (req, res) => {
         });
       });
 
-      // All unique item IDs
-      const allIds = new Set([
+      // All unique item IDs — normalize cs_ prefix to avoid duplicates
+      // closing_stocks uses cs_butter, dispatched uses butter — both refer to same item
+      const allIdsRaw = [
         ...Object.keys(prevItems), ...Object.keys(todayItems),
         ...Object.keys(wastageItems), ...Object.keys(dispatchedItems),
-      ]);
+      ];
+      // Normalize: strip cs_ prefix, deduplicate
+      const allIds = new Set(allIdsRaw.map(id => id.startsWith('cs_') ? id.replace('cs_', '') : id));
 
       const itemDetails = [];
       let totalUsedCost = 0;
 
-      allIds.forEach(rawId => {
-        const csId = rawId.startsWith('cs_') ? rawId : `cs_${rawId}`;
-        const itemId = rawId.startsWith('cs_') ? rawId.replace('cs_', '') : rawId;
+      allIds.forEach(itemId => {
+        const csId = `cs_${itemId}`;
 
-        const prevQty = Number(prevItems[csId] || prevItems[rawId] || 0);
+        const prevQty = Number(prevItems[csId] || prevItems[itemId] || 0);
         const wastageQty = Number(wastageItems[itemId] || 0);
         const dispatchedQty = Number(dispatchedItems[itemId] || 0);
-        const closingQty = Number(todayItems[csId] || todayItems[rawId] || 0);
+        const closingQty = Number(todayItems[csId] || todayItems[itemId] || 0);
 
         const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
         const usedQty = Math.max(0, openingQty - closingQty);
