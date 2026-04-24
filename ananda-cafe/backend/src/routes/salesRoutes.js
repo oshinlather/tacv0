@@ -2014,6 +2014,47 @@ router.get('/stock-usage/:date', async (req, res) => {
     const rateMap = {};
     (rates || []).forEach(r => { rateMap[r.id] = r; });
 
+    // 1b. BK Recipes — for pricing BK prep items via recipe cost
+    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*').eq('active', true);
+    const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+    const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+    const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
+
+    // Build demand item name/unit maps
+    const demandNameMap = {};
+    const demandUnitMap = {};
+    (demandItemsRaw || []).forEach(i => { demandNameMap[i.id] = i.name; demandUnitMap[i.id] = i.unit; });
+
+    // Build inventory → demand_item mapping
+    const invByName = {};
+    (invItemsList || []).forEach(i => {
+      if (i.demand_item_id) invByName[i.id] = i.demand_item_id;
+      if (i.name) invByName[i.name.toLowerCase()] = i.demand_item_id || i.id;
+    });
+
+    // Build BK recipe map with computed cost per Kg
+    const bkRecipeMap = {};
+    (bkRecipes || []).forEach(r => {
+      const ings = (bkIngredients || []).filter(i => i.recipe_id === r.id);
+      const yieldQty = Number(r.yield_qty) || 1;
+      let batchCost = 0;
+      ings.forEach(ing => {
+        const rmId = ing.raw_material_id || ing.raw_material;
+        const mappedId = invByName[rmId] || invByName[rmId?.toLowerCase()] || rmId;
+        const ingRate = rateMap[mappedId];
+        if (ingRate) {
+          const ingUnit = (ing.unit || 'Kg').toLowerCase();
+          const rateUnit = (ingRate.unit || 'Kg').toLowerCase();
+          let factor = 1;
+          if ((ingUnit === 'gm' || ingUnit === 'g') && rateUnit === 'kg') factor = 0.001;
+          if (ingUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor = 1000;
+          batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
+        }
+      });
+      const costPerKg = yieldQty > 0 ? batchCost / yieldQty : 0;
+      bkRecipeMap[r.id] = { name: r.name || r.id, costPerKg, yieldQty };
+    });
+
     // 2. Previous day closing stock
     const { data: prevClosing } = await supabase.from('demands')
       .select('outlet_id, items').eq('type', 'closing').eq('date', prevDateStr);
@@ -2080,15 +2121,52 @@ router.get('/stock-usage/:date', async (req, res) => {
         const usedQty = Math.max(0, openingQty - closingQty);
 
         const rate = rateMap[itemId];
-        const unitPrice = rate ? Number(rate.price) : 0;
-        const usedCost = usedQty * unitPrice;
+        const bkRecipe = bkRecipeMap[itemId];
+
+        let unitPrice = 0;
+        let itemName = itemId;
+        let itemCategory = 'Other';
+        let itemUnit = '';
+
+        if (bkRecipe) {
+          // BK prep item — price via recipe cost per Kg
+          unitPrice = bkRecipe.costPerKg;
+          itemName = bkRecipe.name;
+          itemCategory = 'Food';
+          itemUnit = 'Kg';
+        } else if (rate) {
+          // Direct rate card item
+          unitPrice = Number(rate.price);
+          itemName = rate.name;
+          itemCategory = rate.category || 'Other';
+          itemUnit = rate.unit || '';
+        } else {
+          // Unknown item — try demand_items for name
+          itemName = demandNameMap[itemId] || itemId.replace(/_/g, ' ');
+          itemUnit = demandUnitMap[itemId] || '';
+        }
+
+        // Unit conversion for items where demand unit != rate unit
+        // e.g., demanded in Gm but rate is per Kg
+        const demandUnit = demandUnitMap[itemId] || itemUnit;
+        let convFactor = 1;
+        const du = (demandUnit || '').toLowerCase();
+        const ru = (itemUnit || '').toLowerCase();
+        if ((du === 'gm' || du === 'g') && ru === 'kg') convFactor = 0.001;
+        if (du === 'kg' && (ru === 'gm' || ru === 'g')) convFactor = 1000;
+        if (du === 'tin' && ru === 'kg') convFactor = 15; // 1 Tin ≈ 15 Kg
+        if ((du === 'ml') && (ru === 'ltr' || ru === 'l')) convFactor = 0.001;
+
+        const convertedUsed = usedQty * convFactor;
+        const usedCost = convertedUsed * unitPrice;
 
         if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
           itemDetails.push({
-            item_id: itemId, name: rate?.name || itemId, category: rate?.category || 'Other',
-            unit: rate?.unit || '', prev_closing: prevQty, wastage: wastageQty,
+            item_id: itemId, name: itemName, category: itemCategory,
+            unit: itemUnit, prev_closing: prevQty, wastage: wastageQty,
             dispatched: dispatchedQty, opening: openingQty, closing: closingQty,
-            used: usedQty, rate: unitPrice, used_cost: Math.round(usedCost * 100) / 100,
+            used: usedQty, rate: Math.round(unitPrice * 100) / 100, 
+            used_cost: Math.round(usedCost * 100) / 100,
           });
           totalUsedCost += usedCost;
         }
