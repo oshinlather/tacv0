@@ -2213,14 +2213,13 @@ router.get('/stock-usage/:date', async (req, res) => {
       allIds.forEach(itemId => {
         const csId = `cs_${itemId}`;
 
-        const prevQty = Number(prevItems[csId] || prevItems[itemId] || 0);
-        const wastageQty = Number(wastageItems[itemId] || 0);
-        const dispatchedQty = Number(dispatchedItems[itemId] || 0);
-        const closingQty = Number(todayItems[csId] || todayItems[itemId] || 0);
+        // Raw quantities (in demand unit — could be Batch, Tin, Kg, Pcs, etc.)
+        const rawPrev = Number(prevItems[csId] || prevItems[itemId] || 0);
+        const rawWastage = Number(wastageItems[itemId] || 0);
+        const rawDispatched = Number(dispatchedItems[itemId] || 0);
+        const rawClosing = Number(todayItems[csId] || todayItems[itemId] || 0);
 
-        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
-        const usedQty = Math.max(0, openingQty - closingQty);
-
+        // Determine pricing and category
         const rate = rateMap[itemId];
         const bkRecipe = bkRecipeMap[itemId];
 
@@ -2230,43 +2229,30 @@ router.get('/stock-usage/:date', async (req, res) => {
         let itemUnit = '';
 
         if (rate) {
-          // Direct rate card item — use rate card price
           unitPrice = Number(rate.price);
           itemName = rate.name;
           itemCategory = rate.category || 'Other';
           itemUnit = rate.unit || '';
         } else if (bkRecipe) {
-          // BK prep item with NO rate card — price via recipe cost per Kg
           unitPrice = bkRecipe.costPerKg;
           itemName = bkRecipe.name;
           itemCategory = 'Food';
           itemUnit = 'Kg';
-        } else if (rate) {
-          // Direct rate card item
-          unitPrice = Number(rate.price);
-          itemName = rate.name;
-          itemCategory = rate.category || 'Other';
-          itemUnit = rate.unit || '';
         } else {
-          // Unknown item — try demand_items for name
           itemName = demandNameMap[itemId] || itemId.replace(/_/g, ' ');
           itemUnit = demandUnitMap[itemId] || '';
         }
 
-        // Unit conversion: SI units are base (Kg, Ltr, Pcs).
-        // Gm→Kg is hardcoded (÷1000). Everything else non-SI uses unit_conversions table.
+        // Unit conversion factor (Batch→Kg, Tin→Kg, Gm→Kg, etc.)
         const demandUnit = demandUnitMap[itemId] || itemUnit;
         let convFactor = 1;
         const du = (demandUnit || '').toLowerCase();
         const ru = (itemUnit || '').toLowerCase();
 
-        // 1. Check unit_conversions table first (Batch→Kg, Tin→Kg, etc.)
         const conv = convMap[itemId];
         if (conv && du === conv.fromUnit.toLowerCase()) {
           convFactor = conv.qty;
-        }
-        // 2. Standard SI conversions (hardcoded, universal)
-        else if ((du === 'gm' || du === 'g' || du === 'gram' || du === 'grams') && ru === 'kg') {
+        } else if ((du === 'gm' || du === 'g') && ru === 'kg') {
           convFactor = 0.001;
         } else if (du === 'kg' && (ru === 'gm' || ru === 'g')) {
           convFactor = 1000;
@@ -2275,12 +2261,17 @@ router.get('/stock-usage/:date', async (req, res) => {
         } else if ((du === 'ltr' || du === 'l') && ru === 'ml') {
           convFactor = 1000;
         }
-        // 3. If units don't match and no conversion found, factor stays 1
-        //    (logs a warning so owner knows to add a conversion)
 
-        const convertedUsed = usedQty * convFactor;
-        const usedCost = convertedUsed * unitPrice;
-        // Display unit should be the base unit after conversion (e.g., Kg not Batch)
+        // Convert ALL quantities to base units FIRST, then compute consumed
+        const prevQty = rawPrev * convFactor;
+        const wastageQty = rawWastage * convFactor;
+        const dispatchedQty = rawDispatched * convFactor;
+        const closingQty = rawClosing * convFactor;
+
+        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
+        const usedQty = Math.max(0, openingQty - closingQty);
+        const usedCost = usedQty * unitPrice;
+
         const displayUnit = convFactor !== 1 ? (conv ? conv.baseUnit : itemUnit) : itemUnit;
 
         if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
@@ -2288,13 +2279,11 @@ router.get('/stock-usage/:date', async (req, res) => {
             item_id: itemId, name: itemName, category: itemCategory,
             unit: displayUnit,
             demand_unit: demandUnit,
-            prev_closing: prevQty, wastage: wastageQty,
-            dispatched: dispatchedQty, 
-            dispatched_converted: dispatchedQty * convFactor,
-            opening: openingQty * convFactor, 
-            closing: closingQty,
-            used: Math.round(convertedUsed * 1000) / 1000,
-            used_raw: usedQty,
+            prev_closing: Math.round(prevQty * 1000) / 1000, 
+            wastage: Math.round(wastageQty * 1000) / 1000,
+            dispatched: Math.round(dispatchedQty * 1000) / 1000, 
+            closing: Math.round(closingQty * 1000) / 1000,
+            used: Math.round(usedQty * 1000) / 1000,
             conv_factor: convFactor,
             rate: Math.round(unitPrice * 100) / 100, 
             used_cost: Math.round(usedCost * 100) / 100,
