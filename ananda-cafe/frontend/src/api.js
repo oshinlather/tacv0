@@ -1,9 +1,27 @@
 const API = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
-const api = {
-  // ── Auth ──
-  login: (pin) => post("/api/auth/login", { pin }),
+// Read the logged-in user's ID from localStorage on every request.
+// Returns null if not logged in — the backend will 401 those requests on
+// protected routes, 200 them on public ones (like /auth/login).
+function getUserId() {
+  try {
+    const u = localStorage.getItem("ananda_user");
+    if (!u) return null;
+    const parsed = JSON.parse(u);
+    return parsed?.id || null;
+  } catch (e) {
+    return null;
+  }
+}
 
+function authHeaders(extra = {}) {
+  const h = { ...extra };
+  const id = getUserId();
+  if (id) h["x-user-id"] = id;
+  return h;
+}
+
+const api = {
   // ── Outlets ──
   getOutlets: () => get("/api/outlets"),
 
@@ -43,7 +61,11 @@ const api = {
     const formData = new FormData();
     formData.append("file", file);
     if (date) formData.append("date", date);
-    return fetch(API + "/api/sales/upload", { method: "POST", body: formData }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
+    return fetch(API + "/api/sales/upload", {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
   },
 
   // ── Issuance Audit ──
@@ -165,15 +187,18 @@ async function get(path, params = {}) {
   // Guard: if params is a string (e.g. a date), wrap it as { date: params }
   const safeParams = typeof params === "string" ? { date: params } : params;
   Object.entries(safeParams).forEach(([k, v]) => { if (v !== undefined && v !== null) url.searchParams.set(k, v); });
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `GET ${path} failed: ${res.status}`);
+  }
   return res.json();
 }
 
 async function post(path, body) {
   const res = await fetch(API + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -186,7 +211,7 @@ async function post(path, body) {
 async function patch(path, body) {
   const res = await fetch(API + path, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -197,7 +222,10 @@ async function patch(path, body) {
 }
 
 async function del(path) {
-  const res = await fetch(API + path, { method: "DELETE" });
+  const res = await fetch(API + path, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `DELETE ${path} failed: ${res.status}`);
