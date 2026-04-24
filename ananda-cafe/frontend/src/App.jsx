@@ -989,17 +989,17 @@ const DailyPnL = () => {
           if (su) {
             p.has_prev_closing = su.has_prev_closing;
             p.has_today_closing = su.has_today_closing;
-            // Only override variable cost when BOTH prev closing and today closing exist
-            // Otherwise the stock usage data is incomplete and P&L from dispatched items is more accurate
-            if (su.has_prev_closing && su.has_today_closing) {
-              p.stock_variable_cost = su.total_used_cost;
-              p.stock_cost_by_category = su.variable_cost_by_category;
-              p.variable_cost = su.total_used_cost;
-              p.variable_by_category = su.variable_cost_by_category;
-              p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
-              p.net_profit = (p.effective_sale || 0) - p.total_expense;
-              p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
-            }
+            p.prev_closing_submitted = su.prev_closing_submitted;
+            p.today_closing_submitted = su.today_closing_submitted;
+            // Always use consumed-material cost (missing closing = zero)
+            p.stock_variable_cost = su.total_used_cost;
+            p.stock_cost_by_category = su.variable_cost_by_category;
+            p.variable_cost = su.total_used_cost;
+            p.variable_by_category = su.variable_cost_by_category;
+            p.stock_items = su.items;
+            p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+            p.net_profit = (p.effective_sale || 0) - p.total_expense;
+            p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
           }
         });
       }
@@ -1144,47 +1144,49 @@ const DailyPnL = () => {
           <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
 
           {/* VARIABLE COST */}
-          <SectionHeader label={d.has_today_closing === true && d.has_prev_closing === true ? "Variable Cost (Used Stock × Rate)" : "Variable Cost (Dispatched × Rate)"} bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
-          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={d.has_today_closing === true && d.has_prev_closing === true ? "Opening − Closing = Used" : "from dispatched items"} />
+          <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
+          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"} />
           {expandSection === "variable" && d.variable_by_category && Object.entries(d.variable_by_category).sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
             <Row key={cat} label={cat} value={cost} indent sub={d.effective_sale > 0 ? pct(cost / d.effective_sale * 100) + " of sale" : ""} />
           ))}
-          {expandSection === "variable" && d.item_breakdown && d.item_breakdown.length > 0 && (
+          {expandSection === "variable" && ((d.stock_items && d.stock_items.length > 0) || (d.item_breakdown && d.item_breakdown.length > 0)) && (() => {
+            const items = d.stock_items && d.stock_items.length > 0 ? d.stock_items : d.item_breakdown || [];
+            const isStockBased = d.stock_items && d.stock_items.length > 0;
+            return (
             <div style={{ padding: "8px 12px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Item-wise Breakdown</span>
-                {selOutlet && <span style={{ fontSize: 9, fontWeight: 500, color: "#BBB", textTransform: "none", letterSpacing: 0 }}>tap ✏️ to fix qty</span>}
+                <span>Item-wise Breakdown {isStockBased ? "(consumed)" : "(dispatched)"}</span>
+                <span style={{ fontSize: 9, fontWeight: 500, color: "#BBB", textTransform: "none", letterSpacing: 0 }}>tap ✏️ to fix qty</span>
               </div>
-              <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => {
+              <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                {items.sort((a, b) => (b.used_cost || b.cost || 0) - (a.used_cost || a.cost || 0)).map((item, i) => {
                   const isEditing = editItem && editItem._idx === i;
-                  const canEdit = !!selOutlet;
+                  const displayQty = isStockBased ? item.used : (item.raw_qty != null ? item.raw_qty : item.qty);
+                  const displayCost = isStockBased ? item.used_cost : item.cost;
+                  const displayRate = item.rate;
+                  const displayUnit = item.unit || '';
                   if (isEditing) {
                     return (
                       <div key={i} style={{ padding: "8px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, marginBottom: 4 }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {editItem.name || item.name}</div>
+                        {isStockBased && (
+                          <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+                            Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                           <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
-                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{item.raw_qty != null ? item.raw_qty : item.qty} {editItem.unit || item.unit}</span>
+                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{displayQty} {displayUnit}</span>
                         </div>
                         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
                           <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            step="any"
-                            autoFocus
-                            value={editItem.value}
+                          <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
                             onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
-                            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}
-                          />
-                          <span style={{ fontSize: 11, color: "#888" }}>{editItem.unit || item.unit}</span>
+                            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                          <span style={{ fontSize: 11, color: "#888" }}>{displayUnit}</span>
                         </div>
-                        <select
-                          value={editItem.reason}
-                          onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
-                          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}
-                        >
+                        <select value={editItem.reason} onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
+                          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
                           <option value="">-- Reason --</option>
                           <option value="unit_error">Unit error (kg vs g etc.)</option>
                           <option value="typo">Typo</option>
@@ -1192,16 +1194,11 @@ const DailyPnL = () => {
                           <option value="other">Other</option>
                         </select>
                         <div style={{ display: "flex", gap: 6 }}>
-                          <button
-                            onClick={saveQtyEdit}
-                            disabled={editSaving}
-                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}
-                          >{editSaving ? "⏳ Saving..." : "💾 Save"}</button>
-                          <button
-                            onClick={() => setEditItem(null)}
-                            disabled={editSaving}
-                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}
-                          >Cancel</button>
+                          <button onClick={saveQtyEdit} disabled={editSaving}
+                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                            {editSaving ? "⏳ Saving..." : "💾 Save"}</button>
+                          <button onClick={() => setEditItem(null)} disabled={editSaving}
+                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
                         </div>
                       </div>
                     );
@@ -1209,11 +1206,11 @@ const DailyPnL = () => {
                   return (
                     <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", fontSize: 11, borderBottom: "1px solid #F5F5F3", alignItems: "center" }}>
                       <span style={{ color: "#555", flex: 1 }}>
-                        {item.name} <span style={{ color: "#BBB" }}>({item.qty} {item.unit} × ₹{item.rate})</span>
+                        {item.name} <span style={{ color: "#BBB" }}>({displayQty} {displayUnit} × ₹{displayRate})</span>
                       </span>
-                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6 }}>{fmt(item.cost)}</span>
+                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6 }}>{fmt(displayCost)}</span>
                       <button
-                        onClick={() => setEditItem({ _idx: i, demand_id: item.demand_id || null, item_id: item.item_id, value: String(item.raw_qty != null ? item.raw_qty : item.qty), reason: "", name: item.name, unit: item.raw_unit || item.unit })}
+                        onClick={() => setEditItem({ _idx: i, demand_id: item.demand_id || null, item_id: item.item_id, value: String(displayQty), reason: "", name: item.name, unit: displayUnit })}
                         title="Edit quantity"
                         style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 11, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
                       >✏️</button>
@@ -1222,7 +1219,8 @@ const DailyPnL = () => {
                 })}
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* DAILY PURCHASES */}
           <SectionHeader label="Daily Purchases" bg="#EFF6FF" borderColor="#BFDBFE" color="#1D4ED8" icon="🧾" />
