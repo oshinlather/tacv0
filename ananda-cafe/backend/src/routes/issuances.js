@@ -2,8 +2,15 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
+const { requireRole } = require("./authGuards");
+
+// Issuances = BK → outlet handovers. Owner + store_mgr only.
+async function gate(req, res) {
+  return await requireRole(req, res, "owner", "store_mgr");
+}
 
 router.get("/", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { date, issue_to, limit = 20 } = req.query;
   let query = supabase.from("issuances").select("*, issuance_photos(*)").order("submitted_at", { ascending: false }).limit(limit);
   if (date) query = query.eq("date", date);
@@ -14,6 +21,7 @@ router.get("/", async (req, res) => {
 });
 
 router.post("/", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { issue_to, note, submitted_by } = req.body;
   const { data, error } = await supabase
     .from("issuances")
@@ -25,6 +33,7 @@ router.post("/", async (req, res) => {
 });
 
 router.post("/:id/photos", async (req, res) => {
+  if (!await gate(req, res)) return;
   const { id } = req.params;
   const { section, base64 } = req.body;
   const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
