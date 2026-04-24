@@ -2,32 +2,31 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
+const { requireAuth, ensureOutletAccess } = require("./authGuards");
 
-// List demands for an outlet (with optional date filter)
+// List demands for an outlet (with optional date filter).
+// outlet_mgr scoped to own outlet; owner & store_mgr unrestricted.
 router.get("/", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { outlet_id, date, limit = 20 } = req.query;
+  if (!ensureOutletAccess(user, outlet_id, res)) return;
+
   let query = supabase.from("demands").select("*, demand_photos(*)").order("submitted_at", { ascending: false }).limit(limit);
   if (outlet_id) query = query.eq("outlet_id", outlet_id);
+  else if (user.role === "outlet_mgr") query = query.eq("outlet_id", user.outlet_id);
   if (date) query = query.eq("date", date);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-// Create demand (manual)
-router.post("/", async (req, res) => {
-  const { outlet_id, type, items, note, submitted_by } = req.body;
-  const { data, error } = await supabase
-    .from("demands")
-    .insert({ outlet_id, type, items: items || {}, note, submitted_by, date: todayIST() })
-    .select()
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
-});
-
-// Upload demand photo (base64)
+// NOTE: POST /demands is handled by salesRoutes.js (already guarded).
+// Photo upload — owner/any logged-in user. Cannot scope by outlet easily since
+// the demand already exists; DB relation implicitly limits it.
 router.post("/:id/photos", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { id } = req.params;
   const { section, base64 } = req.body;
 
@@ -53,9 +52,13 @@ router.post("/:id/photos", async (req, res) => {
   res.json({ ...data, url: urlData?.signedUrl });
 });
 
-// Closing stock
+// Closing stock — outlet_mgr submits for their outlet
 router.post("/closing-stock", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { outlet_id, items, submitted_by } = req.body;
+  if (!ensureOutletAccess(user, outlet_id, res)) return;
+
   const { data, error } = await supabase
     .from("closing_stocks")
     .upsert({ outlet_id, date: todayIST(), items, submitted_by }, { onConflict: "outlet_id,date" })
@@ -66,9 +69,14 @@ router.post("/closing-stock", async (req, res) => {
 });
 
 router.get("/closing-stock", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { outlet_id, date } = req.query;
+  if (!ensureOutletAccess(user, outlet_id, res)) return;
+
   let query = supabase.from("closing_stocks").select("*").order("date", { ascending: false }).limit(30);
   if (outlet_id) query = query.eq("outlet_id", outlet_id);
+  else if (user.role === "outlet_mgr") query = query.eq("outlet_id", user.outlet_id);
   if (date) query = query.eq("date", date);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
