@@ -10,6 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
+const { requireAuth, requireOwner, ensureOutletAccess, invalidateUser } = require('../authGuards');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -31,6 +32,7 @@ const OUTLET_MAP = {
 // ────────────────────────────────────────────────────────────
 router.post('/sales/upload', upload.single('file'), async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
 const overrideDate = req.body.date || null; // Optional: override date from form
@@ -233,6 +235,7 @@ res.status(500).json({ error: err.message });
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { date } = req.params;
 
 // Get precomputed audit
@@ -262,6 +265,7 @@ res.status(500).json({ error: err.message });
 // ────────────────────────────────────────────────────────────
 router.get('/pnl/computed/:date', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date } = req.params;
     const { data: pnl, error } = await supabase
       .from('daily_pnl')
@@ -295,6 +299,7 @@ router.get('/pnl/computed/:date', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/pnl/:date', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { date } = req.params;
 
 const { data: pnl, error } = await supabase
@@ -625,6 +630,7 @@ return auditRows;
 // ────────────────────────────────────────────────────────────
 router.post('/issuance-audit', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { entries } = req.body;
 if (!entries || entries.length === 0) return res.status(400).json({ error: 'No entries' });
 
@@ -652,6 +658,7 @@ res.status(500).json({ error: err.message });
 // ────────────────────────────────────────────────────────────
 router.get('/issuance-audit/:date', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { date } = req.params;
 const { data, error } = await supabase
 .from('issuance_audit')
@@ -673,6 +680,7 @@ res.status(500).json({ error: err.message });
 // ── GET /api/master/sections — All demand sections with items
 router.get('/master/sections', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { data: sections } = await supabase.from('demand_sections').select('*').order('sort_order');
 const { data: items } = await supabase.from('demand_items').select('*').eq('active', true).order('sort_order');
 const result = (sections || []).map(sec => ({
@@ -686,6 +694,7 @@ res.json(result);
 // ── GET /api/master/raw-materials
 router.get('/master/raw-materials', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { data } = await supabase.from('raw_materials').select('*').eq('active', true).order('name');
 res.json(data || []);
 } catch (e) { res.status(500).json({ error: e.message }); }
@@ -694,6 +703,7 @@ res.json(data || []);
 // ── GET /api/master/recipes — All recipes with ingredients
 router.get('/master/recipes', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { data: recipes } = await supabase.from('bk_recipes').select('*').eq('active', true);
 const { data: ingredients } = await supabase.from('bk_recipe_ingredients').select('*');
 const result = {};
@@ -715,6 +725,7 @@ res.json(result);
 // ── POST /api/master/demand-items — Add new demand item
 router.post('/master/demand-items', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { id, section_id, name, unit, sort_order } = req.body;
 const { data, error } = await supabase.from('demand_items').upsert({ id, section_id, name, unit, sort_order: sort_order || 99 });
 if (error) throw error;
@@ -725,6 +736,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/demand-items/:id — Update demand item
 router.patch('/master/demand-items/:id', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { name, unit, sort_order, active } = req.body;
 const updates = {};
 if (name !== undefined) updates.name = name;
@@ -740,6 +752,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/demand-items/:id — Soft delete
 router.delete('/master/demand-items/:id', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { error } = await supabase.from('demand_items').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
 res.json({ ok: true });
@@ -749,6 +762,7 @@ res.json({ ok: true });
 // ── POST /api/master/raw-materials — Add new raw material
 router.post('/master/raw-materials', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { id, name, unit } = req.body;
 const { error } = await supabase.from('raw_materials').upsert({ id, name, unit });
 if (error) throw error;
@@ -759,6 +773,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/raw-materials/:id — Update raw material
 router.patch('/master/raw-materials/:id', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { name, unit, active } = req.body;
 const updates = {};
 if (name !== undefined) updates.name = name;
@@ -773,6 +788,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/raw-materials/:id — Soft delete
 router.delete('/master/raw-materials/:id', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { error } = await supabase.from('raw_materials').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
 res.json({ ok: true });
@@ -782,6 +798,7 @@ res.json({ ok: true });
 // ── POST /api/master/recipes — Add/update recipe
 router.post('/master/recipes', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { id, name, yield_qty, yield_unit, yield_label, ingredients } = req.body;
 // Upsert recipe header
 const { error: recErr } = await supabase.from('bk_recipes').upsert({ id, name, yield_qty, yield_unit: yield_unit || 'Kg', yield_label });
@@ -800,6 +817,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/recipes/:id
 router.delete('/master/recipes/:id', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 await supabase.from('bk_recipe_ingredients').delete().eq('recipe_id', req.params.id);
 const { error } = await supabase.from('bk_recipes').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
@@ -814,6 +832,7 @@ res.json({ ok: true });
 // ── GET /api/master/conversions — All conversions grouped by unit type
 router.get('/master/conversions', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { data } = await supabase.from('unit_conversions').select('*').eq('active', true).order('unit_type').order('item_name');
 const grouped = {};
 (data || []).forEach(row => {
@@ -833,6 +852,7 @@ res.json(grouped);
 // ── POST /api/master/conversions — Add/update a conversion
 router.post('/master/conversions', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { unit_type, item_id, item_name, qty, base_unit, notes } = req.body;
 const { error } = await supabase.from('unit_conversions').upsert(
 { unit_type, item_id, item_name, qty, base_unit, notes: notes || `1 ${unit_type} = ${qty} ${base_unit}` },
@@ -846,6 +866,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/conversions/:id — Update conversion qty
 router.patch('/master/conversions', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { unit_type, item_id, qty, base_unit, notes } = req.body;
 const updates = {};
 if (qty !== undefined) updates.qty = qty;
@@ -861,6 +882,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/conversions — Soft delete
 router.delete('/master/conversions', async (req, res) => {
 try {
+    if (!await requireOwner(req, res)) return;
 const { unit_type, item_id } = req.query;
 const { error } = await supabase.from('unit_conversions').update({ active: false })
 .eq('unit_type', unit_type).eq('item_id', item_id);
@@ -876,6 +898,9 @@ res.json({ ok: true });
 // ── GET /api/outlet-sales — Get sales for a date/outlet
 router.get('/outlet-sales', async (req, res) => {
   try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const _outlet = req.body?.outlet_id || req.query?.outlet_id || req.params?.outlet_id;
+    if (!ensureOutletAccess(_user, _outlet, res)) return;
     const { outlet_id, date } = req.query;
     let query = supabase.from('daily_outlet_sales').select('*');
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
@@ -889,6 +914,9 @@ router.get('/outlet-sales', async (req, res) => {
 // ── GET /api/outlet-sales/latest-cash — Get previous day closing cash for an outlet
 router.get('/outlet-sales/latest-cash', async (req, res) => {
   try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const _outlet = req.body?.outlet_id || req.query?.outlet_id || req.params?.outlet_id;
+    if (!ensureOutletAccess(_user, _outlet, res)) return;
     const { outlet_id, before_date } = req.query;
     const { data, error } = await supabase.from('daily_outlet_sales')
       .select('*')
@@ -904,6 +932,9 @@ router.get('/outlet-sales/latest-cash', async (req, res) => {
 // ── POST /api/outlet-sales — Submit/update daily sales
 router.post('/outlet-sales', async (req, res) => {
   try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const _outlet = req.body?.outlet_id || req.query?.outlet_id || req.params?.outlet_id;
+    if (!ensureOutletAccess(_user, _outlet, res)) return;
     const { outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
             cancelled_orders, complimentary_amount, complimentary_reason, zomato_district,
             upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
@@ -929,6 +960,7 @@ router.post('/outlet-sales', async (req, res) => {
 // ── PATCH /api/outlet-sales/verify — Owner verifies UPI
 router.patch('/outlet-sales/verify', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { outlet_id, date, verified } = req.body;
     const { error } = await supabase.from('daily_outlet_sales')
       .update({ verified, verified_at: new Date().toISOString() })
@@ -986,6 +1018,7 @@ router.post('/auth/login', async (req, res) => {
 
 router.get('/auth/users', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { data, error } = await supabase.from('app_users').select('*').order('name');
     if (error) throw error;
     res.json(data || []);
@@ -994,6 +1027,7 @@ router.get('/auth/users', async (req, res) => {
 
 router.post('/auth/users', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { name, phone, role, outlet_id } = req.body;
     const pin = String(Math.floor(1000 + Math.random() * 9000));
     const { data, error } = await supabase.from('app_users')
@@ -1006,6 +1040,7 @@ router.post('/auth/users', async (req, res) => {
 
 router.patch('/auth/users/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const updates = {};
     if (req.body.name !== undefined) updates.name = req.body.name;
     if (req.body.role !== undefined) updates.role = req.body.role;
@@ -1270,6 +1305,7 @@ router.get('/orders/:id/challan', async (req, res) => {
 // Backend had /sales/:date but frontend expects /sales?date=...&outlet=...
 router.get('/sales', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date, outlet } = req.query;
     if (!date) return res.status(400).json({ error: 'date query param required' });
 
@@ -1465,6 +1501,7 @@ router.delete('/staff-demands/items/:id', async (req, res) => {
 // ── GET /api/rate-card — All active rates
 router.get('/rate-card', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { data, error } = await supabase.from('rate_card').select('*')
       .eq('active', true).order('category').order('name');
     if (error) throw error;
@@ -1475,6 +1512,7 @@ router.get('/rate-card', async (req, res) => {
 // ── POST /api/rate-card — Add/update rate
 router.post('/rate-card', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { id, name, category, unit, price } = req.body;
     const { error } = await supabase.from('rate_card').upsert({
       id, name, category, unit, price: price || 0, updated_at: new Date().toISOString()
@@ -1487,6 +1525,7 @@ router.post('/rate-card', async (req, res) => {
 // ── PATCH /api/rate-card/:id — Update price
 router.patch('/rate-card/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const updates = {};
     if (req.body.price !== undefined) updates.price = req.body.price;
     if (req.body.name !== undefined) updates.name = req.body.name;
@@ -1502,6 +1541,7 @@ router.patch('/rate-card/:id', async (req, res) => {
 // ── DELETE /api/rate-card/:id — Soft delete
 router.delete('/rate-card/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { error } = await supabase.from('rate_card').update({ active: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -1515,6 +1555,7 @@ router.delete('/rate-card/:id', async (req, res) => {
 // ── GET /api/fixed-costs — All active fixed costs
 router.get('/fixed-costs', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { outlet_id } = req.query;
     let query = supabase.from('fixed_costs').select('*').eq('active', true).order('outlet_id').order('cost_head');
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
@@ -1527,6 +1568,7 @@ router.get('/fixed-costs', async (req, res) => {
 // ── POST /api/fixed-costs — Add/update fixed cost
 router.post('/fixed-costs', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { outlet_id, cost_head, label, amount, category } = req.body;
     const { error } = await supabase.from('fixed_costs').upsert({
       outlet_id, cost_head, label, amount: amount || 0, category: category || 'fixed',
@@ -1540,6 +1582,7 @@ router.post('/fixed-costs', async (req, res) => {
 // ── DELETE /api/fixed-costs — Soft delete
 router.delete('/fixed-costs', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { outlet_id, cost_head } = req.query;
     const { error } = await supabase.from('fixed_costs')
       .update({ active: false }).eq('outlet_id', outlet_id).eq('cost_head', cost_head);
@@ -1555,6 +1598,7 @@ router.delete('/fixed-costs', async (req, res) => {
 // ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
 router.get('/pnl/live/:date', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date } = req.params;
     const { outlet } = req.query; // optional outlet filter
 
@@ -1839,6 +1883,7 @@ router.get('/pnl/live/:date', async (req, res) => {
 
 router.get('/stock-usage/:date', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date } = req.params;
     const { outlet } = req.query;
 
@@ -1978,6 +2023,7 @@ router.get('/stock-usage/:date', async (req, res) => {
 // ── GET /api/outlet-recipes — All recipes with ingredients and fill status
 router.get('/outlet-recipes', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { data: recipes, error } = await supabase.from('recipes')
       .select(`id, item_name, item_type, category, status,
         recipe_ingredients ( id, raw_material, qty, unit, qty_kg )`)
@@ -1992,6 +2038,7 @@ router.get('/outlet-recipes', async (req, res) => {
 // ── POST /api/outlet-recipes — Add a new menu item (no ingredients yet)
 router.post('/outlet-recipes', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { item_name, category, item_type } = req.body;
     if (!item_name) return res.status(400).json({ error: 'item_name required' });
     const { data, error } = await supabase.from('recipes').insert({
@@ -2005,6 +2052,7 @@ router.post('/outlet-recipes', async (req, res) => {
 // ── PATCH /api/outlet-recipes/:id — Update menu item name/category
 router.patch('/outlet-recipes/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const updates = {};
     if (req.body.item_name !== undefined) updates.item_name = req.body.item_name;
     if (req.body.category !== undefined) updates.category = req.body.category;
@@ -2019,6 +2067,7 @@ router.patch('/outlet-recipes/:id', async (req, res) => {
 // ── DELETE /api/outlet-recipes/:id — Soft delete (set status = Inactive)
 router.delete('/outlet-recipes/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { error } = await supabase.from('recipes')
       .update({ status: 'Inactive' }).eq('id', req.params.id);
     if (error) throw error;
@@ -2029,6 +2078,7 @@ router.delete('/outlet-recipes/:id', async (req, res) => {
 // ── POST /api/outlet-recipes/:id/ingredients — Save all ingredients for a recipe (replace)
 router.post('/outlet-recipes/:id/ingredients', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { id } = req.params;
     const { ingredients } = req.body; // [{ raw_material, qty, unit, qty_kg }]
     if (!ingredients) return res.status(400).json({ error: 'ingredients array required' });
@@ -2055,6 +2105,7 @@ router.post('/outlet-recipes/:id/ingredients', async (req, res) => {
 // ── DELETE /api/outlet-recipes/:recipeId/ingredients/:ingredientId — Remove single ingredient
 router.delete('/outlet-recipes/:recipeId/ingredients/:ingredientId', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { error } = await supabase.from('recipe_ingredients')
       .delete().eq('id', req.params.ingredientId);
     if (error) throw error;
@@ -2097,6 +2148,7 @@ router.get('/history/dispatches', async (req, res) => {
 // ============================================================
 router.get('/sheets/setup', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     if (!sheetsHelper) {
       return res.status(400).json({ error: 'Google Sheets module not available' });
     }
@@ -2111,6 +2163,7 @@ router.get('/sheets/setup', async (req, res) => {
 
 router.get('/cash-handovers', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { month, date, from_role, to_role } = req.query;
     let query = supabase.from('cash_handovers').select('*').order('date', { ascending: false });
     if (date) query = query.eq('date', date);
@@ -2126,6 +2179,7 @@ router.get('/cash-handovers', async (req, res) => {
 
 router.post('/cash-handovers', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date, from_role, from_name, to_role, to_name, outlet_id, amount, note } = req.body;
     if (!date || !amount) return res.status(400).json({ error: "Date and amount required" });
     const { data, error } = await supabase.from('cash_handovers')
@@ -2143,6 +2197,7 @@ router.post('/cash-handovers', async (req, res) => {
 
 router.get('/paytm-actuals', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { month } = req.query; // YYYY-MM
     const year = Number((month || today().slice(0, 7)).slice(0, 4));
     const mon = Number((month || today().slice(0, 7)).slice(5, 7));
@@ -2158,6 +2213,7 @@ router.get('/paytm-actuals', async (req, res) => {
 
 router.post('/paytm-actuals', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { date, outlet_id, actual_amount } = req.body;
     const { data, error } = await supabase.from('paytm_actuals')
       .upsert({ date, outlet_id, actual_amount: Number(actual_amount) || 0 }, { onConflict: 'date,outlet_id' })
@@ -2173,6 +2229,7 @@ router.post('/paytm-actuals', async (req, res) => {
 
 router.get('/rm-order-config', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { data, error } = await supabase.from('rm_order_config').select('*');
     if (error) throw error;
     res.json(data || []);
@@ -2181,6 +2238,7 @@ router.get('/rm-order-config', async (req, res) => {
 
 router.post('/rm-order-config', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { items } = req.body;
     if (!items || items.length === 0) return res.json({ ok: true, count: 0 });
     const upserts = items.map(i => ({
@@ -2195,6 +2253,7 @@ router.post('/rm-order-config', async (req, res) => {
 
 router.get('/rm-order-config/suggest', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const tenDaysAgo = new Date();
     tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
     const { data: movements } = await supabase.from('inventory_movements')
@@ -2215,6 +2274,7 @@ router.get('/rm-order-config/suggest', async (req, res) => {
 
 router.get('/purchase-orders', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { status, limit } = req.query;
     let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
@@ -2227,6 +2287,7 @@ router.get('/purchase-orders', async (req, res) => {
 
 router.get('/purchase-orders/:id', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { data, error } = await supabase.from('purchase_orders')
       .select('*').eq('id', req.params.id).single();
     if (error) throw error;
@@ -2236,6 +2297,7 @@ router.get('/purchase-orders/:id', async (req, res) => {
 
 router.post('/purchase-orders', async (req, res) => {
   try {
+    if (!await requireOwner(req, res)) return;
     const { items, notes, created_by } = req.body;
     const today = new Date().toISOString().split('T')[0];
     const { data: existing } = await supabase.from('purchase_orders')
