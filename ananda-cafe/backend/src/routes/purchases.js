@@ -2,8 +2,11 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
+const { requireAuth, requireOwner } = require("./authGuards");
 
+// GET / — listing of all purchases across outlets. Owner-only.
 router.get("/", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const { date, limit = 30 } = req.query;
   let query = supabase.from("purchases").select("*, purchase_items(*), purchase_photos(*)").order("submitted_at", { ascending: false }).limit(limit);
   if (date) query = query.eq("date", date);
@@ -12,7 +15,10 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
+// POST / — submit a purchase. Shadowed by salesRoutes.js in prod; guarded here anyway.
 router.post("/", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { items, payment_mode, note, submitted_by } = req.body;
   const total = items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
 
@@ -50,6 +56,8 @@ router.post("/", async (req, res) => {
 });
 
 router.post("/:id/photos", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
   const { id } = req.params;
   const { base64, label } = req.body;
   const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
@@ -62,8 +70,9 @@ router.post("/:id/photos", async (req, res) => {
   res.json({ ...data, url: urlData?.signedUrl });
 });
 
-// Today's purchase total (for dashboard)
+// Today's purchase total (for dashboard) — owner only
 router.get("/summary", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const { date } = req.query;
   const targetDate = date || todayIST();
   const { data, error } = await supabase
