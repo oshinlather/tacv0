@@ -1752,11 +1752,34 @@ router.get('/pnl/live/:date', async (req, res) => {
       if (rateMap[i.id]) invNameToRate[i.name?.toLowerCase().trim()] = i.id;
     });
     
-    // Known ID mappings for recipe ingredients → rate card
+    // Complete raw material → rate card mapping
+    // Recipe ingredients use _raw suffix IDs; rate card uses clean IDs.
     const KNOWN_MAPPINGS = {
-      'coriander_raw': 'coriander_leaves',
-      'urad_daal': 'urad_dal',
-      'sona_masoori_raw': 'sona_masoori_rice',
+      amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
+      chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
+      coriander_raw: 'coriander_leaves', curry_leaves_raw: 'curry_leaves',
+      deggi_mirch_raw: 'deggi_mirch', desi_ghee_raw: 'desi_ghee',
+      dhaniya_whole_raw: 'dhaniya_whole', drumstick_raw: 'drumstick',
+      fortune_refined_raw: 'fortune_refined', garam_masala_raw: 'garam_masala',
+      garlic_raw: 'garlic', ginger_raw: 'ginger', golden_sela_rice: 'golden_sela_rice',
+      green_chilli_raw: 'green_chillies', gur_raw: 'gur',
+      haldi_raw: 'haldi_powder', hing_raw: 'hing_powder',
+      ilaychi_raw: 'ilaychi', imli_raw: 'imli',
+      jeera_raw: 'jeera', kaju_raw: 'kaju', kali_mirch_raw: 'kali_mirch',
+      kesar_raw: 'kesar', kishmish_raw: 'kishmish',
+      meetha_soda_raw: 'meetha_soda', methi_dana_raw: 'methi_dana',
+      milk_raw: 'milk', milkmaid_raw: 'milkmaid', mint_raw: 'mint',
+      mustard_raw: 'mustard_seeds', onions_raw: 'onions',
+      peanuts_raw: 'peanuts', petha_raw: 'petha', pineapple_raw: 'pineapple',
+      poha_raw: 'poha', red_chilli_powder_raw: 'red_chilli_powder',
+      rice_powder_raw: 'rice_powder', roasted_chana_raw: 'roasted_chana',
+      roasted_karipatta_raw: 'roasted_karipatta', roasted_peanuts_raw: 'roasted_peanuts',
+      safed_til_raw: 'safed_til', salt_raw: 'salt',
+      sambhar_masala_raw: 'sambhar_masala_777', semiyan_raw: 'semiyan',
+      sona_masoori_raw: 'sona_masoori_rice', sugar_raw: 'sugar',
+      tadka_raw: 'tadka', tomatoes_raw: 'tomatoes',
+      upma_sooji_raw: 'upma_sooji', urad_daal: 'urad_daal_whole',
+      whole_red_chilli_raw: 'whole_red_chilli',
     };
     
     const findRateId = (rmId) => {
@@ -2056,6 +2079,53 @@ router.get('/stock-usage/:date', async (req, res) => {
       if (i.name) invByName[i.name.toLowerCase()] = i.demand_item_id || i.id;
     });
 
+    // Explicit raw material → rate card mapping
+    // Recipe ingredients use _raw suffix IDs; rate card uses clean IDs.
+    // This map resolves every known mismatch.
+    const rawToRate = {
+      amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
+      chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
+      coriander_raw: 'coriander_leaves', curry_leaves_raw: 'curry_leaves',
+      deggi_mirch_raw: 'deggi_mirch', desi_ghee_raw: 'desi_ghee',
+      dhaniya_whole_raw: 'dhaniya_whole', drumstick_raw: 'drumstick',
+      fortune_refined_raw: 'fortune_refined', garam_masala_raw: 'garam_masala',
+      garlic_raw: 'garlic', ginger_raw: 'ginger', golden_sela_rice: 'golden_sela_rice',
+      green_chilli_raw: 'green_chillies', gur_raw: 'gur',
+      haldi_raw: 'haldi_powder', hing_raw: 'hing_powder',
+      ilaychi_raw: 'ilaychi', imli_raw: 'imli',
+      jeera_raw: 'jeera', kaju_raw: 'kaju', kali_mirch_raw: 'kali_mirch',
+      kesar_raw: 'kesar', kishmish_raw: 'kishmish',
+      meetha_soda_raw: 'meetha_soda', methi_dana_raw: 'methi_dana',
+      milk_raw: 'milk', milkmaid_raw: 'milkmaid', mint_raw: 'mint',
+      mustard_raw: 'mustard_seeds', onions_raw: 'onions',
+      peanuts_raw: 'peanuts', petha_raw: 'petha', pineapple_raw: 'pineapple',
+      poha_raw: 'poha', red_chilli_powder_raw: 'red_chilli_powder',
+      rice_powder_raw: 'rice_powder', roasted_chana_raw: 'roasted_chana',
+      roasted_karipatta_raw: 'roasted_karipatta', roasted_peanuts_raw: 'roasted_peanuts',
+      safed_til_raw: 'safed_til', salt_raw: 'salt',
+      sambhar_masala_raw: 'sambhar_masala_777', semiyan_raw: 'semiyan',
+      sona_masoori_raw: 'sona_masoori_rice', sugar_raw: 'sugar',
+      tadka_raw: 'tadka', tomatoes_raw: 'tomatoes',
+      upma_sooji_raw: 'upma_sooji', urad_daal: 'urad_daal_whole',
+      whole_red_chilli_raw: 'whole_red_chilli',
+    };
+
+    // Resolve a raw material ID to its rate card ID
+    const resolveRateId = (rmId) => {
+      // 1. Direct match in rate card
+      if (rateMap[rmId]) return rmId;
+      // 2. Explicit mapping
+      if (rawToRate[rmId] && rateMap[rawToRate[rmId]]) return rawToRate[rmId];
+      // 3. Strip _raw suffix
+      const stripped = rmId.replace(/_raw$/, '');
+      if (rateMap[stripped]) return stripped;
+      // 4. Inventory mapping
+      const invMapped = invByName[rmId] || invByName[rmId?.toLowerCase()];
+      if (invMapped && rateMap[invMapped]) return invMapped;
+      // 5. Not found
+      return null;
+    };
+
     // Build BK recipe map with computed cost per Kg
     const bkRecipeMap = {};
     (bkRecipes || []).forEach(r => {
@@ -2064,14 +2134,17 @@ router.get('/stock-usage/:date', async (req, res) => {
       let batchCost = 0;
       ings.forEach(ing => {
         const rmId = ing.raw_material_id || ing.raw_material;
-        const mappedId = invByName[rmId] || invByName[rmId?.toLowerCase()] || rmId;
-        const ingRate = rateMap[mappedId];
+        const rateId = resolveRateId(rmId);
+        const ingRate = rateId ? rateMap[rateId] : null;
         if (ingRate) {
           const ingUnit = (ing.unit || 'Kg').toLowerCase();
           const rateUnit = (ingRate.unit || 'Kg').toLowerCase();
           let factor = 1;
           if ((ingUnit === 'gm' || ingUnit === 'g') && rateUnit === 'kg') factor = 0.001;
           if (ingUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor = 1000;
+          // Check unit_conversions for non-standard units
+          const conv = convMap[rmId];
+          if (conv && ingUnit === conv.fromUnit.toLowerCase()) factor = conv.qty;
           batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
         }
       });
