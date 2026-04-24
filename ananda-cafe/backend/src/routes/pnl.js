@@ -2,9 +2,12 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
+const { requireOwner } = require("./authGuards");
 
-// Get P&L for date range
+// All P&L data is owner-only — financial information, profit margins, etc.
+
 router.get("/", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const { outlet_id, start_date, end_date, date } = req.query;
   let query = supabase.from("daily_pnl").select("*").order("date", { ascending: false });
   if (outlet_id) query = query.eq("outlet_id", outlet_id);
@@ -16,8 +19,8 @@ router.get("/", async (req, res) => {
   res.json(data);
 });
 
-// Upsert daily P&L entry
 router.post("/", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const { outlet_id, date, ...fields } = req.body;
   const { data, error } = await supabase
     .from("daily_pnl")
@@ -28,8 +31,8 @@ router.post("/", async (req, res) => {
   res.json(data);
 });
 
-// Summary across all outlets for a date
 router.get("/summary", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
   const { date } = req.query;
   const targetDate = date || todayIST();
   const { data, error } = await supabase
