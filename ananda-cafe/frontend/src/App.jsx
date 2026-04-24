@@ -1156,6 +1156,13 @@ const DailyPnL = () => {
               </div>
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
                 {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => {
+                  if (i === 0 && typeof window !== 'undefined' && !window.__loggedItemShape) {
+                    // TEMP DEBUG: logs once per page load so we can see what fields arrive
+                    window.__loggedItemShape = true;
+                    console.log('🔍 First item_breakdown entry:', item);
+                    console.log('🔍 Has demand_id?', !!item.demand_id, 'Value:', item.demand_id);
+                    console.log('🔍 selOutlet:', selOutlet);
+                  }
                   const isEditing = editItem && editItem.demand_id === item.demand_id && editItem.item_id === item.item_id;
                   const canEdit = selOutlet && item.demand_id; // only per-outlet view, and only rate-card items
                   if (isEditing) {
