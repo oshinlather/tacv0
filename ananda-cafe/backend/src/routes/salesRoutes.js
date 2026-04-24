@@ -1285,6 +1285,89 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/orders/:demand_id/item/:item_id — Owner edits dispatched qty for a single item
+// Overwrites the qty in demands.dispatch_items (or items) and logs to qty_corrections.
+router.patch('/orders/:demand_id/item/:item_id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { demand_id, item_id } = req.params;
+    const { new_qty, reason } = req.body;
+    if (new_qty === undefined || new_qty === null || isNaN(Number(new_qty))) {
+      return res.status(400).json({ error: 'new_qty required and must be a number' });
+    }
+    if (Number(new_qty) < 0) {
+      return res.status(400).json({ error: 'new_qty cannot be negative' });
+    }
+
+    // 1. Load the demand row
+    const { data: order, error: loadErr } = await supabase.from('demands')
+      .select('id, outlet_id, date, items, dispatch_items').eq('id', demand_id).single();
+    if (loadErr || !order) return res.status(404).json({ error: 'Order not found' });
+
+    // 2. Figure out which JSON column the item lives in (dispatch_items first, fallback to items)
+    const useDispatch = order.dispatch_items && order.dispatch_items[item_id] !== undefined;
+    const column = useDispatch ? 'dispatch_items' : 'items';
+    const currentMap = { ...(order[column] || {}) };
+    const oldVal = currentMap[item_id];
+    if (oldVal === undefined) {
+      return res.status(404).json({ error: `Item '${item_id}' not found in this order` });
+    }
+    // Old qty could be a number OR an object like { qty, unit, name } — handle both
+    const oldQty = typeof oldVal === 'object' && oldVal !== null ? Number(oldVal.qty) : Number(oldVal);
+
+    // 3. Write the new value preserving shape
+    if (typeof oldVal === 'object' && oldVal !== null) {
+      currentMap[item_id] = { ...oldVal, qty: Number(new_qty) };
+    } else {
+      currentMap[item_id] = Number(new_qty);
+    }
+
+    // 4. Update the demand row
+    const { error: updateErr } = await supabase.from('demands')
+      .update({ [column]: currentMap })
+      .eq('id', demand_id);
+    if (updateErr) throw updateErr;
+
+    // 5. Log correction. req.user is set by requireOwner (fetched from app_users).
+    // Fetch user name — requireOwner already populated req via the guard cache.
+    const correctorName = req.headers['x-user-name'] ||
+      (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
+      'owner';
+
+    const unit = (typeof oldVal === 'object' && oldVal !== null ? oldVal.unit : null) || null;
+
+    await supabase.from('qty_corrections').insert({
+      demand_id,
+      outlet_id: order.outlet_id,
+      date: order.date,
+      item_id,
+      old_qty: oldQty,
+      new_qty: Number(new_qty),
+      unit,
+      reason: reason || null,
+      corrected_by: correctorName,
+    });
+
+    res.json({ ok: true, old_qty: oldQty, new_qty: Number(new_qty) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/corrections — Owner: list recent qty corrections
+router.get('/corrections', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { outlet_id, date, item_id, limit = 100 } = req.query;
+    let q = supabase.from('qty_corrections').select('*')
+      .order('corrected_at', { ascending: false }).limit(Math.min(Number(limit), 500));
+    if (outlet_id) q = q.eq('outlet_id', outlet_id);
+    if (date) q = q.eq('date', date);
+    if (item_id) q = q.eq('item_id', item_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/orders/:id/challan — Get dispatch challan for an order
 router.get('/orders/:id/challan', async (req, res) => {
   try {
@@ -1744,7 +1827,18 @@ router.get('/pnl/live/:date', async (req, res) => {
             totalVariableCost += cost;
             const cat = rate.category || 'Other';
             variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
-            itemBreakdown.push({ item_id: itemId, name: rate.name, category: cat, qty: convertedQty, unit: rate.unit, rate: Number(rate.price), cost });
+            itemBreakdown.push({
+              demand_id: order.id,
+              raw_qty: Number(qty),
+              raw_unit: demandUnit || rate.unit,
+              item_id: itemId,
+              name: rate.name,
+              category: cat,
+              qty: convertedQty,
+              unit: rate.unit,
+              rate: Number(rate.price),
+              cost,
+            });
           } else {
             // BK prepared item (sambhar, dosa_batter, etc.) — no direct rate
             // Explode into raw materials via BK recipes and price them
@@ -1774,7 +1868,18 @@ router.get('/pnl/live/:date', async (req, res) => {
                 totalVariableCost += itemCost;
                 const cat = 'BK Food';
                 variableByCategory[cat] = (variableByCategory[cat] || 0) + itemCost;
-                itemBreakdown.push({ item_id: itemId, name: getDemandItemName(itemId) || itemId, category: cat, qty: qtyKg, unit: 'Kg', rate: Math.round(itemCost / qtyKg * 100) / 100, cost: itemCost });
+                itemBreakdown.push({
+                  demand_id: order.id,
+                  raw_qty: Number(qty),
+                  raw_unit: demandUnit || 'Kg',
+                  item_id: itemId,
+                  name: getDemandItemName(itemId) || itemId,
+                  category: cat,
+                  qty: qtyKg,
+                  unit: 'Kg',
+                  rate: Math.round(itemCost / qtyKg * 100) / 100,
+                  cost: itemCost,
+                });
               }
             }
           }
