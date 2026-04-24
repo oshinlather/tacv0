@@ -966,13 +966,17 @@ const DailyPnL = () => {
   const [loading, setLoading] = useState(true);
   const [expandSection, setExpandSection] = useState(null); // 'variable', 'fixed', 'purchase'
 
+  // Owner qty-correction edit state: { demand_id, item_id, value, reason }
+  const [editItem, setEditItem] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
+
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
   }, [selDay]);
 
   const [stockData, setStockData] = useState(null);
 
-  useEffect(() => {
+  const fetchPnl = useCallback(() => {
     setLoading(true);
     Promise.all([
       api.getLivePnl(dateStr).catch(() => null),
@@ -1003,6 +1007,26 @@ const DailyPnL = () => {
       setStockData(stock);
     }).finally(() => setLoading(false));
   }, [dateStr]);
+
+  useEffect(() => { fetchPnl(); }, [fetchPnl]);
+
+  // Save an owner qty correction for a single item, then reload P&L
+  const saveQtyEdit = async () => {
+    if (!editItem) return;
+    const newQty = Number(editItem.value);
+    if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity"); return; }
+    if (!editItem.reason) { alert("Please pick a reason for the change"); return; }
+    setEditSaving(true);
+    try {
+      await api.editOrderItemQty(editItem.demand_id, editItem.item_id, newQty, editItem.reason);
+      setEditItem(null);
+      await fetchPnl();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const allPnl = pnlData?.pnl || [];
   const currentData = selOutlet
@@ -1126,14 +1150,77 @@ const DailyPnL = () => {
           ))}
           {expandSection === "variable" && d.item_breakdown && d.item_breakdown.length > 0 && (
             <div style={{ padding: "8px 12px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Item-wise Breakdown</div>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Item-wise Breakdown</span>
+                {selOutlet && <span style={{ fontSize: 9, fontWeight: 500, color: "#BBB", textTransform: "none", letterSpacing: 0 }}>tap ✏️ to fix qty</span>}
+              </div>
               <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", fontSize: 11, borderBottom: "1px solid #F5F5F3" }}>
-                    <span style={{ color: "#555" }}>{item.name} <span style={{ color: "#BBB" }}>({item.qty} {item.unit} × ₹{item.rate})</span></span>
-                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
-                  </div>
-                ))}
+                {d.item_breakdown.sort((a, b) => b.cost - a.cost).map((item, i) => {
+                  const isEditing = editItem && editItem.demand_id === item.demand_id && editItem.item_id === item.item_id;
+                  const canEdit = selOutlet && item.demand_id; // only per-outlet view, and only rate-card items
+                  if (isEditing) {
+                    return (
+                      <div key={i} style={{ padding: "8px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, marginBottom: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {item.name}</div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
+                          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{item.raw_qty} {item.raw_unit}</span>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="any"
+                            autoFocus
+                            value={editItem.value}
+                            onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
+                            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}
+                          />
+                          <span style={{ fontSize: 11, color: "#888" }}>{item.raw_unit}</span>
+                        </div>
+                        <select
+                          value={editItem.reason}
+                          onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
+                          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}
+                        >
+                          <option value="">-- Reason --</option>
+                          <option value="unit_error">Unit error (kg vs g etc.)</option>
+                          <option value="typo">Typo</option>
+                          <option value="genuine_correction">Genuine correction</option>
+                          <option value="other">Other</option>
+                        </select>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <button
+                            onClick={saveQtyEdit}
+                            disabled={editSaving}
+                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+                          >{editSaving ? "⏳ Saving..." : "💾 Save"}</button>
+                          <button
+                            onClick={() => setEditItem(null)}
+                            disabled={editSaving}
+                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}
+                          >Cancel</button>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "4px 8px", fontSize: 11, borderBottom: "1px solid #F5F5F3", alignItems: "center" }}>
+                      <span style={{ color: "#555", flex: 1 }}>
+                        {item.name} <span style={{ color: "#BBB" }}>({item.qty} {item.unit} × ₹{item.rate})</span>
+                      </span>
+                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: canEdit ? 6 : 0 }}>{fmt(item.cost)}</span>
+                      {canEdit && (
+                        <button
+                          onClick={() => setEditItem({ demand_id: item.demand_id, item_id: item.item_id, value: String(item.raw_qty), reason: "" })}
+                          title="Edit quantity"
+                          style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}
+                        >✏️</button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1182,6 +1269,115 @@ const DailyPnL = () => {
           ))}
         </div>
       </>)}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  CORRECTIONS LOG — Owner audit trail of qty edits
+// ═════════════════════════════════════════════════════════════════════════════
+const CorrectionsLog = () => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterOutlet, setFilterOutlet] = useState("");
+  const [filterDate, setFilterDate] = useState("");
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = {};
+    if (filterOutlet) params.outlet_id = filterOutlet;
+    if (filterDate) params.date = filterDate;
+    api.getCorrections(params)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [filterOutlet, filterDate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const outletName = (id) => OUTLETS.find(o => o.id === id)?.short || id;
+  const reasonLabel = (r) => ({
+    unit_error: "Unit error",
+    typo: "Typo",
+    genuine_correction: "Genuine correction",
+    other: "Other",
+  }[r] || r || "—");
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🧾 Corrections Log</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Every time you fix a dispatched item qty, it's logged here.</p>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <select value={filterOutlet} onChange={(e) => setFilterOutlet(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+          <option value="">All outlets</option>
+          {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.short}</option>)}
+        </select>
+        <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+        {(filterOutlet || filterDate) && (
+          <button onClick={() => { setFilterOutlet(""); setFilterDate(""); }}
+            style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>
+            Clear
+          </button>
+        )}
+        <button onClick={load}
+          style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#555", cursor: "pointer", fontFamily: "inherit", marginLeft: "auto" }}>
+          🔄 Refresh
+        </button>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+      {!loading && rows.length === 0 && (
+        <div style={{ textAlign: "center", padding: 40 }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>✨</div>
+          <div style={{ color: "#999" }}>No corrections yet</div>
+          <div style={{ fontSize: 11, color: "#BBB", marginTop: 4 }}>When you fix a qty in P&L, it appears here.</div>
+        </div>
+      )}
+
+      {!loading && rows.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC", display: "grid", gridTemplateColumns: "80px 60px 1fr 90px 90px 100px 90px", gap: 8, fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>
+            <span>Date</span>
+            <span>Outlet</span>
+            <span>Item</span>
+            <span style={{ textAlign: "right" }}>Old → New</span>
+            <span>Reason</span>
+            <span>By</span>
+            <span style={{ textAlign: "right" }}>When</span>
+          </div>
+          {rows.map((r) => {
+            const delta = Number(r.new_qty) - Number(r.old_qty);
+            const pct = Number(r.old_qty) > 0 ? Math.abs(delta / Number(r.old_qty) * 100) : 0;
+            return (
+              <div key={r.id} style={{ padding: "10px 14px", borderBottom: "1px solid #F5F5F3", display: "grid", gridTemplateColumns: "80px 60px 1fr 90px 90px 100px 90px", gap: 8, fontSize: 12, alignItems: "center" }}>
+                <span style={{ fontFamily: "'JetBrains Mono'", color: "#555" }}>{r.date}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#1A1A1A" }}>{outletName(r.outlet_id)}</span>
+                <span style={{ fontWeight: 600 }}>{(r.item_id || "").replace(/_/g, " ")}</span>
+                <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11 }}>
+                  <span style={{ color: "#DC2626", textDecoration: "line-through" }}>{r.old_qty}</span>
+                  {" → "}
+                  <span style={{ color: "#16A34A", fontWeight: 700 }}>{r.new_qty}</span>
+                  <span style={{ color: "#BBB" }}> {r.unit || ""}</span>
+                  {pct > 0 && <div style={{ fontSize: 9, color: pct > 50 ? "#DC2626" : "#999" }}>{delta > 0 ? "+" : ""}{Math.round(pct)}%</div>}
+                </span>
+                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: r.reason === "unit_error" ? "#FEF2F2" : "#F5F5F3", color: r.reason === "unit_error" ? "#991B1B" : "#555", display: "inline-block", width: "fit-content" }}>{reasonLabel(r.reason)}</span>
+                <span style={{ fontSize: 11, color: "#555" }}>{r.corrected_by}</span>
+                <span style={{ textAlign: "right", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono'" }}>
+                  {new Date(r.corrected_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                  <div>{new Date(r.corrected_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -5899,7 +6095,7 @@ export default function AnandaCafe() {
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
+      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -5928,6 +6124,7 @@ export default function AnandaCafe() {
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
+          { id: "corrections", label: "🧾 Corrections Log", sub: "Owner edits of dispatched qty" },
           { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
@@ -5949,7 +6146,7 @@ export default function AnandaCafe() {
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
-      {ownerTab === "stock_usage" && <DailyStockUsage />}
+      {ownerTab === "corrections" && <CorrectionsLog />}
       {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
