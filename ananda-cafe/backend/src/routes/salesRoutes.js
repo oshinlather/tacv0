@@ -2154,13 +2154,13 @@ router.get('/stock-usage/:date', async (req, res) => {
       bkRecipeMap[r.id] = { name: r.name || r.id, costPerKg, yieldQty };
     });
 
-    // 2. Previous day closing stock
-    const { data: prevClosing } = await supabase.from('demands')
-      .select('outlet_id, items').eq('type', 'closing').eq('date', prevDateStr);
+    // 2. Previous day closing stock (from closing_stocks table, NOT demands)
+    const { data: prevClosing } = await supabase.from('closing_stocks')
+      .select('outlet_id, items').eq('date', prevDateStr);
 
     // 3. Today closing stock
-    const { data: todayClosing } = await supabase.from('demands')
-      .select('outlet_id, items').eq('type', 'closing').eq('date', date);
+    const { data: todayClosing } = await supabase.from('closing_stocks')
+      .select('outlet_id, items').eq('date', date);
 
     // 4. Today wastage
     const { data: todayWastage } = await supabase.from('demands')
