@@ -1714,6 +1714,13 @@ router.get('/pnl/live/:date', async (req, res) => {
     const demandUnitMap = {};
     (demandItemsRaw || []).forEach(i => { demandUnitMap[i.id] = i.unit; });
 
+    // 2c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
+    const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
+    const convMap = {};
+    (unitConversions || []).forEach(c => {
+      convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
+    });
+
     // 3. Get daily purchases for this date
     const { data: purchases } = await supabase.from('purchases').select('*').eq('date', date);
 
@@ -1838,7 +1845,12 @@ router.get('/pnl/live/:date', async (req, res) => {
             // BK prepared item — price using recipe cost per kg
             const demandUnit = getDemandUnit(itemId);
             let qtyKg = Number(qty);
-            if (demandUnit && demandUnit.toLowerCase() === 'batch' && recipe.yieldQty) {
+            // Use unit_conversions table for Batch→Kg (e.g., 1 Batch dosa_batter = 9 Kg)
+            const conv = convMap[itemId];
+            if (conv && demandUnit && demandUnit.toLowerCase() === conv.fromUnit.toLowerCase()) {
+              qtyKg = Number(qty) * conv.qty;
+            } else if (demandUnit && demandUnit.toLowerCase() === 'batch' && recipe.yieldQty) {
+              // Fallback to recipe yield if no conversion entry
               qtyKg = Number(qty) * recipe.yieldQty;
             }
             const batches = recipe.yieldQty > 0 ? qtyKg / recipe.yieldQty : 0;
@@ -1856,7 +1868,7 @@ router.get('/pnl/live/:date', async (req, res) => {
             });
             if (itemCost > 0) {
               totalVariableCost += itemCost;
-              const cat = 'BK Food';
+              const cat = 'Food';
               variableByCategory[cat] = (variableByCategory[cat] || 0) + itemCost;
               itemBreakdown.push({
                 demand_id: order.id,
@@ -2020,6 +2032,13 @@ router.get('/stock-usage/:date', async (req, res) => {
     const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
     const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
 
+    // 1c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
+    const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
+    const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
+    (unitConversions || []).forEach(c => {
+      convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
+    });
+
     // Build demand item name/unit maps
     const demandNameMap = {};
     const demandUnitMap = {};
@@ -2147,15 +2166,22 @@ router.get('/stock-usage/:date', async (req, res) => {
         }
 
         // Unit conversion for items where demand unit != rate unit
-        // e.g., demanded in Gm but rate is per Kg
+        // First check unit_conversions table (e.g., Batch→Kg for batters)
         const demandUnit = demandUnitMap[itemId] || itemUnit;
         let convFactor = 1;
-        const du = (demandUnit || '').toLowerCase();
-        const ru = (itemUnit || '').toLowerCase();
-        if ((du === 'gm' || du === 'g') && ru === 'kg') convFactor = 0.001;
-        if (du === 'kg' && (ru === 'gm' || ru === 'g')) convFactor = 1000;
-        if (du === 'tin' && ru === 'kg') convFactor = 15; // 1 Tin ≈ 15 Kg
-        if ((du === 'ml') && (ru === 'ltr' || ru === 'l')) convFactor = 0.001;
+        const conv = convMap[itemId];
+        if (conv && demandUnit.toLowerCase() === conv.fromUnit.toLowerCase()) {
+          // Use DB conversion: e.g., 1 Batch = 9 Kg → factor = 9
+          convFactor = conv.qty;
+        } else {
+          // Standard unit conversions
+          const du = (demandUnit || '').toLowerCase();
+          const ru = (itemUnit || '').toLowerCase();
+          if ((du === 'gm' || du === 'g') && ru === 'kg') convFactor = 0.001;
+          if (du === 'kg' && (ru === 'gm' || du === 'g')) convFactor = 1000;
+          if (du === 'tin' && ru === 'kg') convFactor = 15; // 1 Tin ≈ 15 Kg
+          if ((du === 'ml') && (ru === 'ltr' || ru === 'l')) convFactor = 0.001;
+        }
 
         const convertedUsed = usedQty * convFactor;
         const usedCost = convertedUsed * unitPrice;
