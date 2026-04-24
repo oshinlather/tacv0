@@ -1285,13 +1285,15 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── PATCH /api/orders/:demand_id/item/:item_id — Owner edits dispatched qty for a single item
-// Overwrites the qty in demands.dispatch_items (or items) and logs to qty_corrections.
-router.patch('/orders/:demand_id/item/:item_id', async (req, res) => {
+// ── PATCH /api/qty-edit — Owner edits a dispatched/demand item qty
+// Finds the demand row by outlet_id + date + item_id, overwrites qty, logs to qty_corrections.
+router.patch('/qty-edit', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
-    const { demand_id, item_id } = req.params;
-    const { new_qty, reason } = req.body;
+    const { outlet_id, date, item_id, new_qty, reason } = req.body;
+    if (!outlet_id || !date || !item_id) {
+      return res.status(400).json({ error: 'outlet_id, date, and item_id are required' });
+    }
     if (new_qty === undefined || new_qty === null || isNaN(Number(new_qty))) {
       return res.status(400).json({ error: 'new_qty required and must be a number' });
     }
@@ -1299,56 +1301,68 @@ router.patch('/orders/:demand_id/item/:item_id', async (req, res) => {
       return res.status(400).json({ error: 'new_qty cannot be negative' });
     }
 
-    // 1. Load the demand row
-    const { data: order, error: loadErr } = await supabase.from('demands')
-      .select('id, outlet_id, date, items, dispatch_items').eq('id', demand_id).single();
-    if (loadErr || !order) return res.status(404).json({ error: 'Order not found' });
+    // 1. Find all demand rows for this outlet+date that contain the item
+    const { data: allDemands, error: loadErr } = await supabase.from('demands')
+      .select('id, outlet_id, date, type, items, dispatch_items, status')
+      .eq('outlet_id', outlet_id).eq('date', date);
+    if (loadErr) throw loadErr;
 
-    // 2. Figure out which JSON column the item lives in (dispatch_items first, fallback to items)
-    const useDispatch = order.dispatch_items && order.dispatch_items[item_id] !== undefined;
-    const column = useDispatch ? 'dispatch_items' : 'items';
-    const currentMap = { ...(order[column] || {}) };
-    const oldVal = currentMap[item_id];
-    if (oldVal === undefined) {
-      return res.status(404).json({ error: `Item '${item_id}' not found in this order` });
-    }
-    // Old qty could be a number OR an object like { qty, unit, name } — handle both
-    const oldQty = typeof oldVal === 'object' && oldVal !== null ? Number(oldVal.qty) : Number(oldVal);
+    // 2. Find demands that have this item in dispatch_items or items (skip closing/wastage types)
+    const matchingDemands = (allDemands || []).filter(d => {
+      if (d.type === 'closing' || d.type === 'wastage') return false;
+      const dispItems = d.dispatch_items || d.items || {};
+      return dispItems[item_id] !== undefined;
+    });
 
-    // 3. Write the new value preserving shape
-    if (typeof oldVal === 'object' && oldVal !== null) {
-      currentMap[item_id] = { ...oldVal, qty: Number(new_qty) };
-    } else {
-      currentMap[item_id] = Number(new_qty);
+    if (matchingDemands.length === 0) {
+      return res.status(404).json({ error: `Item '${item_id}' not found in any demand for ${outlet_id} on ${date}` });
     }
 
-    // 4. Update the demand row
-    const { error: updateErr } = await supabase.from('demands')
-      .update({ [column]: currentMap })
-      .eq('id', demand_id);
-    if (updateErr) throw updateErr;
+    // 3. Update ALL matching demands (could be morning + evening)
+    const corrections = [];
+    for (const order of matchingDemands) {
+      const useDispatch = order.dispatch_items && order.dispatch_items[item_id] !== undefined;
+      const column = useDispatch ? 'dispatch_items' : 'items';
+      const currentMap = { ...(order[column] || {}) };
+      const oldVal = currentMap[item_id];
+      const oldQty = typeof oldVal === 'object' && oldVal !== null ? Number(oldVal.qty) : Number(oldVal);
 
-    // 5. Log correction. req.user is set by requireOwner (fetched from app_users).
-    // Fetch user name — requireOwner already populated req via the guard cache.
+      // Write new value preserving shape
+      if (typeof oldVal === 'object' && oldVal !== null) {
+        currentMap[item_id] = { ...oldVal, qty: Number(new_qty) };
+      } else {
+        currentMap[item_id] = Number(new_qty);
+      }
+
+      // Update the demand row
+      const { error: updateErr } = await supabase.from('demands')
+        .update({ [column]: currentMap })
+        .eq('id', order.id);
+      if (updateErr) throw updateErr;
+
+      corrections.push({ demand_id: order.id, old_qty: oldQty });
+    }
+
+    // 4. Log corrections
     const correctorName = req.headers['x-user-name'] ||
       (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
       'owner';
 
-    const unit = (typeof oldVal === 'object' && oldVal !== null ? oldVal.unit : null) || null;
+    for (const c of corrections) {
+      await supabase.from('qty_corrections').insert({
+        demand_id: c.demand_id,
+        outlet_id,
+        date,
+        item_id,
+        old_qty: c.old_qty,
+        new_qty: Number(new_qty),
+        unit: null,
+        reason: reason || null,
+        corrected_by: correctorName,
+      });
+    }
 
-    await supabase.from('qty_corrections').insert({
-      demand_id,
-      outlet_id: order.outlet_id,
-      date: order.date,
-      item_id,
-      old_qty: oldQty,
-      new_qty: Number(new_qty),
-      unit,
-      reason: reason || null,
-      corrected_by: correctorName,
-    });
-
-    res.json({ ok: true, old_qty: oldQty, new_qty: Number(new_qty) });
+    res.json({ ok: true, updated: corrections.length, corrections });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
