@@ -39,7 +39,7 @@ const OUTLET_LABELS = {
 const TAB_SCHEMA = {
   daily_sales:  {
     name: 'Daily Sales',
-    headers: ['Date', 'Submitted At', 'Submitted By', 'Total Sale', 'Swiggy', 'Zomato', 'Other Delivery', 'Cancelled Orders', 'UPI Collected', 'Cash Collected', 'Cash Deposited'],
+    headers: ['Date', 'Submitted At', 'Submitted By', 'Total Sale', 'Swiggy', 'Zomato', 'Other Delivery', 'Cancelled Orders', 'Complimentary Amount', 'Complimentary Reason', 'Zomato District', 'UPI Collected', 'Cash Collected', 'Prev Day Cash', 'Cash Expense', 'Cash Expense Note', 'Cash Deposited', 'Notes'],
   },
   manual:       {
     name: 'Demands',
@@ -258,9 +258,16 @@ function buildRow(type, submittedAt, submittedBy, data, items) {
         items.zomato_sale ?? '',
         items.other_delivery_sale ?? '',
         items.cancelled_orders ?? '',
+        items.complimentary_amount ?? '',
+        items.complimentary_reason ?? '',
+        items.zomato_district ?? '',
         items.upi_collected ?? '',
         items.cash_collected ?? '',
+        items.prev_day_cash ?? '',
+        items.cash_expense ?? '',
+        items.cash_expense_note ?? '',
         items.cash_deposited ?? '',
+        items.notes ?? '',
       ];
 
     case 'manual':
