@@ -8,6 +8,8 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
+let sheetsHelper = null;
+try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -918,6 +920,8 @@ router.post('/outlet-sales', async (req, res) => {
     }, { onConflict: 'outlet_id,date' });
     
     if (error) throw error;
+    // Write to Google Sheet (non-blocking)
+    if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, 'daily_sales', submitted_by, { date }, { total_sale, swiggy_sale, zomato_sale, other_delivery_sale, cancelled_orders, upi_collected, cash_collected, cash_deposited }).catch(() => {});
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1036,6 +1040,8 @@ router.post('/demands', async (req, res) => {
     
     const { data, error } = await supabase.from('demands').insert(record).select('*').single();
     if (error) throw error;
+    // Write to Google Sheet (non-blocking)
+    if (sheetsHelper && outlet_id !== 'bk') sheetsHelper.writeToSheet(supabase, outlet_id, type, submitted_by, record, items).catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1070,6 +1076,9 @@ router.post('/purchases', async (req, res) => {
     } else {
       result = d1;
     }
+    
+    // Write to Google Sheet (non-blocking)
+    if (sheetsHelper && outlet_id) sheetsHelper.writeToSheet(supabase, outlet_id, 'purchase', submitted_by, { date: date || new Date().toISOString().split('T')[0] }, { items: items || [], total: totalAmount, payment_mode }).catch(() => {});
     
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2080,6 +2089,18 @@ router.get('/history/dispatches', async (req, res) => {
       .order('dispatched_at', { ascending: false });
     if (error) throw error;
     res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// GOOGLE SHEETS SETUP
+// ============================================================
+router.get('/sheets/setup', async (req, res) => {
+  try {
+    if (!sheetsHelper) return res.status(400).json({ error: 'Google Sheets module not available' });
+    const id = await sheetsHelper.getSpreadsheetId(supabase);
+    if (!id) return res.status(500).json({ error: 'Failed to create spreadsheet' });
+    res.json({ spreadsheet_id: id, url: `https://docs.google.com/spreadsheets/d/${id}` });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
