@@ -4090,7 +4090,7 @@ const OutletMgr = ({ onBack }) => {
     if (!expSec) setExpSec(DEMAND_SECTIONS[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
-    const manualHidden = new Set(["white_chutney", "coconut", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
+    const manualHidden = new Set(["white_chutney", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
     // Save current category items to DB as draft
