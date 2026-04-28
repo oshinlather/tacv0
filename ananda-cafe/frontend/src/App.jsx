@@ -3658,7 +3658,7 @@ const DemandHistory = () => {
     try {
       const fromDate = days[days.length - 1]?.date;
       const data = await api.getOrders({ from: fromDate, outlet_id: selOutlet });
-      setDemands((data || []).filter(d => d.type === "manual" && d.status === "fulfilled"));
+      setDemands((data || []).filter(d => d.type === "manual" && d.status !== "draft"));
     } catch (e) { console.error(e); setDemands([]); }
     setLoading(false);
   };
