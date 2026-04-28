@@ -3837,6 +3837,11 @@ const DemandHistory = () => {
         const totalPM = g.pm.reduce((s, d) => s + Object.keys(d.items || {}).length, 0);
         const isExpanded = expandedDay === day.date;
 
+        // Calculate day total cost
+        const allDayDemands = [...g.am, ...g.pm];
+        const dayItems = mergeItems(allDayDemands);
+        const dayTotalCost = dayItems.reduce((s, i) => s + i.cost, 0);
+
         return (
           <div key={day.date} style={{ marginBottom: 8, borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", background: "#fff" }}>
             {/* Day header */}
@@ -3847,8 +3852,9 @@ const DemandHistory = () => {
                 <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>{day.date}</span>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {totalAM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#B45309", background: "#FFFBEB", padding: "2px 8px", borderRadius: 6 }}>AM: {g.am.length} orders</span>}
-                {totalPM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#2563EB", background: "#EFF6FF", padding: "2px 8px", borderRadius: 6 }}>PM: {g.pm.length} orders</span>}
+                {dayTotalCost > 0 && <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(dayTotalCost).toLocaleString()}</span>}
+                {totalAM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#B45309", background: "#FFFBEB", padding: "2px 8px", borderRadius: 6 }}>AM: {g.am.length}</span>}
+                {totalPM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#2563EB", background: "#EFF6FF", padding: "2px 8px", borderRadius: 6 }}>PM: {g.pm.length}</span>}
                 <span style={{ fontSize: 12, color: "#999" }}>{isExpanded ? "▼" : "▶"}</span>
               </div>
             </div>
