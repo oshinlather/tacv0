@@ -302,15 +302,23 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 //  ORDER & DISPATCH HISTORY — Last 30 days
 // ═════════════════════════════════════════════════════════════════════════════
 const OrderDispatchHistory = () => {
-  const [historyTab, setHistoryTab] = useState("demands"); // demands, orders, dispatches
+  const [historyTab, setHistoryTab] = useState("demands"); // demands, orders, dispatches, closing, wastage, sales
   const [challans, setChallans] = useState([]);
   const [demands, setDemands] = useState([]);
   const [dispatches, setDispatches] = useState([]);
+  const [closingStocks, setClosingStocks] = useState([]);
+  const [wastages, setWastages] = useState([]);
+  const [salesData, setSalesData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
+  const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
   const outletName = (id) => OUTLETS.find(o => o.id === id)?.name || id;
   const r2 = (n) => Math.round(Number(n) * 100) / 100;
-  const itemLabel = (id) => id.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+  const itemLabel = (id) => {
+    const clean = id.replace(/^cs_/, '');
+    const def = DEMAND_SECTIONS.flatMap(s => s.items).find(i => i.id === clean);
+    return def?.name || clean.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+  };
   const toIST = (ts) => {
     if (!ts) return "";
     const d = new Date(ts);
@@ -327,13 +335,19 @@ const OrderDispatchHistory = () => {
       api.getChallanHistory().catch(() => []),
       api.getDispatchHistory().catch(() => []),
       api.getOrders({ from: thirtyDaysAgo }).catch(() => []),
-    ]).then(([c, disp, dem]) => {
+      api.getClosingStocks({ from: thirtyDaysAgo }).catch(() => []),
+    ]).then(([c, disp, dem, cs]) => {
       setChallans(c || []);
       setDispatches(disp || []);
-      // Filter demands: manual type, submitted/issued/fulfilled, last 30 days
-      setDemands((dem || []).filter(d => d.type === "manual" && d.status !== "draft").sort((a, b) => (b.submitted_at || b.date || "").localeCompare(a.submitted_at || a.date || "")));
+      const allDemands = (dem || []).sort((a, b) => (b.submitted_at || b.date || "").localeCompare(a.submitted_at || a.date || ""));
+      setDemands(allDemands.filter(d => d.type === "manual" && d.status !== "draft"));
+      setWastages(allDemands.filter(d => d.type === "wastage"));
+      setClosingStocks(cs || []);
     }).finally(() => setLoading(false));
   }, []);
+
+  // Filter by outlet
+  const filterByOutlet = (list) => selOutlet ? list.filter(d => d.outlet_id === selOutlet) : list;
 
   const downloadCSV = (rows, filename) => {
     const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -345,12 +359,12 @@ const OrderDispatchHistory = () => {
 
   const exportDemandCSV = () => {
     const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
-    demands.forEach(d => {
+    filterByOutlet(demands).forEach(d => {
       Object.entries(d.items || {}).forEach(([id, qty]) => {
         if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
       });
     });
-    downloadCSV(rows, "demand_challans_history.csv");
+    downloadCSV(rows, "demand_history.csv");
   };
 
   const exportChallanCSV = () => {
@@ -365,77 +379,123 @@ const OrderDispatchHistory = () => {
 
   const exportDispatchCSV = () => {
     const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
-    dispatches.forEach(d => {
+    filterByOutlet(dispatches).forEach(d => {
       const items = d.dispatch_items || d.items || {};
       Object.entries(items).forEach(([id, qty]) => {
         if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
       });
     });
-    downloadCSV(rows, "dispatch_challans_history.csv");
+    downloadCSV(rows, "dispatch_history.csv");
+  };
+
+  const exportClosingCSV = () => {
+    const rows = [["Date", "Outlet", "Item", "Qty"]];
+    filterByOutlet(closingStocks).forEach(d => {
+      Object.entries(d.items || {}).forEach(([id, qty]) => {
+        rows.push([d.date, outletName(d.outlet_id), itemLabel(id), r2(qty)]);
+      });
+    });
+    downloadCSV(rows, "closing_stock_history.csv");
+  };
+
+  const exportWastageCSV = () => {
+    const rows = [["Date", "Outlet", "Item", "Qty"]];
+    filterByOutlet(wastages).forEach(d => {
+      Object.entries(d.items || {}).forEach(([id, qty]) => {
+        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), itemLabel(id), r2(qty)]);
+      });
+    });
+    downloadCSV(rows, "wastage_history.csv");
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading history...</div>;
 
+  const filteredDemands = filterByOutlet(demands);
+  const filteredDispatches = filterByOutlet(dispatches);
+  const filteredClosing = filterByOutlet(closingStocks);
+  const filteredWastage = filterByOutlet(wastages);
+
   const tabs = [
-    { id: "demands", label: "📋 Demand", count: demands.length },
-    { id: "orders", label: "🛒 Order", count: challans.length },
-    { id: "dispatches", label: "🚚 Dispatch", count: dispatches.length },
+    { id: "demands", label: "📋 Demand", count: filteredDemands.length },
+    { id: "dispatches", label: "🚚 Dispatch", count: filteredDispatches.length },
+    { id: "closing", label: "📊 Closing", count: filteredClosing.length },
+    { id: "wastage", label: "🗑️ Wastage", count: filteredWastage.length },
+    { id: "orders", label: "🛒 Orders", count: challans.length },
   ];
-  const exportFn = historyTab === "demands" ? exportDemandCSV : historyTab === "orders" ? exportChallanCSV : exportDispatchCSV;
-  const exportLabel = historyTab === "demands" ? "Demand Challans" : historyTab === "orders" ? "Order Challans" : "Dispatch Challans";
+  const exportFns = { demands: exportDemandCSV, dispatches: exportDispatchCSV, closing: exportClosingCSV, wastage: exportWastageCSV, orders: exportChallanCSV };
+
+  // Generic list renderer for demands/dispatches/closing/wastage
+  const renderItemList = (list, getItems, opts = {}) => {
+    if (list.length === 0) return <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No records found</div>;
+    return list.map(d => {
+      const isExp = expandedId === d.id;
+      const items = getItems(d);
+      const itemList = Object.entries(items).filter(([, q]) => Number(q) > 0 || opts.showZero);
+      return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+        <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
+            <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {itemList.length} items</div>
+            {d.submitted_at && <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong style={{ color: "#888" }}>{d.submitted_by}</strong></span>}</div>}
+            {d.created_at && !d.submitted_at && <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 {toIST(d.created_at)}</div>}
+          </div>
+          {d.status && <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: d.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: d.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{d.status}</span>}
+          <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
+        </div>
+        {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
+              <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
+            </tr></thead>
+            <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
+              <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
+                <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
+                <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>}
+      </div>);
+    });
+  };
 
   return (<div>
-    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Order & Dispatch History (30 days)</h3>
-    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-      {tabs.map(t => (
-        <button key={t.id} onClick={() => { setHistoryTab(t.id); setExpandedId(null); }} style={{ flex: 1, padding: "10px 6px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{t.label} ({t.count})</button>
+    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Operations History (30 days)</h3>
+
+    {/* Outlet filter */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
+      {OUTLETS.map(o => (
+        <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
       ))}
     </div>
 
-    <button onClick={exportFn} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
-      📥 Export CSV — {exportLabel}
+    {/* Tabs */}
+    <div style={{ display: "flex", gap: 4, marginBottom: 12, overflowX: "auto" }}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => { setHistoryTab(t.id); setExpandedId(null); }} style={{ flex: 1, padding: "8px 4px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", minWidth: 60 }}>{t.label} ({t.count})</button>
+      ))}
+    </div>
+
+    {/* Export button */}
+    <button onClick={exportFns[historyTab]} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
+      📥 Export CSV
     </button>
 
-    {/* ── DEMAND CHALLANS (outlet manual demands) ── */}
-    {historyTab === "demands" && (<>
-      {demands.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No demands in last 30 days</div>}
-      {demands.map(d => {
-        const isExp = expandedId === d.id;
-        const itemList = Object.entries(d.items || {}).filter(([, q]) => q > 0);
-        const statusColor = d.status === "submitted" ? "#B45309" : d.status === "issued" ? "#2563EB" : d.status === "fulfilled" ? "#16A34A" : "#888";
-        const statusBg = d.status === "submitted" ? "#FFFBEB" : d.status === "issued" ? "#EFF6FF" : d.status === "fulfilled" ? "#F0FDF4" : "#F5F5F3";
-        return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
-              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
-              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>
-                📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong style={{ color: "#888" }}>{d.submitted_by}</strong></span>}
-                {d.dispatched_at && <span> · 🚚 {toIST(d.dispatched_at)}{d.dispatched_by && <span> by <strong style={{ color: "#888" }}>{d.dispatched_by}</strong></span>}</span>}
-              </div>
-            </div>
-            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: statusBg, color: statusColor }}>{d.status}</span>
-            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
-          </div>
-          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
-              </tr></thead>
-              <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
-                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>}
-        </div>);
-      })}
-    </>)}
+    {/* Demand tab */}
+    {historyTab === "demands" && renderItemList(filteredDemands, d => d.items || {})}
 
-    {/* ── ORDER CHALLANS (purchase orders for inventory) ── */}
+    {/* Dispatch tab */}
+    {historyTab === "dispatches" && renderItemList(filteredDispatches, d => d.dispatch_items || d.items || {})}
+
+    {/* Closing Stock tab */}
+    {historyTab === "closing" && renderItemList(filteredClosing, d => d.items || {}, { showZero: true })}
+
+    {/* Wastage tab */}
+    {historyTab === "wastage" && renderItemList(filteredWastage, d => d.items || {})}
+
+    {/* Order Challans tab */}
     {historyTab === "orders" && (<>
       {challans.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No order challans in last 30 days</div>}
       {challans.map(po => {
@@ -465,41 +525,6 @@ const OrderDispatchHistory = () => {
                   <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{r2(item.current_stock)}</td>
                   <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.rm_qty}</td>
                   <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(item.order_qty)} {item.unit}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>}
-        </div>);
-      })}
-    </>)}
-
-    {/* ── DISPATCH CHALLANS ── */}
-    {historyTab === "dispatches" && (<>
-      {dispatches.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No dispatches in last 30 days</div>}
-      {dispatches.map(d => {
-        const isExp = expandedId === d.id;
-        const items = d.dispatch_items || d.items || {};
-        const itemList = Object.entries(items).filter(([, q]) => q > 0);
-        return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
-              <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {d.demand_slot === "morning" ? "🌅 Morning" : d.demand_slot === "evening" ? "🌇 Evening" : "—"} · {itemList.length} items</div>
-            </div>
-            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>✅ Dispatched</span>
-            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
-          </div>
-          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-            <div style={{ fontSize: 10, color: "#999", marginTop: 6, marginBottom: 4 }}>📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong>{d.submitted_by}</strong></span>} · 🚚 {toIST(d.dispatched_at)}{d.dispatched_by && <span> by <strong>{d.dispatched_by}</strong></span>}</div>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
-              </tr></thead>
-              <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
-                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -6713,5 +6738,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
