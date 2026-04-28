@@ -3606,6 +3606,222 @@ const RecipesPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  DEMAND HISTORY — View & Edit last 7 days of demands by outlet
+// ═════════════════════════════════════════════════════════════════════════════
+const DemandHistory = () => {
+  const [demands, setDemands] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || "sec23");
+  const [expandedDay, setExpandedDay] = useState(null); // "2026-04-24"
+  const [expandedSlot, setExpandedSlot] = useState(null); // "2026-04-24_AM" or "2026-04-24_PM"
+  const [editItem, setEditItem] = useState(null); // { demandId, itemId, value, name, unit }
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Generate last 7 days
+  const days = useMemo(() => {
+    const result = [];
+    for (let i = 0; i < 7; i++) {
+      const d = istNow(); d.setDate(d.getDate() - i);
+      const ds = d.toISOString().split("T")[0];
+      result.push({ date: ds, label: i === 0 ? "Today" : i === 1 ? "Yesterday" : ds.slice(5) });
+    }
+    return result;
+  }, []);
+
+  const fetchDemands = async () => {
+    setLoading(true);
+    try {
+      const fromDate = days[days.length - 1]?.date;
+      const data = await api.getOrders({ from: fromDate, outlet_id: selOutlet });
+      setDemands((data || []).filter(d => d.type === "manual" && d.status === "fulfilled"));
+    } catch (e) { console.error(e); setDemands([]); }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchDemands(); }, [selOutlet]);
+
+  // Group demands by date, then split AM/PM based on submitted_at
+  const grouped = useMemo(() => {
+    const byDate = {};
+    days.forEach(d => { byDate[d.date] = { am: [], pm: [] }; });
+    demands.forEach(d => {
+      if (!byDate[d.date]) byDate[d.date] = { am: [], pm: [] };
+      const hour = d.submitted_at ? new Date(d.submitted_at).getHours() : 8;
+      if (hour < 14) byDate[d.date].am.push(d);
+      else byDate[d.date].pm.push(d);
+    });
+    return byDate;
+  }, [demands, days]);
+
+  // Merge items from multiple demands in a slot into one view
+  const mergeItems = (demandList) => {
+    const merged = {};
+    demandList.forEach(d => {
+      const items = d.items || {};
+      Object.entries(items).forEach(([id, qty]) => {
+        if (!merged[id]) merged[id] = { qty: 0, demandIds: [] };
+        merged[id].qty += Number(qty) || 0;
+        if (!merged[id].demandIds.includes(d.id)) merged[id].demandIds.push(d.id);
+      });
+    });
+    // Get item names from DEMAND_SECTIONS
+    const allItems = DEMAND_SECTIONS.flatMap(s => s.items);
+    return Object.entries(merged)
+      .map(([id, data]) => {
+        const def = allItems.find(i => i.id === id);
+        return {
+          id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '',
+          qty: data.qty, demandIds: data.demandIds,
+          section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
+        };
+      })
+      .sort((a, b) => a.section.localeCompare(b.section) || a.name.localeCompare(b.name));
+  };
+
+  const saveEdit = async () => {
+    if (!editItem || editSaving) return;
+    const newQty = Number(editItem.value);
+    if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity"); return; }
+    setEditSaving(true);
+    try {
+      await api.editItemQty(selOutlet, editItem.date, editItem.itemId, newQty, "demand_correction");
+      setEditItem(null);
+      await fetchDemands();
+    } catch (e) { alert("Failed: " + e.message); }
+    setEditSaving(false);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📋 Demand History</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Last 7 days · Morning / PM split · Tap to expand · Edit quantities</p>
+      </div>
+
+      {/* Outlet selector */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map(o => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)}
+            style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500,
+              border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit",
+              background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>
+            {o.short}
+          </button>
+        ))}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading demands...</div>}
+
+      {!loading && days.map(day => {
+        const g = grouped[day.date] || { am: [], pm: [] };
+        const totalAM = g.am.reduce((s, d) => s + Object.keys(d.items || {}).length, 0);
+        const totalPM = g.pm.reduce((s, d) => s + Object.keys(d.items || {}).length, 0);
+        const isExpanded = expandedDay === day.date;
+
+        return (
+          <div key={day.date} style={{ marginBottom: 8, borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", background: "#fff" }}>
+            {/* Day header */}
+            <div onClick={() => setExpandedDay(isExpanded ? null : day.date)}
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", cursor: "pointer", background: isExpanded ? "#FAFAF8" : "#fff" }}>
+              <div>
+                <span style={{ fontSize: 14, fontWeight: 700 }}>{day.label}</span>
+                <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>{day.date}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {totalAM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#B45309", background: "#FFFBEB", padding: "2px 8px", borderRadius: 6 }}>AM: {g.am.length} orders</span>}
+                {totalPM > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: "#2563EB", background: "#EFF6FF", padding: "2px 8px", borderRadius: 6 }}>PM: {g.pm.length} orders</span>}
+                <span style={{ fontSize: 12, color: "#999" }}>{isExpanded ? "▼" : "▶"}</span>
+              </div>
+            </div>
+
+            {/* Expanded: AM/PM slots */}
+            {isExpanded && (
+              <div>
+                {[{ key: "am", label: "🌅 Morning", data: g.am, color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
+                  { key: "pm", label: "🌙 PM", data: g.pm, color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" }]
+                  .filter(slot => slot.data.length > 0)
+                  .map(slot => {
+                    const slotKey = `${day.date}_${slot.key}`;
+                    const isSlotExpanded = expandedSlot === slotKey;
+                    const items = mergeItems(slot.data);
+                    // Group by section
+                    const sections = {};
+                    items.forEach(item => {
+                      if (!sections[item.section]) sections[item.section] = [];
+                      sections[item.section].push(item);
+                    });
+
+                    return (
+                      <div key={slot.key} style={{ borderTop: "1px solid #F0F0EC" }}>
+                        <div onClick={() => setExpandedSlot(isSlotExpanded ? null : slotKey)}
+                          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", cursor: "pointer", background: slot.bg }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: slot.color }}>{slot.label}</span>
+                          <span style={{ fontSize: 11, color: "#888" }}>{items.length} items · {slot.data.length} {slot.data.length === 1 ? "order" : "orders"} {isSlotExpanded ? "▼" : "▶"}</span>
+                        </div>
+
+                        {isSlotExpanded && (
+                          <div style={{ padding: "0 0 8px" }}>
+                            {Object.entries(sections).map(([secName, secItems]) => (
+                              <div key={secName}>
+                                <div style={{ padding: "6px 16px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>{secName}</div>
+                                {secItems.map(item => {
+                                  const isEditing = editItem && editItem.itemId === item.id && editItem.date === day.date;
+                                  if (isEditing) {
+                                    return (
+                                      <div key={item.id} style={{ padding: "8px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
+                                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {item.name}</div>
+                                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                                          <span style={{ fontSize: 10, color: "#999", minWidth: 60 }}>Current:</span>
+                                          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{item.qty} {item.unit}</span>
+                                        </div>
+                                        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+                                          <span style={{ fontSize: 10, color: "#999", minWidth: 60 }}>New qty:</span>
+                                          <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
+                                            onChange={e => setEditItem({ ...editItem, value: e.target.value })}
+                                            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                                          <span style={{ fontSize: 11, color: "#888" }}>{item.unit}</span>
+                                        </div>
+                                        <div style={{ display: "flex", gap: 6 }}>
+                                          <button onClick={saveEdit} disabled={editSaving}
+                                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                            {editSaving ? "⏳ Saving..." : "💾 Save"}</button>
+                                          <button onClick={() => setEditItem(null)} disabled={editSaving}
+                                            style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                        </div>
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 16px", fontSize: 12, borderBottom: "1px solid #F5F5F3" }}>
+                                      <span style={{ color: "#555", flex: 1 }}>{item.name}</span>
+                                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A", marginRight: 4 }}>{item.qty}</span>
+                                      <span style={{ fontSize: 10, color: "#999", width: 35 }}>{item.unit}</span>
+                                      <button onClick={() => setEditItem({ demandIds: item.demandIds, itemId: item.id, value: String(item.qty), name: item.name, unit: item.unit, date: day.date })}
+                                        style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginLeft: 4 }}>✏️</button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                {g.am.length === 0 && g.pm.length === 0 && (
+                  <div style={{ padding: "16px", textAlign: "center", color: "#999", fontSize: 12 }}>No demands submitted</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  COGS DASHBOARD
 // ═════════════════════════════════════════════════════════════════════════════
 const ITEM_COST = { idli: 18, dosa: 20, masala_dosa: 28, medu_vada: 22, upma: 16, poha: 15, set_dosa: 24, sambhar_vada: 25, halwa: 14, filter_coffee: 8, rava_dosa: 26, uttapam: 23 };
@@ -6407,7 +6623,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
@@ -6459,6 +6675,7 @@ export default function AnandaCafe() {
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
+      {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "corrections" && <CorrectionsLog />}
       {ownerTab === "orders" && <OutletOrders />}
@@ -6481,10 +6698,11 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={currentUser?.role === "outlet_mgr" ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Store Manager (BK)</div><div style={{ fontSize: 11, color: "#999" }}>Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
+      {storeView === "demands" && <DemandHistory />}
       {storeView === "inventory" && <Inventory />}
       {storeView === "sales" && <SalesUpload />}
       {storeView === "cash" && <CashHisab />}
