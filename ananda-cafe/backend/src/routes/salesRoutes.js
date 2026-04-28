@@ -1163,6 +1163,22 @@ router.patch('/demands/:id/draft', async (req, res) => {
 // ORDERS — Fetch and manage demands/orders
 // ============================================================
 
+// ── GET /api/closing-stocks — Get closing stocks history
+router.get('/closing-stocks', async (req, res) => {
+  try {
+    const { date, outlet_id, from } = req.query;
+    let query = supabase.from('closing_stocks').select('*');
+    if (date) query = query.eq('date', date);
+    if (from) query = query.gte('date', from);
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    query = query.order('date', { ascending: false }).order('outlet_id');
+    if (from && !date) query = query.limit(500);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/orders — Get orders/demands for a date (optionally filter by outlet)
 router.get('/orders', async (req, res) => {
   try {
