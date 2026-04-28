@@ -1301,11 +1301,11 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── PATCH /api/qty-edit — Owner edits a dispatched/demand item qty
+// ── PATCH /api/qty-edit — Owner/Store manager edits a dispatched/demand item qty
 // Finds the demand row by outlet_id + date + item_id, overwrites qty, logs to qty_corrections.
 router.patch('/qty-edit', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { outlet_id, date, item_id, new_qty, reason } = req.body;
     if (!outlet_id || !date || !item_id) {
       return res.status(400).json({ error: 'outlet_id, date, and item_id are required' });
