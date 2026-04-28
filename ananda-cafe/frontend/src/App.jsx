@@ -331,18 +331,33 @@ const OrderDispatchHistory = () => {
   useEffect(() => {
     setLoading(true);
     const thirtyDaysAgo = istDateAgo(30);
+    // Load sales for last 7 days (sales API requires per-date calls)
+    const salesDays = [];
+    for (let i = 0; i < 7; i++) {
+      const d = istNow(); d.setDate(d.getDate() - i);
+      salesDays.push(d.toISOString().split("T")[0]);
+    }
     Promise.all([
       api.getChallanHistory().catch(() => []),
       api.getDispatchHistory().catch(() => []),
       api.getOrders({ from: thirtyDaysAgo }).catch(() => []),
       api.getClosingStocks({ from: thirtyDaysAgo }).catch(() => []),
-    ]).then(([c, disp, dem, cs]) => {
+      ...salesDays.map(d => api.getSales({ date: d }).catch(() => ({ items: [], outlets: {} }))),
+    ]).then(([c, disp, dem, cs, ...salesResults]) => {
       setChallans(c || []);
       setDispatches(disp || []);
       const allDemands = (dem || []).sort((a, b) => (b.submitted_at || b.date || "").localeCompare(a.submitted_at || a.date || ""));
       setDemands(allDemands.filter(d => d.type === "manual" && d.status !== "draft"));
       setWastages(allDemands.filter(d => d.type === "wastage"));
       setClosingStocks(cs || []);
+      // Merge sales results into flat list
+      const allSales = salesResults.map((sr, i) => ({
+        date: salesDays[i],
+        items: sr?.items || [],
+        outlets: sr?.outlets || {},
+        total: sr?.total || 0,
+      })).filter(s => s.items.length > 0 || Object.keys(s.outlets).length > 0);
+      setSalesData(allSales);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -415,14 +430,17 @@ const OrderDispatchHistory = () => {
   const filteredClosing = filterByOutlet(closingStocks);
   const filteredWastage = filterByOutlet(wastages);
 
+  const filteredSales = salesData.filter(s => !selOutlet || s.outlets?.[selOutlet]);
+
   const tabs = [
     { id: "demands", label: "📋 Demand", count: filteredDemands.length },
     { id: "dispatches", label: "🚚 Dispatch", count: filteredDispatches.length },
     { id: "closing", label: "📊 Closing", count: filteredClosing.length },
     { id: "wastage", label: "🗑️ Wastage", count: filteredWastage.length },
-    { id: "orders", label: "🛒 Orders", count: challans.length },
+    { id: "sales", label: "💰 Sales", count: filteredSales.length },
+    { id: "orders", label: "📦 Purchase", count: challans.length },
   ];
-  const exportFns = { demands: exportDemandCSV, dispatches: exportDispatchCSV, closing: exportClosingCSV, wastage: exportWastageCSV, orders: exportChallanCSV };
+  const exportFns = { demands: exportDemandCSV, dispatches: exportDispatchCSV, closing: exportClosingCSV, wastage: exportWastageCSV, orders: exportChallanCSV, sales: exportDemandCSV };
 
   // Generic list renderer for demands/dispatches/closing/wastage
   const renderItemList = (list, getItems, opts = {}) => {
@@ -495,7 +513,47 @@ const OrderDispatchHistory = () => {
     {/* Wastage tab */}
     {historyTab === "wastage" && renderItemList(filteredWastage, d => d.items || {})}
 
-    {/* Order Challans tab */}
+    {/* Sales tab */}
+    {historyTab === "sales" && (<>
+      {filteredSales.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No sales data in last 7 days</div>}
+      {filteredSales.map(s => {
+        const isExp = expandedId === s.date;
+        const outletEntries = selOutlet 
+          ? (s.outlets?.[selOutlet] ? [[selOutlet, s.outlets[selOutlet]]] : [])
+          : Object.entries(s.outlets || {});
+        const dayTotal = outletEntries.reduce((sum, [, o]) => sum + (Number(o.store_sale) || 0) + (Number(o.net_delivery) || 0), 0);
+        return (<div key={s.date} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setExpandedId(isExp ? null : s.date)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{s.date}</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{outletEntries.length} outlets</div>
+            </div>
+            <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A", fontSize: 14 }}>₹{Math.round(dayTotal).toLocaleString()}</span>
+            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
+          </div>
+          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Outlet</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Store</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Delivery</th>
+                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#16A34A", fontSize: 10 }}>Total</th>
+              </tr></thead>
+              <tbody>{outletEntries.map(([oid, o]) => (
+                <tr key={oid} style={{ borderBottom: "1px solid #F5F5F3" }}>
+                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{outletName(oid)}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center" }}>₹{Math.round(Number(o.store_sale) || 0).toLocaleString()}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center" }}>₹{Math.round(Number(o.net_delivery) || 0).toLocaleString()}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#16A34A" }}>₹{Math.round((Number(o.store_sale) || 0) + (Number(o.net_delivery) || 0)).toLocaleString()}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>}
+        </div>);
+      })}
+    </>)}
+
+    {/* Order/Purchase Challans tab */}
     {historyTab === "orders" && (<>
       {challans.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No order challans in last 30 days</div>}
       {challans.map(po => {
@@ -3637,10 +3695,31 @@ const DemandHistory = () => {
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || "sec23");
-  const [expandedDay, setExpandedDay] = useState(null); // "2026-04-24"
-  const [expandedSlot, setExpandedSlot] = useState(null); // "2026-04-24_AM" or "2026-04-24_PM"
-  const [editItem, setEditItem] = useState(null); // { demandId, itemId, value, name, unit }
+  const [expandedDay, setExpandedDay] = useState(null);
+  const [expandedSlot, setExpandedSlot] = useState(null);
+  const [editItem, setEditItem] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [rateCard, setRateCard] = useState([]);
+
+  // Load rate card for cost calculation
+  useEffect(() => {
+    api.getRateCard().then(r => setRateCard(r || [])).catch(() => setRateCard([]));
+  }, []);
+
+  const rateMap = useMemo(() => {
+    const m = {};
+    rateCard.forEach(r => { m[r.id] = r; });
+    return m;
+  }, [rateCard]);
+
+  const toIST = (ts) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
+    const h = ist.getHours(), m = ist.getMinutes();
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
 
   // Generate last 7 days
   const days = useMemo(() => {
@@ -3689,18 +3768,32 @@ const DemandHistory = () => {
         if (!merged[id].demandIds.includes(d.id)) merged[id].demandIds.push(d.id);
       });
     });
-    // Get item names from DEMAND_SECTIONS
     const allItems = DEMAND_SECTIONS.flatMap(s => s.items);
     return Object.entries(merged)
       .map(([id, data]) => {
         const def = allItems.find(i => i.id === id);
+        const rate = rateMap[id];
+        const unitPrice = rate ? Number(rate.price) : 0;
+        const cost = data.qty * unitPrice;
         return {
           id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '',
           qty: data.qty, demandIds: data.demandIds,
+          rate: unitPrice, cost,
           section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
         };
       })
-      .sort((a, b) => a.section.localeCompare(b.section) || a.name.localeCompare(b.name));
+      .sort((a, b) => b.cost - a.cost || a.name.localeCompare(b.name));
+  };
+
+  // Get submission info for a slot
+  const getSlotInfo = (demandList) => {
+    const submitters = [...new Set(demandList.map(d => d.submitted_by).filter(Boolean))];
+    const times = demandList.map(d => d.submitted_at).filter(Boolean).sort();
+    return {
+      submitters,
+      earliestTime: times[0] ? toIST(times[0]) : '',
+      latestTime: times.length > 1 ? toIST(times[times.length - 1]) : '',
+    };
   };
 
   const saveEdit = async () => {
@@ -3769,6 +3862,8 @@ const DemandHistory = () => {
                     const slotKey = `${day.date}_${slot.key}`;
                     const isSlotExpanded = expandedSlot === slotKey;
                     const items = mergeItems(slot.data);
+                    const slotInfo = getSlotInfo(slot.data);
+                    const slotTotal = items.reduce((s, i) => s + i.cost, 0);
                     // Group by section
                     const sections = {};
                     items.forEach(item => {
@@ -3779,16 +3874,32 @@ const DemandHistory = () => {
                     return (
                       <div key={slot.key} style={{ borderTop: "1px solid #F0F0EC" }}>
                         <div onClick={() => setExpandedSlot(isSlotExpanded ? null : slotKey)}
-                          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", cursor: "pointer", background: slot.bg }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: slot.color }}>{slot.label}</span>
-                          <span style={{ fontSize: 11, color: "#888" }}>{items.length} items · {slot.data.length} {slot.data.length === 1 ? "order" : "orders"} {isSlotExpanded ? "▼" : "▶"}</span>
+                          style={{ padding: "8px 16px", cursor: "pointer", background: slot.bg }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: slot.color }}>{slot.label}</span>
+                              {slotInfo.submitters.length > 0 && (
+                                <span style={{ fontSize: 10, color: "#888", marginLeft: 8 }}>
+                                  by <strong>{slotInfo.submitters.join(", ")}</strong> at {slotInfo.earliestTime}
+                                  {slotInfo.latestTime && slotInfo.latestTime !== slotInfo.earliestTime ? ` – ${slotInfo.latestTime}` : ''}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              {slotTotal > 0 && <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(slotTotal).toLocaleString()}</span>}
+                              <span style={{ fontSize: 11, color: "#888" }}>{items.length} items {isSlotExpanded ? "▼" : "▶"}</span>
+                            </div>
+                          </div>
                         </div>
 
                         {isSlotExpanded && (
                           <div style={{ padding: "0 0 8px" }}>
                             {Object.entries(sections).map(([secName, secItems]) => (
                               <div key={secName}>
-                                <div style={{ padding: "6px 16px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>{secName}</div>
+                                <div style={{ padding: "6px 16px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between" }}>
+                                  <span>{secName}</span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{Math.round(secItems.reduce((s, i) => s + i.cost, 0)).toLocaleString()}</span>
+                                </div>
                                 {secItems.map(item => {
                                   const isEditing = editItem && editItem.itemId === item.id && editItem.date === day.date;
                                   if (isEditing) {
@@ -3818,9 +3929,8 @@ const DemandHistory = () => {
                                   }
                                   return (
                                     <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 16px", fontSize: 12, borderBottom: "1px solid #F5F5F3" }}>
-                                      <span style={{ color: "#555", flex: 1 }}>{item.name}</span>
-                                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A", marginRight: 4 }}>{item.qty}</span>
-                                      <span style={{ fontSize: 10, color: "#999", width: 35 }}>{item.unit}</span>
+                                      <span style={{ color: "#555", flex: 1 }}>{item.name} <span style={{ color: "#BBB", fontSize: 10 }}>({item.qty} {item.unit} × ₹{item.rate})</span></span>
+                                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: item.cost > 0 ? "#B45309" : "#CCC", marginRight: 4, fontSize: 11 }}>{item.cost > 0 ? `₹${Math.round(item.cost).toLocaleString()}` : '—'}</span>
                                       <button onClick={() => setEditItem({ demandIds: item.demandIds, itemId: item.id, value: String(item.qty), name: item.name, unit: item.unit, date: day.date })}
                                         style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginLeft: 4 }}>✏️</button>
                                     </div>
@@ -6738,5 +6848,4 @@ export default function AnandaCafe() {
   </div>);
   return null;
 }
-
 
