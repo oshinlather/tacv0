@@ -150,6 +150,7 @@ const DEMAND_SECTIONS = [
       { id: "soya_badi", name: "Soya Badi", unit: "Kg" },
       { id: "staff_dal", name: "Staff Dal", unit: "Kg" },
       { id: "peanuts", name: "Peanuts (Raw)", unit: "Kg" },
+      { id: "chilka_peanut", name: "Chilka Peanut", unit: "Kg" },
       { id: "milkmaid", name: "Milkmaid", unit: "Kg" },
       { id: "kaju", name: "Kaju (Cashew)", unit: "Kg" },
       { id: "kishmish", name: "Kishmish", unit: "Kg" },
