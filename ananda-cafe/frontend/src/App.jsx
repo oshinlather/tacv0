@@ -3770,16 +3770,72 @@ const DemandHistory = () => {
       });
     });
     const allItems = DEMAND_SECTIONS.flatMap(s => s.items);
+
+    // Raw material → rate card mapping for recipe costing
+    const rawToRate = {
+      amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
+      chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
+      coriander_raw: 'coriander_leaves', curry_leaves_raw: 'curry_leaves',
+      deggi_mirch_raw: 'deggi_mirch', desi_ghee_raw: 'desi_ghee',
+      dhaniya_whole_raw: 'dhaniya_whole', drumstick_raw: 'drumstick',
+      fortune_refined_raw: 'fortune_refined', garam_masala_raw: 'garam_masala',
+      garlic_raw: 'garlic', ginger_raw: 'ginger', green_chilli_raw: 'green_chillies',
+      gur_raw: 'gur', haldi_raw: 'haldi_powder', hing_raw: 'hing_powder',
+      ilaychi_raw: 'ilaychi', imli_raw: 'imli', jeera_raw: 'jeera',
+      kaju_raw: 'kaju', kali_mirch_raw: 'kali_mirch', kesar_raw: 'kesar',
+      kishmish_raw: 'kishmish', meetha_soda_raw: 'meetha_soda',
+      methi_dana_raw: 'methi_dana', milk_raw: 'milk', milkmaid_raw: 'milkmaid',
+      mint_raw: 'mint', mustard_raw: 'mustard_seeds', onions_raw: 'onions',
+      peanuts_raw: 'peanuts', petha_raw: 'petha', pineapple_raw: 'pineapple',
+      poha_raw: 'poha', red_chilli_powder_raw: 'red_chilli_powder',
+      rice_powder_raw: 'rice_powder', roasted_chana_raw: 'roasted_chana',
+      roasted_karipatta_raw: 'roasted_karipatta', roasted_peanuts_raw: 'roasted_peanuts',
+      safed_til_raw: 'safed_til', salt_raw: 'salt',
+      sambhar_masala_raw: 'sambhar_masala_777', semiyan_raw: 'semiyan',
+      sona_masoori_raw: 'sona_masoori_rice', sugar_raw: 'sugar',
+      tadka_raw: 'tadka', tomatoes_raw: 'tomatoes', upma_sooji_raw: 'upma_sooji',
+      urad_daal: 'urad_daal_whole', whole_red_chilli_raw: 'whole_red_chilli',
+    };
+
+    // Compute recipe cost per Kg for a BK item
+    const getRecipeCostPerKg = (itemId) => {
+      const recipe = RECIPES[itemId];
+      if (!recipe) return 0;
+      const yieldQty = recipe.yieldQty || 1;
+      let batchCost = 0;
+      (recipe.ingredients || []).forEach(ing => {
+        let r = rateMap[ing.rawId];
+        if (!r && rawToRate[ing.rawId]) r = rateMap[rawToRate[ing.rawId]];
+        if (!r) r = rateMap[ing.rawId.replace(/_raw$/, '')];
+        if (r) batchCost += ing.qty * Number(r.price);
+      });
+      return yieldQty > 0 ? batchCost / yieldQty : 0;
+    };
+
     return Object.entries(merged)
       .map(([id, data]) => {
         const def = allItems.find(i => i.id === id);
         const rate = rateMap[id];
-        const unitPrice = rate ? Number(rate.price) : 0;
+        let unitPrice = rate ? Number(rate.price) : 0;
+        let displayUnit = def?.unit || '';
+
+        // BK recipe fallback: if no rate card, compute from recipe
+        if (!rate && RECIPES[id]) {
+          const costPerKg = getRecipeCostPerKg(id);
+          // Convert qty if unit is Batch
+          if (displayUnit === 'Batch') {
+            const yieldQty = RECIPES[id].yieldQty || 1;
+            unitPrice = costPerKg * yieldQty; // cost per Batch
+          } else {
+            unitPrice = costPerKg; // cost per Kg
+          }
+        }
+
         const cost = data.qty * unitPrice;
         return {
-          id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '',
+          id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
           qty: data.qty, demandIds: data.demandIds,
-          rate: unitPrice, cost,
+          rate: Math.round(unitPrice * 100) / 100, cost,
           section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
         };
       })
