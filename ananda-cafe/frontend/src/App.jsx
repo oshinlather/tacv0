@@ -3751,9 +3751,9 @@ const DemandHistory = () => {
     days.forEach(d => { byDate[d.date] = { am: [], pm: [] }; });
     demands.forEach(d => {
       if (!byDate[d.date]) byDate[d.date] = { am: [], pm: [] };
-      const hour = d.submitted_at ? new Date(d.submitted_at).getHours() : 8;
-      if (hour < 14) byDate[d.date].am.push(d);
-      else byDate[d.date].pm.push(d);
+      const slot = (d.demand_slot || '').toLowerCase();
+      if (slot === 'evening' || slot === 'pm') byDate[d.date].pm.push(d);
+      else byDate[d.date].am.push(d);
     });
     return byDate;
   }, [demands, days]);
