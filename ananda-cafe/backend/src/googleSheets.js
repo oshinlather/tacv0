@@ -3,19 +3,21 @@
 //
 // SETUP (one-time, manual because service accounts can't own Drive files on
 // consumer Google accounts):
-//   1. Create 4 spreadsheets at sheets.google.com:
+//   1. Create 5 spreadsheets at sheets.google.com:
 //        "Ananda Cafe — Sector 23"
 //        "Ananda Cafe — Sector 31"
 //        "Ananda Cafe — Sector 56"
 //        "Ananda Cafe — Elan"
+//        "Ananda Cafe — Gaur Siddhartham"
 //   2. Share each with the service account (GOOGLE_SERVICE_EMAIL) as Editor.
 //   3. Copy each spreadsheet ID from the URL.
-//   4. Insert 4 rows into Supabase `app_config`:
-//        key = 'sheet_id_sec23', value = '<id>'
-//        key = 'sheet_id_sec31', value = '<id>'
-//        key = 'sheet_id_sec56', value = '<id>'
-//        key = 'sheet_id_elan',  value = '<id>'
-//      (Or set env vars GOOGLE_SHEET_ID_SEC23, _SEC31, _SEC56, _ELAN.)
+//   4. Insert rows into Supabase `app_config`:
+//        key = 'sheet_id_sec23',   value = '<id>'
+//        key = 'sheet_id_sec31',   value = '<id>'
+//        key = 'sheet_id_sec56',   value = '<id>'
+//        key = 'sheet_id_elan',    value = '<id>'
+//        key = 'sheet_id_gaursid', value = '<id>'
+//      (Or set env vars GOOGLE_SHEET_ID_SEC23, _SEC31, _SEC56, _ELAN, _GAURSID.)
 //   5. Hit GET /api/sheets/setup once — it will create/verify the tabs and
 //      headers in each sheet. You don't have to pre-create the tabs.
 
@@ -32,6 +34,7 @@ const OUTLET_LABELS = {
   sec31: 'Sector 31',
   sec56: 'Sector 56',
   elan:  'Elan',
+  gaursid: 'Gaur Siddhartham',
 };
 
 // Tab definitions: name + header row for each data type.

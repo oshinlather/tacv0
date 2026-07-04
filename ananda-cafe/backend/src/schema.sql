@@ -16,7 +16,8 @@ INSERT INTO outlets (id, name, short_name, is_franchise) VALUES
   ('sec23', 'Sector 23', 'S-23', FALSE),
   ('sec31', 'Sector 31', 'S-31', FALSE),
   ('sec56', 'Sector 56', 'S-56', FALSE),
-  ('elan', 'Elan (Franchise)', 'ELAN', TRUE);
+  ('elan', 'Elan (Franchise)', 'ELAN', TRUE),
+  ('gaursid', 'Gaur Siddhartham (Franchise)', 'GSID', TRUE);
 
 -- Users (simple PIN-based auth for managers)
 CREATE TABLE users (

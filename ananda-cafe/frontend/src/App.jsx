@@ -16,6 +16,7 @@ const OUTLETS = [
   { id: "sec31", name: "Sector 31", short: "S-31" },
   { id: "sec56", name: "Sector 56", short: "S-56" },
   { id: "elan", name: "Elan (Franchise)", short: "ELAN", franchise: true },
+  { id: "gaursid", name: "Gaur Siddhartham (Franchise)", short: "GSID", franchise: true },
 ];
 const OWN_OUTLETS = OUTLETS.filter(o => !o.franchise);
 const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
@@ -6583,8 +6584,8 @@ const FixedCostsPanel = () => {
   const load = () => { setLoading(true); api.getFixedCosts().then(setCosts).catch(() => setCosts([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
-  const outletIds = ["bk", "sec23", "sec31", "sec56", "elan"];
-  const outletNames = { bk: "Base Kitchen", sec23: "S-23", sec31: "S-31", sec56: "S-56", elan: "ELAN" };
+  const outletIds = ["bk", ...OUTLETS.map((o) => o.id)];
+  const outletNames = { bk: "Base Kitchen", ...Object.fromEntries(OUTLETS.map((o) => [o.id, o.short])) };
   const filteredCosts = selOutlet ? costs.filter((c) => c.outlet_id === selOutlet) : costs;
 
   // Group by outlet
