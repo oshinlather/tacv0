@@ -1863,19 +1863,28 @@ router.get('/pnl/live/:date', async (req, res) => {
 
       // Unit conversion factor: demand unit → rate card unit
       // Rule: SI units (Gm↔Kg, ml↔Ltr) hardcoded. Everything else from unit_conversions table.
+      // unit_conversions may only take the demand unit to an intermediate base unit
+      // (e.g. Pkt → Gm) — chain an SI step on top when that base unit still
+      // doesn't match the rate card's unit (e.g. Pkt → Gm → Kg).
       const getUnitConv = (demandUnit, rateUnit, itemId) => {
         const du = (demandUnit || '').toLowerCase();
         const ru = (rateUnit || '').toLowerCase();
         if (du === ru) return 1;
         // Check unit_conversions table first
         const conv = convMap[itemId];
-        if (conv && du === conv.fromUnit.toLowerCase()) return conv.qty;
+        let factor = 1;
+        let fromUnit = du;
+        if (conv && du === conv.fromUnit.toLowerCase()) {
+          factor = conv.qty;
+          fromUnit = (conv.baseUnit || '').toLowerCase();
+        }
+        if (fromUnit === ru) return factor;
         // Standard SI conversions
-        if ((du === 'gm' || du === 'g' || du === 'gram' || du === 'grams') && ru === 'kg') return 0.001;
-        if (du === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return 1000;
-        if ((du === 'ml' || du === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return 0.001;
-        if ((du === 'ltr' || du === 'l') && (ru === 'ml')) return 1000;
-        return 1;
+        if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
+        if (fromUnit === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return factor * 1000;
+        if ((fromUnit === 'ml' || fromUnit === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return factor * 0.001;
+        if ((fromUnit === 'ltr' || fromUnit === 'l') && (ru === 'ml')) return factor * 1000;
+        return factor;
       };
 
       outletOrders.forEach(order => {
@@ -1914,14 +1923,19 @@ router.get('/pnl/live/:date', async (req, res) => {
           } else if (recipe && recipe.ingredients) {
             // BK prepared item with NO rate card — price using recipe cost per Kg
             const demandUnit = getDemandUnit(itemId);
-            let qtyKg = Number(qty);
-            // Use unit_conversions table for Batch→Kg (e.g., 1 Batch dosa_batter = 9 Kg)
+            // Reuse the same chained conversion helper as the rate-card branch above
+            // (unit_conversions base unit, then an SI step if that base unit isn't Kg)
+            // instead of a separate ad-hoc lookup, so this stays consistent if the
+            // conversion table ever adds a non-Kg base unit for a Batch/Tin item.
             const conv = convMap[itemId];
+            let qtyKg;
             if (conv && demandUnit && demandUnit.toLowerCase() === conv.fromUnit.toLowerCase()) {
-              qtyKg = Number(qty) * conv.qty;
+              qtyKg = Number(qty) * getUnitConv(demandUnit, 'Kg', itemId);
             } else if (demandUnit && demandUnit.toLowerCase() === 'batch' && recipe.yieldQty) {
               // Fallback to recipe yield if no conversion entry
               qtyKg = Number(qty) * recipe.yieldQty;
+            } else {
+              qtyKg = Number(qty);
             }
             const batches = recipe.yieldQty > 0 ? qtyKg / recipe.yieldQty : 0;
             let itemCost = 0;
@@ -2158,11 +2172,20 @@ router.get('/stock-usage/:date', async (req, res) => {
           const ingUnit = (ing.unit || 'Kg').toLowerCase();
           const rateUnit = (ingRate.unit || 'Kg').toLowerCase();
           let factor = 1;
-          if ((ingUnit === 'gm' || ingUnit === 'g') && rateUnit === 'kg') factor = 0.001;
-          if (ingUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor = 1000;
-          // Check unit_conversions for non-standard units
+          let fromUnit = ingUnit;
+          // Check unit_conversions for non-standard units first (e.g. Tin -> Kg),
+          // then chain an SI step on top if that base unit still isn't the rate's unit.
           const conv = convMap[rmId];
-          if (conv && ingUnit === conv.fromUnit.toLowerCase()) factor = conv.qty;
+          if (conv && ingUnit === conv.fromUnit.toLowerCase()) {
+            factor = conv.qty;
+            fromUnit = (conv.baseUnit || '').toLowerCase();
+          }
+          if (fromUnit !== rateUnit) {
+            if ((fromUnit === 'gm' || fromUnit === 'g') && rateUnit === 'kg') factor *= 0.001;
+            else if (fromUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor *= 1000;
+            else if (fromUnit === 'ml' && (rateUnit === 'ltr' || rateUnit === 'l')) factor *= 0.001;
+            else if ((fromUnit === 'ltr' || fromUnit === 'l') && rateUnit === 'ml') factor *= 1000;
+          }
           batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
         }
       });
@@ -2259,23 +2282,25 @@ router.get('/stock-usage/:date', async (req, res) => {
           itemUnit = demandUnitMap[itemId] || '';
         }
 
-        // Unit conversion factor (Batch→Kg, Tin→Kg, Gm→Kg, etc.)
+        // Unit conversion factor (Batch→Kg, Tin→Kg, Gm→Kg, etc.) — chain through the
+        // unit_conversions base unit, then an SI step, when that base unit still
+        // doesn't match the rate card's unit (e.g. Pkt → Gm → Kg).
         const demandUnit = demandUnitMap[itemId] || itemUnit;
-        let convFactor = 1;
         const du = (demandUnit || '').toLowerCase();
         const ru = (itemUnit || '').toLowerCase();
 
+        let convFactor = 1;
+        let resolvedUnit = du;
         const conv = convMap[itemId];
         if (conv && du === conv.fromUnit.toLowerCase()) {
           convFactor = conv.qty;
-        } else if ((du === 'gm' || du === 'g') && ru === 'kg') {
-          convFactor = 0.001;
-        } else if (du === 'kg' && (ru === 'gm' || ru === 'g')) {
-          convFactor = 1000;
-        } else if (du === 'ml' && (ru === 'ltr' || ru === 'l')) {
-          convFactor = 0.001;
-        } else if ((du === 'ltr' || du === 'l') && ru === 'ml') {
-          convFactor = 1000;
+          resolvedUnit = (conv.baseUnit || '').toLowerCase();
+        }
+        if (resolvedUnit !== ru) {
+          if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') { convFactor *= 0.001; resolvedUnit = ru; }
+          else if (resolvedUnit === 'kg' && (ru === 'gm' || ru === 'g')) { convFactor *= 1000; resolvedUnit = ru; }
+          else if (resolvedUnit === 'ml' && (ru === 'ltr' || ru === 'l')) { convFactor *= 0.001; resolvedUnit = ru; }
+          else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && ru === 'ml') { convFactor *= 1000; resolvedUnit = ru; }
         }
 
         // Convert ALL quantities to base units FIRST, then compute consumed
@@ -2288,7 +2313,7 @@ router.get('/stock-usage/:date', async (req, res) => {
         const usedQty = Math.max(0, openingQty - closingQty);
         const usedCost = usedQty * unitPrice;
 
-        const displayUnit = convFactor !== 1 ? (conv ? conv.baseUnit : itemUnit) : itemUnit;
+        const displayUnit = resolvedUnit === ru ? itemUnit : (conv ? conv.baseUnit : itemUnit);
 
         if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
           itemDetails.push({
@@ -2301,7 +2326,12 @@ router.get('/stock-usage/:date', async (req, res) => {
             closing: Math.round(closingQty * 1000) / 1000,
             used: Math.round(usedQty * 1000) / 1000,
             conv_factor: convFactor,
-            rate: Math.round(unitPrice * 100) / 100, 
+            // Raw master conversion row (e.g. "1 Pkt = 200 Gm") — distinct from conv_factor,
+            // which is the full compound factor (Pkt -> Gm -> Kg) used for costing above.
+            conv_qty: conv ? conv.qty : null,
+            conv_base_unit: conv ? conv.baseUnit : null,
+            has_rate_card: !!rate,
+            rate: Math.round(unitPrice * 100) / 100,
             used_cost: Math.round(usedCost * 100) / 100,
           });
           totalUsedCost += usedCost;

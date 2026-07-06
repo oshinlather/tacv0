@@ -249,7 +249,6 @@ const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.filter((i) => !
 // ─── STYLES ─────────────────────────────────────────────────────────────────
 const FONT = <><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" /><style dangerouslySetInnerHTML={{ __html: "input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}input[type=number]{-moz-appearance:textfield;appearance:textfield}" }} /></>;
 const PAGE = { minHeight: "100vh", background: "#FAFAF8", fontFamily: "'Outfit', sans-serif", color: "#1A1A1A" };
-const cogsC = (p) => p <= 30 ? "#16A34A" : p <= 38 ? "#B45309" : "#DC2626";
 
 // ─── SMALL COMPONENTS ───────────────────────────────────────────────────────
 const BackBtn = ({ onClick }) => (
@@ -300,300 +299,6 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
 // ═════════════════════════════════════════════════════════════════════════════
 //  DAILY P&L (matches user's Excel exactly)
 // ═════════════════════════════════════════════════════════════════════════════
-// ═════════════════════════════════════════════════════════════════════════════
-//  ORDER & DISPATCH HISTORY — Last 30 days
-// ═════════════════════════════════════════════════════════════════════════════
-const OrderDispatchHistory = () => {
-  const [historyTab, setHistoryTab] = useState("demands"); // demands, orders, dispatches, closing, wastage, sales
-  const [challans, setChallans] = useState([]);
-  const [demands, setDemands] = useState([]);
-  const [dispatches, setDispatches] = useState([]);
-  const [closingStocks, setClosingStocks] = useState([]);
-  const [wastages, setWastages] = useState([]);
-  const [salesData, setSalesData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null);
-  const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
-  const outletName = (id) => OUTLETS.find(o => o.id === id)?.name || id;
-  const r2 = (n) => Math.round(Number(n) * 100) / 100;
-  const itemLabel = (id) => {
-    const clean = id.replace(/^cs_/, '');
-    const def = DEMAND_SECTIONS.flatMap(s => s.items).find(i => i.id === clean);
-    return def?.name || clean.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
-  };
-  const toIST = (ts) => {
-    if (!ts) return "";
-    const d = new Date(ts);
-    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
-    const h = ist.getHours(), m = ist.getMinutes();
-    const ampm = h >= 12 ? "PM" : "AM";
-    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
-  };
-
-  useEffect(() => {
-    setLoading(true);
-    const thirtyDaysAgo = istDateAgo(30);
-    // Load sales for last 7 days (sales API requires per-date calls)
-    const salesDays = [];
-    for (let i = 0; i < 7; i++) {
-      const d = istNow(); d.setDate(d.getDate() - i);
-      salesDays.push(d.toISOString().split("T")[0]);
-    }
-    Promise.all([
-      api.getChallanHistory().catch(() => []),
-      api.getDispatchHistory().catch(() => []),
-      api.getOrders({ from: thirtyDaysAgo }).catch(() => []),
-      api.getClosingStocks({ from: thirtyDaysAgo }).catch(() => []),
-      ...salesDays.map(d => api.getSales({ date: d }).catch(() => ({ items: [], outlets: {} }))),
-    ]).then(([c, disp, dem, cs, ...salesResults]) => {
-      setChallans(c || []);
-      setDispatches(disp || []);
-      const allDemands = (dem || []).sort((a, b) => (b.submitted_at || b.date || "").localeCompare(a.submitted_at || a.date || ""));
-      setDemands(allDemands.filter(d => d.type === "manual" && d.status !== "draft"));
-      setWastages(allDemands.filter(d => d.type === "wastage"));
-      setClosingStocks(cs || []);
-      // Merge sales results into flat list
-      const allSales = salesResults.map((sr, i) => ({
-        date: salesDays[i],
-        items: sr?.items || [],
-        outlets: sr?.outlets || {},
-        total: sr?.total || 0,
-      })).filter(s => s.items.length > 0 || Object.keys(s.outlets).length > 0);
-      setSalesData(allSales);
-    }).finally(() => setLoading(false));
-  }, []);
-
-  // Filter by outlet
-  const filterByOutlet = (list) => selOutlet ? list.filter(d => d.outlet_id === selOutlet) : list;
-
-  const downloadCSV = (rows, filename) => {
-    const csv = rows.map(r => r.map(c => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const exportDemandCSV = () => {
-    const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
-    filterByOutlet(demands).forEach(d => {
-      Object.entries(d.items || {}).forEach(([id, qty]) => {
-        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
-      });
-    });
-    downloadCSV(rows, "demand_history.csv");
-  };
-
-  const exportChallanCSV = () => {
-    const rows = [["Order #", "Date", "Status", "Vendor", "Item", "Unit", "Req", "Stock", "Order Qty"]];
-    challans.forEach(po => {
-      Object.entries(po.items || {}).forEach(([id, item]) => {
-        rows.push([po.order_number, po.date, po.status, po.notes || "", item.name, item.unit, item.rm_qty, item.current_stock, r2(item.order_qty)]);
-      });
-    });
-    downloadCSV(rows, "order_challans_history.csv");
-  };
-
-  const exportDispatchCSV = () => {
-    const rows = [["Date", "Outlet", "Slot", "Status", "Item", "Qty"]];
-    filterByOutlet(dispatches).forEach(d => {
-      const items = d.dispatch_items || d.items || {};
-      Object.entries(items).forEach(([id, qty]) => {
-        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), d.demand_slot || "", d.status, itemLabel(id), r2(qty)]);
-      });
-    });
-    downloadCSV(rows, "dispatch_history.csv");
-  };
-
-  const exportClosingCSV = () => {
-    const rows = [["Date", "Outlet", "Item", "Qty"]];
-    filterByOutlet(closingStocks).forEach(d => {
-      Object.entries(d.items || {}).forEach(([id, qty]) => {
-        rows.push([d.date, outletName(d.outlet_id), itemLabel(id), r2(qty)]);
-      });
-    });
-    downloadCSV(rows, "closing_stock_history.csv");
-  };
-
-  const exportWastageCSV = () => {
-    const rows = [["Date", "Outlet", "Item", "Qty"]];
-    filterByOutlet(wastages).forEach(d => {
-      Object.entries(d.items || {}).forEach(([id, qty]) => {
-        if (qty > 0) rows.push([d.date, outletName(d.outlet_id), itemLabel(id), r2(qty)]);
-      });
-    });
-    downloadCSV(rows, "wastage_history.csv");
-  };
-
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading history...</div>;
-
-  const filteredDemands = filterByOutlet(demands);
-  const filteredDispatches = filterByOutlet(dispatches);
-  const filteredClosing = filterByOutlet(closingStocks);
-  const filteredWastage = filterByOutlet(wastages);
-
-  const filteredSales = salesData.filter(s => !selOutlet || s.outlets?.[selOutlet]);
-
-  const tabs = [
-    { id: "demands", label: "📋 Demand", count: filteredDemands.length },
-    { id: "dispatches", label: "🚚 Dispatch", count: filteredDispatches.length },
-    { id: "closing", label: "📊 Closing", count: filteredClosing.length },
-    { id: "wastage", label: "🗑️ Wastage", count: filteredWastage.length },
-    { id: "sales", label: "💰 Sales", count: filteredSales.length },
-    { id: "orders", label: "📦 Purchase", count: challans.length },
-  ];
-  const exportFns = { demands: exportDemandCSV, dispatches: exportDispatchCSV, closing: exportClosingCSV, wastage: exportWastageCSV, orders: exportChallanCSV, sales: exportDemandCSV };
-
-  // Generic list renderer for demands/dispatches/closing/wastage
-  const renderItemList = (list, getItems, opts = {}) => {
-    if (list.length === 0) return <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No records found</div>;
-    return list.map(d => {
-      const isExp = expandedId === d.id;
-      const items = getItems(d);
-      const itemList = Object.entries(items).filter(([, q]) => Number(q) > 0 || opts.showZero);
-      return (<div key={d.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-        <div onClick={() => setExpandedId(isExp ? null : d.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>{outletName(d.outlet_id)}</div>
-            <div style={{ fontSize: 11, color: "#999" }}>{d.date} · {itemList.length} items</div>
-            {d.submitted_at && <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📤 {toIST(d.submitted_at)}{d.submitted_by && <span> by <strong style={{ color: "#888" }}>{d.submitted_by}</strong></span>}</div>}
-            {d.created_at && !d.submitted_at && <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 {toIST(d.created_at)}</div>}
-          </div>
-          {d.status && <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: d.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: d.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{d.status}</span>}
-          <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
-        </div>
-        {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-            <thead><tr style={{ background: "#FAFAF8" }}>
-              <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
-              <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Qty</th>
-            </tr></thead>
-            <tbody>{itemList.sort((a, b) => a[0].localeCompare(b[0])).map(([id, qty]) => (
-              <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                <td style={{ padding: "6px 8px", fontWeight: 600 }}>{itemLabel(id)}</td>
-                <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(qty)}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>}
-      </div>);
-    });
-  };
-
-  return (<div>
-    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>📜 Operations History (30 days)</h3>
-
-    {/* Outlet filter */}
-    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-      <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
-      {OUTLETS.map(o => (
-        <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
-      ))}
-    </div>
-
-    {/* Tabs */}
-    <div style={{ display: "flex", gap: 4, marginBottom: 12, overflowX: "auto" }}>
-      {tabs.map(t => (
-        <button key={t.id} onClick={() => { setHistoryTab(t.id); setExpandedId(null); }} style={{ flex: 1, padding: "8px 4px", borderRadius: 10, border: historyTab === t.id ? "none" : "1px solid #E0E0DC", background: historyTab === t.id ? "#1A1A1A" : "#fff", color: historyTab === t.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap", minWidth: 60 }}>{t.label} ({t.count})</button>
-      ))}
-    </div>
-
-    {/* Export button */}
-    <button onClick={exportFns[historyTab]} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>
-      📥 Export CSV
-    </button>
-
-    {/* Demand tab */}
-    {historyTab === "demands" && renderItemList(filteredDemands, d => d.items || {})}
-
-    {/* Dispatch tab */}
-    {historyTab === "dispatches" && renderItemList(filteredDispatches, d => d.dispatch_items || d.items || {})}
-
-    {/* Closing Stock tab */}
-    {historyTab === "closing" && renderItemList(filteredClosing, d => d.items || {}, { showZero: true })}
-
-    {/* Wastage tab */}
-    {historyTab === "wastage" && renderItemList(filteredWastage, d => d.items || {})}
-
-    {/* Sales tab */}
-    {historyTab === "sales" && (<>
-      {filteredSales.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No sales data in last 7 days</div>}
-      {filteredSales.map(s => {
-        const isExp = expandedId === s.date;
-        const outletEntries = selOutlet 
-          ? (s.outlets?.[selOutlet] ? [[selOutlet, s.outlets[selOutlet]]] : [])
-          : Object.entries(s.outlets || {});
-        const dayTotal = outletEntries.reduce((sum, [, o]) => sum + (Number(o.store_sale) || 0) + (Number(o.net_delivery) || 0), 0);
-        return (<div key={s.date} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExp ? null : s.date)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{s.date}</div>
-              <div style={{ fontSize: 11, color: "#999" }}>{outletEntries.length} outlets</div>
-            </div>
-            <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A", fontSize: 14 }}>₹{Math.round(dayTotal).toLocaleString()}</span>
-            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
-          </div>
-          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Outlet</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Store</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Delivery</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#16A34A", fontSize: 10 }}>Total</th>
-              </tr></thead>
-              <tbody>{outletEntries.map(([oid, o]) => (
-                <tr key={oid} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{outletName(oid)}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center" }}>₹{Math.round(Number(o.store_sale) || 0).toLocaleString()}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center" }}>₹{Math.round(Number(o.net_delivery) || 0).toLocaleString()}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#16A34A" }}>₹{Math.round((Number(o.store_sale) || 0) + (Number(o.net_delivery) || 0)).toLocaleString()}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>}
-        </div>);
-      })}
-    </>)}
-
-    {/* Order/Purchase Challans tab */}
-    {historyTab === "orders" && (<>
-      {challans.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999" }}>No order challans in last 30 days</div>}
-      {challans.map(po => {
-        const isExp = expandedId === po.id;
-        const itemList = Object.entries(po.items || {});
-        return (<div key={po.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-          <div onClick={() => setExpandedId(isExp ? null : po.id)} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{po.order_number}</div>
-              <div style={{ fontSize: 11, color: "#999" }}>{po.date} · {po.notes || ""} · {po.total_items} items</div>
-              <div style={{ fontSize: 10, color: "#BBB", marginTop: 2 }}>📝 {toIST(po.created_at)}{po.created_by && <span> by <strong style={{ color: "#888" }}>{po.created_by}</strong></span>}{po.received_at && <span> · 📥 {toIST(po.received_at)}{po.received_by && <span> by <strong style={{ color: "#888" }}>{po.received_by}</strong></span>}</span>}</div>
-            </div>
-            <span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: po.status === "pending" ? "#FFFBEB" : po.status === "received" ? "#F0FDF4" : "#F5F5F3", color: po.status === "pending" ? "#B45309" : po.status === "received" ? "#16A34A" : "#888" }}>{po.status}</span>
-            <span style={{ color: "#CCC" }}>{isExp ? "▲" : "▼"}</span>
-          </div>
-          {isExp && <div style={{ padding: "0 14px 12px", borderTop: "1px solid #F0F0EC" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ padding: "6px 8px", textAlign: "left", fontWeight: 700, color: "#888", fontSize: 10 }}>Item</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Stock</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#888", fontSize: 10 }}>Req</th>
-                <th style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB", fontSize: 10 }}>Order Qty</th>
-              </tr></thead>
-              <tbody>{itemList.sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => (
-                <tr key={id} style={{ borderBottom: "1px solid #F5F5F3" }}>
-                  <td style={{ padding: "6px 8px", fontWeight: 600 }}>{item.name}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{r2(item.current_stock)}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", color: "#888" }}>{item.rm_qty}</td>
-                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#2563EB" }}>{r2(item.order_qty)} {item.unit}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>}
-        </div>);
-      })}
-    </>)}
-  </div>);
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  USERS MANAGEMENT
@@ -1072,11 +777,83 @@ const DailyPnL = () => {
   const [editSaving, setEditSaving] = useState(false);
   const [expandedCats, setExpandedCats] = useState({});
 
+  // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
+  const [editMaster, setEditMaster] = useState(null); // { _idx, item_id, name, kind: 'price'|'conv', value, unit, demandUnit, currentValue }
+  const [masterSaving, setMasterSaving] = useState(false);
+
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
   }, [selDay]);
 
   const [stockData, setStockData] = useState(null);
+
+  // Month view: aggregate the same per-day P&L + stock-usage calls across a whole month
+  const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for day view
+  const [monthData, setMonthData] = useState(null);
+  const [monthLoading, setMonthLoading] = useState(false);
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  const fetchMonthlyPnl = useCallback((monthStr) => {
+    setMonthLoading(true);
+    const [y, mo] = monthStr.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const dates = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break; // skip future dates
+      dates.push(ds);
+    }
+    Promise.all(dates.map((ds) =>
+      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null)])
+        .then(([pnl, stock]) => {
+          // Same merge as the daily fetch: consumed-material cost overrides dispatch-based variable cost
+          if (pnl?.pnl && stock?.outlets) {
+            pnl.pnl.forEach((p) => {
+              const su = stock.outlets.find((s) => s.outlet_id === p.outlet_id);
+              if (su) {
+                p.variable_cost = su.total_used_cost;
+                p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+                p.net_profit = (p.effective_sale || 0) - p.total_expense;
+              }
+            });
+          }
+          return { date: ds, pnl: pnl?.pnl || [] };
+        })
+    )).then((results) => {
+      const totals = {}; // outlet_id -> summed totals across the month
+      results.forEach(({ pnl }) => {
+        pnl.forEach((p) => {
+          if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, total_expense: 0, net_profit: 0 };
+          const t = totals[p.outlet_id];
+          t.total_sale += p.total_sale || 0;
+          t.effective_sale += p.effective_sale || 0;
+          t.variable_cost += p.variable_cost || 0;
+          t.daily_fixed_cost += p.daily_fixed_cost || 0;
+          t.bk_share += p.bk_share || 0;
+          t.daily_purchases += p.daily_purchases || 0;
+          t.total_expense += p.total_expense || 0;
+          t.net_profit += p.net_profit || 0;
+        });
+      });
+      // Margin computed on the summed totals (not an average of daily percentages)
+      Object.values(totals).forEach((t) => { t.margin = t.effective_sale > 0 ? Math.round(t.net_profit / t.effective_sale * 1000) / 10 : 0; });
+      setMonthData({ totals, days: results });
+    }).finally(() => setMonthLoading(false));
+  }, []);
+
+  useEffect(() => { if (selMonth) fetchMonthlyPnl(selMonth); }, [selMonth, fetchMonthlyPnl]);
 
   const fetchPnl = useCallback(() => {
     setLoading(true);
@@ -1131,6 +908,31 @@ const DailyPnL = () => {
     }
   };
 
+  // Save a master-data edit (Rate Card price or unit-conversion qty) — affects ALL outlets, so confirm first.
+  const saveMasterEdit = async () => {
+    if (!editMaster) return;
+    const newVal = Number(editMaster.value);
+    if (isNaN(newVal) || newVal <= 0) { alert("Enter a valid number"); return; }
+    const msg = editMaster.kind === 'price'
+      ? `Update the master Rate Card price for "${editMaster.name}" from ₹${editMaster.currentValue} to ₹${newVal} per ${editMaster.unit}?\n\nThis changes pricing for ALL outlets — past, present, and future P&L.`
+      : `Update the master unit conversion for "${editMaster.name}" — 1 ${editMaster.demandUnit} = ${newVal} ${editMaster.unit} (was ${editMaster.currentValue} ${editMaster.unit}).\n\nThis changes conversions for ALL outlets — past, present, and future P&L.`;
+    if (!confirm(msg)) return;
+    setMasterSaving(true);
+    try {
+      if (editMaster.kind === 'price') {
+        await api.updateRate(editMaster.item_id, { price: newVal });
+      } else {
+        await api.updateConversion({ unit_type: editMaster.demandUnit, item_id: editMaster.item_id, qty: newVal, base_unit: editMaster.unit, notes: `1 ${editMaster.demandUnit} = ${newVal} ${editMaster.unit}` });
+      }
+      setEditMaster(null);
+      await fetchPnl();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setMasterSaving(false);
+    }
+  };
+
   const allPnl = pnlData?.pnl || [];
   const currentData = selOutlet
     ? allPnl.find((r) => r.outlet_id === selOutlet)
@@ -1165,12 +967,17 @@ const DailyPnL = () => {
       </div>
 
       {/* Date pills */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {Array.from({ length: 10 }, (_, i) => {
           const dd = istNow(); dd.setDate(dd.getDate() - i);
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
-          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
+        <select value={selMonth || ""} onChange={(e) => setSelMonth(e.target.value || null)}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
+          <option value="">📅 Month view...</option>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
       </div>
 
       {/* Outlet pills */}
@@ -1179,11 +986,11 @@ const DailyPnL = () => {
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
       </div>
 
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
+      {!selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
 
-      {!loading && !currentData && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
+      {!selMonth && !loading && !currentData && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
 
-      {!loading && currentData && (<>
+      {!selMonth && !loading && currentData && (<>
         {/* Stock data warnings */}
         {d.has_prev_closing === false && (
           <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>
@@ -1215,15 +1022,18 @@ const DailyPnL = () => {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
             {allPnl.filter((r) => r.outlet_id !== "all").map((r) => {
               const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
+              const cogs = r.effective_sale > 0 ? (r.variable_cost / r.effective_sale * 100) : 0;
+              const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
                   <div style={{ fontSize: 9, color: "#888" }}>Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
-                  <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626", marginTop: 4 }}>
+                  <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                     {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
-                  </div>
-                  <div style={{ fontSize: 10, color: r.margin >= 0 ? "#16A34A" : "#DC2626", fontWeight: 600 }}>{r.margin}%</div>
+                  </strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{r.margin}%</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: cogsColor }}>{cogs.toFixed(1)}%</strong></div>
                 </div>
               );
             })}
@@ -1281,10 +1091,41 @@ const DailyPnL = () => {
                     {isExpanded && sortedItems.map((item, i) => {
                       const globalIdx = item._origIdx;
                       const isEditing = editItem && editItem._idx === globalIdx;
+                      const isEditingMaster = editMaster && editMaster._idx === globalIdx;
                       const displayQty = isStockBased ? item.used : (item.raw_qty != null ? item.raw_qty : item.qty);
                       const displayCost = isStockBased ? item.used_cost : item.cost;
                       const displayRate = item.rate;
                       const displayUnit = item.unit || '';
+                      const demandUnitForItem = isStockBased ? item.demand_unit : item.raw_unit;
+                      const hasConvEdit = isStockBased && item.conv_qty != null && item.conv_base_unit;
+                      if (isEditingMaster) {
+                        return (
+                          <div key={globalIdx} style={{ padding: "8px 16px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#1D4ED8", marginBottom: 6 }}>
+                              {editMaster.kind === 'price' ? `💲 Edit Master Price — ${editMaster.name}` : `🔄 Edit Master Conversion — ${editMaster.name}`}
+                            </div>
+                            <div style={{ fontSize: 10, color: "#888", marginBottom: 6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+                              {editMaster.kind === 'price'
+                                ? `Current: ₹${editMaster.currentValue} per ${editMaster.unit} — changes the Rate Card for ALL outlets`
+                                : `Current: 1 ${editMaster.demandUnit} = ${editMaster.currentValue} ${editMaster.unit} — changes the master conversion for ALL outlets`}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>{editMaster.kind === 'price' ? 'New price:' : 'New qty:'}</span>
+                              <input type="number" inputMode="decimal" step="any" autoFocus value={editMaster.value}
+                                onChange={(e) => setEditMaster({ ...editMaster, value: e.target.value })}
+                                style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                              <span style={{ fontSize: 11, color: "#888" }}>{editMaster.kind === 'price' ? `/ ${editMaster.unit}` : editMaster.unit}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button onClick={saveMasterEdit} disabled={masterSaving}
+                                style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: masterSaving ? "#D0D0CC" : "#1D4ED8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: masterSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                {masterSaving ? "⏳ Saving..." : "💾 Save (with confirm)"}</button>
+                              <button onClick={() => setEditMaster(null)} disabled={masterSaving}
+                                style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                            </div>
+                          </div>
+                        );
+                      }
                       if (isEditing) {
                         return (
                           <div key={globalIdx} style={{ padding: "8px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
@@ -1332,9 +1173,23 @@ const DailyPnL = () => {
                             <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6, fontSize: 11 }}>{fmt(displayCost)}</span>
                             <button
                               onClick={() => setEditItem({ _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id, value: String(displayQty), reason: "", name: item.name, unit: displayUnit })}
-                              title="Edit quantity"
-                              style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}
-                            >✏️</button>
+                              title="Edit today's quantity (this date only)"
+                              style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginRight: 4 }}
+                            >✏️ Qty</button>
+                            {isStockBased && item.has_rate_card && (
+                              <button
+                                onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}
+                                title="Edit master Rate Card price (all outlets)"
+                                style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700, marginRight: hasConvEdit ? 4 : 0 }}
+                              >💲 Price</button>
+                            )}
+                            {hasConvEdit && (
+                              <button
+                                onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'conv', value: String(item.conv_qty), unit: item.conv_base_unit, demandUnit: demandUnitForItem, currentValue: item.conv_qty })}
+                                title="Edit master unit conversion (all outlets)"
+                                style={{ padding: "2px 6px", border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#B45309", fontWeight: 700 }}
+                              >🔄 Conv</button>
+                            )}
                           </div>
                           {isStockBased && (item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
                             <div style={{ padding: "0 16px 4px 32px", fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'" }}>
@@ -1394,6 +1249,86 @@ const DailyPnL = () => {
             </div>
           ))}
         </div>
+      </>)}
+
+      {/* Month view — aggregates the same per-day P&L + stock-usage data across a whole month */}
+      {selMonth && (<>
+        {monthLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing month...</div>}
+        {!monthLoading && monthData && (() => {
+          const md = (selOutlet ? monthData.totals[selOutlet] : monthData.totals['all']) || {};
+          const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+          const outletTotals = Object.values(monthData.totals).filter((t) => t.outlet_id !== 'all');
+          return (<>
+            <div style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>{monthLabel} · {monthData.days.length} day(s) so far</div>
+            {/* Summary Cards */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+              {[
+                { l: "Effective Sale", v: md.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
+                { l: "Total Expense", v: md.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
+                { l: "Net P&L", v: md.net_profit, c: (md.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626", bg: (md.net_profit || 0) >= 0 ? "#F0FDF4" : "#FEF2F2", bc: (md.net_profit || 0) >= 0 ? "#BBF7D0" : "#FECACA" },
+                { l: "Margin", v: null, display: (md.margin || 0) + "%", c: (md.margin || 0) >= 0 ? "#16A34A" : "#DC2626", bg: "#fff", bc: "#E8E8E4" },
+              ].map((s, i) => (
+                <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.display || fmt(s.v || 0)}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Per-outlet mini cards (when All Outlets selected) */}
+            {!selOutlet && outletTotals.length > 0 && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
+                {outletTotals.map((r) => {
+                  const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
+                  const cogs = r.effective_sale > 0 ? (r.variable_cost / r.effective_sale * 100) : 0;
+                  const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
+                  return (
+                    <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
+                        {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
+                      </strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{r.margin}%</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: cogsColor }}>{cogs.toFixed(1)}%</strong></div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Day-by-day breakdown for the currently selected outlet (or All) */}
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+              <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Day by Day</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Date</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Sale</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Expense</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Margin</th>
+                  </tr></thead>
+                  <tbody>
+                    {monthData.days.map(({ date, pnl }) => {
+                      const row = pnl.find((p) => p.outlet_id === (selOutlet || 'all')) || {};
+                      return (
+                        <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                          <td style={tdS}>{date.slice(5)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#166534" }}>{fmt(row.effective_sale || 0)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>{fmt(row.total_expense || 0)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (row.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{(row.net_profit || 0) >= 0 ? "" : "−"}{fmt(Math.abs(row.net_profit || 0))}</td>
+                          <td style={{ ...tdS, textAlign: "right", color: (row.margin || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{row.margin != null ? `${row.margin}%` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>);
+        })()}
       </>)}
     </div>
   );
@@ -1826,79 +1761,6 @@ const exportCSV = (headers, rows, filename) => {
 const ExportBtn = ({ onClick }) => (
   <button className="no-print" onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 14px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 12, fontWeight: 600, color: "#16A34A", cursor: "pointer", fontFamily: "inherit" }}>📥 CSV</button>
 );
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  LIVE ACTIVITY — real-time dashboard from DB
-// ═════════════════════════════════════════════════════════════════════════════
-const LiveActivity = () => {
-  const [data, setData] = useState(null); const [loading, setLoading] = useState(true); const [err, setErr] = useState(null);
-  const load = () => { setLoading(true); setErr(null); api.getDashboardSummary(today()).then(setData).catch((e) => setErr(e.message)).finally(() => setLoading(false)); };
-  useEffect(load, []);
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading activity...</div>;
-  if (err) return <div style={{ textAlign: "center", padding: 40 }}><div style={{ color: "#DC2626", fontSize: 14, fontWeight: 700, marginBottom: 8 }}>❌ {err}</div><button onClick={load} style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🔄 Retry</button></div>;
-  if (!data) return null;
-  const s = data.summary;
-  return (<div>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-      <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔴 Live Activity — {today()}</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>All submissions from outlets & BK</p></div>
-      <button onClick={load} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🔄 Refresh</button>
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 20 }}>
-      {[{ l: "Demands", v: s.total_demands, bg: "#F0FDF4", bc: "#BBF7D0", c: "#16A34A" }, { l: "Pending", v: s.pending_dispatch, bg: s.pending_dispatch > 0 ? "#FFFBEB" : "#F0FDF4", bc: s.pending_dispatch > 0 ? "#FDE68A" : "#BBF7D0", c: s.pending_dispatch > 0 ? "#B45309" : "#16A34A" }, { l: "Issuances", v: s.total_issuances, bg: "#EFF6FF", bc: "#BFDBFE", c: "#2563EB" }, { l: "Purchases", v: s.total_purchases, bg: "#FFFBEB", bc: "#FDE68A", c: "#B45309" }, { l: "Purchase ₹", v: fmt(s.purchase_amount), bg: "#FFFBEB", bc: "#FDE68A", c: "#B45309" }].map((card, i) => (
-        <div key={i} style={{ background: card.bg, borderRadius: 12, padding: "12px 14px", border: `1px solid ${card.bc}`, textAlign: "center" }}><div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>{card.l}</div><div style={{ fontSize: 20, fontWeight: 800, color: card.c, fontFamily: "'JetBrains Mono', monospace" }}>{card.v}</div></div>
-      ))}
-    </div>
-    {/* Missing demand alerts */}
-    {(() => {
-      const h = istHour();
-      const afterNightWindow = h >= 1 && h < 11; // Between 1AM-11AM, night orders should have been placed
-      if (!afterNightWindow) return null;
-      const outletDemands = data.demands || [];
-      const missingOutlets = OUTLETS.filter((o) => !outletDemands.some((d) => d.outlet_id === o.id));
-      if (missingOutlets.length === 0) return null;
-      return (<div style={{ padding: "12px 16px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>🚨 Missing Night Demand (9PM–1AM)</div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{missingOutlets.map((o) => (<span key={o.id} style={{ padding: "3px 10px", borderRadius: 6, background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 700 }}>{o.name}</span>))}</div>
-      </div>);
-    })()}
-    {data.demands.length > 0 && <div style={{ marginBottom: 16 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>📋 Demands</div>{data.demands.map((d) => (<div key={d.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><strong style={{ fontSize: 12 }}>{OUTLETS.find((o) => o.id === d.outlet_id)?.name || d.outlet_id}</strong><span style={{ fontSize: 10, color: "#888" }}>{d.type === "photo" ? "📷" : d.type === "wastage" ? "🗑️" : "✏️"}</span><span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: d.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: d.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{d.status}</span></div><span style={{ fontSize: 11, color: "#999" }}>{new Date(d.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>))}</div>}
-    {data.purchases.length > 0 && <div style={{ marginBottom: 16 }}><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>🧾 Purchases</div>{data.purchases.map((p) => (<div key={p.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 12, fontWeight: 600 }}>💳 {p.payment_mode}</span><span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(Number(p.total_amount))}</span></div>))}</div>}
-    {data.issuances.length > 0 && <div><div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>📋 Issuances</div>{data.issuances.map((iss) => (<div key={iss.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 12, fontWeight: 600 }}>→ {iss.issue_to === "bk" ? "BK Production" : OUTLETS.find((o) => o.id === iss.issue_to)?.name || iss.issue_to}</span><span style={{ fontSize: 11, color: "#999" }}>{new Date(iss.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span></div>))}</div>}
-    {s.total_demands === 0 && s.total_purchases === 0 && s.total_issuances === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>📭</div><div style={{ color: "#999" }}>No activity yet today</div></div>}
-  </div>);
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  OUTLET ORDERS — fetches from DB
-// ═════════════════════════════════════════════════════════════════════════════
-const OutletOrders = () => {
-  const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
-  useEffect(() => { 
-    const tomorrow = istDateAgo(-1);
-    Promise.all([api.getOrders({ date: today() }), api.getOrders({ date: tomorrow })]).then(([t, tm]) => {
-      setOrders([...(t || []), ...(tm || []).filter(d => d.demand_slot === "morning")]);
-    }).catch(() => setOrders([])).finally(() => setLoading(false)); 
-  }, []);
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
-  return (
-    <div id="print-orders">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>Outlet Orders (Live from DB)</h3><p style={{ fontSize: 13, color: "#888", margin: 0 }}>{orders.length} orders for {today()}</p></div>
-        <PrintBtn sectionId="print-orders" title="Outlet Orders" />
-      </div>
-      {orders.length === 0 ? <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>📋</div><div style={{ color: "#999" }}>No orders submitted yet today</div></div> : (
-        OUTLETS.map((outlet) => { const oo = orders.filter((d) => d.outlet_id === outlet.id); return (
-          <div key={outlet.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px 18px", marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <strong style={{ fontSize: 14 }}>{outlet.name}</strong>
-              {oo.length === 0 ? <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#FEF2F2", color: "#DC2626" }}>NOT ORDERED</span> : <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: "#F0FDF4", color: "#16A34A" }}>{oo.length} order(s)</span>}
-            </div>
-            {oo.map((o) => (<div key={o.id} style={{ padding: "6px 10px", background: "#FAFAF8", borderRadius: 8, marginBottom: 3, fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontWeight: 600 }}>{o.type === "photo" ? "📷 Photo" : "✏️ Manual"}</span><span style={{ color: "#999" }}>{new Date(o.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span><span style={{ marginLeft: "auto", padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: o.status === "fulfilled" ? "#F0FDF4" : "#FFFBEB", color: o.status === "fulfilled" ? "#16A34A" : "#B45309" }}>{o.status}</span></div>))}
-          </div>); })
-      )}
-    </div>
-  );
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  BASE KITCHEN (Consolidated Demand + Stock Out BK + Per-Outlet Direct Items)
@@ -3702,10 +3564,13 @@ const DemandHistory = () => {
   const [editItem, setEditItem] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [rateCard, setRateCard] = useState([]);
+  const [conversions, setConversions] = useState({});
 
-  // Load rate card for cost calculation
+  // Load rate card + master unit conversions for cost calculation — same
+  // source-of-truth tables the backend P&L uses, so figures agree everywhere.
   useEffect(() => {
     api.getRateCard().then(r => setRateCard(r || [])).catch(() => setRateCard([]));
+    api.getConversions().then(c => setConversions(c || {})).catch(() => setConversions({}));
   }, []);
 
   const rateMap = useMemo(() => {
@@ -3713,6 +3578,37 @@ const DemandHistory = () => {
     rateCard.forEach(r => { m[r.id] = r; });
     return m;
   }, [rateCard]);
+
+  // { item_id: { fromUnit: unit_type, qty, baseUnit } } — flattened for lookup by item_id
+  const convMap = useMemo(() => {
+    const m = {};
+    Object.entries(conversions).forEach(([unitType, rows]) => {
+      (rows || []).forEach(row => { m[row.item_id] = { fromUnit: unitType, qty: Number(row.qty), baseUnit: row.base_unit }; });
+    });
+    return m;
+  }, [conversions]);
+
+  // Demand unit → rate card unit, chaining through the unit_conversions base unit
+  // then an SI step if needed (e.g. Tin → Kg via 15, or Pkt → Gm → Kg) —
+  // mirrors the backend's /pnl/live and /stock-usage conversion logic exactly.
+  const getUnitConv = (demandUnit, rateUnit, itemId) => {
+    const du = (demandUnit || '').toLowerCase();
+    const ru = (rateUnit || '').toLowerCase();
+    if (du === ru) return 1;
+    const conv = convMap[itemId];
+    let factor = 1;
+    let fromUnit = du;
+    if (conv && du === conv.fromUnit.toLowerCase()) {
+      factor = conv.qty;
+      fromUnit = (conv.baseUnit || '').toLowerCase();
+    }
+    if (fromUnit === ru) return factor;
+    if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
+    if (fromUnit === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return factor * 1000;
+    if ((fromUnit === 'ml' || fromUnit === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return factor * 0.001;
+    if ((fromUnit === 'ltr' || fromUnit === 'l') && ru === 'ml') return factor * 1000;
+    return factor;
+  };
 
   const toIST = (ts) => {
     if (!ts) return "";
@@ -3764,9 +3660,15 @@ const DemandHistory = () => {
     const merged = {};
     demandList.forEach(d => {
       const items = d.items || {};
-      Object.entries(items).forEach(([id, qty]) => {
-        if (!merged[id]) merged[id] = { qty: 0, demandIds: [] };
-        merged[id].qty += Number(qty) || 0;
+      const dispItems = d.dispatch_items || null;
+      const ids = new Set([...Object.keys(items), ...Object.keys(dispItems || {})]);
+      ids.forEach(id => {
+        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, demandIds: [] };
+        merged[id].qty += Number(items[id]) || 0;
+        if (dispItems) {
+          merged[id].hasDispatch = true;
+          merged[id].dispatchedQty += Number(dispItems[id]) || 0;
+        }
         if (!merged[id].demandIds.includes(d.id)) merged[id].demandIds.push(d.id);
       });
     });
@@ -3819,9 +3721,17 @@ const DemandHistory = () => {
         const rate = rateMap[id];
         let unitPrice = rate ? Number(rate.price) : 0;
         let displayUnit = def?.unit || '';
+        let rateUnit = displayUnit;
+        let convFactor = 1;
 
-        // BK recipe fallback: if no rate card, compute from recipe
-        if (!rate && RECIPES[id]) {
+        if (rate) {
+          // Rate card is priced per rate.unit (often Kg/Ltr) while the item is
+          // demanded per Tin/Pkt/Batch etc — chain through unit_conversions + SI,
+          // same as the backend, instead of assuming the units already match.
+          rateUnit = rate.unit || displayUnit;
+          convFactor = getUnitConv(displayUnit, rateUnit, id);
+        } else if (RECIPES[id]) {
+          // BK recipe fallback: if no rate card, compute from recipe
           const costPerKg = getRecipeCostPerKg(id);
           // Convert qty if unit is Batch
           if (displayUnit === 'Batch') {
@@ -3832,11 +3742,13 @@ const DemandHistory = () => {
           }
         }
 
-        const cost = data.qty * unitPrice;
+        const cost = data.qty * convFactor * unitPrice;
+        const mismatch = data.hasDispatch && Math.abs(data.dispatchedQty - data.qty) > 0.001;
         return {
           id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
           qty: data.qty, demandIds: data.demandIds,
-          rate: Math.round(unitPrice * 100) / 100, cost,
+          hasDispatch: data.hasDispatch, dispatchedQty: data.dispatchedQty, mismatch,
+          rate: Math.round(unitPrice * 100) / 100, rateUnit, cost,
           section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
         };
       })
@@ -3992,8 +3904,17 @@ const DemandHistory = () => {
                                     );
                                   }
                                   return (
-                                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 16px", fontSize: 12, borderBottom: "1px solid #F5F5F3" }}>
-                                      <span style={{ color: "#555", flex: 1 }}>{item.name} <span style={{ color: "#BBB", fontSize: 10 }}>({item.qty} {item.unit} × ₹{item.rate})</span></span>
+                                    <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 16px", fontSize: 12, borderBottom: "1px solid #F5F5F3", background: item.mismatch ? "#FEF2F2" : "transparent" }}>
+                                      <span style={{ color: item.mismatch ? "#991B1B" : "#555", flex: 1 }}>
+                                        {item.name}{" "}
+                                        <span style={{ color: item.mismatch ? "#991B1B" : "#BBB", fontSize: 10, fontWeight: item.mismatch ? 700 : 400 }}>
+                                          (Demand: {item.qty} {item.unit}
+                                          {item.hasDispatch
+                                            ? <> → Dispatch: <span style={{ color: item.mismatch ? "#DC2626" : "#BBB", fontWeight: item.mismatch ? 800 : 400 }}>{item.dispatchedQty} {item.unit}</span>{item.mismatch ? " ⚠️" : ""}</>
+                                            : ' · not dispatched yet'}
+                                          {' · ₹' + item.rate + '/' + (item.rateUnit || item.unit) + ')'}
+                                        </span>
+                                      </span>
                                       <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: item.cost > 0 ? "#B45309" : "#CCC", marginRight: 4, fontSize: 11 }}>{item.cost > 0 ? `₹${Math.round(item.cost).toLocaleString()}` : '—'}</span>
                                       <button onClick={() => setEditItem({ demandIds: item.demandIds, itemId: item.id, value: String(item.qty), name: item.name, unit: item.unit, date: day.date })}
                                         style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginLeft: 4 }}>✏️</button>
@@ -4035,113 +3956,6 @@ const MENU_ITEMS = [
 const genSales = () => { const d = {}; OUTLETS.forEach((o) => { const it = {}; MENU_ITEMS.forEach((m) => { it[m.id] = { d: 0, a: 0 }; }); d[o.id] = it; }); return d; };
 const SALES = genSales();
 const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC = { d: 0, a: 0 }; const items = []; MENU_ITEMS.forEach((m) => { const q = s[m.id], c = ITEM_COST[m.id]; const dr = q.d * m.price.d, ar = q.a * m.price.a, dc = q.d * c, ac = q.a * c; tR.d += dr; tR.a += ar; tC.d += dc; tC.a += ac; items.push({ id: m.id, name: m.name, dI: { q: q.d, r: dr, c: dc, cogs: dr > 0 ? dc / dr * 100 : 0 }, ag: { q: q.a, r: ar, c: ac, cogs: ar > 0 ? ac / ar * 100 : 0 }, t: { q: q.d + q.a, r: dr + ar, c: dc + ac, cogs: (dr + ar) > 0 ? (dc + ac) / (dr + ar) * 100 : 0 } }); }); const tRev = tR.d + tR.a, tCost = tC.d + tC.a; return { rev: tR, cost: tC, tRev, tCost, cogs: tRev > 0 ? tCost / tRev * 100 : 0, cogsDi: tR.d > 0 ? tC.d / tR.d * 100 : 0, cogsAg: tR.a > 0 ? tC.a / tR.a * 100 : 0, items: items.sort((a, b) => b.t.r - a.t.r) }; };
-
-const CogsDash = () => {
-  const [selDay, setSelDay] = useState(0);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      api.getSales({ date: dateStr }).catch(() => null),
-      api.getLivePnl(dateStr).catch(() => null),
-    ]).then(([sales, pnl]) => {
-      setData({ sales, pnl: pnl?.pnl || [] });
-    }).finally(() => setLoading(false));
-  }, [dateStr]);
-
-  const pnlAll = data?.pnl || [];
-  const salesData = data?.sales || {};
-
-  // Per-outlet summary from P&L
-  const outletData = OUTLETS.map(o => {
-    const p = pnlAll.find(r => r.outlet_id === o.id);
-    return {
-      ...o,
-      revenue: p?.effective_sale || 0,
-      variableCost: p?.variable_cost || 0,
-      cogs: p?.effective_sale > 0 ? (p?.variable_cost || 0) / p.effective_sale * 100 : 0,
-    };
-  });
-  const totalRevenue = outletData.reduce((s, o) => s + o.revenue, 0);
-  const totalCost = outletData.reduce((s, o) => s + o.variableCost, 0);
-  const totalCogs = totalRevenue > 0 ? totalCost / totalRevenue * 100 : 0;
-
-  return (<div>
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-      {Array.from({ length: 10 }, (_, i) => {
-        const d = new Date(); d.setDate(d.getDate() - i);
-        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
-        return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-      })}
-    </div>
-
-    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-
-    {!loading && <>
-      <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 20, background: "#E8E8E4" }}>
-        {[{ l: "Revenue", v: fmt(totalRevenue) }, { l: "Material Cost", v: fmt(totalCost), c: "#B45309" }, { l: "Cost %", v: pct(totalCogs), c: cogsC(totalCogs) }].map((s, i) => (
-          <div key={i} style={{ flex: 1, background: "#fff", padding: "14px", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: s.c || "#1A1A1A", fontFamily: "'JetBrains Mono'" }}>{s.v}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-        {outletData.map(o => {
-          const c = cogsC(o.cogs);
-          return (<div key={o.id} style={{ background: "#fff", borderRadius: 14, padding: "18px 20px", border: "1px solid #E8E8E4" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: c, fontFamily: "'JetBrains Mono'", lineHeight: 1 }}>{pct(o.cogs)}</div>
-            </div>
-            <div style={{ height: 5, borderRadius: 3, background: "#EBEBEB", marginBottom: 12, overflow: "hidden" }}>
-              <div style={{ height: "100%", borderRadius: 3, background: c, width: `${Math.min(o.cogs * 2, 100)}%` }} />
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}>
-                <div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>REVENUE</div>
-                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{fmt(o.revenue)}</div>
-              </div>
-              <div style={{ flex: 1, background: "#F8F8F5", borderRadius: 8, padding: "5px 8px" }}>
-                <div style={{ fontSize: 9, color: "#999", fontWeight: 600 }}>COST</div>
-                <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(o.variableCost)}</div>
-              </div>
-            </div>
-          </div>);
-        })}
-      </div>
-
-      {/* Item-wise sales from PetPooja */}
-      {salesData.items && salesData.items.length > 0 && (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-          <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", fontWeight: 700, fontSize: 14 }}>📋 Item-wise Sales — {dateStr}</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={thS}>Item</th><th style={thS}>Category</th>
-                <th style={{ ...thS, textAlign: "right" }}>Qty</th>
-                <th style={{ ...thS, textAlign: "right" }}>Revenue</th>
-              </tr></thead>
-              <tbody>{salesData.items.map((item, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                  <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}</td>
-                  <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{item.qty}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmt(item.revenue)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </>}
-  </div>);
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  OUTLET MANAGER
@@ -6822,7 +6636,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "sales", label: "📤 Sales" }, { id: "cogs", label: "📊 COGS" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
       </div>
@@ -6834,9 +6648,6 @@ export default function AnandaCafe() {
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
-          { id: "activity", label: "🔴 Live Activity", sub: "Real-time submissions" },
-          { id: "orders", label: "📋 Orders", sub: "All outlet orders today" },
-          { id: "history", label: "📜 History", sub: "Order & Dispatch challans (30 days)" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -6868,16 +6679,13 @@ export default function AnandaCafe() {
       </div>
     </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
-      {ownerTab === "activity" && <LiveActivity />}
       {ownerTab === "sales" && <SalesUpload />}
-      {ownerTab === "cogs" && <CogsDash />}
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "corrections" && <CorrectionsLog />}
-      {ownerTab === "orders" && <OutletOrders />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "master" && <MasterData />}
@@ -6889,7 +6697,6 @@ export default function AnandaCafe() {
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "recipes" && <RecipesPanel />}
       {ownerTab === "pp_recipes" && <PetPoojaRecipes />}
-      {ownerTab === "history" && <OrderDispatchHistory />}
       {ownerTab === "users" && <UsersPanel />}
     </div>
   </div>);
