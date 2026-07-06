@@ -1978,9 +1978,21 @@ router.get('/pnl/live/:date', async (req, res) => {
       // BK food items are dispatched via issuances — tracked separately in inventory_movements
       // For now, BK cost is included in variable cost if items have rates
 
-      // ── DAILY PURCHASES ──
+      // ── DAILY PURCHASES ── split by line-item type (vendor_payment vs new_purchase).
+      // Existing records predate the type field — treat those as new_purchase.
       const outletPurchases = (purchases || []).filter(p => p.outlet_id === oid);
       const dailyPurchaseTotal = outletPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
+      let vendorPayments = 0, newPurchases = 0;
+      outletPurchases.forEach(p => {
+        (p.items || []).forEach(i => {
+          const amt = Number(i.amount) || 0;
+          if (i.type === 'vendor_payment') vendorPayments += amt; else newPurchases += amt;
+        });
+      });
+      // Purchases recorded before per-item breakdown existed (empty items array) still count
+      // toward the total but can't be split — fold them into new_purchase so nothing goes missing.
+      const unsplit = dailyPurchaseTotal - (vendorPayments + newPurchases);
+      if (unsplit > 0.5) newPurchases += unsplit;
 
       // ── FIXED COSTS (daily = monthly / days in month) ──
       const outletFixed = (fixedCosts || []).filter(f => f.outlet_id === oid);
@@ -2026,6 +2038,8 @@ router.get('/pnl/live/:date', async (req, res) => {
         monthly_fixed: monthlyFixed,
         // Purchases
         daily_purchases: dailyPurchaseTotal,
+        vendor_payments: Math.round(vendorPayments),
+        new_purchases: Math.round(newPurchases),
         // Summary
         total_expense: Math.round(totalExpense),
         net_profit: Math.round(netProfit),
@@ -2049,6 +2063,8 @@ router.get('/pnl/live/:date', async (req, res) => {
         daily_fixed_cost: pnlResults.reduce((s, r) => s + r.daily_fixed_cost, 0),
         bk_share: pnlResults.reduce((s, r) => s + r.bk_share, 0),
         daily_purchases: pnlResults.reduce((s, r) => s + r.daily_purchases, 0),
+        vendor_payments: pnlResults.reduce((s, r) => s + (r.vendor_payments || 0), 0),
+        new_purchases: pnlResults.reduce((s, r) => s + (r.new_purchases || 0), 0),
         total_expense: pnlResults.reduce((s, r) => s + r.total_expense, 0),
         net_profit: pnlResults.reduce((s, r) => s + r.net_profit, 0),
         days_in_month: pnlResults[0]?.days_in_month || 30,

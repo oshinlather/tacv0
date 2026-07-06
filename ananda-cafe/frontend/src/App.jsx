@@ -791,6 +791,8 @@ const DailyPnL = () => {
   const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for day view
   const [monthData, setMonthData] = useState(null);
   const [monthLoading, setMonthLoading] = useState(false);
+  const [monthBreakdownMode, setMonthBreakdownMode] = useState("daily"); // 'daily' or 'category'
+  const [monthExpandedCats, setMonthExpandedCats] = useState({});
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -826,6 +828,7 @@ const DailyPnL = () => {
                 p.variable_cost = su.total_used_cost;
                 p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
                 p.net_profit = (p.effective_sale || 0) - p.total_expense;
+                p.stock_items = su.items; // per-item cost, carried through for the header/category-wise roll-up below
               }
             });
           }
@@ -833,9 +836,11 @@ const DailyPnL = () => {
         })
     )).then((results) => {
       const totals = {}; // outlet_id -> summed totals across the month
+      const categoryTotals = {}; // outlet_id -> { category -> { total, items: { item_id -> { name, unit, qty, cost } } } }
+      const fixedTotals = {}; // outlet_id -> { cost_head -> { label, total } }
       results.forEach(({ pnl }) => {
         pnl.forEach((p) => {
-          if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, total_expense: 0, net_profit: 0 };
+          if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, vendor_payments: 0, new_purchases: 0, total_expense: 0, net_profit: 0 };
           const t = totals[p.outlet_id];
           t.total_sale += p.total_sale || 0;
           t.effective_sale += p.effective_sale || 0;
@@ -843,13 +848,41 @@ const DailyPnL = () => {
           t.daily_fixed_cost += p.daily_fixed_cost || 0;
           t.bk_share += p.bk_share || 0;
           t.daily_purchases += p.daily_purchases || 0;
+          t.vendor_payments += p.vendor_payments || 0;
+          t.new_purchases += p.new_purchases || 0;
           t.total_expense += p.total_expense || 0;
           t.net_profit += p.net_profit || 0;
+
+          // The backend's 'all' row is a plain numeric summary with no item/fixed-cost
+          // breakdown — roll each real outlet's breakdown into both its own bucket and
+          // an 'all' bucket here instead, so "All Outlets" isn't left empty.
+          if (p.outlet_id !== 'all') {
+            [p.outlet_id, 'all'].forEach((key) => {
+              if (!categoryTotals[key]) categoryTotals[key] = {};
+              const catMap = categoryTotals[key];
+              (p.stock_items || []).forEach((item) => {
+                const cat = item.category || 'Other';
+                if (!catMap[cat]) catMap[cat] = { total: 0, items: {} };
+                catMap[cat].total += item.used_cost || 0;
+                if (!catMap[cat].items[item.item_id]) catMap[cat].items[item.item_id] = { name: item.name, unit: item.unit, qty: 0, cost: 0 };
+                const it = catMap[cat].items[item.item_id];
+                it.qty += item.used || 0;
+                it.cost += item.used_cost || 0;
+              });
+
+              if (!fixedTotals[key]) fixedTotals[key] = {};
+              const fMap = fixedTotals[key];
+              (p.fixed_breakdown || []).forEach((f) => {
+                if (!fMap[f.cost_head]) fMap[f.cost_head] = { label: f.label, total: 0 };
+                fMap[f.cost_head].total += f.daily || 0;
+              });
+            });
+          }
         });
       });
       // Margin computed on the summed totals (not an average of daily percentages)
       Object.values(totals).forEach((t) => { t.margin = t.effective_sale > 0 ? Math.round(t.net_profit / t.effective_sale * 1000) / 10 : 0; });
-      setMonthData({ totals, days: results });
+      setMonthData({ totals, categoryTotals, fixedTotals, days: results });
     }).finally(() => setMonthLoading(false));
   }, []);
 
@@ -1209,6 +1242,8 @@ const DailyPnL = () => {
           {/* DAILY PURCHASES */}
           <SectionHeader label="Daily Purchases" bg="#EFF6FF" borderColor="#BFDBFE" color="#1D4ED8" icon="🧾" />
           <Row label="Cash Purchases" value={d.daily_purchases} bold color="#2563EB" />
+          <Row label="New Purchase" value={d.new_purchases} indent />
+          <Row label="Vendor Payments" value={d.vendor_payments} indent />
 
           {/* FIXED COSTS */}
           <SectionHeader label={"Fixed Costs (Monthly ÷ " + (d.days_in_month || 30) + " days)"} bg="#F5F3FF" borderColor="#DDD6FE" color="#6D28D9" icon="🏢" expandKey="fixed" count={d.fixed_breakdown?.length + " heads"} />
@@ -1298,34 +1333,121 @@ const DailyPnL = () => {
               </div>
             )}
 
-            {/* Day-by-day breakdown for the currently selected outlet (or All) */}
+            {/* Day-by-day / Category-wise breakdown for the currently selected outlet (or All) */}
             <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-              <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Day by Day</div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead><tr style={{ background: "#FAFAF8" }}>
-                    <th style={thS}>Date</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Sale</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Expense</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Margin</th>
-                  </tr></thead>
-                  <tbody>
-                    {monthData.days.map(({ date, pnl }) => {
-                      const row = pnl.find((p) => p.outlet_id === (selOutlet || 'all')) || {};
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.6 }}>Expense Breakdown</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[{ id: "daily", label: "📅 Day by Day" }, { id: "category", label: "🗂️ Header Wise" }].map((m) => (
+                    <button key={m.id} onClick={() => setMonthBreakdownMode(m.id)}
+                      style={{ padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: monthBreakdownMode === m.id ? 700 : 500, border: monthBreakdownMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: monthBreakdownMode === m.id ? "#1A1A1A" : "#fff", color: monthBreakdownMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {monthBreakdownMode === "daily" && (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr style={{ background: "#FAFAF8" }}>
+                      <th style={thS}>Date</th>
+                      <th style={{ ...thS, textAlign: "right" }}>Sale</th>
+                      <th style={{ ...thS, textAlign: "right" }}>Expense</th>
+                      <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
+                      <th style={{ ...thS, textAlign: "right" }}>Margin</th>
+                    </tr></thead>
+                    <tbody>
+                      {monthData.days.map(({ date, pnl }) => {
+                        const row = pnl.find((p) => p.outlet_id === (selOutlet || 'all')) || {};
+                        return (
+                          <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                            <td style={tdS}>{date.slice(5)}</td>
+                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#166534" }}>{fmt(row.effective_sale || 0)}</td>
+                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>{fmt(row.total_expense || 0)}</td>
+                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (row.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{(row.net_profit || 0) >= 0 ? "" : "−"}{fmt(Math.abs(row.net_profit || 0))}</td>
+                            <td style={{ ...tdS, textAlign: "right", color: (row.margin || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{row.margin != null ? `${row.margin}%` : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {monthBreakdownMode === "category" && (() => {
+                const oid = selOutlet || 'all';
+                const catMap = monthData.categoryTotals[oid] || {};
+                const fixedMap = monthData.fixedTotals[oid] || {};
+                const mTotals = monthData.totals[oid] || {};
+                const sortedCats = Object.entries(catMap).sort((a, b) => b[1].total - a[1].total);
+                const sortedFixed = Object.entries(fixedMap).sort((a, b) => b[1].total - a[1].total);
+                if (sortedCats.length === 0 && sortedFixed.length === 0) return <div style={{ padding: "20px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No expense data for this month yet</div>;
+                const GroupHeader = ({ label }) => (
+                  <div style={{ padding: "6px 16px", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>{label}</div>
+                );
+                return (
+                  <div>
+                    {sortedCats.length > 0 && <GroupHeader label="Material Cost" />}
+                    {sortedCats.map(([cat, group]) => {
+                      const isExpanded = !!monthExpandedCats[cat];
+                      const sortedItems = Object.entries(group.items).sort((a, b) => b[1].cost - a[1].cost);
                       return (
-                        <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                          <td style={tdS}>{date.slice(5)}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#166534" }}>{fmt(row.effective_sale || 0)}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>{fmt(row.total_expense || 0)}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (row.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{(row.net_profit || 0) >= 0 ? "" : "−"}{fmt(Math.abs(row.net_profit || 0))}</td>
-                          <td style={{ ...tdS, textAlign: "right", color: (row.margin || 0) >= 0 ? "#16A34A" : "#DC2626" }}>{row.margin != null ? `${row.margin}%` : "—"}</td>
-                        </tr>
+                        <div key={cat}>
+                          <div onClick={() => setMonthExpandedCats((prev) => ({ ...prev, [cat]: !prev[cat] }))}
+                            style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: isExpanded ? "#FFFDF5" : "#fff", borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: "#333" }}>
+                              {isExpanded ? "▼" : "▶"} {cat} <span style={{ color: "#BBB", fontWeight: 400, fontSize: 11 }}>({sortedItems.length})</span>
+                            </span>
+                            <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</span>
+                          </div>
+                          {isExpanded && sortedItems.map(([itemId, item]) => (
+                            <div key={itemId} style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 6px 32px", fontSize: 12, borderBottom: "1px solid #F5F5F3" }}>
+                              <span style={{ color: "#555" }}>{item.name} <span style={{ color: "#BBB", fontSize: 10 }}>({Math.round(item.qty * 100) / 100} {item.unit})</span></span>
+                              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
+                            </div>
+                          ))}
+                        </div>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
+
+                    {sortedFixed.length > 0 && <GroupHeader label="Fixed Costs" />}
+                    {sortedFixed.map(([head, f]) => (
+                      <div key={head} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#fff", borderBottom: "1px solid #F0F0EC" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{f.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{fmt(f.total)}</span>
+                      </div>
+                    ))}
+                    {(mTotals.bk_share || 0) > 0 && (
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#fff", borderBottom: "1px solid #F0F0EC" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Base Kitchen Share</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{fmt(mTotals.bk_share)}</span>
+                      </div>
+                    )}
+
+                    <GroupHeader label="Purchases" />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#fff", borderBottom: "1px solid #F0F0EC" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>New Purchase</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(mTotals.new_purchases)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#fff", borderBottom: "1px solid #F0F0EC" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>Vendor Payments</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(mTotals.vendor_payments)}</span>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderTop: "2px solid #1A1A1A", borderBottom: "1px solid #F0F0EC" }}>
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>Net Expense</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(mTotals.total_expense)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: (mTotals.net_profit || 0) >= 0 ? "#F0FDF4" : "#FEF2F2" }}>
+                      <span style={{ fontSize: 13, fontWeight: 800 }}>Net P&L</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: (mTotals.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626" }}>
+                        {(mTotals.net_profit || 0) >= 0 ? "" : "−"}{fmt(Math.abs(mTotals.net_profit || 0))}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </>);
         })()}
@@ -3973,10 +4095,10 @@ const OutletMgr = ({ onBack }) => {
   const [existingData, setExistingData] = useState(null);
   const [salesLoaded, setSalesLoaded] = useState(false);
   // Purchase state
-  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
+  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   // ── Staff Demand State ──
   const [staffItems, setStaffItems] = useState([]); // master items from DB
@@ -3996,7 +4118,7 @@ const OutletMgr = ({ onBack }) => {
 
   const staffFoodItems = staffItems.filter((i) => i.category === "food");
   const staffDressItems = staffItems.filter((i) => i.category === "dress");
-  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
+  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
   const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
 
@@ -4516,7 +4638,7 @@ const OutletMgr = ({ onBack }) => {
     const submitPurchase = async () => {
       setSaving(true); setErr(null);
       try {
-        const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor }));
+        const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase" }));
         const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
         // Photo upload — non-blocking, don't fail purchase if photo fails
         for (const [label, base64] of Object.entries(billImages)) { 
@@ -4533,7 +4655,8 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Items Purchased</div>
       {purchases.map((row, idx) => (<div key={idx} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8 }}>
         <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input value={row.item} onChange={(e) => updatePurchase(idx, "item", e.target.value)} placeholder="Item name" style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 600 }} />{purchases.length > 1 && <button onClick={() => removePurchaseRow(idx)} style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 16, cursor: "pointer" }}>✕</button>}</div>
-        <div style={{ display: "flex", gap: 8 }}><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Qty</div><input value={row.qty} onChange={(e) => updatePurchase(idx, "qty", e.target.value)} type="number" inputMode="decimal" placeholder="0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 600 }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Amount (₹)</div><input value={row.amount} onChange={(e) => updatePurchase(idx, "amount", e.target.value)} type="number" inputMode="numeric" placeholder="₹0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#B45309" }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Vendor</div><input value={row.vendor} onChange={(e) => updatePurchase(idx, "vendor", e.target.value)} placeholder="Shop" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} /></div></div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Qty</div><input value={row.qty} onChange={(e) => updatePurchase(idx, "qty", e.target.value)} type="number" inputMode="decimal" placeholder="0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 600 }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Amount (₹)</div><input value={row.amount} onChange={(e) => updatePurchase(idx, "amount", e.target.value)} type="number" inputMode="numeric" placeholder="₹0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#B45309" }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Vendor</div><input value={row.vendor} onChange={(e) => updatePurchase(idx, "vendor", e.target.value)} placeholder="Shop" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} /></div></div>
+        <div style={{ display: "flex", gap: 6 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (<button key={t.id} onClick={() => updatePurchase(idx, "type", t.id)} style={{ flex: 1, padding: "7px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: (row.type || "new_purchase") === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: (row.type || "new_purchase") === t.id ? "#EFF6FF" : "#fff", color: (row.type || "new_purchase") === t.id ? "#2563EB" : "#888" }}>{t.label}</button>))}</div>
       </div>))}
       <button onClick={addPurchaseRow} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "2px dashed #E0E0DC", background: "transparent", fontSize: 14, fontWeight: 700, color: "#999", cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>+ Add Item</button>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Payment</div>
@@ -4738,7 +4861,7 @@ const StoreMgr = ({ onBack }) => {
   const [issueImages, setIssueImages] = useState({});
   const [issueNote, setIssueNote] = useState("");
   // Purchase state
-  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
+  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const [billImages, setBillImages] = useState({});
   const [purchaseNote, setPurchaseNote] = useState("");
   const [paymentMode, setPaymentMode] = useState("cash");
@@ -4755,7 +4878,7 @@ const StoreMgr = ({ onBack }) => {
   const todayPurchaseTotal = todayPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
 
   const resetIssuance = () => { setIssueImages({}); setIssueNote(""); setIssueTo("bk"); setErr(null); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   const submitIssuance = async () => {
     setSaving(true); setErr(null);
@@ -4775,7 +4898,7 @@ const StoreMgr = ({ onBack }) => {
     setSaving(true); setErr(null);
     try {
       const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor }));
+      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase" }));
       const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote });
       // Upload bill photos
       for (const [label, base64] of Object.entries(billImages)) {
@@ -4791,7 +4914,7 @@ const StoreMgr = ({ onBack }) => {
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div></div></div> : null;
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
 
-  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "" }]);
+  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
   const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
 
@@ -4945,6 +5068,7 @@ const StoreMgr = ({ onBack }) => {
                 style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
             </div>
           </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (<button key={t.id} onClick={() => updatePurchase(idx, "type", t.id)} style={{ flex: 1, padding: "7px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: (row.type || "new_purchase") === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: (row.type || "new_purchase") === t.id ? "#EFF6FF" : "#fff", color: (row.type || "new_purchase") === t.id ? "#2563EB" : "#888" }}>{t.label}</button>))}</div>
         </div>
       ))}
       <button onClick={addPurchaseRow} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "2px dashed #E0E0DC", background: "transparent", fontSize: 14, fontWeight: 700, color: "#999", cursor: "pointer", fontFamily: "inherit", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>+ Add Another Item</button>
