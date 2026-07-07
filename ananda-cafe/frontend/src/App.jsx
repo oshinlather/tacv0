@@ -4411,8 +4411,37 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+
+  // Per-item unit overrides for demand/wastage (draftUnits) and closing stock (closingUnits) —
+  // only items with a defined unit_conversions row get a picker (e.g. Desi Ghee: Tin or Kg).
+  const [conversions, setConversions] = useState({});
+  useEffect(() => { api.getConversions().then((c) => setConversions(c || {})).catch(() => setConversions({})); }, []);
+  const convMap = useMemo(() => {
+    const m = {};
+    Object.entries(conversions).forEach(([unitType, rows]) => { (rows || []).forEach((row) => { m[row.item_id] = { fromUnit: unitType, baseUnit: row.base_unit }; }); });
+    return m;
+  }, [conversions]);
+  const getUnitOptions = (itemId, defaultUnit) => {
+    const conv = convMap[itemId];
+    if (conv && conv.fromUnit === defaultUnit && conv.baseUnit && conv.baseUnit !== defaultUnit) return [defaultUnit, conv.baseUnit];
+    return [defaultUnit];
+  };
+  const [draftUnits, setDraftUnits] = useState({}); // { item_id: unit } — only set when manager picks something other than default
+  const [closingUnits, setClosingUnits] = useState({});
+  // Renders either a plain unit label (single unit) or a dropdown (item has an alternate
+  // unit via unit_conversions, e.g. Desi Ghee: Tin or Kg)
+  const UnitPicker = ({ itemId, defaultUnit, unitsState, setUnitsState }) => {
+    const options = getUnitOptions(itemId, defaultUnit);
+    if (options.length < 2) return <span style={{ fontSize: 10, color: "#999", width: 28 }}>{defaultUnit}</span>;
+    return (
+      <select value={unitsState[itemId] || defaultUnit} onChange={(e) => setUnitsState((p) => ({ ...p, [itemId]: e.target.value }))}
+        style={{ fontSize: 10, color: "#2563EB", width: 48, border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", padding: "2px 1px", fontFamily: "inherit", fontWeight: 600 }}>
+        {options.map((u) => <option key={u} value={u}>{u}</option>)}
+      </select>
+    );
+  };
 
   // ── Staff Demand State ──
   const [staffItems, setStaffItems] = useState([]); // master items from DB
@@ -4443,12 +4472,15 @@ const OutletMgr = ({ onBack }) => {
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
-        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing, date: selectedDate });
+        // Only send unit overrides for items actually filled in this submission
+        const closingItemsUnits = Object.fromEntries(Object.entries(closingUnits).filter(([id]) => closing[`cs_${id}`] !== undefined && closing[`cs_${id}`] !== ""));
+        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing, items_units: closingItemsUnits, date: selectedDate });
         const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
         setSubs((p) => [e, ...p]); setLast(e);
         alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(closing).length} items`);
       } else if (type === "wastage") {
-        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, note: note || "", date: selectedDate, submitted_by: getCurrentUser()?.name || outlet });
+        const draftItemsUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0));
+        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: getCurrentUser()?.name || outlet });
         const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
         setSubs((p) => [e, ...p]); setLast(e);
         const wastageCount = Object.values(draft).filter(v => v > 0).length;
@@ -4456,12 +4488,13 @@ const OutletMgr = ({ onBack }) => {
       } else {
         const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
         const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
-        const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
+        const draftItemsUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0));
+        const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
         const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
         setSubs((p) => [e, ...p]); setLast(e);
         alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
       }
-      reset(); setClosing({}); setScreen("done");
+      reset(); setClosing({}); setClosingUnits({}); setScreen("done");
     } catch (error) {
       const errMsg = error.message || "Failed to submit";
       setErr(errMsg);
@@ -4497,7 +4530,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -4706,7 +4739,7 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 18 }}>{activeSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({wastageFilterItems(activeSec.items).length})</span>
       </div>
-      <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
+      <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>))}</div>
     </div>
     <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
@@ -4830,7 +4863,7 @@ const OutletMgr = ({ onBack }) => {
           <span style={{ fontSize: 11, color: "#999" }}>({filterManualItems(activeSec.items).length} items)</span>
           {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅ Saved</span>}
         </div>
-        <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span></div>))}</div>
+        <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>))}</div>
       </div>
       {/* Sticky footer — Save + Submit side by side */}
       <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
@@ -5005,11 +5038,11 @@ const OutletMgr = ({ onBack }) => {
           </button>); })}
       </div>
       <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
-        {csItems.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; return (
+        {csItems.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; const bareId = item.id.replace(/^cs_/, ""); return (
           <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < csItems.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
             <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
             <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-            <span style={{ fontSize: 10, color: "#999", width: 24 }}>{item.unit}</span>
+            <UnitPicker itemId={bareId} defaultUnit={item.unit} unitsState={closingUnits} setUnitsState={setClosingUnits} />
           </div>); })}
       </div>
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>

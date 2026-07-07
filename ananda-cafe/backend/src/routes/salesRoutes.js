@@ -832,7 +832,10 @@ res.json({ ok: true });
 // ── GET /api/master/conversions — All conversions grouped by unit type
 router.get('/master/conversions', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    // Read-only and not price-sensitive (just unit definitions like "1 Tin = 15 Kg") —
+    // any logged-in user can read this; outlet managers need it for the unit picker on
+    // demand/closing-stock/wastage forms. Only mutations below stay owner-only.
+    if (!await requireAuth(req, res)) return;
 const { data } = await supabase.from('unit_conversions').select('*').eq('active', true).order('unit_type').order('item_name');
 const grouped = {};
 (data || []).forEach(row => {
@@ -1058,13 +1061,16 @@ router.patch('/auth/users/:id', async (req, res) => {
 // ── POST /api/demands — Create demand (robust version, handles all types)
 router.post('/demands', async (req, res) => {
   try {
-    const { outlet_id, type, items, note, date, demand_slot, submitted_by, status } = req.body;
+    const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status } = req.body;
     if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
-    
+
     const record = {
       outlet_id,
       type,
       items: items || {},
+      // Per-item unit overrides, only for items where the manager picked something
+      // other than the item's default demand unit — e.g. { desi_ghee: 'Kg' }.
+      items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null,
       note: note || null,
       date: date || new Date().toISOString().split('T')[0],
       demand_slot: demand_slot || null,
@@ -2211,45 +2217,76 @@ router.get('/stock-usage/:date', async (req, res) => {
 
     // 2. Previous day closing stock (from closing_stocks table, NOT demands)
     const { data: prevClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items').eq('date', prevDateStr);
+      .select('outlet_id, items, items_units').eq('date', prevDateStr);
 
     // 3. Today closing stock
     const { data: todayClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items').eq('date', date);
+      .select('outlet_id, items, items_units').eq('date', date);
 
     // 4. Today wastage
     const { data: todayWastage } = await supabase.from('demands')
-      .select('outlet_id, items').eq('type', 'wastage').eq('date', date);
+      .select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date);
 
     // 5. Today dispatched
     const { data: todayOrders } = await supabase.from('demands')
-      .select('outlet_id, items, dispatch_items, status').eq('date', date);
+      .select('outlet_id, items, items_units, dispatch_items, status').eq('date', date);
     const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
     // 6. Compute per outlet
     const outletIds = ['sec23', 'sec31', 'sec56', 'elan', 'gaursid'];
     const results = [];
 
+    // Conversion factor from a specific recorded unit to the item's rate-card unit —
+    // chains through unit_conversions then an SI step, same as everywhere else. `rawUnit`
+    // is whatever unit that particular entry was recorded in (may differ entry-to-entry
+    // now that managers can pick a unit per submission); falls back to the item's default
+    // demand unit when the entry predates that feature or didn't override it.
+    const convFactorFor = (itemId, rawUnit, targetUnit) => {
+      const du = (rawUnit || demandUnitMap[itemId] || targetUnit || '').toLowerCase();
+      const ru = (targetUnit || '').toLowerCase();
+      if (du === ru) return 1;
+      let factor = 1;
+      let resolvedUnit = du;
+      const conv = convMap[itemId];
+      if (conv && du === conv.fromUnit.toLowerCase()) {
+        factor = conv.qty;
+        resolvedUnit = (conv.baseUnit || '').toLowerCase();
+      }
+      if (resolvedUnit !== ru) {
+        if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') factor *= 0.001;
+        else if (resolvedUnit === 'kg' && (ru === 'gm' || ru === 'g')) factor *= 1000;
+        else if (resolvedUnit === 'ml' && (ru === 'ltr' || ru === 'l')) factor *= 0.001;
+        else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && ru === 'ml') factor *= 1000;
+      }
+      return factor;
+    };
+
     for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
       const prevCS = (prevClosing || []).find(d => d.outlet_id === oid);
       const prevItems = prevCS?.items || {};
+      const prevUnits = prevCS?.items_units || {};
       const todayCS = (todayClosing || []).find(d => d.outlet_id === oid);
       const todayItems = todayCS?.items || {};
+      const todayUnits = todayCS?.items_units || {};
 
-      // Aggregate wastage
-      const wastageItems = {};
+      // Aggregate wastage — keep each record's own recorded unit (multiple wastage
+      // submissions in a day could each use a different unit for the same item)
+      const wastageEntries = {}; // { item_id: [{ qty, unit }] }
       (todayWastage || []).filter(d => d.outlet_id === oid).forEach(w => {
         Object.entries(w.items || {}).forEach(([id, qty]) => {
-          wastageItems[id] = (wastageItems[id] || 0) + Number(qty);
+          if (!wastageEntries[id]) wastageEntries[id] = [];
+          wastageEntries[id].push({ qty: Number(qty) || 0, unit: (w.items_units || {})[id] || null });
         });
       });
 
-      // Aggregate dispatched
-      const dispatchedItems = {};
+      // Aggregate dispatched — dispatch fulfills a specific demand record, so it inherits
+      // that same record's items_units rather than having its own unit selection
+      const dispatchedEntries = {};
       dispatched.filter(o => o.outlet_id === oid).forEach(o => {
         const items = o.dispatch_items || o.items || {};
         Object.entries(items).forEach(([id, qty]) => {
-          dispatchedItems[id] = (dispatchedItems[id] || 0) + Number(qty);
+          if (!dispatchedEntries[id]) dispatchedEntries[id] = [];
+          dispatchedEntries[id].push({ qty: Number(qty) || 0, unit: (o.items_units || {})[id] || null });
         });
       });
 
@@ -2257,7 +2294,7 @@ router.get('/stock-usage/:date', async (req, res) => {
       // closing_stocks uses cs_butter, dispatched uses butter — both refer to same item
       const allIdsRaw = [
         ...Object.keys(prevItems), ...Object.keys(todayItems),
-        ...Object.keys(wastageItems), ...Object.keys(dispatchedItems),
+        ...Object.keys(wastageEntries), ...Object.keys(dispatchedEntries),
       ];
       // Normalize: strip cs_ prefix, deduplicate
       const allIds = new Set(allIdsRaw.map(id => id.startsWith('cs_') ? id.replace('cs_', '') : id));
@@ -2268,11 +2305,11 @@ router.get('/stock-usage/:date', async (req, res) => {
       allIds.forEach(itemId => {
         const csId = `cs_${itemId}`;
 
-        // Raw quantities (in demand unit — could be Batch, Tin, Kg, Pcs, etc.)
+        // Raw quantities (in whatever unit each entry recorded — could be Batch, Tin, Kg, Pcs, etc.)
         const rawPrev = Number(prevItems[csId] || prevItems[itemId] || 0);
-        const rawWastage = Number(wastageItems[itemId] || 0);
-        const rawDispatched = Number(dispatchedItems[itemId] || 0);
+        const rawPrevUnit = prevUnits[csId] || prevUnits[itemId] || null;
         const rawClosing = Number(todayItems[csId] || todayItems[itemId] || 0);
+        const rawClosingUnit = todayUnits[csId] || todayUnits[itemId] || null;
 
         // Determine pricing and category
         const rate = rateMap[itemId];
@@ -2298,38 +2335,30 @@ router.get('/stock-usage/:date', async (req, res) => {
           itemUnit = demandUnitMap[itemId] || '';
         }
 
-        // Unit conversion factor (Batch→Kg, Tin→Kg, Gm→Kg, etc.) — chain through the
-        // unit_conversions base unit, then an SI step, when that base unit still
-        // doesn't match the rate card's unit (e.g. Pkt → Gm → Kg).
+        // Convert each of the four components using its OWN recorded unit (falls back to
+        // the item's default demand unit when an entry didn't override it), then combine —
+        // this is what lets different days/records legitimately use different units for the
+        // same item without corrupting the consumed-material formula.
+        const prevQty = rawPrev * convFactorFor(itemId, rawPrevUnit, itemUnit);
+        const closingQty = rawClosing * convFactorFor(itemId, rawClosingUnit, itemUnit);
+        const wastageQty = (wastageEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
+        const dispatchedQty = (dispatchedEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
+
+        // Default demand unit's conversion — used only for display labeling (conv_qty /
+        // conv_base_unit below), independent of which unit any specific entry actually used.
         const demandUnit = demandUnitMap[itemId] || itemUnit;
         const du = (demandUnit || '').toLowerCase();
         const ru = (itemUnit || '').toLowerCase();
-
-        let convFactor = 1;
-        let resolvedUnit = du;
         const conv = convMap[itemId];
-        if (conv && du === conv.fromUnit.toLowerCase()) {
-          convFactor = conv.qty;
-          resolvedUnit = (conv.baseUnit || '').toLowerCase();
-        }
-        if (resolvedUnit !== ru) {
-          if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') { convFactor *= 0.001; resolvedUnit = ru; }
-          else if (resolvedUnit === 'kg' && (ru === 'gm' || ru === 'g')) { convFactor *= 1000; resolvedUnit = ru; }
-          else if (resolvedUnit === 'ml' && (ru === 'ltr' || ru === 'l')) { convFactor *= 0.001; resolvedUnit = ru; }
-          else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && ru === 'ml') { convFactor *= 1000; resolvedUnit = ru; }
-        }
-
-        // Convert ALL quantities to base units FIRST, then compute consumed
-        const prevQty = rawPrev * convFactor;
-        const wastageQty = rawWastage * convFactor;
-        const dispatchedQty = rawDispatched * convFactor;
-        const closingQty = rawClosing * convFactor;
+        const defaultFactor = convFactorFor(itemId, demandUnit, itemUnit);
 
         const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
         const usedQty = Math.max(0, openingQty - closingQty);
         const usedCost = usedQty * unitPrice;
 
-        const displayUnit = resolvedUnit === ru ? itemUnit : (conv ? conv.baseUnit : itemUnit);
+        // If no conversion was actually needed (demand unit already matches the rate
+        // unit), show the item's own unit rather than an unrelated conv-table base unit.
+        const displayUnit = du === ru || defaultFactor === 1 ? itemUnit : (conv ? conv.baseUnit : itemUnit);
 
         if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
           itemDetails.push({
@@ -2341,7 +2370,9 @@ router.get('/stock-usage/:date', async (req, res) => {
             dispatched: Math.round(dispatchedQty * 1000) / 1000, 
             closing: Math.round(closingQty * 1000) / 1000,
             used: Math.round(usedQty * 1000) / 1000,
-            conv_factor: convFactor,
+            // Default demand unit's conversion factor — for display only; the actual costing
+            // above may have used a different factor per entry if a manager overrode the unit.
+            conv_factor: defaultFactor,
             // Raw master conversion row (e.g. "1 Pkt = 200 Gm") — distinct from conv_factor,
             // which is the full compound factor (Pkt -> Gm -> Kg) used for costing above.
             conv_qty: conv ? conv.qty : null,
