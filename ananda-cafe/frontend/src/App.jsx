@@ -4378,6 +4378,152 @@ const FranchiseBilling = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  CLOSING STOCK / WASTAGE — day-wise grid across all outlets, same layout as
+//  Franchise Billing's Day by Day view (items vertical, dates horizontal, CSV export)
+// ═════════════════════════════════════════════════════════════════════════════
+const OutletActivityGrid = ({ mode }) => {
+  const isClosing = mode === "closing";
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  const days = useMemo(() => {
+    const [y, mo] = selMonth.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const result = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      result.push(ds);
+    }
+    return result;
+  }, [selMonth]);
+
+  useEffect(() => {
+    if (!selOutlet || !selMonth) return;
+    setLoading(true);
+    const from = `${selMonth}-01`;
+    const req = isClosing
+      ? api.getClosingStocks({ outlet_id: selOutlet, from })
+      : api.getOrders({ outlet_id: selOutlet, from }).then((data) => (data || []).filter((d) => d.type === "wastage" && d.status !== "draft"));
+    req.then((data) => setRecords((data || []).filter((d) => d.date.startsWith(selMonth))))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, [selOutlet, selMonth, isClosing]);
+
+  // Per-item, per-day qty — { item_id: { date: qty } }. Closing-stock keys carry a cs_
+  // prefix (cs_butter); normalize to the bare item id so lookups match either source.
+  const dayWise = useMemo(() => {
+    const map = {};
+    records.forEach((r) => {
+      Object.entries(r.items || {}).forEach(([rawId, qty]) => {
+        const id = rawId.startsWith("cs_") ? rawId.replace("cs_", "") : rawId;
+        if (!map[id]) map[id] = {};
+        map[id][r.date] = (map[id][r.date] || 0) + (Number(qty) || 0);
+      });
+    });
+    return map;
+  }, [records]);
+
+  const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
+  const items = useMemo(() => {
+    return Object.keys(dayWise).map((id) => {
+      const def = allDemandItems.find((i) => i.id === id);
+      const total = Object.values(dayWise[id]).reduce((s, v) => s + v, 0);
+      return { id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', total };
+    }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total);
+  }, [dayWise, allDemandItems]);
+
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+
+  const downloadCSV = () => {
+    const headers = ["Item", "Unit", ...days.map((ds) => ds.slice(5)), "Total"];
+    const rows = items.map((i) => {
+      const perDay = days.map((ds) => Math.round(((dayWise[i.id] || {})[ds] || 0) * 100) / 100);
+      return [i.name, i.unit, ...perDay, Math.round(i.total * 100) / 100];
+    });
+    exportCSV(headers, rows, `${mode}_${selOutlet}_${selMonth}.csv`);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{isClosing ? "📊 Closing Stock" : "🗑️ Wastage"}</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {isClosing ? "closing stock" : "wastage"} per item, all outlets — month-wise</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+        <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+      {!loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
+              <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
+            </div>
+            <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
+          </div>
+
+          {items.length === 0 ? (
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No {isClosing ? "closing stock" : "wastage"} data for {outletName} in {monthLabel}</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, width: 150, minWidth: 150 }}>Item</th>
+                  <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>Total</th>
+                  {days.map((ds) => <th key={ds} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{ds.slice(8)}</th>)}
+                </tr></thead>
+                <tbody>
+                  {items.map((i) => (
+                    <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, whiteSpace: "nowrap", width: 150, minWidth: 150 }}>{i.name} <span style={{ color: "#BBB", fontSize: 9 }}>({i.unit})</span></td>
+                      <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
+                      {days.map((ds) => {
+                        const v = (dayWise[i.id] || {})[ds] || 0;
+                        return <td key={ds} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD" }}>{v > 0 ? Math.round(v * 100) / 100 : "—"}</td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ClosingStockHistory = () => <OutletActivityGrid mode="closing" />;
+const WastageHistory = () => <OutletActivityGrid mode="wastage" />;
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  COGS DASHBOARD
 // ═════════════════════════════════════════════════════════════════════════════
 const ITEM_COST = { idli: 18, dosa: 20, masala_dosa: 28, medu_vada: 22, upma: 16, poha: 15, set_dosa: 24, sambhar_vada: 25, halwa: 14, filter_coffee: 8, rava_dosa: 26, uttapam: 23 };
@@ -7153,7 +7299,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -7219,6 +7365,8 @@ export default function AnandaCafe() {
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
+      {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
+      {ownerTab === "wastage_history" && <WastageHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "dispatch" && <Dispatch />}
