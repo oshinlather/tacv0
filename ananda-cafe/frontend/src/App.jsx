@@ -1041,7 +1041,7 @@ const DailyPnL = () => {
             { l: "Effective Sale", v: d.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
             { l: "Total Expense", v: d.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
             { l: "Net P&L", v: d.net_profit, c: d.net_profit >= 0 ? "#16A34A" : "#DC2626", bg: d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", bc: d.net_profit >= 0 ? "#BBF7D0" : "#FECACA" },
-            { l: "Margin", v: null, display: (d.margin || 0) + "%", c: d.margin >= 0 ? "#16A34A" : "#DC2626", bg: "#fff", bc: "#E8E8E4" },
+            { l: "Margin", v: null, display: d.effective_sale > 0 ? (d.margin || 0) + "%" : "N/A", c: d.effective_sale > 0 ? (d.margin >= 0 ? "#16A34A" : "#DC2626") : "#999", bg: "#fff", bc: "#E8E8E4" },
           ].map((s, i) => (
             <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
               <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
@@ -1055,18 +1055,21 @@ const DailyPnL = () => {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
             {allPnl.filter((r) => r.outlet_id !== "all").map((r) => {
               const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
-              const cogs = r.effective_sale > 0 ? (r.variable_cost / r.effective_sale * 100) : 0;
+              const hasSale = r.effective_sale > 0;
+              const cogs = hasSale ? (r.variable_cost / r.effective_sale * 100) : 0;
               const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
-                  <div style={{ fontSize: 9, color: "#888" }}>Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Total Sale: <strong style={{ color: "#166534" }}>{fmt(r.total_sale)}</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Effective Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                     {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                   </strong></div>
-                  <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{r.margin}%</strong></div>
-                  <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: cogsColor }}>{cogs.toFixed(1)}%</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: !hasSale ? "#999" : r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{hasSale ? `${r.margin}%` : "N/A"}</strong></div>
+                  <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: !hasSale ? "#999" : cogsColor }}>{hasSale ? `${cogs.toFixed(1)}%` : "N/A"}</strong></div>
+                  {!hasSale && r.total_expense > 0 && <div style={{ fontSize: 8, color: "#DC2626", marginTop: 2 }}>⚠️ no sales recorded</div>}
                 </div>
               );
             })}
@@ -1301,7 +1304,7 @@ const DailyPnL = () => {
                 { l: "Effective Sale", v: md.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
                 { l: "Total Expense", v: md.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
                 { l: "Net P&L", v: md.net_profit, c: (md.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626", bg: (md.net_profit || 0) >= 0 ? "#F0FDF4" : "#FEF2F2", bc: (md.net_profit || 0) >= 0 ? "#BBF7D0" : "#FECACA" },
-                { l: "Margin", v: null, display: (md.margin || 0) + "%", c: (md.margin || 0) >= 0 ? "#16A34A" : "#DC2626", bg: "#fff", bc: "#E8E8E4" },
+                { l: "Margin", v: null, display: md.effective_sale > 0 ? (md.margin || 0) + "%" : "N/A", c: md.effective_sale > 0 ? ((md.margin || 0) >= 0 ? "#16A34A" : "#DC2626") : "#999", bg: "#fff", bc: "#E8E8E4" },
               ].map((s, i) => (
                 <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
@@ -1315,18 +1318,21 @@ const DailyPnL = () => {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
                 {outletTotals.map((r) => {
                   const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
-                  const cogs = r.effective_sale > 0 ? (r.variable_cost / r.effective_sale * 100) : 0;
+                  const hasSale = r.effective_sale > 0;
+                  const cogs = hasSale ? (r.variable_cost / r.effective_sale * 100) : 0;
                   const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
                   return (
                     <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                       <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
-                      <div style={{ fontSize: 9, color: "#888" }}>Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Total Sale: <strong style={{ color: "#166534" }}>{fmt(r.total_sale)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Effective Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                         {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                       </strong></div>
-                      <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{r.margin}%</strong></div>
-                      <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: cogsColor }}>{cogs.toFixed(1)}%</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: !hasSale ? "#999" : r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{hasSale ? `${r.margin}%` : "N/A"}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: !hasSale ? "#999" : cogsColor }}>{hasSale ? `${cogs.toFixed(1)}%` : "N/A"}</strong></div>
+                      {!hasSale && r.total_expense > 0 && <div style={{ fontSize: 8, color: "#DC2626", marginTop: 2 }}>⚠️ no sales recorded</div>}
                     </div>
                   );
                 })}
@@ -4062,6 +4068,314 @@ const DemandHistory = () => {
   );
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  FRANCHISE BILLING — month-wise demand vs dispatch, priced off the rate card,
+//  for franchise outlets only (billed for what Base Kitchen actually supplied)
+// ═════════════════════════════════════════════════════════════════════════════
+const FranchiseBilling = () => {
+  const franchiseOutlets = OUTLETS.filter((o) => o.franchise);
+  const [selOutlet, setSelOutlet] = useState(franchiseOutlets[0]?.id || null);
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [demands, setDemands] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [rateCard, setRateCard] = useState([]);
+  const [conversions, setConversions] = useState({});
+  const [viewMode, setViewMode] = useState("summary"); // 'summary' or 'daywise'
+  // Local-only corrections applied before export — never written back to demands or the rate card.
+  const [edits, setEdits] = useState({}); // { [item_id]: { qty?: number, rate?: number } }
+  useEffect(() => { setEdits({}); }, [selOutlet, selMonth]);
+  const setEditField = (id, field, value) => setEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
+  const resetEditField = (id, field) => setEdits((prev) => { const next = { ...prev, [id]: { ...prev[id] } }; delete next[id][field]; if (Object.keys(next[id]).length === 0) delete next[id]; return next; });
+  // Same local-only correction pattern, but per item per day — for the Day by Day grid.
+  const [dayEdits, setDayEdits] = useState({}); // { [item_id]: { [date]: value } }
+  useEffect(() => { setDayEdits({}); }, [selOutlet, selMonth]);
+  const setDayEdit = (id, date, value) => setDayEdits((prev) => ({ ...prev, [id]: { ...prev[id], [date]: value } }));
+  const resetDayEdit = (id, date) => setDayEdits((prev) => { const next = { ...prev, [id]: { ...prev[id] } }; delete next[id][date]; if (Object.keys(next[id]).length === 0) delete next[id]; return next; });
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  useEffect(() => {
+    api.getRateCard().then((r) => setRateCard(r || [])).catch(() => setRateCard([]));
+    api.getConversions().then((c) => setConversions(c || {})).catch(() => setConversions({}));
+  }, []);
+
+  const rateMap = useMemo(() => { const m = {}; rateCard.forEach((r) => { m[r.id] = r; }); return m; }, [rateCard]);
+  const convMap = useMemo(() => {
+    const m = {};
+    Object.entries(conversions).forEach(([unitType, rows]) => { (rows || []).forEach((row) => { m[row.item_id] = { fromUnit: unitType, qty: Number(row.qty), baseUnit: row.base_unit }; }); });
+    return m;
+  }, [conversions]);
+
+  // Demand unit -> rate card unit, chaining through unit_conversions then an SI step —
+  // identical logic to Demand History / the backend P&L, so billed amounts agree everywhere.
+  const getUnitConv = (demandUnit, rateUnit, itemId) => {
+    const du = (demandUnit || '').toLowerCase();
+    const ru = (rateUnit || '').toLowerCase();
+    if (du === ru) return 1;
+    const conv = convMap[itemId];
+    let factor = 1;
+    let fromUnit = du;
+    if (conv && du === conv.fromUnit.toLowerCase()) { factor = conv.qty; fromUnit = (conv.baseUnit || '').toLowerCase(); }
+    if (fromUnit === ru) return factor;
+    if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
+    if (fromUnit === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return factor * 1000;
+    if ((fromUnit === 'ml' || fromUnit === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return factor * 0.001;
+    if ((fromUnit === 'ltr' || fromUnit === 'l') && ru === 'ml') return factor * 1000;
+    return factor;
+  };
+
+  useEffect(() => {
+    if (!selOutlet || !selMonth) return;
+    setLoading(true);
+    const from = `${selMonth}-01`;
+    api.getOrders({ from, outlet_id: selOutlet })
+      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && d.date.startsWith(selMonth))))
+      .catch(() => setDemands([]))
+      .finally(() => setLoading(false));
+  }, [selOutlet, selMonth]);
+
+  const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
+
+  const items = useMemo(() => {
+    const merged = {};
+    demands.forEach((d) => {
+      const dItems = d.items || {};
+      const dispItems = d.dispatch_items || null;
+      const ids = new Set([...Object.keys(dItems), ...Object.keys(dispItems || {})]);
+      ids.forEach((id) => {
+        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false };
+        merged[id].qty += Number(dItems[id]) || 0;
+        if (dispItems) { merged[id].hasDispatch = true; merged[id].dispatchedQty += Number(dispItems[id]) || 0; }
+      });
+    });
+    return Object.entries(merged).map(([id, data]) => {
+      const def = allDemandItems.find((i) => i.id === id);
+      const rate = rateMap[id];
+      const displayUnit = def?.unit || rate?.unit || '';
+      let rateUnit = displayUnit, unitPrice = 0, convFactor = 1;
+      if (rate) { unitPrice = Number(rate.price); rateUnit = rate.unit || displayUnit; convFactor = getUnitConv(displayUnit, rateUnit, id); }
+      // Billed on what was actually dispatched (supplied), not just demanded
+      const computedDispatchQty = data.hasDispatch ? Math.round(data.dispatchedQty * 100) / 100 : null;
+      const computedRate = Math.round(unitPrice * 100) / 100;
+
+      // Apply local-only corrections (this bill only — never touches demands or rate_card)
+      const edit = edits[id] || {};
+      const qtyEdited = edit.qty !== undefined;
+      const rateEdited = edit.rate !== undefined;
+      const billedQty = qtyEdited ? Number(edit.qty) || 0 : (computedDispatchQty ?? 0);
+      const billedRate = rateEdited ? Number(edit.rate) || 0 : computedRate;
+      const amount = billedQty * convFactor * billedRate;
+
+      return {
+        id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
+        demandQty: Math.round(data.qty * 100) / 100,
+        dispatchQty: computedDispatchQty, dispatchQtyEdited: qtyEdited, billedQty,
+        rate: computedRate, rateEdited, billedRate, rateUnit, amount,
+      };
+    }).filter((i) => i.demandQty > 0 || i.billedQty > 0).sort((a, b) => b.amount - a.amount);
+  }, [demands, rateMap, convMap, edits]);
+
+  const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+
+  // Every date in the month up to today (dates with no demand still show as a column)
+  const days = useMemo(() => {
+    const [y, mo] = selMonth.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const result = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      result.push(ds);
+    }
+    return result;
+  }, [selMonth]);
+
+  // Day-wise dispatched qty per item (the billed basis) — { item_id: { date: qty } }
+  const dayWise = useMemo(() => {
+    const map = {};
+    demands.forEach((d) => {
+      const dispItems = d.dispatch_items || null;
+      if (!dispItems) return;
+      Object.entries(dispItems).forEach(([id, qty]) => {
+        if (!map[id]) map[id] = {};
+        map[id][d.date] = (map[id][d.date] || 0) + (Number(qty) || 0);
+      });
+    });
+    return map;
+  }, [demands]);
+
+  // Effective (possibly manually corrected) dispatched qty for one item on one day
+  const getDayQty = (itemId, date) => {
+    const edited = (dayEdits[itemId] || {})[date];
+    return edited !== undefined ? (Number(edited) || 0) : ((dayWise[itemId] || {})[date] || 0);
+  };
+
+  const downloadCSV = () => {
+    if (viewMode === "daywise") {
+      const headers = ["Item", "Unit", ...days.map((ds) => ds.slice(5)), "Total"];
+      const rows = items.map((i) => {
+        const perDay = days.map((ds) => Math.round(getDayQty(i.id, ds) * 100) / 100);
+        const total = perDay.reduce((s, v) => s + v, 0);
+        return [i.name, i.unit, ...perDay, Math.round(total * 100) / 100];
+      });
+      exportCSV(headers, rows, `franchise_billing_daywise_${selOutlet}_${selMonth}.csv`);
+      return;
+    }
+    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", "Rate Unit", "Amount"];
+    const rows = items.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, i.rateUnit, Math.round(i.amount * 100) / 100]);
+    rows.push(["", "", "", "", "", "TOTAL", Math.round(totalAmount * 100) / 100]);
+    exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🧾 Franchise Billing</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Month-wise demand vs dispatch, priced off the rate card — billed on what was actually dispatched</p>
+        <p style={{ fontSize: 11, color: "#2563EB", margin: "4px 0 0" }}>✏️ Qty and Rate are editable for corrections before export — edits here are local to this bill only and never change the actual demand records or rate card.</p>
+      </div>
+
+      {franchiseOutlets.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No franchise outlets configured</div>
+      ) : (<>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          {franchiseOutlets.map((o) => (
+            <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.name}</button>
+          ))}
+          <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+            style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+            {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        </div>
+
+        {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+        {!loading && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
+                <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }].map((m) => (
+                    <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
+                  ))}
+                </div>
+                <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
+              </div>
+            </div>
+
+            {items.length === 0 ? (
+              <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No demands for {outletName} in {monthLabel}</div>
+            ) : viewMode === "daywise" ? (<>
+              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>✏️ Click any day's qty to correct it — local to this bill only, resets on outlet/month change.</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, width: 150, minWidth: 150 }}>Item</th>
+                    <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>Total</th>
+                    {days.map((ds) => <th key={ds} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{ds.slice(8)}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {items.map((i) => {
+                      const perDay = days.map((ds) => getDayQty(i.id, ds));
+                      const total = perDay.reduce((s, v) => s + v, 0);
+                      const hasAnyEdit = !!dayEdits[i.id];
+                      if (total === 0 && !hasAnyEdit) return null;
+                      return (
+                        <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                          <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, whiteSpace: "nowrap", width: 150, minWidth: 150 }}>{i.name} <span style={{ color: "#BBB", fontSize: 9 }}>({i.unit})</span></td>
+                          <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(total * 100) / 100}</td>
+                          {days.map((ds, idx) => {
+                            const v = perDay[idx];
+                            const isEdited = (dayEdits[i.id] || {})[ds] !== undefined;
+                            return (
+                              <td key={ds} style={{ ...tdS, textAlign: "right", padding: "4px 6px" }}>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                                  <input type="number" inputMode="decimal" step="any" value={v === 0 && !isEdited ? "" : v}
+                                    placeholder="—"
+                                    onChange={(e) => setDayEdit(i.id, ds, e.target.value)}
+                                    style={{ width: 46, padding: "3px 4px", borderRadius: 5, border: isEdited ? "1px solid #2563EB" : "1px solid #E8E8E4", background: isEdited ? "#EFF6FF" : "transparent", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: isEdited ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: isEdited ? 700 : 400 }} />
+                                  {isEdited && <button onClick={() => resetDayEdit(i.id, ds)} title="Reset" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 10, padding: 0 }}>↺</button>}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>) : (<>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Item</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Demanded</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Rate</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Amount</th>
+                  </tr></thead>
+                  <tbody>
+                    {items.map((i) => {
+                      const mismatch = i.dispatchQty != null && Math.abs(i.dispatchQty - i.demandQty) > 0.01;
+                      return (
+                        <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC", background: mismatch && !i.dispatchQtyEdited ? "#FEF2F2" : "transparent" }}>
+                          <td style={tdS}>{i.name}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{i.demandQty} {i.unit}</td>
+                          <td style={{ ...tdS, textAlign: "right" }}>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <input type="number" inputMode="decimal" step="any" value={i.billedQty}
+                                onChange={(e) => setEditField(i.id, "qty", e.target.value)}
+                                style={{ width: 64, padding: "4px 6px", borderRadius: 6, border: i.dispatchQtyEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.dispatchQtyEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.dispatchQtyEdited ? "#2563EB" : (mismatch ? "#DC2626" : "#1A1A1A"), fontWeight: i.dispatchQtyEdited || mismatch ? 700 : 400 }} />
+                              <span style={{ color: "#999" }}>{i.unit}</span>
+                              {i.dispatchQtyEdited && <button onClick={() => resetEditField(i.id, "qty")} title="Reset to dispatched qty" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
+                            </div>
+                          </td>
+                          <td style={{ ...tdS, textAlign: "right" }}>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <span style={{ color: "#999" }}>₹</span>
+                              <input type="number" inputMode="decimal" step="any" value={i.billedRate}
+                                onChange={(e) => setEditField(i.id, "rate", e.target.value)}
+                                style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: i.rateEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.rateEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.rateEdited ? "#2563EB" : "#888", fontWeight: i.rateEdited ? 700 : 400 }} />
+                              <span style={{ color: "#999" }}>/{i.rateUnit}</span>
+                              {i.rateEdited && <button onClick={() => resetEditField(i.id, "rate")} title="Reset to rate card price" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
+                            </div>
+                          </td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(i.amount)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 16px", borderTop: "2px solid #1A1A1A", background: "#F8F8F5" }}>
+                <span style={{ fontSize: 14, fontWeight: 800 }}>Total</span>
+                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalAmount)}</span>
+              </div>
+            </>)}
+          </div>
+        )}
+      </>)}
+    </div>
+  );
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  COGS DASHBOARD
@@ -6680,6 +6994,22 @@ export default function AnandaCafe() {
   const [ownerTab, setOwnerTab] = useState("pnl");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
+  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections"];
+  const AUDIT_PIN = "5502";
+  const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
+  const [auditPinPrompt, setAuditPinPrompt] = useState(false);
+  const [auditPinInput, setAuditPinInput] = useState("");
+  const [auditPinError, setAuditPinError] = useState("");
+  const tryUnlockAudit = () => {
+    if (auditPinInput === AUDIT_PIN) {
+      setAuditUnlocked(true);
+      try { sessionStorage.setItem("audit_unlocked", "1"); } catch (e) {}
+      setAuditPinPrompt(false); setAuditPinInput(""); setAuditPinError("");
+      setAuditDropdown(true); setBkDropdown(false);
+    } else {
+      setAuditPinError("Incorrect PIN");
+    }
+  };
   const [storeView, setStoreView] = useState("bk");
   const [masterLoaded, setMasterLoaded] = useState(false);
 
@@ -6760,9 +7090,9 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? 700 : 500, color: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["master","audit","iss_audit","inv_monthly","recipes","pp_recipes","users","rate_card","fixed_costs","corrections"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🔍 Audit ▾</button>
+      <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -6802,26 +7132,51 @@ export default function AnandaCafe() {
         ))}
       </div>
     </>)}
+    {/* Audit PIN prompt */}
+    {auditPinPrompt && (<>
+      <div onClick={() => setAuditPinPrompt(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 280, padding: "20px" }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔒 Audit Section</div>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>Enter PIN to access sensitive owner data</div>
+        <input type="password" inputMode="numeric" autoFocus value={auditPinInput}
+          onChange={(e) => { setAuditPinInput(e.target.value); setAuditPinError(""); }}
+          onKeyDown={(e) => { if (e.key === "Enter") tryUnlockAudit(); }}
+          placeholder="PIN" style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: auditPinError ? "1px solid #DC2626" : "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", textAlign: "center", letterSpacing: 4, marginBottom: 8, boxSizing: "border-box" }} />
+        {auditPinError && <div style={{ fontSize: 11, color: "#DC2626", marginBottom: 8 }}>{auditPinError}</div>}
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={tryUnlockAudit} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Unlock</button>
+          <button onClick={() => setAuditPinPrompt(false)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "demands" && <DemandHistory />}
+      {ownerTab === "franchise_billing" && <FranchiseBilling />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
-      {ownerTab === "corrections" && <CorrectionsLog />}
       {ownerTab === "kitchen" && <BaseKitchen />}
-      {ownerTab === "audit" && <RMAuditPanel />}
-      {ownerTab === "master" && <MasterData />}
-      {ownerTab === "rate_card" && <RateCardPanel />}
-      {ownerTab === "fixed_costs" && <FixedCostsPanel />}
-      {ownerTab === "iss_audit" && <IssuanceAudit />}
-      {ownerTab === "inv_monthly" && <MonthlyInventory />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
-      {ownerTab === "recipes" && <RecipesPanel />}
-      {ownerTab === "pp_recipes" && <PetPoojaRecipes />}
-      {ownerTab === "users" && <UsersPanel />}
+      {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>
+          <div style={{ fontSize: 14, color: "#888", marginBottom: 14 }}>This section is PIN-protected</div>
+          <button onClick={() => { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); }} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Enter PIN</button>
+        </div>
+      )}
+      {auditUnlocked && ownerTab === "corrections" && <CorrectionsLog />}
+      {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
+      {auditUnlocked && ownerTab === "master" && <MasterData />}
+      {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
+      {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
+      {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
+      {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}
+      {auditUnlocked && ownerTab === "recipes" && <RecipesPanel />}
+      {auditUnlocked && ownerTab === "pp_recipes" && <PetPoojaRecipes />}
+      {auditUnlocked && ownerTab === "users" && <UsersPanel />}
     </div>
   </div>);
 
