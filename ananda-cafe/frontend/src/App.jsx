@@ -4400,6 +4400,11 @@ const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
   const [selectedDate, setSelectedDate] = useState(today()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
+  // Morning demand is ambiguous right after midnight — managers working through the
+  // night don't mentally distinguish "today" from "tomorrow". So instead of guessing
+  // from the clock, ask explicitly which calendar date the morning delivery is for.
+  const [pickingMorningDate, setPickingMorningDate] = useState(false);
+  const [morningDeliveryDate, setMorningDeliveryDate] = useState(null);
   const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
@@ -4411,7 +4416,7 @@ const OutletMgr = ({ onBack }) => {
   // Purchase state
   const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
   const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
   const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   // Per-item unit overrides for demand/wastage (draftUnits) and closing stock (closingUnits) —
@@ -4486,7 +4491,7 @@ const OutletMgr = ({ onBack }) => {
         const wastageCount = Object.values(draft).filter(v => v > 0).length;
         alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
       } else {
-        const deliveryDate = demandSlot === "morning" ? istDateAgo(-1) : today();
+        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
         const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
         const draftItemsUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0));
         const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
@@ -4748,6 +4753,31 @@ const OutletMgr = ({ onBack }) => {
     </div>
   </div>); }
 
+  if (screen === "manual" && !demandSlot && pickingMorningDate) {
+    return (<div><SavingOverlay />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><BackBtn onClick={() => setPickingMorningDate(false)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🌅 Which morning?</div></div>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 20 }}>
+        If it's already past midnight, pick <strong>Today</strong> — the morning you mean is happening today. If it's still before midnight, pick <strong>Tomorrow</strong>.
+      </div>
+      <button onClick={() => { setMorningDeliveryDate(today()); setDemandSlot("morning"); }} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 34 }}>🌅</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#B45309" }}>{today()} (Today)</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Past midnight — this morning is today's date</div>
+        </div>
+        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
+      </button>
+      <button onClick={() => { setMorningDeliveryDate(istDateAgo(-1)); setDemandSlot("morning"); }} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+        <div style={{ fontSize: 34 }}>🌅</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#B45309" }}>{istDateAgo(-1)} (Tomorrow)</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Still before midnight — ordering ahead for the next morning</div>
+        </div>
+        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
+      </button>
+    </div>);
+  }
+
   if (screen === "manual" && !demandSlot) {
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div></div>
@@ -4756,11 +4786,11 @@ const OutletMgr = ({ onBack }) => {
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>When do you need this?</h3>
         <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Select the delivery slot for your demand</p>
       </div>
-      <button onClick={() => setDemandSlot("morning")} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+      <button onClick={() => setPickingMorningDate(true)} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
         <div style={{ fontSize: 40 }}>🌅</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#B45309" }}>Morning Delivery</div>
-          <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>{istDateAgo(-1)} (Tomorrow)</div>
+          <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Pick today or tomorrow's date</div>
           <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items will be prepared tonight & dispatched tomorrow morning</div>
         </div>
         <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
@@ -4835,7 +4865,7 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? istDateAgo(-1) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
