@@ -4329,10 +4329,11 @@ const OutletActivityGrid = ({ mode }) => {
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [editCell, setEditCell] = useState(null); // { itemId, itemName, unit, date, currentVal }
-  const [editVal, setEditVal] = useState("");
-  const [editReason, setEditReason] = useState("");
-  const [saving, setSaving] = useState(false);
+  // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — cleared once the
+  // save round-trips and the fetched dayWise value reflects it. Same inline-input pattern
+  // as Franchise Billing's Day by Day grid, but each blur persists a real correction here.
+  const [drafts, setDrafts] = useState({});
+  const [savingKey, setSavingKey] = useState(null);
   const currentUser = getCurrentUser();
   const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
 
@@ -4374,21 +4375,21 @@ const OutletActivityGrid = ({ mode }) => {
   }, [selOutlet, selMonth, isClosing]);
   useEffect(load, [load]);
 
-  const openEdit = (itemId, itemName, unit, date, currentVal) => {
-    setEditCell({ itemId, itemName, unit, date, currentVal });
-    setEditVal(String(currentVal));
-    setEditReason("");
-  };
+  const draftKey = (itemId, date) => `${itemId}|${date}`;
+  const setDraft = (itemId, date, value) => setDrafts((prev) => ({ ...prev, [draftKey(itemId, date)]: value }));
+  const clearDraft = (itemId, date) => setDrafts((prev) => { const next = { ...prev }; delete next[draftKey(itemId, date)]; return next; });
 
-  const saveEdit = async () => {
-    if (!editCell) return;
-    setSaving(true);
+  const commitCell = async (itemId, date, rawVal) => {
+    const key = draftKey(itemId, date);
+    const newQty = Number(rawVal) || 0;
+    if (newQty === Math.round(((dayWise[itemId] || {})[date] || 0) * 100) / 100) { clearDraft(itemId, date); return; }
+    setSavingKey(key);
     try {
-      await api.editItemQty(selOutlet, editCell.date, editCell.itemId, Number(editVal) || 0, editReason || undefined, isClosing ? "closing_stock" : "wastage");
-      setEditCell(null);
+      await api.editItemQty(selOutlet, date, itemId, newQty, undefined, isClosing ? "closing_stock" : "wastage");
+      clearDraft(itemId, date);
       load();
     } catch (e) { alert("Error: " + e.message); }
-    finally { setSaving(false); }
+    finally { setSavingKey(null); }
   };
 
   // Per-item, per-day qty — { item_id: { date: qty } }. Closing-stock keys carry a cs_
@@ -4474,12 +4475,19 @@ const OutletActivityGrid = ({ mode }) => {
                       <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
                       {days.map((ds) => {
                         const v = (dayWise[i.id] || {})[ds] || 0;
-                        const editable = canRecord;
+                        const key = draftKey(i.id, ds);
+                        const hasDraft = drafts[key] !== undefined;
+                        const shown = hasDraft ? drafts[key] : (v > 0 ? Math.round(v * 100) / 100 : "");
+                        const isSaving = savingKey === key;
+                        if (!canRecord) {
+                          return <td key={ds} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD" }}>{v > 0 ? Math.round(v * 100) / 100 : "—"}</td>;
+                        }
                         return (
-                          <td key={ds} onClick={editable ? () => openEdit(i.id, i.name, i.unit, ds, Math.round(v * 100) / 100) : undefined}
-                            style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD", cursor: editable ? "pointer" : "default" }}
-                            title={editable ? "Click to correct" : undefined}>
-                            {v > 0 ? Math.round(v * 100) / 100 : "—"}
+                          <td key={ds} style={{ ...tdS, textAlign: "right", padding: "4px 6px" }}>
+                            <input type="number" inputMode="decimal" step="any" value={shown} placeholder="—" disabled={isSaving}
+                              onChange={(e) => setDraft(i.id, ds, e.target.value)}
+                              onBlur={(e) => commitCell(i.id, ds, e.target.value)}
+                              style={{ width: 44, padding: "3px 4px", borderRadius: 5, border: hasDraft ? "1px solid #2563EB" : "1px solid #E8E8E4", background: isSaving ? "#F5F5F3" : (hasDraft ? "#EFF6FF" : "transparent"), fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: hasDraft ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: hasDraft ? 700 : 400 }} />
                           </td>
                         );
                       })}
@@ -4491,31 +4499,6 @@ const OutletActivityGrid = ({ mode }) => {
           )}
         </div>
       )}
-
-      {/* Correction modal */}
-      {editCell && (<>
-        <div onClick={() => setEditCell(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
-        <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>✏️ Correct {editCell.itemName}</div>
-          <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editCell.date}</div>
-          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Current: {editCell.currentVal} {editCell.unit}</div>
-          <input type="number" inputMode="decimal" step="any" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)}
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Reason</div>
-          <select value={editReason} onChange={(e) => setEditReason(e.target.value)}
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }}>
-            <option value="">-- Reason --</option>
-            <option value="unit_error">Unit error (kg vs g etc.)</option>
-            <option value="typo">Typo</option>
-            <option value="genuine_correction">Genuine correction</option>
-            <option value="other">Other</option>
-          </select>
-          <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={saveEdit} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
-            <button onClick={() => setEditCell(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          </div>
-        </div>
-      </>)}
     </div>
   );
 };
