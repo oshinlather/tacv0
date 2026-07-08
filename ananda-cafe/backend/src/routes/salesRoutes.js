@@ -1422,11 +1422,27 @@ router.patch('/qty-edit', async (req, res) => {
       const { data: row, error: loadErr } = await supabase.from('closing_stocks')
         .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
       if (loadErr) throw loadErr;
-      const key = row && Object.keys(row.items || {}).find(k => k === item_id || k === `cs_${item_id}`);
-      if (!row || !key) {
-        return res.status(404).json({ error: `Item '${item_id}' not found in closing stock for ${outlet_id} on ${date}` });
+
+      if (!row) {
+        // No closing stock submitted at all for this outlet+date yet — create the
+        // row with just this one item, same as if the outlet manager had submitted it.
+        // closing_stocks.submitted_by is a foreign key into Supabase Auth's users table,
+        // which this app doesn't use (it has its own app_users/PIN login) — every existing
+        // row already leaves it null, so match that rather than fail the insert.
+        const { error: insertErr } = await supabase.from('closing_stocks').insert({
+          outlet_id, date, items: { [`cs_${item_id}`]: Number(new_qty) },
+          submitted_by: null, submitted_at: new Date().toISOString(),
+        });
+        if (insertErr) throw insertErr;
+        await supabase.from('qty_corrections').insert({
+          demand_id: null, outlet_id, date, item_id, old_qty: 0, new_qty: Number(new_qty),
+          unit: null, reason: reason || null, corrected_by: correctorName,
+        });
+        return res.json({ ok: true, updated: 1, created: true });
       }
-      const oldQty = Number(row.items[key]);
+
+      const key = Object.keys(row.items || {}).find(k => k === item_id || k === `cs_${item_id}`) || `cs_${item_id}`;
+      const oldQty = Number((row.items || {})[key]) || 0;
       const newItems = { ...row.items, [key]: Number(new_qty) };
       const { error: updateErr } = await supabase.from('closing_stocks').update({ items: newItems }).eq('id', row.id);
       if (updateErr) throw updateErr;
@@ -1442,9 +1458,33 @@ router.patch('/qty-edit', async (req, res) => {
         .select('id, items').eq('outlet_id', outlet_id).eq('date', date).eq('type', 'wastage');
       if (loadErr) throw loadErr;
       const matching = (rows || []).filter(d => (d.items || {})[item_id] !== undefined);
+
       if (matching.length === 0) {
-        return res.status(404).json({ error: `Item '${item_id}' not found in wastage for ${outlet_id} on ${date}` });
+        if ((rows || []).length > 0) {
+          // A wastage submission exists for this date but doesn't include this item yet — add it.
+          const target = rows[0];
+          const newItems = { ...target.items, [item_id]: Number(new_qty) };
+          const { error: updateErr } = await supabase.from('demands').update({ items: newItems }).eq('id', target.id);
+          if (updateErr) throw updateErr;
+          await supabase.from('qty_corrections').insert({
+            demand_id: target.id, outlet_id, date, item_id, old_qty: 0, new_qty: Number(new_qty),
+            unit: null, reason: reason || null, corrected_by: correctorName,
+          });
+          return res.json({ ok: true, updated: 1 });
+        }
+        // No wastage submitted at all for this outlet+date — create it, same as a manager submission.
+        const { error: insertErr } = await supabase.from('demands').insert({
+          outlet_id, date, type: 'wastage', status: 'submitted', items: { [item_id]: Number(new_qty) },
+          submitted_by: correctorName, submitted_at: new Date().toISOString(),
+        });
+        if (insertErr) throw insertErr;
+        await supabase.from('qty_corrections').insert({
+          demand_id: null, outlet_id, date, item_id, old_qty: 0, new_qty: Number(new_qty),
+          unit: null, reason: reason || null, corrected_by: correctorName,
+        });
+        return res.json({ ok: true, updated: 1, created: true });
       }
+
       const corrections = [];
       for (const row of matching) {
         const oldQty = Number(row.items[item_id]);

@@ -4474,7 +4474,7 @@ const OutletActivityGrid = ({ mode }) => {
                       <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
                       {days.map((ds) => {
                         const v = (dayWise[i.id] || {})[ds] || 0;
-                        const editable = canRecord && v > 0;
+                        const editable = canRecord;
                         return (
                           <td key={ds} onClick={editable ? () => openEdit(i.id, i.name, i.unit, ds, Math.round(v * 100) / 100) : undefined}
                             style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD", cursor: editable ? "pointer" : "default" }}
