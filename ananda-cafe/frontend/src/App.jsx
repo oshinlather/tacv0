@@ -4677,7 +4677,7 @@ const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC 
 //  OUTLET MANAGER
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
-  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null);
+  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState(today()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   // Morning demand is ambiguous right after midnight — managers working through the
@@ -4827,7 +4827,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -5022,10 +5022,23 @@ const OutletMgr = ({ onBack }) => {
     // Items to hide from wastage (not relevant for disposal tracking)
     const wastageHidden = new Set(["roasted_peanuts", "roasted_chana", "roasted_karipatta", "podi_masala", "upma_sooji"]);
     const wastageFilterItems = (items) => items.filter((i) => !wastageHidden.has(i.id));
-    const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id); return (<div><SavingOverlay />
+    const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id);
+    const wastageQuery = itemSearch.trim().toLowerCase();
+    const wastageSearchResults = wastageQuery ? wastageFilterItems(wastageSections.flatMap((s) => s.items)).filter((i) => i.name.toLowerCase().includes(wastageQuery)) : [];
+    const wastageItemRow = (item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>);
+    return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
+    <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+    {wastageQuery ? (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+        <div style={{ padding: "6px 12px 12px" }}>
+          {wastageSearchResults.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No items match "{itemSearch}"</div>}
+          {wastageSearchResults.map(wastageItemRow)}
+        </div>
+      </div>
+    ) : (<>
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {wastageSections.map((sec) => { const fl = sec.items.filter((i) => draft[i.id] > 0).length; return (
         <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || wastageSections[0].id) === sec.id ? 700 : 500, border: (expSec || wastageSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || wastageSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || wastageSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
@@ -5036,8 +5049,9 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 18 }}>{activeSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({wastageFilterItems(activeSec.items).length})</span>
       </div>
-      <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>))}</div>
+      <div style={{ padding: "6px 12px 12px" }}>{wastageFilterItems(activeSec.items).map(wastageItemRow)}</div>
     </div>
+    </>)}
     <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
       <ErrBar />
@@ -5341,7 +5355,7 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "close") { 
+  if (screen === "close") {
     const csSections = DEMAND_SECTIONS;
     const csActiveSec = csSections.find((s) => s.id === expSec) || csSections[0];
     if (!expSec) setExpSec(csSections[0].id);
@@ -5349,10 +5363,25 @@ const OutletMgr = ({ onBack }) => {
     const allFilled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const secFilled = csItems.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const canSubmit = allFilled > 0;
+    const csQuery = itemSearch.trim().toLowerCase();
+    const csSearchResults = csQuery ? csSections.flatMap((s) => s.items).filter((i) => !CLOSING_HIDDEN.has(i.id)).map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit })).filter((i) => i.name.toLowerCase().includes(csQuery)) : [];
+    const csItemRow = (item, idx, arr) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; const bareId = item.id.replace(/^cs_/, ""); return (
+      <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < arr.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
+        <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+        <UnitPicker itemId={bareId} defaultUnit={item.unit} unitsState={closingUnits} setUnitsState={setClosingUnits} />
+      </div>); };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
       <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>Fill items you have in stock. Skip items that are zero or not applicable.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
+      <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 10, boxSizing: "border-box" }} />
+      {csQuery ? (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+          {csSearchResults.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 13 }}>No items match "{itemSearch}"</div>}
+          {csSearchResults.map((item, idx) => csItemRow(item, idx, csSearchResults))}
+        </div>
+      ) : (<>
       <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
         {csSections.map((sec) => { const fl = sec.items.filter((i) => closing[`cs_${i.id}`] !== undefined && closing[`cs_${i.id}`] !== "").length; return (
           <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: (expSec || csSections[0].id) === sec.id ? 700 : 500, border: (expSec || csSections[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || csSections[0].id) === sec.id ? sec.color : "#fff", color: (expSec || csSections[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
@@ -5360,13 +5389,9 @@ const OutletMgr = ({ onBack }) => {
           </button>); })}
       </div>
       <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
-        {csItems.map((item, idx) => { const isFilled = closing[item.id] !== undefined && closing[item.id] !== ""; const bareId = item.id.replace(/^cs_/, ""); return (
-          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < csItems.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
-            <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
-            <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-            <UnitPicker itemId={bareId} defaultUnit={item.unit} unitsState={closingUnits} setUnitsState={setClosingUnits} />
-          </div>); })}
+        {csItems.map((item, idx) => csItemRow(item, idx, csItems))}
       </div>
+      </>)}
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
         <button onClick={() => submit("closing")} disabled={!canSubmit} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: canSubmit ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{canSubmit ? `📊 Submit Closing Stock (${allFilled} items)` : "Fill at least 1 item"}</button>
       </div>
