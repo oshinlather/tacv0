@@ -409,225 +409,167 @@ const UsersPanel = () => {
 //  PAYTM RECONCILIATION — Monthly sheet with actuals vs reported
 // ═════════════════════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════════════════════
-//  CASH HISAB — Store Manager: collect from outlets + handover to owner
+//  CASH LEDGER — per-outlet running credit/debit ledger. Outlet managers report
+//  cash IN (daily sales) and expenses; owner/store manager independently record
+//  cash OUT when they actually collect it — both write to the same
+//  daily_outlet_sales.cash_deposited field, so there's one shared number instead
+//  of two disconnected self-reports. Used by both the Owner and Store Manager
+//  dashboards (both roles can record a collection).
 // ═════════════════════════════════════════════════════════════════════════════
-const CashHisab = () => {
-  const [selDay, setSelDay] = useState(0);
-  const [handovers, setHandovers] = useState([]);
-  const [ownerHandover, setOwnerHandover] = useState("");
-  const [ownerNote, setOwnerNote] = useState("");
+const CashLedger = () => {
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [latestByOutlet, setLatestByOutlet] = useState({});
+  const [editDate, setEditDate] = useState(null);
+  const [editAmt, setEditAmt] = useState("");
+  const [editBy, setEditBy] = useState("");
   const [saving, setSaving] = useState(false);
-  const [outletSalesData, setOutletSalesData] = useState({});
 
-  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
-  const userName = getCurrentUser()?.name || "Store Manager";
+  const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
+  const dates = Array.from({ length: daysInMonth }, (_, i) => `${selMonth}-${String(i + 1).padStart(2, "0")}`).filter((d) => d <= today());
 
-  const load = useCallback(() => {
+  // Available-cash summary cards across all outlets — each outlet's most recent
+  // recorded closing balance. Recording a collection cascades the corrected balance
+  // forward through subsequent days server-side (see /outlet-sales/cash-collection),
+  // so this stored snapshot stays accurate rather than going stale.
+  const loadSummary = useCallback(() => {
+    const tomorrow = istDateAgo(-1);
+    Promise.all(OUTLETS.map((o) => api.getLatestCash(o.id, tomorrow).catch(() => null)))
+      .then((rowsArr) => { const map = {}; OUTLETS.forEach((o, i) => { map[o.id] = rowsArr[i]; }); setLatestByOutlet(map); });
+  }, []);
+  useEffect(loadSummary, [loadSummary]);
+
+  const loadMonth = useCallback(() => {
+    if (!selOutlet) return;
     setLoading(true);
-    Promise.all([
-      api.getCashHandovers({ date: dateStr }).catch(() => []),
-      // Fetch outlet sales to get cash_deposited amounts
-      api.getOutletSales({ date: dateStr }).catch(() => []),
-    ]).then(([ho, sales]) => {
-      setHandovers(ho || []);
-      // Build outlet collections from daily_outlet_sales cash_deposited
-      const salesMap = {};
-      (sales || []).forEach(s => { salesMap[s.outlet_id] = s; });
-      setOutletSalesData(salesMap);
-      const toOwner = (ho || []).find(h => h.from_role === "store" && h.to_role === "owner" && h.date === dateStr);
-      if (toOwner) { setOwnerHandover(String(toOwner.amount)); setOwnerNote(toOwner.note || ""); }
-      else { setOwnerHandover(""); setOwnerNote(""); }
-    }).finally(() => setLoading(false));
-  }, [dateStr]);
+    api.getOutletSales({ outlet_id: selOutlet, from: `${selMonth}-01`, to: dates[dates.length - 1] || `${selMonth}-01` })
+      .then((data) => setRows(data || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [selOutlet, selMonth]);
+  useEffect(loadMonth, [loadMonth]);
 
-  useEffect(load, [load]);
+  const rowFor = (date) => rows.find((r) => r.date === date);
+  const closingFor = (date) => {
+    const r = rowFor(date);
+    if (!r) return null;
+    return Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0);
+  };
 
-  const outletCollections = OWN_OUTLETS.map(o => {
-    const s = outletSalesData[o.id];
-    const cashDeposited = s ? Number(s.cash_deposited) || 0 : 0;
-    return { ...o, amount: cashDeposited, from: s?.submitted_by || "—" };
-  });
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const currentUser = getCurrentUser();
+  const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
 
-  const totalCollected = outletCollections.reduce((s, o) => s + o.amount, 0);
-  const handedToOwner = Number(ownerHandover) || 0;
-  const pending = totalCollected - handedToOwner;
+  const openEdit = (date) => {
+    const r = rowFor(date);
+    setEditDate(date);
+    setEditAmt(r ? String(r.cash_deposited || 0) : "0");
+    setEditBy(currentUser?.name || "");
+  };
 
-  const saveOwnerHandover = async () => {
+  const saveCollection = async () => {
+    if (!editDate) return;
     setSaving(true);
     try {
-      await api.saveCashHandover({ date: dateStr, from_role: "store", from_name: userName, to_role: "owner", to_name: "Owner", amount: ownerHandover, note: ownerNote });
-      alert(`✅ Handover to Owner recorded!\n\n📅 ${dateStr}\n💰 ₹${Number(ownerHandover).toLocaleString("en-IN")}`);
-      load();
+      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || currentUser?.name });
+      setEditDate(null);
+      loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
-
   return (<div>
-    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💵 Cash Hisab</h3>
-    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-      {Array.from({ length: 5 }, (_, i) => {
-        const d = istDateAgo(i);
-        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
-        return (<button key={i} onClick={() => setSelDay(i)} style={{ flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", lineHeight: 1.3 }}>{label}{i <= 1 && <div style={{ fontSize: 9, opacity: 0.6 }}>{d.slice(5)}</div>}</button>);
-      })}
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💵 Cash Ledger</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Running cash balance per outlet — collected minus expense minus deposited/collected</p>
     </div>
 
-    {/* Collections from outlets */}
-    <div style={{ fontSize: 12, fontWeight: 700, color: "#16A34A", marginBottom: 8 }}>📥 Collections from Outlets</div>
-    {outletCollections.map(o => (
-      <div key={o.id} style={{ display: "flex", alignItems: "center", padding: "12px 14px", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 6 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
-          <div style={{ fontSize: 10, color: "#999" }}>{o.amount > 0 ? `by ${o.from}` : "Not received yet"}</div>
-        </div>
-        <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: o.amount > 0 ? "#16A34A" : "#DDD" }}>
-          {o.amount > 0 ? `₹${o.amount.toLocaleString("en-IN")}` : "—"}
-        </div>
-      </div>
-    ))}
-
-    {/* Total collected */}
-    <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "#F0FDF4", borderRadius: 12, border: "1px solid #BBF7D0", marginTop: 10, marginBottom: 20 }}>
-      <span style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>Total Collected</span>
-      <span style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{totalCollected.toLocaleString("en-IN")}</span>
-    </div>
-
-    {/* Handover to Owner */}
-    {handedToOwner > 0 && (
-      <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", background: "#EFF6FF", borderRadius: 12, border: "1px solid #BFDBFE", marginBottom: 10 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "#1D4ED8" }}>Available Cash (Collected − Handed Over)</span>
-        <span style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: pending > 0 ? "#B45309" : "#16A34A" }}>₹{pending.toLocaleString("en-IN")}</span>
-      </div>
-    )}
-    <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 8 }}>📤 Handover to Owner</div>
-    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px" }}>
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
-        <span style={{ fontSize: 20 }}>₹</span>
-        <input type="number" inputMode="numeric" placeholder="Amount" value={ownerHandover} onChange={e => setOwnerHandover(e.target.value)}
-          style={{ flex: 1, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, fontFamily: "'JetBrains Mono'", fontWeight: 800, textAlign: "center" }} />
-      </div>
-      <input placeholder="Note (optional)" value={ownerNote} onChange={e => setOwnerNote(e.target.value)}
-        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
-      <button onClick={saveOwnerHandover} disabled={!ownerHandover || saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: ownerHandover ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ownerHandover ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-        {saving ? "⏳..." : `📤 Record Handover to Owner — ₹${Number(ownerHandover || 0).toLocaleString("en-IN")}`}
-      </button>
-      {pending > 0 && handedToOwner > 0 && <div style={{ marginTop: 8, fontSize: 11, color: "#DC2626", textAlign: "center" }}>⚠️ Pending: ₹{pending.toLocaleString("en-IN")} not handed over</div>}
-    </div>
-  </div>);
-};
-
-// ═════════════════════════════════════════════════════════════════════════════
-//  CASH LEDGER — Owner: full visibility of cash flow
-// ═════════════════════════════════════════════════════════════════════════════
-const CashLedger = () => {
-  const [month, setMonth] = useState(() => today().slice(0, 7));
-  const [outletSales, setOutletSales] = useState([]);
-  const [handovers, setHandovers] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
-  const dates = Array.from({ length: daysInMonth }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([
-      // Fetch all outlet sales for the month to get cash_deposited
-      Promise.all(dates.map(d => api.getOutletSales({ date: d }).catch(() => []))),
-      api.getCashHandovers({ month }).catch(() => []),
-    ]).then(([salesArr, ho]) => {
-      const allSales = [];
-      salesArr.forEach((dayData, i) => {
-        (dayData || []).forEach(s => { allSales.push({ ...s, date: dates[i] }); });
-      });
-      setOutletSales(allSales);
-      setHandovers(ho || []);
-    }).finally(() => setLoading(false));
-  }, [month]);
-
-  const getCashDeposited = (date, outletId) => {
-    const s = outletSales.find(s => s.date === date && s.outlet_id === outletId);
-    return s ? Number(s.cash_deposited) || 0 : null;
-  };
-
-  const getOwnerHandover = (date) => {
-    const h = handovers.find(h => h.date === date && h.from_role === "store" && h.to_role === "owner");
-    return h ? Number(h.amount) : null;
-  };
-
-  const totals = {};
-  OWN_OUTLETS.forEach(o => { totals[o.id] = dates.reduce((s, d) => s + (getCashDeposited(d, o.id) || 0), 0); });
-  const totalFromOutlets = Object.values(totals).reduce((s, v) => s + v, 0);
-  const totalToOwner = dates.reduce((s, d) => s + (getOwnerHandover(d) || 0), 0);
-
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
-
-  return (<div>
-    <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>💵 Cash Ledger</h3>
-
-    {/* Month picker */}
-    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
-      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
-      <input type="month" value={month} onChange={e => setMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
-      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
-    </div>
-
-    {/* Monthly totals */}
-    <div style={{ display: "flex", gap: 1, borderRadius: 12, overflow: "hidden", marginBottom: 16, background: "#E8E8E4" }}>
-      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
-        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>From Outlets</div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#16A34A", fontFamily: "'JetBrains Mono'" }}>{fmt(totalFromOutlets)}</div>
-      </div>
-      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
-        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>To Owner</div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB", fontFamily: "'JetBrains Mono'" }}>{fmt(totalToOwner)}</div>
-      </div>
-      <div style={{ flex: 1, background: "#fff", padding: "12px", textAlign: "center" }}>
-        <div style={{ fontSize: 9, color: "#999", fontWeight: 600, textTransform: "uppercase" }}>Pending</div>
-        <div style={{ fontSize: 18, fontWeight: 800, color: totalFromOutlets - totalToOwner > 0 ? "#DC2626" : "#16A34A", fontFamily: "'JetBrains Mono'" }}>{fmt(totalFromOutlets - totalToOwner)}</div>
-      </div>
-    </div>
-
-    {/* Daily breakdown */}
-    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "8px 6px", background: "#FAFAF8", borderBottom: "2px solid #E8E8E4", fontSize: 9, fontWeight: 700, color: "#888" }}>
-        <div>Date</div>
-        {OWN_OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center" }}>{o.short}</div>)}
-        <div style={{ textAlign: "center" }}>Total</div>
-        <div style={{ textAlign: "center", color: "#2563EB" }}>→ Owner</div>
-      </div>
-      {dates.filter(d => d <= today()).map(d => {
-        const dayNum = d.slice(8, 10);
-        const dayTotals = OWN_OUTLETS.map(o => getCashDeposited(d, o.id));
-        const dayTotal = dayTotals.reduce((s, v) => s + (v || 0), 0);
-        const toOwner = getOwnerHandover(d);
+    {/* Available cash summary, all outlets */}
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 20 }}>
+      {OUTLETS.map((o) => {
+        const r = latestByOutlet[o.id];
+        const avail = r ? Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0) : 0;
         return (
-          <div key={d} style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "7px 6px", borderBottom: "1px solid #F0F0EC", alignItems: "center", fontSize: 11 }}>
-            <div style={{ fontWeight: 700 }}>{dayNum}</div>
-            {dayTotals.map((amt, i) => (
-              <div key={OWN_OUTLETS[i].id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 600, color: amt ? "#16A34A" : "#E0E0DC" }}>
-                {amt ? `₹${(amt/1000).toFixed(1)}k` : "—"}
-              </div>
-            ))}
-            <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 700, color: dayTotal > 0 ? "#1A1A1A" : "#E0E0DC" }}>
-              {dayTotal > 0 ? `₹${(dayTotal/1000).toFixed(1)}k` : "—"}
-            </div>
-            <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, fontWeight: 700, color: toOwner ? "#2563EB" : "#E0E0DC" }}>
-              {toOwner ? `₹${(toOwner/1000).toFixed(1)}k` : "—"}
-            </div>
+          <div key={o.id} onClick={() => setSelOutlet(o.id)} style={{ background: selOutlet === o.id ? "#1A1A1A" : "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "12px", cursor: "pointer", textAlign: "center" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: selOutlet === o.id ? "#fff" : "#1A1A1A" }}>{o.short}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: selOutlet === o.id ? "#fff" : (avail > 0 ? "#B45309" : "#16A34A") }}>{fmt(avail)}</div>
+            <div style={{ fontSize: 9, color: selOutlet === o.id ? "#BBB" : "#999" }}>available</div>
           </div>
         );
       })}
-      {/* Monthly total row */}
-      <div style={{ display: "grid", gridTemplateColumns: `50px ${OWN_OUTLETS.map(() => "1fr").join(" ")} 70px 70px`, padding: "10px 6px", background: "#FAFAF8", borderTop: "2px solid #E8E8E4", fontSize: 11, fontWeight: 800 }}>
-        <div>Total</div>
-        {OWN_OUTLETS.map(o => <div key={o.id} style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#16A34A" }}>{totals[o.id] > 0 ? `₹${(totals[o.id]/1000).toFixed(1)}k` : "—"}</div>)}
-        <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10 }}>₹{(totalFromOutlets/1000).toFixed(1)}k</div>
-        <div style={{ textAlign: "center", fontFamily: "'JetBrains Mono'", fontSize: 10, color: "#2563EB" }}>₹{(totalToOwner/1000).toFixed(1)}k</div>
-      </div>
     </div>
+
+    {/* Month picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+    {!loading && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 13, fontWeight: 700 }}>{outletName}</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Date</th>
+              <th style={{ ...thS, textAlign: "right" }}>Opening</th>
+              <th style={{ ...thS, textAlign: "right" }}>+ Collected</th>
+              <th style={{ ...thS, textAlign: "right" }}>− Expense</th>
+              <th style={{ ...thS, textAlign: "right" }}>− Deposited</th>
+              <th style={{ ...thS, textAlign: "left" }}>By</th>
+              <th style={{ ...thS, textAlign: "right" }}>= Closing</th>
+              {canRecord && <th style={thS}></th>}
+            </tr></thead>
+            <tbody>
+              {dates.slice().reverse().map((d) => {
+                const r = rowFor(d);
+                const closing = closingFor(d);
+                return (
+                  <tr key={d} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={tdS}>{d.slice(5)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{r ? fmt(r.prev_day_cash) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{r ? fmt(r.cash_collected) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{r && r.cash_expense > 0 ? fmt(r.cash_expense) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{r && r.cash_deposited > 0 ? fmt(r.cash_deposited) : "—"}</td>
+                    <td style={{ ...tdS, fontSize: 10, color: "#999" }}>{r?.cash_deposited_by || "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: closing > 0 ? "#B45309" : "#16A34A" }}>{closing != null ? fmt(closing) : "—"}</td>
+                    {canRecord && (
+                      <td style={tdS}>
+                        <button onClick={() => openEdit(d)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 10, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️</button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+
+    {/* Record collection modal */}
+    {editDate && (<>
+      <div onClick={() => setEditDate(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>💵 Record Collection</div>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editDate}</div>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected / deposited</div>
+        <input type="number" inputMode="numeric" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Collected by</div>
+        <input value={editBy} onChange={(e) => setEditBy(e.target.value)} placeholder="e.g. AVP Rahul"
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={saveCollection} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
+          <button onClick={() => setEditDate(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
   </div>);
 };
 
@@ -7401,7 +7343,7 @@ export default function AnandaCafe() {
       {storeView === "demands" && <DemandHistory />}
       {storeView === "inventory" && <Inventory />}
       {storeView === "sales" && <SalesUpload />}
-      {storeView === "cash" && <CashHisab />}
+      {storeView === "cash" && <CashLedger />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData hideRecipes />}

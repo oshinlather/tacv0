@@ -898,16 +898,43 @@ res.json({ ok: true });
 // Add to salesRoutes.js before module.exports = router;
 // ============================================================
 
+// Cascades a corrected closing balance forward through subsequent EXISTING rows for
+// this outlet, so later days' prev_day_cash/closing stay consistent after an earlier
+// day's cash_deposited changes — e.g. recording a collection for a past date shouldn't
+// leave every later day showing a stale, pre-collection "available cash". Only walks
+// through rows that actually exist (gap days need no update — the next real row already
+// carries the balance via its own prev_day_cash once corrected). Stops early once a
+// row's stored prev_day_cash already matches the computed balance, since anything
+// after that should already be consistent from a prior cascade.
+async function cascadeCashForward(supabase, outletId, fromDate) {
+  const { data: seed } = await supabase.from('daily_outlet_sales').select('*')
+    .eq('outlet_id', outletId).eq('date', fromDate).maybeSingle();
+  if (!seed) return;
+  let balance = Number(seed.prev_day_cash || 0) + Number(seed.cash_collected || 0) - Number(seed.cash_expense || 0) - Number(seed.cash_deposited || 0);
+  let cursorDate = fromDate;
+  for (let i = 0; i < 180; i++) {
+    const { data: nextRow } = await supabase.from('daily_outlet_sales').select('*')
+      .eq('outlet_id', outletId).gt('date', cursorDate).order('date', { ascending: true }).limit(1).maybeSingle();
+    if (!nextRow) break;
+    if (Number(nextRow.prev_day_cash || 0) === balance) break;
+    await supabase.from('daily_outlet_sales').update({ prev_day_cash: balance }).eq('outlet_id', outletId).eq('date', nextRow.date);
+    balance = balance + Number(nextRow.cash_collected || 0) - Number(nextRow.cash_expense || 0) - Number(nextRow.cash_deposited || 0);
+    cursorDate = nextRow.date;
+  }
+}
+
 // ── GET /api/outlet-sales — Get sales for a date/outlet
 router.get('/outlet-sales', async (req, res) => {
   try {
     const _user = await requireAuth(req, res); if (!_user) return;
     const _outlet = req.body?.outlet_id || req.query?.outlet_id || req.params?.outlet_id;
     if (!ensureOutletAccess(_user, _outlet, res)) return;
-    const { outlet_id, date } = req.query;
+    const { outlet_id, date, from, to } = req.query;
     let query = supabase.from('daily_outlet_sales').select('*');
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
     if (date) query = query.eq('date', date);
+    if (from) query = query.gte('date', from);
+    if (to) query = query.lte('date', to);
     const { data, error } = await query.order('date', { ascending: false });
     if (error) throw error;
     res.json(data || []);
@@ -942,8 +969,8 @@ router.post('/outlet-sales', async (req, res) => {
             cancelled_orders, complimentary_amount, complimentary_reason, zomato_district,
             upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
             cash_deposited, submitted_by, notes } = req.body;
-    
-    const { data, error } = await supabase.from('daily_outlet_sales').upsert({
+
+    const record = {
       outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
       cancelled_orders: cancelled_orders || 0,
       complimentary_amount: complimentary_amount || 0,
@@ -951,12 +978,72 @@ router.post('/outlet-sales', async (req, res) => {
       zomato_district: zomato_district || 0,
       upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
       cash_deposited, submitted_by, notes, submitted_at: new Date().toISOString()
-    }, { onConflict: 'outlet_id,date' });
-    
+    };
+
+    // Only re-stamp who/when "cash deposited" was set if this submission actually
+    // changes that value — otherwise an outlet manager routinely re-saving their
+    // sales form (which pre-fills whatever is already in the DB) would silently
+    // overwrite an owner/store-manager's collection record with their own name.
+    const { data: existing } = await supabase.from('daily_outlet_sales')
+      .select('cash_deposited, cash_collected, cash_expense').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+    const depositChanged = !existing || Number(existing.cash_deposited || 0) !== Number(cash_deposited || 0);
+    if (depositChanged) {
+      record.cash_deposited_by = submitted_by || null;
+      record.cash_deposited_at = new Date().toISOString();
+    }
+    // Any of these changing on a past date shifts that day's closing balance, which
+    // later days' prev_day_cash would otherwise go stale against — cascade forward.
+    const closingChanged = depositChanged
+      || Number(existing?.cash_collected || 0) !== Number(cash_collected || 0)
+      || Number(existing?.cash_expense || 0) !== Number(cash_expense || 0);
+
+    const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
+
     if (error) throw error;
+    if (closingChanged) await cascadeCashForward(supabase, outlet_id, date);
     // Write to Google Sheet (non-blocking)
     if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, 'daily_sales', submitted_by, { date }, { total_sale, swiggy_sale, zomato_sale, other_delivery_sale, cancelled_orders, complimentary_amount, complimentary_reason, zomato_district, upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note, cash_deposited, notes }).catch(() => {});
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/outlet-sales/cash-collection — Owner/Store Manager records an
+// actual cash collection/deposit for a specific outlet+date. This writes to the
+// SAME cash_deposited field the outlet manager's daily-sales form uses, so
+// there's one shared number regardless of who records it — not two competing ones.
+router.patch('/outlet-sales/cash-collection', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    const { outlet_id, date, cash_deposited, collected_by, note } = req.body;
+    if (!outlet_id || !date || cash_deposited === undefined) {
+      return res.status(400).json({ error: 'outlet_id, date, and cash_deposited are required' });
+    }
+
+    const { data: existing } = await supabase.from('daily_outlet_sales')
+      .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+
+    const record = {
+      outlet_id, date,
+      cash_deposited: Number(cash_deposited) || 0,
+      cash_deposited_by: collected_by || null,
+      cash_deposited_at: new Date().toISOString(),
+      // Preserve everything else already on the row — this endpoint only ever
+      // touches the deposited/collection fields, nothing else.
+      ...(existing ? {
+        total_sale: existing.total_sale, swiggy_sale: existing.swiggy_sale, zomato_sale: existing.zomato_sale,
+        other_delivery_sale: existing.other_delivery_sale, cancelled_orders: existing.cancelled_orders,
+        complimentary_amount: existing.complimentary_amount, complimentary_reason: existing.complimentary_reason,
+        zomato_district: existing.zomato_district, upi_collected: existing.upi_collected,
+        cash_collected: existing.cash_collected, prev_day_cash: existing.prev_day_cash,
+        cash_expense: existing.cash_expense, cash_expense_note: existing.cash_expense_note,
+        submitted_by: existing.submitted_by, submitted_at: existing.submitted_at, notes: existing.notes,
+      } : { notes: note || null }),
+    };
+
+    const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' }).select('*').single();
+    if (error) throw error;
+    await cascadeCashForward(supabase, outlet_id, date);
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -127,6 +127,7 @@ const api = {
   getLatestCash: (outlet_id, before_date) => get("/api/outlet-sales/latest-cash", { outlet_id, before_date }),
   submitOutletSales: (data) => post("/api/outlet-sales", data),
   verifyOutletSales: (data) => patch("/api/outlet-sales/verify", data),
+  recordCashCollection: (data) => patch("/api/outlet-sales/cash-collection", data),
 
   // ── Staff Demands (Food & Dress) ──
   getStaffDemandItems: () => get("/api/staff-demands/items"),
