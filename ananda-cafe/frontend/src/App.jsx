@@ -709,7 +709,7 @@ const PaytmRecon = () => {
 
 const DailyPnL = () => {
   const [selOutlet, setSelOutlet] = useState(null);
-  const [selDay, setSelDay] = useState(0);
+  const [selDay, setSelDay] = useState(1);
   const [pnlData, setPnlData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandSection, setExpandSection] = useState(null); // 'variable', 'fixed', 'purchase'
@@ -7317,6 +7317,7 @@ export default function AnandaCafe() {
   const [ownerTab, setOwnerTab] = useState("pnl");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
+  const [paymentsDropdown, setPaymentsDropdown] = useState(false);
   const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
@@ -7413,9 +7414,10 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "sales", label: "📤 Sales" }, { id: "paytm", label: "💳 Paytm" }, { id: "cash_ledger", label: "💵 Cash" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
     {/* BK Dropdown */}
@@ -7425,8 +7427,23 @@ export default function AnandaCafe() {
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
+          { id: "sales", label: "📤 Sales", sub: "Sales upload & summary" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
+            <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
+            <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
+          </button>
+        ))}
+      </div>
+    </>)}
+    {/* Payments Dropdown */}
+    {paymentsDropdown && (<>
+      <div onClick={() => setPaymentsDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
+      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+        {[{ id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
+          { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
+        ].map((t) => (
+          <button key={t.id} onClick={() => { setOwnerTab(t.id); setPaymentsDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
             <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
           </button>
