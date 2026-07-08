@@ -3629,6 +3629,7 @@ const DemandHistory = () => {
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || "sec23");
+  const [viewMode, setViewMode] = useState("recent"); // 'recent' (7-day AM/PM) or 'month' (day-wise per-item grid)
   const [expandedDay, setExpandedDay] = useState(null);
   const [expandedSlot, setExpandedSlot] = useState(null);
   const [editItem, setEditItem] = useState(null);
@@ -3851,11 +3852,20 @@ const DemandHistory = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📋 Demand History</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Last 7 days · Morning / PM split · Tap to expand · Edit quantities</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📋 Demand History</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{viewMode === "recent" ? "Last 7 days · Morning / PM split · Tap to expand · Edit quantities" : "Full month · day-wise per item · filter by category"}</p>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => setViewMode("recent")} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: viewMode === "recent" ? 700 : 500, border: viewMode === "recent" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === "recent" ? "#1A1A1A" : "#fff", color: viewMode === "recent" ? "#fff" : "#888" }}>📆 Last 7 Days</button>
+          <button onClick={() => setViewMode("month")} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: viewMode === "month" ? 700 : 500, border: viewMode === "month" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === "month" ? "#1A1A1A" : "#fff", color: viewMode === "month" ? "#fff" : "#888" }}>🗓️ Month View</button>
+        </div>
       </div>
 
+      {viewMode === "month" && <OutletActivityGrid mode="demand" />}
+
+      {viewMode === "recent" && <>
       {/* Outlet selector */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {OUTLETS.map(o => (
@@ -4006,6 +4016,7 @@ const DemandHistory = () => {
           </div>
         );
       })}
+      </>}
     </div>
   );
 };
@@ -4325,8 +4336,10 @@ const FranchiseBilling = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletActivityGrid = ({ mode }) => {
   const isClosing = mode === "closing";
+  const isDemand = mode === "demand";
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — cleared once the
@@ -4335,7 +4348,9 @@ const OutletActivityGrid = ({ mode }) => {
   const [drafts, setDrafts] = useState({});
   const [savingKey, setSavingKey] = useState(null);
   const currentUser = getCurrentUser();
-  const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
+  // Demand is a view-only rollup here (AM+PM merged per day) — corrections belong in the
+  // Last 7 Days view where a single demand record can be targeted unambiguously.
+  const canRecord = !isDemand && currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -4368,11 +4383,11 @@ const OutletActivityGrid = ({ mode }) => {
     const from = `${selMonth}-01`;
     const req = isClosing
       ? api.getClosingStocks({ outlet_id: selOutlet, from })
-      : api.getOrders({ outlet_id: selOutlet, from }).then((data) => (data || []).filter((d) => d.type === "wastage" && d.status !== "draft"));
+      : api.getOrders({ outlet_id: selOutlet, from }).then((data) => (data || []).filter((d) => d.type === (isDemand ? "manual" : "wastage") && d.status !== "draft"));
     req.then((data) => setRecords((data || []).filter((d) => d.date.startsWith(selMonth))))
       .catch(() => setRecords([]))
       .finally(() => setLoading(false));
-  }, [selOutlet, selMonth, isClosing]);
+  }, [selOutlet, selMonth, isClosing, isDemand]);
   useEffect(load, [load]);
 
   const draftKey = (itemId, date) => `${itemId}|${date}`;
@@ -4407,16 +4422,24 @@ const OutletActivityGrid = ({ mode }) => {
   }, [records]);
 
   const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
+  // item_id → section id (food, dairy, vegetable, ...) — used by the demand-mode category pills
+  const itemCategoryMap = useMemo(() => {
+    const m = {};
+    DEMAND_SECTIONS.forEach((s) => s.items.forEach((i) => { m[i.id] = s.id; }));
+    return m;
+  }, []);
   const items = useMemo(() => {
     return Object.keys(dayWise).map((id) => {
       const def = allDemandItems.find((i) => i.id === id);
       const total = Object.values(dayWise[id]).reduce((s, v) => s + v, 0);
-      return { id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', total };
-    }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total);
-  }, [dayWise, allDemandItems]);
+      return { id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', total, category: itemCategoryMap[id] || null };
+    }).filter((i) => i.total > 0 && (!selCategory || i.category === selCategory)).sort((a, b) => b.total - a.total);
+  }, [dayWise, allDemandItems, itemCategoryMap, selCategory]);
 
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+  const modeLabel = isClosing ? "closing stock" : isDemand ? "demand" : "wastage";
+  const modeTitle = isClosing ? "📊 Closing Stock" : isDemand ? "📋 Demand" : "🗑️ Wastage";
 
   const downloadCSV = () => {
     const headers = ["Item", "Unit", ...days.map((ds) => ds.slice(5)), "Total"];
@@ -4431,8 +4454,8 @@ const OutletActivityGrid = ({ mode }) => {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <div>
-          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{isClosing ? "📊 Closing Stock" : "🗑️ Wastage"}</h3>
-          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {isClosing ? "closing stock" : "wastage"} per item, all outlets — month-wise{canRecord ? " · click a value to correct it" : ""}</p>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{modeTitle}</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {modeLabel} per item, all outlets — month-wise{canRecord ? " · click a value to correct it" : ""}</p>
         </div>
         <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
           style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
@@ -4445,6 +4468,15 @@ const OutletActivityGrid = ({ mode }) => {
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
       </div>
+
+      {isDemand && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          <button onClick={() => setSelCategory(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCategory ? 700 : 500, border: !selCategory ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCategory ? "#1A1A1A" : "#fff", color: !selCategory ? "#fff" : "#888" }}>All Categories</button>
+          {DEMAND_SECTIONS.map((s) => (
+            <button key={s.id} onClick={() => setSelCategory(s.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCategory === s.id ? 700 : 500, border: selCategory === s.id ? "none" : `1px solid ${s.border}`, cursor: "pointer", fontFamily: "inherit", background: selCategory === s.id ? (s.color || "#1A1A1A") : (s.bg || "#fff"), color: selCategory === s.id ? "#fff" : (s.color || "#888") }}>{s.emoji} {s.titleHi}</button>
+          ))}
+        </div>
+      )}
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
 
@@ -4459,7 +4491,7 @@ const OutletActivityGrid = ({ mode }) => {
           </div>
 
           {items.length === 0 ? (
-            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No {isClosing ? "closing stock" : "wastage"} data for {outletName} in {monthLabel}</div>
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No {modeLabel} data for {outletName} in {monthLabel}</div>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
