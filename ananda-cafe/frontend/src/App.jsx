@@ -19,10 +19,20 @@ const OUTLETS = [
   { id: "gaursid", name: "Gaur Siddhartham (Franchise)", short: "GSID", franchise: true },
 ];
 const OWN_OUTLETS = OUTLETS.filter(o => !o.franchise);
-const today = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; };
-const istNow = () => { const d = new Date(); return new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); };
+// Date.now() is an absolute instant (timezone-agnostic); shifting it by IST's fixed
+// +5:30 and reading it back via UTC-based methods gives correct IST wall-clock digits
+// regardless of what timezone the device running this code is set to. (Previously this
+// also added d.getTimezoneOffset(), which cancels the shift out entirely on any device
+// already set to IST, silently making "now" run ~5.5 hours behind real IST.)
+const today = () => new Date(Date.now() + 330 * 60000).toISOString().split("T")[0];
+const istNow = () => new Date(Date.now() + 330 * 60000);
+// Safe regardless of device timezone: getDate()/setDate() here operate as a pure
+// get+set roundtrip on the same object (a translation by whole days), which is
+// timezone-invariant since IST/UTC never observe DST.
 const istDateAgo = (days) => { const ist = istNow(); ist.setDate(ist.getDate() - days); return ist.toISOString().split("T")[0]; };
-const istHour = () => { const d = new Date(); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.getHours(); };
+// Must read via getUTCHours(), not getHours() — istNow()'s Date object only carries
+// correct IST digits when read through UTC-based getters.
+const istHour = () => istNow().getUTCHours();
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
   const h = istHour();
@@ -740,7 +750,7 @@ const DailyPnL = () => {
     const opts = [];
     const now = istNow();
     for (let i = 0; i < 12; i++) {
-      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
       const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
       const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
       opts.push({ value, label });
@@ -1845,7 +1855,7 @@ const BaseKitchen = () => {
   const load = useCallback(() => {
     setLoading(true);
     // Load today's orders AND previous day's orders (for night demands)
-    const prevDate = (() => { const d = new Date(); d.setDate(d.getDate() - 1); const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000); return ist.toISOString().split("T")[0]; })();
+    const prevDate = istDateAgo(1);
     Promise.all([
       api.getOrders({ date: selDate }),
       selDate === today() ? api.getOrders({ date: prevDate }) : Promise.resolve([]),
@@ -1861,8 +1871,8 @@ const BaseKitchen = () => {
   const getOrderHour = (o) => {
     if (!o.submitted_at) return 12;
     const d = new Date(o.submitted_at);
-    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
-    return ist.getHours();
+    const ist = new Date(d.getTime() + 330 * 60000);
+    return ist.getUTCHours();
   };
 
   const morningOrders = [
@@ -3684,8 +3694,8 @@ const DemandHistory = () => {
   const toIST = (ts) => {
     if (!ts) return "";
     const d = new Date(ts);
-    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
-    const h = ist.getHours(), m = ist.getMinutes();
+    const ist = new Date(d.getTime() + 330 * 60000);
+    const h = ist.getUTCHours(), m = ist.getUTCMinutes();
     const ampm = h >= 12 ? "PM" : "AM";
     return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
   };
@@ -4028,7 +4038,7 @@ const DemandHistory = () => {
 const FranchiseBilling = () => {
   const franchiseOutlets = OUTLETS.filter((o) => o.franchise);
   const [selOutlet, setSelOutlet] = useState(franchiseOutlets[0]?.id || null);
-  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rateCard, setRateCard] = useState([]);
@@ -4049,7 +4059,7 @@ const FranchiseBilling = () => {
     const opts = [];
     const now = istNow();
     for (let i = 0; i < 12; i++) {
-      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
       const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
       const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
       opts.push({ value, label });
@@ -4338,7 +4348,7 @@ const OutletActivityGrid = ({ mode }) => {
   const isClosing = mode === "closing";
   const isDemand = mode === "demand";
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
-  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4356,7 +4366,7 @@ const OutletActivityGrid = ({ mode }) => {
     const opts = [];
     const now = istNow();
     for (let i = 0; i < 12; i++) {
-      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
       const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
       const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
       opts.push({ value, label });
@@ -4556,7 +4566,7 @@ const LOG_CATEGORIES = [
 
 const SystemLogs = () => {
   const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
-  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [activeCats, setActiveCats] = useState(() => new Set(LOG_CATEGORIES.map((c) => c.id)));
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4565,7 +4575,7 @@ const SystemLogs = () => {
     const opts = [];
     const now = istNow();
     for (let i = 0; i < 12; i++) {
-      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
       const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
       const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
       opts.push({ value, label });
@@ -4597,8 +4607,8 @@ const SystemLogs = () => {
   const toIST = (ts) => {
     if (!ts) return "";
     const d = new Date(ts);
-    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
-    return ist.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true });
+    const ist = new Date(d.getTime() + 330 * 60000);
+    return ist.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" });
   };
 
   return (
