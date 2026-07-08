@@ -11,6 +11,7 @@ const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
 const { requireAuth, requireOwner, requireRole, ensureOutletAccess, invalidateUser } = require('./authGuards');
+const { todayIST } = require('../helpers');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -641,7 +642,7 @@ calculated_qty: e.calculated_qty,
 issued_qty: e.issued_qty,
 variance: e.variance,
 source: e.source || 'recipe',
-audit_date: e.date || new Date().toISOString().split('T')[0],
+audit_date: e.date || todayIST(),
 }));
 
 const { error } = await supabase.from('issuance_audit').insert(rows);
@@ -1159,7 +1160,7 @@ router.post('/demands', async (req, res) => {
       // other than the item's default demand unit — e.g. { desi_ghee: 'Kg' }.
       items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null,
       note: note || null,
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || todayIST(),
       demand_slot: demand_slot || null,
       submitted_by: submitted_by || null,
       status: status || 'submitted',
@@ -1187,7 +1188,7 @@ router.post('/purchases', async (req, res) => {
       payment_mode: payment_mode || 'cash',
       note: note || null,
       submitted_by: submitted_by || null,
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || todayIST(),
     };
     
     // Try with items column first, fallback without it
@@ -1206,7 +1207,7 @@ router.post('/purchases', async (req, res) => {
     }
     
     // Write to Google Sheet (non-blocking)
-    if (sheetsHelper && outlet_id) sheetsHelper.writeToSheet(supabase, outlet_id, 'purchase', submitted_by, { date: date || new Date().toISOString().split('T')[0] }, { items: items || [], total: totalAmount, payment_mode }).catch(() => {});
+    if (sheetsHelper && outlet_id) sheetsHelper.writeToSheet(supabase, outlet_id, 'purchase', submitted_by, { date: date || todayIST() }, { items: items || [], total: totalAmount, payment_mode }).catch(() => {});
     
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1294,7 +1295,7 @@ router.get('/orders/consolidated', async (req, res) => {
   try {
     const { date } = req.query;
     const { data, error } = await supabase.from('demands').select('*')
-      .eq('date', date || new Date().toISOString().split('T')[0])
+      .eq('date', date || todayIST())
       .in('type', ['manual', 'photo'])
       .in('status', ['submitted', 'received', 'issued', 'fulfilled']);
     if (error) throw error;
@@ -1306,7 +1307,7 @@ router.get('/orders/consolidated', async (req, res) => {
 router.get('/orders/dashboard-summary', async (req, res) => {
   try {
     const { date } = req.query;
-    const d = date || new Date().toISOString().split('T')[0];
+    const d = date || todayIST();
 
     const [demands, purchases, issuances] = await Promise.all([
       supabase.from('demands').select('*').eq('date', d).order('submitted_at', { ascending: false }),
@@ -1649,7 +1650,7 @@ router.post('/staff-demands', async (req, res) => {
     if (category === 'food' && shift) {
       const { data, error } = await supabase.from('staff_demands').upsert({
         outlet_id,
-        date: date || new Date().toISOString().split('T')[0],
+        date: date || todayIST(),
         shift,
         category,
         items,
@@ -1664,7 +1665,7 @@ router.post('/staff-demands', async (req, res) => {
     // For dress: always insert (no upsert)
     const { data, error } = await supabase.from('staff_demands').insert({
       outlet_id,
-      date: date || new Date().toISOString().split('T')[0],
+      date: date || todayIST(),
       shift: shift || null,
       category,
       items,
@@ -2800,7 +2801,7 @@ router.post('/purchase-orders', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
     const { items, notes, created_by } = req.body;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayIST();
     const { data: existing } = await supabase.from('purchase_orders')
       .select('id').eq('date', today);
     const seq = (existing?.length || 0) + 1;
@@ -2827,6 +2828,100 @@ router.patch('/purchase-orders/:id', async (req, res) => {
     const { error } = await supabase.from('purchase_orders').update(updates).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/system-logs — Unified, owner-only activity log across every
+// submission/edit action in the app: who did what, when, for which outlet+date.
+// Normalizes several tables (demands, closing_stocks, daily_outlet_sales,
+// purchases, qty_corrections) into one flat, chronological timeline so managers
+// can't dispute what was actually submitted and when.
+router.get('/system-logs', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { outlet_id, from, to } = req.query;
+    const defaultFrom = new Date(`${todayIST()}T00:00:00Z`); defaultFrom.setUTCDate(defaultFrom.getUTCDate() - 30);
+    const fromDate = from || defaultFrom.toISOString().split('T')[0];
+    const toDate = to || todayIST();
+
+    const applyOutlet = (q) => outlet_id && outlet_id !== 'all' ? q.eq('outlet_id', outlet_id) : q;
+
+    const [demandsRes, closingRes, salesRes, purchasesRes, correctionsRes] = await Promise.all([
+      applyOutlet(supabase.from('demands').select('id, outlet_id, date, type, demand_slot, items, dispatch_items, status, submitted_by, submitted_at, dispatched_by, dispatched_at').gte('date', fromDate).lte('date', toDate)),
+      applyOutlet(supabase.from('closing_stocks').select('outlet_id, date, items, submitted_by, submitted_at').gte('date', fromDate).lte('date', toDate)),
+      applyOutlet(supabase.from('daily_outlet_sales').select('outlet_id, date, total_sale, cash_collected, cash_deposited, cash_deposited_by, cash_deposited_at, submitted_by, submitted_at').gte('date', fromDate).lte('date', toDate)),
+      applyOutlet(supabase.from('purchases').select('outlet_id, date, total_amount, payment_mode, submitted_by, submitted_at').gte('date', fromDate).lte('date', toDate)),
+      applyOutlet(supabase.from('qty_corrections').select('outlet_id, date, item_id, old_qty, new_qty, reason, corrected_by, corrected_at').gte('date', fromDate).lte('date', toDate)),
+    ]);
+
+    const logs = [];
+
+    (demandsRes.data || []).forEach((d) => {
+      const itemCount = Object.keys(d.items || {}).length;
+      if (d.type === 'manual') {
+        logs.push({
+          category: 'demand', outlet_id: d.outlet_id, date: d.date,
+          actor: d.submitted_by || 'Unknown', timestamp: d.submitted_at,
+          detail: `${d.demand_slot === 'evening' ? 'Evening' : 'Morning'} demand submitted — ${itemCount} items`,
+        });
+      } else if (d.type === 'wastage') {
+        logs.push({
+          category: 'wastage', outlet_id: d.outlet_id, date: d.date,
+          actor: d.submitted_by || 'Unknown', timestamp: d.submitted_at,
+          detail: `Wastage recorded — ${itemCount} items`,
+        });
+      }
+      if (d.dispatched_at) {
+        const dispatchCount = Object.keys(d.dispatch_items || {}).length;
+        logs.push({
+          category: 'dispatch', outlet_id: d.outlet_id, date: d.date,
+          actor: d.dispatched_by || 'Unknown', timestamp: d.dispatched_at,
+          detail: `Dispatched (${d.status}) — ${dispatchCount} items`,
+        });
+      }
+    });
+
+    (closingRes.data || []).forEach((c) => {
+      logs.push({
+        category: 'closing_stock', outlet_id: c.outlet_id, date: c.date,
+        actor: c.submitted_by || 'Unknown', timestamp: c.submitted_at,
+        detail: `Closing stock submitted — ${Object.keys(c.items || {}).length} items`,
+      });
+    });
+
+    (salesRes.data || []).forEach((s) => {
+      logs.push({
+        category: 'sales', outlet_id: s.outlet_id, date: s.date,
+        actor: s.submitted_by || 'Unknown', timestamp: s.submitted_at,
+        detail: `Daily sales submitted — Total ₹${Number(s.total_sale || 0).toLocaleString('en-IN')}, Cash ₹${Number(s.cash_collected || 0).toLocaleString('en-IN')}`,
+      });
+      if (s.cash_deposited_at) {
+        logs.push({
+          category: 'cash', outlet_id: s.outlet_id, date: s.date,
+          actor: s.cash_deposited_by || 'Unknown', timestamp: s.cash_deposited_at,
+          detail: `Cash collection recorded — ₹${Number(s.cash_deposited || 0).toLocaleString('en-IN')}`,
+        });
+      }
+    });
+
+    (purchasesRes.data || []).forEach((p) => {
+      logs.push({
+        category: 'purchase', outlet_id: p.outlet_id, date: p.date,
+        actor: p.submitted_by || 'Unknown', timestamp: p.submitted_at,
+        detail: `Cash purchase — ₹${Number(p.total_amount || 0).toLocaleString('en-IN')} (${p.payment_mode || 'cash'})`,
+      });
+    });
+
+    (correctionsRes.data || []).forEach((c) => {
+      logs.push({
+        category: 'correction', outlet_id: c.outlet_id, date: c.date,
+        actor: c.corrected_by || 'Unknown', timestamp: c.corrected_at,
+        detail: `Qty corrected — ${c.item_id}: ${c.old_qty} → ${c.new_qty} (${c.reason || 'no reason given'})`,
+      });
+    });
+
+    logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    res.json(logs);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -167,6 +167,8 @@ const api = {
   getPurchaseOrder: (id) => get(`/api/purchase-orders/${id}`),
   createPurchaseOrder: (data) => post("/api/purchase-orders", data),
   updatePurchaseOrder: (id, data) => patch(`/api/purchase-orders/${id}`, data),
+  // System Logs
+  getSystemLogs: (params) => get("/api/system-logs", params),
   // History
   getChallanHistory: () => get("/api/history/challans"),
   getDispatchHistory: () => get("/api/history/dispatches"),

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { requireOwner } = require("./authGuards");
+const { todayIST } = require("../helpers");
 
 // PetPooja API config
 const PETPOOJA_API_KEY = process.env.PETPOOJA_API_KEY;
@@ -15,7 +16,7 @@ router.post("/sync", async (req, res) => {
   }
 
   const { date } = req.body;
-  const targetDate = date || new Date().toISOString().split("T")[0];
+  const targetDate = date || todayIST();
 
   // TODO: Replace with actual PetPooja API call when you have the keys
   res.json({

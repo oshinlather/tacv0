@@ -30,7 +30,7 @@ const getDemandWindow = () => {
   if (h >= 11 && h < 16) return { id: "day", label: "☀️ Day Order", active: true };
   return { id: "anytime", label: "📋 Manual Entry", active: true };
 };
-const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 const fmt = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
 const pct = (n) => (n || 0).toFixed(1) + "%";
 
@@ -677,7 +677,7 @@ const PaytmRecon = () => {
           const diff = actual != null ? actual - rep : null;
           const isEditing = editCell === d;
           const dayNum = Number(d.slice(8, 10));
-          const dayName = new Date(d).toLocaleDateString("en", { weekday: "short" });
+          const dayName = new Date(d).toLocaleDateString("en", { weekday: "short", timeZone: "Asia/Kolkata" });
           const isFuture = d > today();
           return (
             <div key={d} style={{ display: "grid", gridTemplateColumns: "70px 1fr 1fr 80px", padding: "8px 10px", borderBottom: "1px solid #F0F0EC", alignItems: "center", background: isFuture ? "#FAFAF8" : "transparent", opacity: isFuture ? 0.4 : 1 }}>
@@ -1501,8 +1501,8 @@ const CorrectionsLog = () => {
                 <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: r.reason === "unit_error" ? "#FEF2F2" : "#F5F5F3", color: r.reason === "unit_error" ? "#991B1B" : "#555", display: "inline-block", width: "fit-content" }}>{reasonLabel(r.reason)}</span>
                 <span style={{ fontSize: 11, color: "#555" }}>{r.corrected_by}</span>
                 <span style={{ textAlign: "right", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono'" }}>
-                  {new Date(r.corrected_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
-                  <div>{new Date(r.corrected_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div>
+                  {new Date(r.corrected_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" })}
+                  <div>{new Date(r.corrected_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</div>
                 </span>
               </div>
             );
@@ -1812,7 +1812,7 @@ const tdS = { padding: "10px 14px" };
 const printSection = (sectionId, title) => {
   const el = document.getElementById(sectionId); if (!el) return;
   const pw = window.open("", "_blank");
-  const ds = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric" });
+  const ds = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
   pw.document.write(`<!DOCTYPE html><html><head><title>${title}</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" /><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px;background:#fff}.print-header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:20px}.print-header h1{font-size:18px;font-weight:800}.print-header span{font-size:12px;color:#888}table{width:100%;border-collapse:collapse;font-size:12px}th{padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD;background:#F8F8F5}td{padding:8px 10px;border-bottom:1px solid #EEE}.no-print,button,input{display:none!important}@media print{body{padding:0}}</style></head><body><div class="print-header"><h1>The The Ananda Cafe — ${title}</h1><span>${ds}</span></div>${el.innerHTML}</body></html>`);
   pw.document.close(); setTimeout(() => { pw.focus(); pw.print(); }, 400);
 };
@@ -2056,7 +2056,7 @@ const Dispatch = () => {
     const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
     const categories = getItemsByCategory(demanded);
     const dateStr = order.date || today();
-    const timeStr = order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    const timeStr = order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
     const printChallan = () => {
       const pw = window.open("", "_blank");
@@ -2066,7 +2066,7 @@ const Dispatch = () => {
         const short = disp < dem;
         return `<tr style="${short ? "background:#FEF2F2" : ""}"><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${getItemName(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;color:#999;font-size:11px">${getItemUnit(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${dem}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:${short ? "#DC2626" : "#16A34A"}">${disp}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-size:11px;color:${short ? "#DC2626" : "#16A34A"}">${short ? "⬇ " + (dem - disp) + " short" : disp === dem ? "✓" : "⬆ +" + (disp - dem)}</td></tr>`;
       }).join("");
-      pw.document.write(`<!DOCTYPE html><html><head><title>Dispatch Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">The The Ananda Cafe — Dispatch Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${outlet?.name || order.outlet_id}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${dateStr}</div><div style="font-size:11px;color:#BBB">${timeStr}</div></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;display:flex;justify-content:space-between;font-size:11px;color:#999"><span>Total: ${allIds.length} items</span><span>Generated: ${new Date().toLocaleString("en-IN")}</span></div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Transport</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Outlet Manager</div></div></div></body></html>`);
+      pw.document.write(`<!DOCTYPE html><html><head><title>Dispatch Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">The The Ananda Cafe — Dispatch Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${outlet?.name || order.outlet_id}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${dateStr}</div><div style="font-size:11px;color:#BBB">${timeStr}</div></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;display:flex;justify-content:space-between;font-size:11px;color:#999"><span>Total: ${allIds.length} items</span><span>Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</span></div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Transport</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Outlet Manager</div></div></div></body></html>`);
       pw.document.close();
       setTimeout(() => { pw.focus(); pw.print(); }, 400);
     };
@@ -2164,7 +2164,7 @@ const Dispatch = () => {
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.short || order.outlet_id}</span>
                 <span style={{ fontSize: 10, color: "#999" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
-                <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>
+                <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
@@ -2247,7 +2247,7 @@ const Dispatch = () => {
                 <span style={{ padding: "1px 6px", borderRadius: 3, fontSize: 9, fontWeight: 700, background: hasShortage ? "#FDE68A" : "#DCFCE7", color: hasShortage ? "#B45309" : "#16A34A" }}>{hasShortage ? "PARTIAL" : "FULL"}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 11, color: "#999" }}>{order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                <span style={{ fontSize: 11, color: "#999" }}>{order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : ""}</span>
                 <span style={{ fontSize: 11, color: "#2563EB", fontWeight: 600 }}>📋 Challan →</span>
               </div>
             </div>
@@ -2624,7 +2624,7 @@ const Inventory = () => {
       {movements.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No movements yet</div> : movements.map((m) => (
         <div key={m.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div><span style={{ fontSize: 12, fontWeight: 700, color: m.type === "stock_in" ? "#16A34A" : m.type === "stock_out" ? "#DC2626" : "#B45309" }}>{m.type === "stock_in" ? "📥 IN" : m.type === "stock_out" ? "📤 OUT" : "🔄 ADJ"}</span><span style={{ fontSize: 12, color: "#888", marginLeft: 8 }}>{m.reason}</span></div>
-          <div style={{ textAlign: "right" }}><div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: m.quantity > 0 ? "#16A34A" : "#DC2626" }}>{m.quantity > 0 ? "+" : ""}{m.quantity}</div><div style={{ fontSize: 10, color: "#999" }}>{new Date(m.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })} {new Date(m.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</div></div>
+          <div style={{ textAlign: "right" }}><div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: m.quantity > 0 ? "#16A34A" : "#DC2626" }}>{m.quantity > 0 ? "+" : ""}{m.quantity}</div><div style={{ fontSize: 10, color: "#999" }}>{new Date(m.created_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", timeZone: "Asia/Kolkata" })} {new Date(m.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</div></div>
         </div>
       ))}
     </div>);
@@ -4466,6 +4466,125 @@ const ClosingStockHistory = () => <OutletActivityGrid mode="closing" />;
 const WastageHistory = () => <OutletActivityGrid mode="wastage" />;
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  SYSTEM LOGS — unified, owner-only activity timeline across every submission/
+//  edit action (demand, wastage, dispatch, sales, closing stock, cash, purchase,
+//  qty correction) so nobody can dispute what was actually submitted and when.
+// ═════════════════════════════════════════════════════════════════════════════
+const LOG_CATEGORIES = [
+  { id: "demand", label: "📋 Demand", color: "#B45309", bg: "#FFFBEB" },
+  { id: "dispatch", label: "🚚 Dispatch", color: "#2563EB", bg: "#EFF6FF" },
+  { id: "sales", label: "💰 Sales", color: "#16A34A", bg: "#F0FDF4" },
+  { id: "closing_stock", label: "📊 Closing Stock", color: "#7C3AED", bg: "#F5F3FF" },
+  { id: "wastage", label: "🗑️ Wastage", color: "#DC2626", bg: "#FEF2F2" },
+  { id: "cash", label: "💵 Cash", color: "#2563EB", bg: "#EFF6FF" },
+  { id: "purchase", label: "🧾 Purchase", color: "#B45309", bg: "#FFF7ED" },
+  { id: "correction", label: "✏️ Correction", color: "#DC2626", bg: "#FEF2F2" },
+];
+
+const SystemLogs = () => {
+  const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
+  const [activeCats, setActiveCats] = useState(() => new Set(LOG_CATEGORIES.map((c) => c.id)));
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    const [y, mo] = selMonth.split("-").map(Number);
+    const from = `${selMonth}-01`;
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const to = `${selMonth}-${String(daysInMo).padStart(2, "0")}`;
+    api.getSystemLogs({ outlet_id: selOutlet || "all", from, to })
+      .then((data) => setLogs(data || []))
+      .catch(() => setLogs([]))
+      .finally(() => setLoading(false));
+  }, [selOutlet, selMonth]);
+
+  const toggleCat = (id) => setActiveCats((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const filtered = logs.filter((l) => activeCats.has(l.category));
+  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+
+  const toIST = (ts) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    const ist = new Date(d.getTime() + (330 + d.getTimezoneOffset()) * 60000);
+    return ist.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true });
+  };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 System Logs</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Who did what, when, for which outlet and date — every submission and edit, unfiltered</p>
+      </div>
+
+      {/* Category filters */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        {LOG_CATEGORIES.map((c) => (
+          <button key={c.id} onClick={() => toggleCat(c.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: activeCats.has(c.id) ? 700 : 500, border: activeCats.has(c.id) ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: activeCats.has(c.id) ? c.bg : "#fff", color: activeCats.has(c.id) ? c.color : "#BBB", opacity: activeCats.has(c.id) ? 1 : 0.6 }}>{c.label}</button>
+        ))}
+      </div>
+
+      {/* Outlet + month filters */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+        <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+      {!loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", fontSize: 12, color: "#888" }}>{monthLabel} · {filtered.length} events</div>
+          {filtered.length === 0 ? (
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No activity matching these filters</div>
+          ) : (
+            filtered.map((l, i) => {
+              const cat = LOG_CATEGORIES.find((c) => c.id === l.category);
+              const outletLabel = OUTLETS.find((o) => o.id === l.outlet_id)?.short || l.outlet_id;
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", borderBottom: "1px solid #F0F0EC" }}>
+                  <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: cat?.bg, color: cat?.color, whiteSpace: "nowrap" }}>{cat?.label || l.category}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5 }}>
+                      <strong>{l.actor}</strong> — {l.detail}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{outletLabel} · business date {l.date} · logged {toIST(l.timestamp)}</div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  COGS DASHBOARD
 // ═════════════════════════════════════════════════════════════════════════════
 const ITEM_COST = { idli: 18, dosa: 20, masala_dosa: 28, medu_vada: 22, upma: 16, poha: 15, set_dosa: 24, sambhar_vada: 25, halwa: 14, filter_coffee: 8, rava_dosa: 26, uttapam: 23 };
@@ -4562,6 +4681,18 @@ const OutletMgr = ({ onBack }) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
     const filledCount = Object.values(draft).filter(v => v > 0).length;
     if (type === "manual" && filledCount === 0) { alert("Please fill at least 1 item"); return; }
+    // Guard against a stale delivery date: if the form sat open long enough that the
+    // chosen morning date has already passed by actual submit time, don't silently
+    // submit a demand for a bygone day — send them back to re-pick.
+    if (type === "manual" && demandSlot === "morning") {
+      const chosenDate = morningDeliveryDate || istDateAgo(-1);
+      if (chosenDate < today()) {
+        alert(`⚠️ The delivery date you picked (${chosenDate}) has already passed — it's now ${today()}.\n\nPlease re-select the delivery date.`);
+        setDemandSlot(null);
+        setPickingMorningDate(true);
+        return;
+      }
+    }
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
@@ -7145,7 +7276,7 @@ export default function AnandaCafe() {
   const [ownerTab, setOwnerTab] = useState("pnl");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections"];
+  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -7265,7 +7396,8 @@ export default function AnandaCafe() {
     {auditDropdown && (<>
       <div onClick={() => setAuditDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
-        {[{ id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
+        {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
+          { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
@@ -7322,6 +7454,7 @@ export default function AnandaCafe() {
       )}
       {auditUnlocked && ownerTab === "corrections" && <CorrectionsLog />}
       {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
+      {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
