@@ -424,9 +424,7 @@ const CashLedger = () => {
   const [latestByOutlet, setLatestByOutlet] = useState({});
   const [editDate, setEditDate] = useState(null);
   const [editAmt, setEditAmt] = useState("");
-  const [editCollected, setEditCollected] = useState("");
   const [editBy, setEditBy] = useState("");
-  const [editReason, setEditReason] = useState("");
   const [saving, setSaving] = useState(false);
 
   const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
@@ -468,22 +466,14 @@ const CashLedger = () => {
     const r = rowFor(date);
     setEditDate(date);
     setEditAmt(r ? String(r.cash_deposited || 0) : "0");
-    setEditCollected(r ? String(r.cash_collected || 0) : "0");
     setEditBy(currentUser?.name || "");
-    setEditReason("");
   };
 
   const saveCollection = async () => {
     if (!editDate) return;
     setSaving(true);
     try {
-      await api.recordCashCollection({
-        outlet_id: selOutlet, date: editDate,
-        cash_deposited: Number(editAmt) || 0,
-        cash_collected: Number(editCollected) || 0,
-        collected_by: editBy || currentUser?.name,
-        reason: editReason || undefined,
-      });
+      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || currentUser?.name });
       setEditDate(null);
       loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
@@ -562,29 +552,18 @@ const CashLedger = () => {
       </div>
     )}
 
-    {/* Edit cash entry modal */}
+    {/* Record collection modal */}
     {editDate && (<>
       <div onClick={() => setEditDate(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
-      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 320, padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>✏️ Edit Cash Entry</div>
+      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>💵 Record Collection</div>
         <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editDate}</div>
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Cash collected (sales day)</div>
-        <input type="number" inputMode="numeric" autoFocus value={editCollected} onChange={(e) => setEditCollected(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Cash deposited / collected by owner</div>
-        <input type="number" inputMode="numeric" value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>By</div>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected / deposited</div>
+        <input type="number" inputMode="numeric" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Collected by</div>
         <input value={editBy} onChange={(e) => setEditBy(e.target.value)} placeholder="e.g. AVP Rahul"
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Reason (if correcting collected amount)</div>
-        <select value={editReason} onChange={(e) => setEditReason(e.target.value)}
-          style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }}>
-          <option value="">-- Reason --</option>
-          <option value="typo">Typo</option>
-          <option value="genuine_correction">Genuine correction</option>
-          <option value="other">Other</option>
-        </select>
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
         <div style={{ display: "flex", gap: 6 }}>
           <button onClick={saveCollection} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
           <button onClick={() => setEditDate(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>

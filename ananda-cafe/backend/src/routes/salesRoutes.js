@@ -1009,22 +1009,15 @@ router.post('/outlet-sales', async (req, res) => {
 });
 
 // ── PATCH /api/outlet-sales/cash-collection — Owner/Store Manager records an
-// actual cash collection/deposit for a specific outlet+date, and/or corrects the
-// "cash_collected" figure the outlet manager entered on their sales submission.
-// cash_deposited writes straight through (that field's own by/at columns already
-// track who touched it). cash_collected corrections are also logged to
-// qty_corrections (item_id: 'cash_collected') so they show up in the Corrections
-// Log / System Logs alongside every other manual override — same audit trail,
-// not a silent edit.
+// actual cash collection/deposit for a specific outlet+date. This writes to the
+// SAME cash_deposited field the outlet manager's daily-sales form uses, so
+// there's one shared number regardless of who records it — not two competing ones.
 router.patch('/outlet-sales/cash-collection', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
-    const { outlet_id, date, cash_deposited, cash_collected, collected_by, reason, note } = req.body;
-    if (!outlet_id || !date) {
-      return res.status(400).json({ error: 'outlet_id and date are required' });
-    }
-    if (cash_deposited === undefined && cash_collected === undefined) {
-      return res.status(400).json({ error: 'cash_deposited or cash_collected is required' });
+    const { outlet_id, date, cash_deposited, collected_by, note } = req.body;
+    if (!outlet_id || !date || cash_deposited === undefined) {
+      return res.status(400).json({ error: 'outlet_id, date, and cash_deposited are required' });
     }
 
     const { data: existing } = await supabase.from('daily_outlet_sales')
@@ -1032,8 +1025,11 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
 
     const record = {
       outlet_id, date,
+      cash_deposited: Number(cash_deposited) || 0,
+      cash_deposited_by: collected_by || null,
+      cash_deposited_at: new Date().toISOString(),
       // Preserve everything else already on the row — this endpoint only ever
-      // touches the deposited/collected fields, nothing else.
+      // touches the deposited/collection fields, nothing else.
       ...(existing ? {
         total_sale: existing.total_sale, swiggy_sale: existing.swiggy_sale, zomato_sale: existing.zomato_sale,
         other_delivery_sale: existing.other_delivery_sale, cancelled_orders: existing.cancelled_orders,
@@ -1041,36 +1037,12 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
         zomato_district: existing.zomato_district, upi_collected: existing.upi_collected,
         cash_collected: existing.cash_collected, prev_day_cash: existing.prev_day_cash,
         cash_expense: existing.cash_expense, cash_expense_note: existing.cash_expense_note,
-        cash_deposited: existing.cash_deposited,
         submitted_by: existing.submitted_by, submitted_at: existing.submitted_at, notes: existing.notes,
       } : { notes: note || null }),
     };
 
-    if (cash_deposited !== undefined) {
-      record.cash_deposited = Number(cash_deposited) || 0;
-      record.cash_deposited_by = collected_by || null;
-      record.cash_deposited_at = new Date().toISOString();
-    }
-
-    let collectedCorrection = null;
-    if (cash_collected !== undefined) {
-      const oldCollected = Number(existing?.cash_collected || 0);
-      const newCollected = Number(cash_collected) || 0;
-      record.cash_collected = newCollected;
-      if (oldCollected !== newCollected) collectedCorrection = { old: oldCollected, new: newCollected };
-    }
-
     const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' }).select('*').single();
     if (error) throw error;
-
-    if (collectedCorrection) {
-      await supabase.from('qty_corrections').insert({
-        demand_id: null, outlet_id, date, item_id: 'cash_collected',
-        old_qty: collectedCorrection.old, new_qty: collectedCorrection.new, unit: null,
-        reason: reason || null, corrected_by: collected_by || 'owner',
-      });
-    }
-
     await cascadeCashForward(supabase, outlet_id, date);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2941,13 +2913,10 @@ router.get('/system-logs', async (req, res) => {
     });
 
     (correctionsRes.data || []).forEach((c) => {
-      const isCash = c.item_id === 'cash_collected';
       logs.push({
         category: 'correction', outlet_id: c.outlet_id, date: c.date,
         actor: c.corrected_by || 'Unknown', timestamp: c.corrected_at,
-        detail: isCash
-          ? `Cash collected corrected — ₹${Number(c.old_qty).toLocaleString('en-IN')} → ₹${Number(c.new_qty).toLocaleString('en-IN')} (${c.reason || 'no reason given'})`
-          : `Qty corrected — ${c.item_id}: ${c.old_qty} → ${c.new_qty} (${c.reason || 'no reason given'})`,
+        detail: `Qty corrected — ${c.item_id}: ${c.old_qty} → ${c.new_qty} (${c.reason || 'no reason given'})`,
       });
     });
 
