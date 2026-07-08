@@ -4329,6 +4329,12 @@ const OutletActivityGrid = ({ mode }) => {
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; });
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [editCell, setEditCell] = useState(null); // { itemId, itemName, unit, date, currentVal }
+  const [editVal, setEditVal] = useState("");
+  const [editReason, setEditReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const currentUser = getCurrentUser();
+  const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -4355,7 +4361,7 @@ const OutletActivityGrid = ({ mode }) => {
     return result;
   }, [selMonth]);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!selOutlet || !selMonth) return;
     setLoading(true);
     const from = `${selMonth}-01`;
@@ -4366,6 +4372,24 @@ const OutletActivityGrid = ({ mode }) => {
       .catch(() => setRecords([]))
       .finally(() => setLoading(false));
   }, [selOutlet, selMonth, isClosing]);
+  useEffect(load, [load]);
+
+  const openEdit = (itemId, itemName, unit, date, currentVal) => {
+    setEditCell({ itemId, itemName, unit, date, currentVal });
+    setEditVal(String(currentVal));
+    setEditReason("");
+  };
+
+  const saveEdit = async () => {
+    if (!editCell) return;
+    setSaving(true);
+    try {
+      await api.editItemQty(selOutlet, editCell.date, editCell.itemId, Number(editVal) || 0, editReason || undefined, isClosing ? "closing_stock" : "wastage");
+      setEditCell(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
 
   // Per-item, per-day qty — { item_id: { date: qty } }. Closing-stock keys carry a cs_
   // prefix (cs_butter); normalize to the bare item id so lookups match either source.
@@ -4404,19 +4428,21 @@ const OutletActivityGrid = ({ mode }) => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{isClosing ? "📊 Closing Stock" : "🗑️ Wastage"}</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {isClosing ? "closing stock" : "wastage"} per item, all outlets — month-wise</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{isClosing ? "📊 Closing Stock" : "🗑️ Wastage"}</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {isClosing ? "closing stock" : "wastage"} per item, all outlets — month-wise{canRecord ? " · click a value to correct it" : ""}</p>
+        </div>
+        <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
-        <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
-          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
-          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
@@ -4448,7 +4474,14 @@ const OutletActivityGrid = ({ mode }) => {
                       <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
                       {days.map((ds) => {
                         const v = (dayWise[i.id] || {})[ds] || 0;
-                        return <td key={ds} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD" }}>{v > 0 ? Math.round(v * 100) / 100 : "—"}</td>;
+                        const editable = canRecord && v > 0;
+                        return (
+                          <td key={ds} onClick={editable ? () => openEdit(i.id, i.name, i.unit, ds, Math.round(v * 100) / 100) : undefined}
+                            style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD", cursor: editable ? "pointer" : "default" }}
+                            title={editable ? "Click to correct" : undefined}>
+                            {v > 0 ? Math.round(v * 100) / 100 : "—"}
+                          </td>
+                        );
                       })}
                     </tr>
                   ))}
@@ -4458,6 +4491,31 @@ const OutletActivityGrid = ({ mode }) => {
           )}
         </div>
       )}
+
+      {/* Correction modal */}
+      {editCell && (<>
+        <div onClick={() => setEditCell(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+        <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>✏️ Correct {editCell.itemName}</div>
+          <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editCell.date}</div>
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Current: {editCell.currentVal} {editCell.unit}</div>
+          <input type="number" inputMode="decimal" step="any" autoFocus value={editVal} onChange={(e) => setEditVal(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Reason</div>
+          <select value={editReason} onChange={(e) => setEditReason(e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }}>
+            <option value="">-- Reason --</option>
+            <option value="unit_error">Unit error (kg vs g etc.)</option>
+            <option value="typo">Typo</option>
+            <option value="genuine_correction">Genuine correction</option>
+            <option value="other">Other</option>
+          </select>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={saveEdit} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
+            <button onClick={() => setEditCell(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      </>)}
     </div>
   );
 };

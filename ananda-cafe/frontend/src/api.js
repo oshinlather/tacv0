@@ -178,9 +178,9 @@ const api = {
   // Cash Handovers
   getCashHandovers: (params) => get("/api/cash-handovers", params),
   saveCashHandover: (data) => post("/api/cash-handovers", data),
-  // Qty Corrections (owner edit of dispatched item qty)
-  editItemQty: (outlet_id, date, item_id, new_qty, reason) =>
-    patch("/api/qty-edit", { outlet_id, date, item_id, new_qty, reason }),
+  // Qty Corrections (owner edit of dispatched/wastage/closing-stock item qty)
+  editItemQty: (outlet_id, date, item_id, new_qty, reason, record_type) =>
+    patch("/api/qty-edit", { outlet_id, date, item_id, new_qty, reason, record_type }),
   getCorrections: (params) => get("/api/corrections", params),
   // Auth
   login: (phone, pin) => post("/api/auth/login", { phone, pin }),

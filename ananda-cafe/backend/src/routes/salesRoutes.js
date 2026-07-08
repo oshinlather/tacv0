@@ -1395,12 +1395,15 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── PATCH /api/qty-edit — Owner/Store manager edits a dispatched/demand item qty
-// Finds the demand row by outlet_id + date + item_id, overwrites qty, logs to qty_corrections.
+// ── PATCH /api/qty-edit — Owner/Store manager edits a demand/dispatch/wastage/
+// closing-stock item qty. record_type selects the target: 'demand' (default,
+// dispatched/demand qty on a manual demand row), 'wastage' (demands table,
+// type='wastage'), or 'closing_stock' (its own table, cs_-prefixed item keys).
+// Every edit is logged to qty_corrections for the Corrections Log / System Logs.
 router.patch('/qty-edit', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
-    const { outlet_id, date, item_id, new_qty, reason } = req.body;
+    const { outlet_id, date, item_id, new_qty, reason, record_type } = req.body;
     if (!outlet_id || !date || !item_id) {
       return res.status(400).json({ error: 'outlet_id, date, and item_id are required' });
     }
@@ -1411,6 +1414,55 @@ router.patch('/qty-edit', async (req, res) => {
       return res.status(400).json({ error: 'new_qty cannot be negative' });
     }
 
+    const correctorName = req.headers['x-user-name'] ||
+      (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
+      'owner';
+
+    if (record_type === 'closing_stock') {
+      const { data: row, error: loadErr } = await supabase.from('closing_stocks')
+        .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+      if (loadErr) throw loadErr;
+      const key = row && Object.keys(row.items || {}).find(k => k === item_id || k === `cs_${item_id}`);
+      if (!row || !key) {
+        return res.status(404).json({ error: `Item '${item_id}' not found in closing stock for ${outlet_id} on ${date}` });
+      }
+      const oldQty = Number(row.items[key]);
+      const newItems = { ...row.items, [key]: Number(new_qty) };
+      const { error: updateErr } = await supabase.from('closing_stocks').update({ items: newItems }).eq('id', row.id);
+      if (updateErr) throw updateErr;
+      await supabase.from('qty_corrections').insert({
+        demand_id: null, outlet_id, date, item_id, old_qty: oldQty, new_qty: Number(new_qty),
+        unit: null, reason: reason || null, corrected_by: correctorName,
+      });
+      return res.json({ ok: true, updated: 1 });
+    }
+
+    if (record_type === 'wastage') {
+      const { data: rows, error: loadErr } = await supabase.from('demands')
+        .select('id, items').eq('outlet_id', outlet_id).eq('date', date).eq('type', 'wastage');
+      if (loadErr) throw loadErr;
+      const matching = (rows || []).filter(d => (d.items || {})[item_id] !== undefined);
+      if (matching.length === 0) {
+        return res.status(404).json({ error: `Item '${item_id}' not found in wastage for ${outlet_id} on ${date}` });
+      }
+      const corrections = [];
+      for (const row of matching) {
+        const oldQty = Number(row.items[item_id]);
+        const newItems = { ...row.items, [item_id]: Number(new_qty) };
+        const { error: updateErr } = await supabase.from('demands').update({ items: newItems }).eq('id', row.id);
+        if (updateErr) throw updateErr;
+        corrections.push({ demand_id: row.id, old_qty: oldQty });
+      }
+      for (const c of corrections) {
+        await supabase.from('qty_corrections').insert({
+          demand_id: c.demand_id, outlet_id, date, item_id, old_qty: c.old_qty, new_qty: Number(new_qty),
+          unit: null, reason: reason || null, corrected_by: correctorName,
+        });
+      }
+      return res.json({ ok: true, updated: corrections.length, corrections });
+    }
+
+    // Default ('demand'): dispatched/demand qty on a manual demand row.
     // 1. Find all demand rows for this outlet+date that contain the item
     const { data: allDemands, error: loadErr } = await supabase.from('demands')
       .select('id, outlet_id, date, type, items, dispatch_items, status')
@@ -1454,10 +1506,6 @@ router.patch('/qty-edit', async (req, res) => {
     }
 
     // 4. Log corrections
-    const correctorName = req.headers['x-user-name'] ||
-      (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
-      'owner';
-
     for (const c of corrections) {
       await supabase.from('qty_corrections').insert({
         demand_id: c.demand_id,
