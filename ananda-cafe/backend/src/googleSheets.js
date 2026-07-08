@@ -1,6 +1,16 @@
 // googleSheets.js — Auto-write outlet submissions to Google Sheets
 // Structure: one spreadsheet per outlet, with a dedicated tab per data type.
 //
+// Two write formats live here:
+//   - Log format (Daily Sales, Purchases, BK Demands): one row appended per
+//     submission, in the tab named after the type (TAB_SCHEMA below).
+//   - Pivot format (Demands, Closing Stock, Wastage): matches the in-app
+//     day-wise CSV download exactly — Item + Unit as rows, one column per
+//     date, running left to right through the month, with a Total column.
+//     A new tab is created per month (e.g. "Demands – Jul 2026") so a tab
+//     never grows unbounded and always matches what a CSV download for that
+//     month would show.
+//
 // SETUP (one-time, manual because service accounts can't own Drive files on
 // consumer Google accounts):
 //   1. Create 5 spreadsheets at sheets.google.com:
@@ -18,8 +28,10 @@
 //        key = 'sheet_id_elan',    value = '<id>'
 //        key = 'sheet_id_gaursid', value = '<id>'
 //      (Or set env vars GOOGLE_SHEET_ID_SEC23, _SEC31, _SEC56, _ELAN, _GAURSID.)
-//   5. Hit GET /api/sheets/setup once — it will create/verify the tabs and
-//      headers in each sheet. You don't have to pre-create the tabs.
+//   5. Hit GET /api/sheets/setup once — it will create/verify the log-format
+//      tabs and headers in each sheet. Pivot tabs (Demands/Closing
+//      Stock/Wastage) are created lazily, the first time each month sees a
+//      real submission.
 
 const { google } = require('googleapis');
 
@@ -37,28 +49,15 @@ const OUTLET_LABELS = {
   gaursid: 'Gaur Siddhartham',
 };
 
-// Tab definitions: name + header row for each data type.
-// Order here is the tab order in the spreadsheet.
+// Log-format tab definitions: name + header row for each data type.
 const TAB_SCHEMA = {
   daily_sales:  {
     name: 'Daily Sales',
     headers: ['Date', 'Submitted At', 'Submitted By', 'Total Sale', 'Swiggy', 'Zomato', 'Other Delivery', 'Cancelled Orders', 'Complimentary Amount', 'Complimentary Reason', 'Zomato District', 'UPI Collected', 'Cash Collected', 'Prev Day Cash', 'Cash Expense', 'Cash Expense Note', 'Cash Deposited', 'Notes'],
   },
-  manual:       {
-    name: 'Demands',
-    headers: ['Date', 'Submitted At', 'Submitted By', 'Slot', 'Status', 'Items', 'Note'],
-  },
   bk_demand:    {
     name: 'BK Demands',
     headers: ['Date', 'Submitted At', 'Submitted By', 'Slot', 'Status', 'Items', 'Note'],
-  },
-  wastage:      {
-    name: 'Wastage',
-    headers: ['Date', 'Submitted At', 'Submitted By', 'Items', 'Note'],
-  },
-  closing:      {
-    name: 'Closing Stock',
-    headers: ['Date', 'Submitted At', 'Submitted By', 'Items', 'Note'],
   },
   purchase:     {
     name: 'Purchases',
@@ -66,10 +65,22 @@ const TAB_SCHEMA = {
   },
 };
 
+// Pivot-format types: item-rows × date-columns, one tab per calendar month.
+// combine: 'sum' merges same-day multi-submissions (e.g. AM + PM demand);
+// 'set' overwrites (closing stock is a full-day upsert, not additive).
+const PIVOT_SCHEMA = {
+  manual:  { name: 'Demands', combine: 'sum' },
+  wastage: { name: 'Wastage', combine: 'sum' },
+  closing: { name: 'Closing Stock', combine: 'set' },
+};
+
 // In-memory caches so we don't re-check the same sheet every request
 const spreadsheetIdCache = {};          // { sec23: 'abc...', ... }
-const tabsVerifiedCache  = {};          // { sec23: true, ... }
+const tabsVerifiedCache  = {};          // { sec23: true, ... } — log-format tabs
+const pivotTabsVerifiedCache = {};      // { 'sheetId:tabName': true, ... }
 let sheetsClient = null;
+let demandItemsCache = null;
+let demandItemsCacheAt = 0;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Auth
@@ -122,7 +133,7 @@ async function getSpreadsheetIdForOutlet(supabase, outletId) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Tab setup — ensure every tab exists with the right headers.
+// Log-format tab setup — ensure every log tab exists with the right headers.
 // Runs once per outlet per process (cached).
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -225,8 +236,7 @@ async function setupAllOutlets(supabase) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Row builders — one per data type.
-// Each returns the row array in the same column order as TAB_SCHEMA[type].headers.
+// Log-format row builders — one per data type.
 // ────────────────────────────────────────────────────────────────────────────
 
 function formatItemList(items) {
@@ -273,20 +283,11 @@ function buildRow(type, submittedAt, submittedBy, data, items) {
         items.notes ?? '',
       ];
 
-    case 'manual':
     case 'bk_demand':
       return [
         date, submittedAt, submittedBy || '',
         data.demand_slot || '',
         data.status || '',
-        formatItemList(items),
-        data.note || '',
-      ];
-
-    case 'wastage':
-    case 'closing':
-      return [
-        date, submittedAt, submittedBy || '',
         formatItemList(items),
         data.note || '',
       ];
@@ -305,6 +306,140 @@ function buildRow(type, submittedAt, submittedBy, data, items) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Pivot-format helpers (Demands / Closing Stock / Wastage)
+// ────────────────────────────────────────────────────────────────────────────
+
+// item_id → { name, unit } from the demand_items master table. Cached for
+// 5 minutes since it changes rarely and every submission would otherwise
+// trigger a Supabase round-trip.
+async function getDemandItemMap(supabase) {
+  const now = Date.now();
+  if (demandItemsCache && (now - demandItemsCacheAt) < 5 * 60 * 1000) return demandItemsCache;
+  const { data } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
+  const map = {};
+  (data || []).forEach(i => { map[i.id] = { name: i.name || i.id, unit: i.unit || '' }; });
+  demandItemsCache = map;
+  demandItemsCacheAt = now;
+  return map;
+}
+
+// Closing-stock keys carry a cs_ prefix (cs_butter) — strip it so lookups
+// match the same demand_items id used by Demand/Wastage.
+function buildItemRows(itemsObj, demandItemMap) {
+  return Object.entries(itemsObj || {})
+    .filter(([_, v]) => v !== '' && v !== null && v !== undefined && Number(v) !== 0)
+    .map(([rawId, qty]) => {
+      const id = rawId.startsWith('cs_') ? rawId.slice(3) : rawId;
+      const def = demandItemMap[id];
+      return { name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', qty: Number(qty) || 0 };
+    });
+}
+
+// "2026-07-08" → "Jul 2026" (same label used by the app's month dropdowns)
+function monthLabel(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+}
+
+async function ensurePivotTab(sheets, spreadsheetId, tabName) {
+  const cacheKey = `${spreadsheetId}:${tabName}`;
+  if (pivotTabsVerifiedCache[cacheKey]) return;
+
+  const { data: meta } = await sheets.spreadsheets.get({ spreadsheetId });
+  const existing = (meta.sheets || []).find(s => s.properties.title === tabName);
+
+  if (!existing) {
+    const { data: batchRes } = await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      resource: { requests: [{ addSheet: { properties: { title: tabName } } }] },
+    });
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${tabName}'!A1`,
+      valueInputOption: 'RAW',
+      resource: { values: [['Item', 'Unit', 'Total']] },
+    });
+
+    const newSheetId = batchRes.replies?.[0]?.addSheet?.properties?.sheetId;
+    if (newSheetId != null) {
+      try {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId,
+          resource: { requests: [
+            {
+              repeatCell: {
+                range: { sheetId: newSheetId, startRowIndex: 0, endRowIndex: 1 },
+                cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.95, green: 0.95, blue: 0.9 } } },
+                fields: 'userEnteredFormat(textFormat,backgroundColor)',
+              },
+            },
+            {
+              updateSheetProperties: {
+                properties: { sheetId: newSheetId, gridProperties: { frozenRowCount: 1, frozenColumnCount: 2 } },
+                fields: 'gridProperties(frozenRowCount,frozenColumnCount)',
+              },
+            },
+          ],
+        },
+        });
+      } catch (e) {
+        console.log('Pivot header formatting skipped:', e.message);
+      }
+    }
+  }
+
+  pivotTabsVerifiedCache[cacheKey] = true;
+}
+
+// Reads the whole month tab, merges in this submission's item quantities for
+// one date column, and rewrites the tab in a single call. Tabs are bounded
+// to one month (≤31 day-columns, a few dozen item-rows) so a full rewrite
+// on every write is cheap and avoids fragile partial-range cell math.
+async function writeToPivotSheet(sheets, spreadsheetId, tabName, dayLabel, itemRows, combine) {
+  await ensurePivotTab(sheets, spreadsheetId, tabName);
+
+  const { data: current } = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${tabName}'!A1:ZZ1000` });
+  const rows = (current.values && current.values.length > 0) ? current.values.map(r => [...r]) : [['Item', 'Unit', 'Total']];
+  const header = rows[0];
+
+  let colIdx = header.findIndex((h, i) => i >= 3 && h === dayLabel);
+  if (colIdx === -1) {
+    colIdx = header.length;
+    header.push(dayLabel);
+  }
+
+  const itemRowIndex = {};
+  for (let r = 1; r < rows.length; r++) {
+    if (rows[r][0]) itemRowIndex[rows[r][0]] = r;
+  }
+
+  for (const it of itemRows) {
+    let r = itemRowIndex[it.name];
+    if (r === undefined) {
+      r = rows.length;
+      rows.push([it.name, it.unit || '']);
+      itemRowIndex[it.name] = r;
+    }
+    while (rows[r].length <= colIdx) rows[r].push('');
+    const existing = Number(rows[r][colIdx]) || 0;
+    rows[r][colIdx] = combine === 'sum' ? existing + it.qty : it.qty;
+  }
+
+  // Keep every row's Total formula in sync (fixed generous range, cheap to redo)
+  for (let r = 1; r < rows.length; r++) {
+    while (rows[r].length <= colIdx) rows[r].push('');
+    rows[r][2] = `=SUM(D${r + 1}:ZZ${r + 1})`;
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${tabName}'!A1`,
+    valueInputOption: 'USER_ENTERED',
+    resource: { values: [header, ...rows.slice(1)] },
+  });
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Write a submission to the correct outlet sheet + tab
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -315,18 +450,33 @@ async function writeToSheet(supabase, outletId, type, submittedBy, data, items) 
       return;
     }
 
-    const schema = TAB_SCHEMA[type];
-    if (!schema) {
-      console.log(`Sheets: no tab schema for type '${type}', skipping`);
-      return;
-    }
-
     const sheets = await getSheets();
     if (!sheets) return;
 
     const spreadsheetId = await getSpreadsheetIdForOutlet(supabase, outletId);
     if (!spreadsheetId) {
       console.log(`Sheets: no spreadsheet configured for outlet '${outletId}'`);
+      return;
+    }
+
+    // Pivot format: Demands, Wastage, Closing Stock — item rows × date columns,
+    // one tab per month, matching the in-app day-wise CSV download exactly.
+    if (PIVOT_SCHEMA[type]) {
+      const dateStr = (data && data.date) || new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+      const demandItemMap = await getDemandItemMap(supabase);
+      const itemRows = buildItemRows(items, demandItemMap);
+      if (itemRows.length === 0) return;
+
+      const tabName = `${PIVOT_SCHEMA[type].name} – ${monthLabel(dateStr)}`;
+      await writeToPivotSheet(sheets, spreadsheetId, tabName, dateStr.slice(5), itemRows, PIVOT_SCHEMA[type].combine);
+      console.log(`📊 Sheet updated (pivot): ${OUTLET_LABELS[outletId]} › ${tabName} (${type} by ${submittedBy || '—'})`);
+      return;
+    }
+
+    // Log format: Daily Sales, BK Demands, Purchases — one row per submission.
+    const schema = TAB_SCHEMA[type];
+    if (!schema) {
+      console.log(`Sheets: no tab schema for type '${type}', skipping`);
       return;
     }
 
@@ -360,5 +510,6 @@ module.exports = {
   getSpreadsheetIdForOutlet,
   // exposed for debugging
   TAB_SCHEMA,
+  PIVOT_SCHEMA,
   OUTLET_LABELS,
 };

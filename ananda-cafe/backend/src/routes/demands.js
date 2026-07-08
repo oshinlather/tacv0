@@ -3,6 +3,8 @@ const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
 const { requireAuth, ensureOutletAccess } = require("./authGuards");
+let sheetsHelper = null;
+try { sheetsHelper = require("../googleSheets"); } catch (e) { console.log("Google Sheets module not found — sheet sync disabled"); }
 
 // List demands for an outlet (with optional date filter).
 // outlet_mgr scoped to own outlet; owner & store_mgr unrestricted.
@@ -65,6 +67,8 @@ router.post("/closing-stock", async (req, res) => {
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
+  // Write to Google Sheet (non-blocking)
+  if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, "closing", submitted_by, { date: data.date }, items).catch(() => {});
   res.json(data);
 });
 
