@@ -307,6 +307,33 @@ const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUp
   );
 };
 
+// Multiple bill photos against a single expense — thumbnail strip + an always-present
+// "add another" tile, so a long or multi-page bill isn't limited to one shot.
+let _multiPhotoUid = 0;
+const MultiPhotoUpload = ({ images, onAdd, onRemove }) => {
+  const uid = useRef(`multi-${_multiPhotoUid++}`).current;
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    if (f) { const r = new FileReader(); r.onload = (ev) => onAdd(ev.target.result); r.readAsDataURL(f); }
+    e.target.value = ""; // allow picking the same file again immediately after
+  };
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      {images.map((img, i) => (
+        <div key={i} style={{ position: "relative", width: 60, height: 60, borderRadius: 10, overflow: "hidden", border: "2px solid #16A34A", flexShrink: 0 }}>
+          <img src={img} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          <button onClick={() => onRemove(i)} style={{ position: "absolute", top: 2, right: 2, width: 18, height: 18, borderRadius: "50%", background: "rgba(220,38,38,0.9)", color: "#fff", border: "none", fontSize: 10, cursor: "pointer", lineHeight: "18px", padding: 0 }}>✕</button>
+        </div>
+      ))}
+      <label htmlFor={uid} style={{ width: 60, height: 60, borderRadius: 10, border: "2px dashed #FDE68A", background: "#FFFBEB", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#B45309", flexShrink: 0 }}>
+        <span style={{ fontSize: 18 }}>📷</span>
+        <span style={{ fontSize: 8, fontWeight: 700 }}>{images.length ? "+ Add" : "Photo"}</span>
+      </label>
+      <input id={uid} type="file" accept="image/*" capture="environment" onChange={pick} style={{ display: "none" }} />
+    </div>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  DAILY P&L (matches user's Excel exactly)
 // ═════════════════════════════════════════════════════════════════════════════
@@ -4704,11 +4731,15 @@ const OutletMgr = ({ onBack }) => {
   const [salesSaving, setSalesSaving] = useState(false);
   const [existingData, setExistingData] = useState(null);
   const [salesLoaded, setSalesLoaded] = useState(false);
-  // Purchase state
-  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
-  const [billImages, setBillImages] = useState({}); const [purchaseNote, setPurchaseNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash");
+  // Cash Purchase — quick-add one expense at a time (submits immediately), instead of
+  // filling a multi-row batch and submitting once. Each expense supports multiple bill photos.
+  const [quickItem, setQuickItem] = useState(""); const [quickQty, setQuickQty] = useState(""); const [quickAmount, setQuickAmount] = useState("");
+  const [quickVendor, setQuickVendor] = useState(""); const [quickType, setQuickType] = useState("new_purchase"); const [quickPhotos, setQuickPhotos] = useState([]);
+  const [quickNote, setQuickNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash"); const [quickSaving, setQuickSaving] = useState(false);
+  const [todaysPurchases, setTodaysPurchases] = useState([]); const [purchaseToast, setPurchaseToast] = useState(null);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+  // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
+  const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
 
   // Per-item unit overrides for demand/wastage (draftUnits) and closing stock (closingUnits) —
   // only items with a defined unit_conversions row get a picker (e.g. Desi Ghee: Tin or Kg).
@@ -4757,9 +4788,26 @@ const OutletMgr = ({ onBack }) => {
 
   const staffFoodItems = staffItems.filter((i) => i.category === "food");
   const staffDressItems = staffItems.filter((i) => i.category === "dress");
-  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
-  const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
-  const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
+
+  // Saves this one expense immediately (its own purchase record) and clears the draft
+  // for the next entry — no batching, no "submit at the end of the day" risk of loss.
+  const submitQuickExpense = async () => {
+    if (!quickItem.trim() || !quickAmount) return;
+    setQuickSaving(true); setErr(null);
+    try {
+      const apiItems = [{ item_name: quickItem.trim(), quantity: Number(quickQty) || null, unit: "Kg", amount: Number(quickAmount), vendor: quickVendor.trim() || null, type: quickType }];
+      const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: quickNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
+      for (let i = 0; i < quickPhotos.length; i++) {
+        try { await api.uploadPurchasePhoto(result.id, quickPhotos[i], `bill_${i + 1}`); } catch (e) { console.log("Photo upload skipped:", e.message); }
+      }
+      const entry = { id: result.id, item: quickItem.trim(), amount: Number(quickAmount), vendor: quickVendor.trim(), photoCount: quickPhotos.length, time: timeNow() };
+      setTodaysPurchases((p) => [entry, ...p]);
+      setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickPhotos([]); setQuickNote("");
+      setPurchaseToast(`✅ Added ${fmt(Number(quickAmount))} — ${entry.item}`);
+      setTimeout(() => setPurchaseToast(null), 2500);
+    } catch (error) { setErr(error.message); alert(`❌ Failed to save: ${error.message}`); }
+    finally { setQuickSaving(false); }
+  };
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
@@ -5325,44 +5373,51 @@ const OutletMgr = ({ onBack }) => {
   </div>); }
 
   if (screen === "purchase") {
-    const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-    const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-    const billCount = Object.values(billImages).filter(Boolean).length;
-    const canSubmit = validItems.length > 0;
-    const submitPurchase = async () => {
-      setSaving(true); setErr(null);
-      try {
-        const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase" }));
-        const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
-        // Photo upload — non-blocking, don't fail purchase if photo fails
-        for (const [label, base64] of Object.entries(billImages)) { 
-          if (base64) { try { await api.uploadPurchasePhoto(result.id, base64, label); } catch (e) { console.log("Photo upload skipped:", e.message); } }
-        }
-        alert(`✅ Purchase recorded!\n\n💰 ₹${totalAmt.toLocaleString("en-IN")}\n📦 ${validItems.length} items\n🏪 ${oData?.name}`);
-        const e = { ...result, type: "purchase", outlet, totalAmount: totalAmt, paymentMode, time: timeNow(), date: today() };
-        setSubs((p) => [e, ...p]); setLast(e); resetPurchase(); setScreen("done");
-      } catch (error) { setErr(error.message); alert(`❌ Purchase failed: ${error.message}`); } finally { setSaving(false); }
-    };
+    const canAdd = quickItem.trim() && Number(quickAmount) > 0;
+    const todayTotal = todaysPurchases.reduce((s, p) => s + p.amount, 0);
     return (<div><SavingOverlay />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div>{totalAmt > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalAmt)}</span>}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div>{todayTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(todayTotal)}</span>}</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Items Purchased</div>
-      {purchases.map((row, idx) => (<div key={idx} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8 }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input value={row.item} onChange={(e) => updatePurchase(idx, "item", e.target.value)} placeholder="Item name" style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 600 }} />{purchases.length > 1 && <button onClick={() => removePurchaseRow(idx)} style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 16, cursor: "pointer" }}>✕</button>}</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Qty</div><input value={row.qty} onChange={(e) => updatePurchase(idx, "qty", e.target.value)} type="number" inputMode="decimal" placeholder="0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 600 }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Amount (₹)</div><input value={row.amount} onChange={(e) => updatePurchase(idx, "amount", e.target.value)} type="number" inputMode="numeric" placeholder="₹0" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700, color: "#B45309" }} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Vendor</div><input value={row.vendor} onChange={(e) => updatePurchase(idx, "vendor", e.target.value)} placeholder="Shop" style={{ width: "100%", padding: "8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} /></div></div>
-        <div style={{ display: "flex", gap: 6 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (<button key={t.id} onClick={() => updatePurchase(idx, "type", t.id)} style={{ flex: 1, padding: "7px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: (row.type || "new_purchase") === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: (row.type || "new_purchase") === t.id ? "#EFF6FF" : "#fff", color: (row.type || "new_purchase") === t.id ? "#2563EB" : "#888" }}>{t.label}</button>))}</div>
-      </div>))}
-      <button onClick={addPurchaseRow} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "2px dashed #E0E0DC", background: "transparent", fontSize: 14, fontWeight: 700, color: "#999", cursor: "pointer", fontFamily: "inherit", marginBottom: 14 }}>+ Add Item</button>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Payment</div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>{[{ id: "cash", label: "💵 Cash" }, { id: "upi", label: "📱 UPI" }, { id: "credit", label: "📒 Udhar" }].map((m) => (<button key={m.id} onClick={() => setPaymentMode(m.id)} style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: paymentMode === m.id ? "2px solid #B45309" : "1px solid #E0E0DC", background: paymentMode === m.id ? "#FFFBEB" : "#fff", color: paymentMode === m.id ? "#B45309" : "#888" }}>{m.label}</button>))}</div>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Bill Photo (required)</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>{[{ id: "bill1", titleHi: "Bill Photo", emoji: "🧾", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" }].map((s) => (<PhotoUpload key={s.id} {...s} image={billImages[s.id]} onUpload={(img) => setBillImages((p) => ({ ...p, [s.id]: img }))} onRemove={() => setBillImages((p) => { const n = { ...p }; delete n[s.id]; return n; })} />))}</div>
-      {!billCount && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>⚠️ Bill photo is required!</div>}
-      <ErrBar />
-      <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
-        {totalAmt > 0 && <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 8 }}><span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>Total</span><span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(totalAmt)}</span></div>}
-        <button onClick={submitPurchase} disabled={!canSubmit || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: canSubmit && !saving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canSubmit && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🧾 Record Purchase ${totalAmt > 0 ? `— ${fmt(totalAmt)}` : ""}`}</button>
+
+      <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E8E4", padding: 16, marginBottom: 14 }}>
+        <input value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} type="number" inputMode="numeric" placeholder="₹ Amount"
+          style={{ width: "100%", padding: 14, borderRadius: 12, border: "2px solid #FDE68A", background: "#FFFBEB", fontSize: 26, fontWeight: 800, textAlign: "center", fontFamily: "'JetBrains Mono'", color: "#B45309", marginBottom: 10, boxSizing: "border-box" }} />
+        <input value={quickItem} onChange={(e) => setQuickItem(e.target.value)} placeholder="What did you buy? (e.g. Vegetables, Gas)"
+          style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 15, fontFamily: "inherit", fontWeight: 600, marginBottom: 8, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <input value={quickQty} onChange={(e) => setQuickQty(e.target.value)} type="number" inputMode="decimal" placeholder="Qty (optional)"
+            style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "center", boxSizing: "border-box" }} />
+          <input value={quickVendor} onChange={(e) => setQuickVendor(e.target.value)} placeholder="Shop / Vendor (optional)"
+            style={{ flex: 2, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (
+          <button key={t.id} onClick={() => setQuickType(t.id)} style={{ flex: 1, padding: 8, borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: quickType === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: quickType === t.id ? "#EFF6FF" : "#fff", color: quickType === t.id ? "#2563EB" : "#888" }}>{t.label}</button>
+        ))}</div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>{[{ id: "cash", label: "💵 Cash" }, { id: "upi", label: "📱 UPI" }, { id: "credit", label: "📒 Udhar" }].map((m) => (
+          <button key={m.id} onClick={() => setPaymentMode(m.id)} style={{ flex: 1, padding: 8, borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: paymentMode === m.id ? "2px solid #B45309" : "1px solid #E0E0DC", background: paymentMode === m.id ? "#FFFBEB" : "#fff", color: paymentMode === m.id ? "#B45309" : "#888" }}>{m.label}</button>
+        ))}</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 6 }}>{quickPhotos.length > 0 ? `Bill Photos (${quickPhotos.length})` : "Bill Photo (optional — can add more than one)"}</div>
+        <MultiPhotoUpload images={quickPhotos} onAdd={(img) => setQuickPhotos((p) => [...p, img])} onRemove={(i) => setQuickPhotos((p) => p.filter((_, idx) => idx !== i))} />
+        <ErrBar />
+        <button onClick={submitQuickExpense} disabled={!canAdd || quickSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: canAdd && !quickSaving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canAdd && !quickSaving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>
+          {quickSaving ? "⏳ Saving..." : `+ Add Expense${quickAmount ? ` — ${fmt(Number(quickAmount))}` : ""}`}
+        </button>
       </div>
+
+      {purchaseToast && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 12, textAlign: "center" }}>{purchaseToast}</div>}
+
+      {todaysPurchases.length > 0 && <>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Added Today ({todaysPurchases.length})</div>
+        {todaysPurchases.map((p) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 6 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{p.item}</div>
+              <div style={{ fontSize: 10, color: "#999" }}>{p.vendor ? `${p.vendor} · ` : ""}{p.time}{p.photoCount > 0 ? ` · 📷 ${p.photoCount}` : ""}</div>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(p.amount)}</div>
+          </div>
+        ))}
+      </>}
     </div>);
   }
 
