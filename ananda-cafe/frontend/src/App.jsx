@@ -15,6 +15,7 @@ const OUTLETS = [
   { id: "sec23", name: "Sector 23", short: "S-23" },
   { id: "sec31", name: "Sector 31", short: "S-31" },
   { id: "sec56", name: "Sector 56", short: "S-56" },
+  { id: "sec14", name: "Sector 14", short: "S-14" },
   { id: "elan", name: "Elan (Franchise)", short: "ELAN", franchise: true },
   { id: "gaursid", name: "Gaur Siddhartham (Franchise)", short: "GSID", franchise: true },
 ];

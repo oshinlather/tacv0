@@ -45,6 +45,7 @@ const OUTLET_LABELS = {
   sec23: 'Sector 23',
   sec31: 'Sector 31',
   sec56: 'Sector 56',
+  sec14: 'Sector 14',
   elan:  'Elan',
   gaursid: 'Gaur Siddhartham',
 };

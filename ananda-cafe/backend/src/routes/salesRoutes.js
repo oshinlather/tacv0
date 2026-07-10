@@ -2013,7 +2013,7 @@ router.get('/pnl/live/:date', async (req, res) => {
     const getDemandItemName = (id) => demandItemNameMap[id] || id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
     // 7. Compute per-outlet P&L
-    const outletIds = ['sec23', 'sec31', 'sec56', 'elan', 'gaursid'];
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
     const pnlResults = [];
 
     for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
@@ -2409,7 +2409,7 @@ router.get('/stock-usage/:date', async (req, res) => {
     const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
     // 6. Compute per outlet
-    const outletIds = ['sec23', 'sec31', 'sec56', 'elan', 'gaursid'];
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
     const results = [];
 
     // Conversion factor from a specific recorded unit to the item's rate-card unit —
