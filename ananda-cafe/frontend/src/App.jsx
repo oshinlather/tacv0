@@ -1032,10 +1032,11 @@ const DailyPnL = () => {
           ))}
         </div>
 
-        {/* Per-outlet mini cards (when All Outlets selected) */}
-        {!selOutlet && allPnl.filter((r) => r.outlet_id !== "all").length > 0 && (
+        {/* Per-outlet mini cards (when All Outlets selected) — Elan excluded from the
+            consolidated view entirely, not just its totals; click its own pill to see it. */}
+        {!selOutlet && allPnl.filter((r) => r.outlet_id !== "all" && r.outlet_id !== "elan").length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, marginBottom: 20 }}>
-            {allPnl.filter((r) => r.outlet_id !== "all").map((r) => {
+            {allPnl.filter((r) => r.outlet_id !== "all" && r.outlet_id !== "elan").map((r) => {
               const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
               const hasSale = r.effective_sale > 0;
               const cogs = hasSale ? (r.variable_cost / r.effective_sale * 100) : 0;
@@ -1277,7 +1278,7 @@ const DailyPnL = () => {
         {!monthLoading && monthData && (() => {
           const md = (selOutlet ? monthData.totals[selOutlet] : monthData.totals['all']) || {};
           const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
-          const outletTotals = Object.values(monthData.totals).filter((t) => t.outlet_id !== 'all');
+          const outletTotals = Object.values(monthData.totals).filter((t) => t.outlet_id !== 'all' && t.outlet_id !== 'elan');
           return (<>
             <div style={{ fontSize: 12, color: "#888", marginBottom: 12 }}>{monthLabel} · {monthData.days.length} day(s) so far</div>
             {/* Summary Cards */}
