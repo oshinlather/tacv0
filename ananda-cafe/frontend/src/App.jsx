@@ -4520,7 +4520,7 @@ const OutletActivityGrid = ({ mode }) => {
         ))}
       </div>
 
-      {isDemand && (
+      {(isDemand || isClosing) && (
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           <button onClick={() => setSelCategory(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCategory ? 700 : 500, border: !selCategory ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCategory ? "#1A1A1A" : "#fff", color: !selCategory ? "#fff" : "#888" }}>All Categories</button>
           {DEMAND_SECTIONS.map((s) => (
