@@ -81,6 +81,7 @@ const api = {
   // ── Orders / Dashboard ──
   getOrders: (params) => get("/api/orders", params),
   getClosingStocks: (params) => get("/api/closing-stocks", params),
+  moveSubmissionDate: (data) => post("/api/move-submission-date", data),
   getConsolidated: (date) => get("/api/orders/consolidated", { date }),
   updateOrderStatus: (id, status, notes) => patch(`/api/orders/${id}/status`, { status, dispatch_notes: notes }),
   dispatchOrder: (id, dispatch_items, dispatched_by, remaining_items) => patch(`/api/orders/${id}/dispatch`, { dispatch_items, dispatched_by, remaining_items }),

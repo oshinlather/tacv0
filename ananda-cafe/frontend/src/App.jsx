@@ -4595,6 +4595,133 @@ const LOG_CATEGORIES = [
   { id: "correction", label: "✏️ Correction", color: "#DC2626", bg: "#FEF2F2" },
 ];
 
+// Owner-only fix for an outlet manager submitting under the wrong date — moves that
+// day's Sales / Closing Stock / Wastage entirely from one date to another (same
+// outlet), updating the database (so P&L/stock-usage recompute correctly) and the
+// corresponding Google Sheet.
+const MoveSubmissionDate = () => {
+  const [outlet, setOutlet] = useState(OUTLETS[0]?.id || null);
+  const [fromDate, setFromDate] = useState(today());
+  const [toDate, setToDate] = useState(today());
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [selTypes, setSelTypes] = useState({ sales: false, closing: false, wastage: false });
+  const [result, setResult] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const oName = OUTLETS.find((o) => o.id === outlet)?.name || outlet;
+
+  const loadPreview = useCallback(() => {
+    if (!outlet || !fromDate) return;
+    setPreviewLoading(true); setResult(null);
+    Promise.all([
+      api.getOutletSales({ outlet_id: outlet, date: fromDate }).catch(() => []),
+      api.getClosingStocks({ outlet_id: outlet, date: fromDate }).catch(() => []),
+      api.getOrders({ outlet_id: outlet, date: fromDate }).then((d) => (d || []).filter((o) => o.type === "wastage")).catch(() => []),
+    ]).then(([sales, closing, wastage]) => {
+      const salesRow = (sales || [])[0] || null;
+      const closingRow = (closing || [])[0] || null;
+      const p = {
+        sales: salesRow ? { total_sale: salesRow.total_sale } : null,
+        closing: closingRow ? { items: Object.keys(closingRow.items || {}).length } : null,
+        wastage: wastage.length > 0 ? { entries: wastage.length } : null,
+      };
+      setPreview(p);
+      setSelTypes({ sales: !!p.sales, closing: !!p.closing, wastage: !!p.wastage });
+    }).finally(() => setPreviewLoading(false));
+  }, [outlet, fromDate]);
+
+  useEffect(() => { loadPreview(); }, [loadPreview]);
+
+  const anySelected = Object.values(selTypes).some(Boolean);
+  const canMove = anySelected && fromDate && toDate && fromDate !== toDate;
+
+  const doMove = async (force) => {
+    setSaving(true);
+    try {
+      const types = Object.entries(selTypes).filter(([, v]) => v).map(([k]) => k);
+      const res = await api.moveSubmissionDate({ outlet_id: outlet, from_date: fromDate, to_date: toDate, types, force });
+      setResult(res);
+      if (!(res.conflicts && res.conflicts.length > 0 && !force)) loadPreview();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const rows = preview ? [
+    { key: "sales", label: "💰 Sales", detail: preview.sales ? `Total Sale ${fmt(preview.sales.total_sale)}` : null },
+    { key: "closing", label: "📊 Closing Stock", detail: preview.closing ? `${preview.closing.items} items` : null },
+    { key: "wastage", label: "🗑️ Wastage", detail: preview.wastage ? `${preview.wastage.entries} entr${preview.wastage.entries === 1 ? "y" : "ies"}` : null },
+  ].filter((t) => t.detail) : [];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔀 Move Submission Date</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Fix a manager's wrong-date entry — moves Sales, Closing Stock, and/or Wastage from one date to another. Updates the database and Google Sheets.</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: outlet === o.id ? 700 : 500, border: outlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: outlet === o.id ? "#1A1A1A" : "#fff", color: outlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div style={{ flex: "1 1 140px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 4 }}>WRONG DATE (from)</div>
+            <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ paddingBottom: 8, fontSize: 18, color: "#CCC" }}>→</div>
+          <div style={{ flex: "1 1 140px" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 4 }}>CORRECT DATE (to)</div>
+            <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        </div>
+
+        {previewLoading && <div style={{ textAlign: "center", padding: 20, color: "#999", fontSize: 12 }}>⏳ Checking what's on {fromDate}...</div>}
+
+        {!previewLoading && preview && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 8 }}>WHAT'S ON {fromDate}</div>
+            {rows.length === 0 && (
+              <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FAFAF8", border: "1px solid #E8E8E4", fontSize: 12, color: "#999", textAlign: "center" }}>No Sales, Closing Stock, or Wastage data found for {oName} on {fromDate}</div>
+            )}
+            {rows.map((t) => (
+              <label key={t.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: selTypes[t.key] ? "#EFF6FF" : "#FAFAF8", border: `1px solid ${selTypes[t.key] ? "#BFDBFE" : "#E8E8E4"}`, marginBottom: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={selTypes[t.key]} onChange={(e) => setSelTypes((p) => ({ ...p, [t.key]: e.target.checked }))} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{t.label}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{t.detail}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+
+        <button onClick={() => doMove(false)} disabled={!canMove || saving} style={{ width: "100%", padding: 12, borderRadius: 12, border: "none", background: canMove && !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canMove && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {saving ? "⏳ Moving..." : `🔀 Move to ${toDate}`}
+        </button>
+      </div>
+
+      {result && result.conflicts && result.conflicts.length > 0 && (
+        <div style={{ padding: 14, borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#991B1B", marginBottom: 6 }}>⚠️ {toDate} already has data</div>
+          {result.conflicts.map((c, i) => <div key={i} style={{ fontSize: 12, color: "#991B1B", marginBottom: 4 }}>{c.type}: {c.message}</div>)}
+          <button onClick={() => doMove(true)} disabled={saving} style={{ marginTop: 8, padding: "8px 14px", borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Overwrite target date anyway</button>
+        </div>
+      )}
+
+      {result && result.moved && result.moved.length > 0 && (
+        <div style={{ padding: 14, borderRadius: 12, background: "#F0FDF4", border: "1px solid #BBF7D0" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#166534", marginBottom: 4 }}>✅ Moved {fromDate} → {toDate}</div>
+          {result.moved.map((m, i) => <div key={i} style={{ fontSize: 12, color: "#166534" }}>{m.type}{m.items != null ? ` (${m.items} items)` : ""}{m.entries != null ? ` (${m.entries} entries)` : ""}</div>)}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const SystemLogs = () => {
   const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
@@ -7444,7 +7571,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs"];
+  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -7581,6 +7708,7 @@ export default function AnandaCafe() {
       <div onClick={() => setAuditDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
+          { id: "move_date", label: "🔀 Move Submission Date", sub: "Fix a manager's wrong-date entry" },
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
@@ -7639,6 +7767,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "corrections" && <CorrectionsLog />}
       {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
       {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
+      {auditUnlocked && ownerTab === "move_date" && <MoveSubmissionDate />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}

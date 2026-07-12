@@ -924,6 +924,26 @@ async function cascadeCashForward(supabase, outletId, fromDate) {
   }
 }
 
+// After a sales row is moved away from `removedDate` (see /move-submission-date), the
+// row that used to follow it — if any — has a stale prev_day_cash pointing at a balance
+// that no longer exists there. Re-seed the cascade from whatever row now precedes the
+// gap (or zero it out if removedDate was this outlet's very first row) so the chain
+// stays consistent with the row actually gone.
+async function recascadeAfterRemoval(supabase, outletId, removedDate) {
+  const { data: prevRow } = await supabase.from('daily_outlet_sales').select('date')
+    .eq('outlet_id', outletId).lt('date', removedDate).order('date', { ascending: false }).limit(1).maybeSingle();
+  if (prevRow) {
+    await cascadeCashForward(supabase, outletId, prevRow.date);
+    return;
+  }
+  const { data: nextRow } = await supabase.from('daily_outlet_sales').select('date')
+    .eq('outlet_id', outletId).gt('date', removedDate).order('date', { ascending: true }).limit(1).maybeSingle();
+  if (nextRow) {
+    await supabase.from('daily_outlet_sales').update({ prev_day_cash: 0 }).eq('outlet_id', outletId).eq('date', nextRow.date);
+    await cascadeCashForward(supabase, outletId, nextRow.date);
+  }
+}
+
 // ── GET /api/outlet-sales — Get sales for a date/outlet
 router.get('/outlet-sales', async (req, res) => {
   try {
@@ -1392,6 +1412,99 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
     }
 
     res.json({ ok: true, remaining_order_id: remainingOrderId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/move-submission-date — Owner-only: an outlet manager submitted under
+// the wrong date, so move that day's Sales / Closing Stock / Wastage entirely from
+// from_date to to_date (same outlet). Closing Stock and Wastage just need their `date`
+// column changed — P&L and stock-usage read live from these tables, so the correction
+// takes effect immediately everywhere. Sales additionally needs its cash-carry-forward
+// chain (prev_day_cash) re-threaded on both sides of the move, since that's a stored
+// running balance, not something recomputed live. If the target date already has data
+// for a type, that type is reported back as a conflict and skipped unless force=true.
+router.post('/move-submission-date', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { outlet_id, from_date, to_date, types, force } = req.body;
+    if (!outlet_id || !from_date || !to_date || !Array.isArray(types) || types.length === 0) {
+      return res.status(400).json({ error: 'outlet_id, from_date, to_date, and types[] are required' });
+    }
+    if (from_date === to_date) return res.status(400).json({ error: 'from_date and to_date must be different' });
+
+    const result = { moved: [], skipped: [], conflicts: [] };
+
+    // ── CLOSING STOCK ── one row per outlet+date
+    if (types.includes('closing')) {
+      const { data: src } = await supabase.from('closing_stocks').select('*').eq('outlet_id', outlet_id).eq('date', from_date).maybeSingle();
+      if (!src) {
+        result.skipped.push({ type: 'closing', reason: 'No closing stock data on source date' });
+      } else {
+        const { data: existingTarget } = await supabase.from('closing_stocks').select('id').eq('outlet_id', outlet_id).eq('date', to_date).maybeSingle();
+        if (existingTarget && !force) {
+          result.conflicts.push({ type: 'closing', message: 'Target date already has closing stock data' });
+        } else {
+          if (existingTarget) await supabase.from('closing_stocks').delete().eq('id', existingTarget.id);
+          await supabase.from('closing_stocks').update({ date: to_date }).eq('id', src.id);
+          if (sheetsHelper) sheetsHelper.moveDateInSheet(supabase, outlet_id, 'closing', from_date, to_date).catch(() => {});
+          result.moved.push({ type: 'closing', items: Object.keys(src.items || {}).length });
+        }
+      }
+    }
+
+    // ── WASTAGE ── demands table, type='wastage' — multiple entries per day are normal
+    if (types.includes('wastage')) {
+      const { data: srcRows } = await supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', from_date).eq('type', 'wastage');
+      if (!srcRows || srcRows.length === 0) {
+        result.skipped.push({ type: 'wastage', reason: 'No wastage data on source date' });
+      } else {
+        const { data: existingTarget } = await supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', to_date).eq('type', 'wastage').limit(1);
+        if (existingTarget && existingTarget.length > 0 && !force) {
+          result.conflicts.push({ type: 'wastage', message: 'Target date already has wastage data' });
+        } else {
+          await supabase.from('demands').update({ date: to_date }).in('id', srcRows.map(r => r.id));
+          if (sheetsHelper) sheetsHelper.moveDateInSheet(supabase, outlet_id, 'wastage', from_date, to_date).catch(() => {});
+          result.moved.push({ type: 'wastage', entries: srcRows.length });
+        }
+      }
+    }
+
+    // ── SALES ── one row per outlet+date, plus the prev_day_cash running-balance chain
+    if (types.includes('sales')) {
+      const { data: src } = await supabase.from('daily_outlet_sales').select('*').eq('outlet_id', outlet_id).eq('date', from_date).maybeSingle();
+      if (!src) {
+        result.skipped.push({ type: 'sales', reason: 'No sales data on source date' });
+      } else {
+        const { data: existingTarget } = await supabase.from('daily_outlet_sales').select('id').eq('outlet_id', outlet_id).eq('date', to_date).maybeSingle();
+        if (existingTarget && !force) {
+          result.conflicts.push({ type: 'sales', message: 'Target date already has sales data' });
+        } else {
+          if (existingTarget) await supabase.from('daily_outlet_sales').delete().eq('id', existingTarget.id);
+
+          // The moved row's own prev_day_cash was computed for its old neighbors — recompute
+          // it for whatever now actually precedes it at the target date before cascading.
+          const { data: predB } = await supabase.from('daily_outlet_sales').select('*').eq('outlet_id', outlet_id).lt('date', to_date).order('date', { ascending: false }).limit(1).maybeSingle();
+          const correctPrevCash = predB ? (Number(predB.prev_day_cash || 0) + Number(predB.cash_collected || 0) - Number(predB.cash_expense || 0) - Number(predB.cash_deposited || 0)) : 0;
+
+          const { data: moved, error } = await supabase.from('daily_outlet_sales').update({ date: to_date, prev_day_cash: correctPrevCash }).eq('id', src.id).select().single();
+          if (error) throw error;
+
+          await recascadeAfterRemoval(supabase, outlet_id, from_date);
+          await cascadeCashForward(supabase, outlet_id, to_date);
+
+          if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, 'daily_sales', moved.submitted_by, { date: to_date }, {
+            total_sale: moved.total_sale, swiggy_sale: moved.swiggy_sale, zomato_sale: moved.zomato_sale, other_delivery_sale: moved.other_delivery_sale,
+            cancelled_orders: moved.cancelled_orders, complimentary_amount: moved.complimentary_amount, complimentary_reason: moved.complimentary_reason,
+            zomato_district: moved.zomato_district, upi_collected: moved.upi_collected, cash_collected: moved.cash_collected, prev_day_cash: moved.prev_day_cash,
+            cash_expense: moved.cash_expense, cash_expense_note: moved.cash_expense_note, cash_deposited: moved.cash_deposited, notes: moved.notes,
+          }).catch(() => {});
+
+          result.moved.push({ type: 'sales' });
+        }
+      }
+    }
+
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

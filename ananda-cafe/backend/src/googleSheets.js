@@ -440,6 +440,60 @@ async function writeToPivotSheet(sheets, spreadsheetId, tabName, dayLabel, itemR
   });
 }
 
+// Moves one date's pivot data (Closing Stock / Wastage) to another date, possibly in a
+// different month's tab — clears the source column (only the rows that actually had a
+// value there) and writes those same values into the target column via the normal
+// writeToPivotSheet combine logic (so a 'sum' move onto a target day that already has
+// its own entries adds to them, exactly like a fresh submission would).
+async function moveDateInSheet(supabase, outletId, type, fromDate, toDate) {
+  try {
+    if (!OUTLET_LABELS[outletId] || !PIVOT_SCHEMA[type]) return;
+    const sheets = await getSheets();
+    if (!sheets) return;
+    const spreadsheetId = await getSpreadsheetIdForOutlet(supabase, outletId);
+    if (!spreadsheetId) return;
+
+    const { name: baseName, combine } = PIVOT_SCHEMA[type];
+    const fromTab = `${baseName} – ${monthLabel(fromDate)}`;
+    const toTab = `${baseName} – ${monthLabel(toDate)}`;
+    const fromLabel = fromDate.slice(5);
+    const toLabel = toDate.slice(5);
+
+    await ensurePivotTab(sheets, spreadsheetId, fromTab);
+    const { data: srcData } = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${fromTab}'!A1:ZZ1000` });
+    const srcRows = (srcData.values && srcData.values.length > 0) ? srcData.values.map(r => [...r]) : [['Item', 'Unit', 'Total']];
+    const srcHeader = srcRows[0];
+    const fromColIdx = srcHeader.findIndex((h, i) => i >= 3 && h === fromLabel);
+
+    const moved = [];
+    if (fromColIdx !== -1) {
+      for (let r = 1; r < srcRows.length; r++) {
+        const val = Number(srcRows[r][fromColIdx]) || 0;
+        if (val) {
+          moved.push({ name: srcRows[r][0], unit: srcRows[r][1], qty: val });
+          srcRows[r][fromColIdx] = '';
+        }
+      }
+      if (moved.length > 0) {
+        for (let r = 1; r < srcRows.length; r++) {
+          while (srcRows[r].length <= fromColIdx) srcRows[r].push('');
+          srcRows[r][2] = `=SUM(D${r + 1}:ZZ${r + 1})`;
+        }
+        await sheets.spreadsheets.values.update({
+          spreadsheetId, range: `'${fromTab}'!A1`, valueInputOption: 'USER_ENTERED',
+          resource: { values: [srcHeader, ...srcRows.slice(1)] },
+        });
+      }
+    }
+
+    if (moved.length === 0) return; // nothing was actually in the sheet for that date
+    await writeToPivotSheet(sheets, spreadsheetId, toTab, toLabel, moved, combine);
+    console.log(`📊 Sheet date moved: ${OUTLET_LABELS[outletId]} › ${baseName} (${fromDate} → ${toDate})`);
+  } catch (e) {
+    console.error(`Google Sheets move error (${outletId}/${type}):`, e.message);
+  }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Write a submission to the correct outlet sheet + tab
 // ────────────────────────────────────────────────────────────────────────────
@@ -507,6 +561,7 @@ async function writeToSheet(supabase, outletId, type, submittedBy, data, items) 
 
 module.exports = {
   writeToSheet,
+  moveDateInSheet,
   setupAllOutlets,
   getSpreadsheetIdForOutlet,
   // exposed for debugging
