@@ -1020,6 +1020,7 @@ const DailyPnL = () => {
         {/* Summary Cards */}
         <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
           {[
+            { l: "Total Sale", v: d.total_sale, c: "#1D4ED8", bg: "#EFF6FF", bc: "#BFDBFE" },
             { l: "Effective Sale", v: d.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
             { l: "Total Expense", v: d.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
             { l: "Net P&L", v: d.net_profit, c: d.net_profit >= 0 ? "#16A34A" : "#DC2626", bg: d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", bc: d.net_profit >= 0 ? "#BBF7D0" : "#FECACA" },
@@ -1284,6 +1285,7 @@ const DailyPnL = () => {
             {/* Summary Cards */}
             <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
               {[
+                { l: "Total Sale", v: md.total_sale, c: "#1D4ED8", bg: "#EFF6FF", bc: "#BFDBFE" },
                 { l: "Effective Sale", v: md.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
                 { l: "Total Expense", v: md.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
                 { l: "Net P&L", v: md.net_profit, c: (md.net_profit || 0) >= 0 ? "#16A34A" : "#DC2626", bg: (md.net_profit || 0) >= 0 ? "#F0FDF4" : "#FEF2F2", bc: (md.net_profit || 0) >= 0 ? "#BBF7D0" : "#FECACA" },
