@@ -835,9 +835,11 @@ const DailyPnL = () => {
 
           // The backend's 'all' row is a plain numeric summary with no item/fixed-cost
           // breakdown — roll each real outlet's breakdown into both its own bucket and
-          // an 'all' bucket here instead, so "All Outlets" isn't left empty.
+          // an 'all' bucket here instead, so "All Outlets" isn't left empty. Elan is
+          // excluded from the 'all' bucket (but still gets its own), matching the
+          // backend's consolidated-total exclusion.
           if (p.outlet_id !== 'all') {
-            [p.outlet_id, 'all'].forEach((key) => {
+            [p.outlet_id, ...(p.outlet_id !== 'elan' ? ['all'] : [])].forEach((key) => {
               if (!categoryTotals[key]) categoryTotals[key] = {};
               const catMap = categoryTotals[key];
               (p.stock_items || []).forEach((item) => {

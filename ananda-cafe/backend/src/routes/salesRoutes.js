@@ -2230,26 +2230,29 @@ router.get('/pnl/live/:date', async (req, res) => {
       });
     }
 
-    // Add ALL-outlets summary
+    // Add ALL-outlets summary — Elan is excluded from the consolidated total (still
+    // available on its own via its individual outlet_id row) since it's a franchise
+    // whose numbers the owner doesn't want blended into the company-wide P&L.
     if (!outlet || outlet === 'all') {
+      const consolidated = pnlResults.filter(r => r.outlet_id !== 'elan');
       const summary = {
         outlet_id: 'all',
         date,
-        total_sale: pnlResults.reduce((s, r) => s + r.total_sale, 0),
-        delivery_sale: pnlResults.reduce((s, r) => s + r.delivery_sale, 0),
-        store_sale: pnlResults.reduce((s, r) => s + r.store_sale, 0),
-        cancelled_orders: pnlResults.reduce((s, r) => s + r.cancelled_orders, 0),
-        complimentary: pnlResults.reduce((s, r) => s + r.complimentary, 0),
-        effective_sale: pnlResults.reduce((s, r) => s + r.effective_sale, 0),
-        variable_cost: pnlResults.reduce((s, r) => s + r.variable_cost, 0),
-        daily_fixed_cost: pnlResults.reduce((s, r) => s + r.daily_fixed_cost, 0),
-        bk_share: pnlResults.reduce((s, r) => s + r.bk_share, 0),
-        daily_purchases: pnlResults.reduce((s, r) => s + r.daily_purchases, 0),
-        vendor_payments: pnlResults.reduce((s, r) => s + (r.vendor_payments || 0), 0),
-        new_purchases: pnlResults.reduce((s, r) => s + (r.new_purchases || 0), 0),
-        total_expense: pnlResults.reduce((s, r) => s + r.total_expense, 0),
-        net_profit: pnlResults.reduce((s, r) => s + r.net_profit, 0),
-        days_in_month: pnlResults[0]?.days_in_month || 30,
+        total_sale: consolidated.reduce((s, r) => s + r.total_sale, 0),
+        delivery_sale: consolidated.reduce((s, r) => s + r.delivery_sale, 0),
+        store_sale: consolidated.reduce((s, r) => s + r.store_sale, 0),
+        cancelled_orders: consolidated.reduce((s, r) => s + r.cancelled_orders, 0),
+        complimentary: consolidated.reduce((s, r) => s + r.complimentary, 0),
+        effective_sale: consolidated.reduce((s, r) => s + r.effective_sale, 0),
+        variable_cost: consolidated.reduce((s, r) => s + r.variable_cost, 0),
+        daily_fixed_cost: consolidated.reduce((s, r) => s + r.daily_fixed_cost, 0),
+        bk_share: consolidated.reduce((s, r) => s + r.bk_share, 0),
+        daily_purchases: consolidated.reduce((s, r) => s + r.daily_purchases, 0),
+        vendor_payments: consolidated.reduce((s, r) => s + (r.vendor_payments || 0), 0),
+        new_purchases: consolidated.reduce((s, r) => s + (r.new_purchases || 0), 0),
+        total_expense: consolidated.reduce((s, r) => s + r.total_expense, 0),
+        net_profit: consolidated.reduce((s, r) => s + r.net_profit, 0),
+        days_in_month: consolidated[0]?.days_in_month || 30,
       };
       summary.margin = summary.effective_sale > 0 ? Math.round(summary.net_profit / summary.effective_sale * 1000) / 10 : 0;
       pnlResults.unshift(summary);
@@ -2579,19 +2582,21 @@ router.get('/stock-usage/:date', async (req, res) => {
       });
     }
 
-    // ALL summary
+    // ALL summary — same Elan exclusion as /pnl/live, so the consolidated variable-cost
+    // figure that overrides P&L's 'all' row stays consistent with it.
     if (!outlet || outlet === 'all') {
+      const consolidated = results.filter(r => r.outlet_id !== 'elan');
       const summary = {
         outlet_id: 'all', date,
         has_prev_closing: true,
         has_today_closing: true,
-        prev_closing_submitted: results.every(r => r.prev_closing_submitted),
-        today_closing_submitted: results.every(r => r.today_closing_submitted),
-        total_used_cost: results.reduce((s, r) => s + r.total_used_cost, 0),
+        prev_closing_submitted: consolidated.every(r => r.prev_closing_submitted),
+        today_closing_submitted: consolidated.every(r => r.today_closing_submitted),
+        total_used_cost: consolidated.reduce((s, r) => s + r.total_used_cost, 0),
         variable_cost_by_category: {},
         items: [],
       };
-      results.forEach(r => {
+      consolidated.forEach(r => {
         Object.entries(r.variable_cost_by_category).forEach(([cat, cost]) => {
           summary.variable_cost_by_category[cat] = (summary.variable_cost_by_category[cat] || 0) + cost;
         });
