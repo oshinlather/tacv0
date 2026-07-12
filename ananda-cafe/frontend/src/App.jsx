@@ -4624,7 +4624,8 @@ const LOG_CATEGORIES = [
 // variation. % is against each outlet's OWN effective sale, so outlets of different
 // sizes/volumes are still directly comparable.
 const CogsCompare = () => {
-  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
+  const [selDay, setSelDay] = useState(1); // 0=Today, 1=Yesterday (default), 2.. further back
+  const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
   const [loading, setLoading] = useState(true);
   const [monthData, setMonthData] = useState(null);
   const [drillCat, setDrillCat] = useState(null);
@@ -4641,17 +4642,22 @@ const CogsCompare = () => {
     return opts;
   }, []);
 
-  const fetchMonth = useCallback((monthStr) => {
-    setLoading(true);
-    const [y, mo] = monthStr.split("-").map(Number);
+  const monthDates = useMemo(() => {
+    if (!selMonth) return null;
+    const [y, mo] = selMonth.split("-").map(Number);
     const daysInMo = new Date(y, mo, 0).getDate();
     const todayStr = today();
-    const dates = [];
+    const result = [];
     for (let day = 1; day <= daysInMo; day++) {
       const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       if (ds > todayStr) break;
-      dates.push(ds);
+      result.push(ds);
     }
+    return result;
+  }, [selMonth]);
+
+  const fetchDates = useCallback((dates) => {
+    setLoading(true);
     Promise.all(dates.map((ds) =>
       Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null)])
         .then(([pnl, stock]) => {
@@ -4686,7 +4692,9 @@ const CogsCompare = () => {
     }).finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { fetchMonth(selMonth); }, [selMonth, fetchMonth]);
+  useEffect(() => {
+    fetchDates(selMonth ? monthDates : [istDateAgo(selDay)]);
+  }, [selDay, selMonth, monthDates, fetchDates]);
 
   const outletsWithData = useMemo(() => {
     if (!monthData) return [];
@@ -4746,25 +4754,34 @@ const CogsCompare = () => {
   };
 
   const drillSection = drillCat ? DEMAND_SECTIONS.find((s) => s.id === drillCat) : null;
-  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+  const periodLabel = selMonth
+    ? (monthOptions.find((m) => m.value === selMonth)?.label || selMonth)
+    : (selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : istDateAgo(selDay));
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <div>
-          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 COGS Compare</h3>
-          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
-        </div>
-        <select value={selMonth} onChange={(e) => { setSelMonth(e.target.value); setDrillCat(null); }}
-          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 COGS Compare</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
+      </div>
+
+      {/* Date pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); setDrillCat(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+        <select value={selMonth || ""} onChange={(e) => { setSelMonth(e.target.value || null); setDrillCat(null); }}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
+          <option value="">📅 Month view...</option>
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
 
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}...</div>}
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
 
       {!loading && outletsWithData.length === 0 && (
-        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {monthLabel}</div>
+        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {periodLabel}</div>
       )}
 
       {!loading && outletsWithData.length > 0 && (
@@ -4774,7 +4791,7 @@ const CogsCompare = () => {
               <button onClick={() => setDrillCat(null)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>← Categories</button>
               <div style={{ fontSize: 13, fontWeight: 700 }}>{drillSection?.emoji} {drillSection?.titleHi} — item-wise</div>
             </>) : (
-              <div style={{ fontSize: 13, fontWeight: 700 }}>Category-wise · {monthLabel} · tap a row to see item-wise</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Category-wise · {periodLabel} · tap a row to see item-wise</div>
             )}
           </div>
           <div style={{ overflowX: "auto" }}>
@@ -7784,7 +7801,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date", "cogs_compare"];
+  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -7880,7 +7897,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
@@ -7922,7 +7939,6 @@ export default function AnandaCafe() {
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
           { id: "move_date", label: "🔀 Move Submission Date", sub: "Fix a manager's wrong-date entry" },
-          { id: "cogs_compare", label: "📊 COGS Compare", sub: "Category & item cost % across outlets" },
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
@@ -7963,6 +7979,7 @@ export default function AnandaCafe() {
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
+      {ownerTab === "cogs_compare" && <CogsCompare />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
       {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
@@ -7982,7 +7999,6 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
       {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
       {auditUnlocked && ownerTab === "move_date" && <MoveSubmissionDate />}
-      {auditUnlocked && ownerTab === "cogs_compare" && <CogsCompare />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
