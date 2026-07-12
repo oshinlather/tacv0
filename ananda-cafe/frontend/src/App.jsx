@@ -4616,6 +4616,202 @@ const LOG_CATEGORIES = [
 // day's Sales / Closing Stock / Wastage entirely from one date to another (same
 // outlet), updating the database (so P&L/stock-usage recompute correctly) and the
 // corresponding Google Sheet.
+// Compares COGS% — category-level first, then item-wise within a category — across
+// outlets for a month. Every outlet dispatches from the same base kitchen and cooks the
+// same recipes at the same rate-card prices, so a category or item that costs a much
+// higher % of sale at one outlet than another is a real signal (over-portioning,
+// unrecorded wastage, theft, or a closing-stock reporting error) rather than expected
+// variation. % is against each outlet's OWN effective sale, so outlets of different
+// sizes/volumes are still directly comparable.
+const CogsCompare = () => {
+  const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
+  const [loading, setLoading] = useState(true);
+  const [monthData, setMonthData] = useState(null);
+  const [drillCat, setDrillCat] = useState(null);
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  const fetchMonth = useCallback((monthStr) => {
+    setLoading(true);
+    const [y, mo] = monthStr.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const dates = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      dates.push(ds);
+    }
+    Promise.all(dates.map((ds) =>
+      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null)])
+        .then(([pnl, stock]) => {
+          if (pnl?.pnl && stock?.outlets) {
+            pnl.pnl.forEach((p) => {
+              const su = stock.outlets.find((s) => s.outlet_id === p.outlet_id);
+              if (su) p.stock_items = su.items;
+            });
+          }
+          return pnl?.pnl || [];
+        })
+    )).then((results) => {
+      const totals = {}; // outlet_id -> { effective_sale }
+      const categoryTotals = {}; // outlet_id -> { catId -> { total, items: { item_id -> { name, unit, cost } } } }
+      results.forEach((pnl) => {
+        pnl.forEach((p) => {
+          if (p.outlet_id === "all") return;
+          if (!totals[p.outlet_id]) totals[p.outlet_id] = { effective_sale: 0 };
+          totals[p.outlet_id].effective_sale += p.effective_sale || 0;
+          if (!categoryTotals[p.outlet_id]) categoryTotals[p.outlet_id] = {};
+          const catMap = categoryTotals[p.outlet_id];
+          (p.stock_items || []).forEach((item) => {
+            const catId = (item.category || "other").toLowerCase();
+            if (!catMap[catId]) catMap[catId] = { total: 0, items: {} };
+            catMap[catId].total += item.used_cost || 0;
+            if (!catMap[catId].items[item.item_id]) catMap[catId].items[item.item_id] = { name: item.name, unit: item.unit, cost: 0 };
+            catMap[catId].items[item.item_id].cost += item.used_cost || 0;
+          });
+        });
+      });
+      setMonthData({ totals, categoryTotals });
+    }).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { fetchMonth(selMonth); }, [selMonth, fetchMonth]);
+
+  const outletsWithData = useMemo(() => {
+    if (!monthData) return [];
+    return OUTLETS.filter((o) => (monthData.totals[o.id]?.effective_sale || 0) > 0);
+  }, [monthData]);
+
+  const pctOf = (outletId, cost) => {
+    const sale = monthData?.totals?.[outletId]?.effective_sale || 0;
+    return sale > 0 ? (cost / sale * 100) : null;
+  };
+
+  // Sorted by spread (max − min %) descending — the categories with the biggest
+  // cross-outlet inconsistency are the actual anomalies worth looking at first.
+  const categoryRows = useMemo(() => {
+    if (!monthData || outletsWithData.length === 0) return [];
+    return DEMAND_SECTIONS.map((s) => {
+      const pcts = outletsWithData.map((o) => pctOf(o.id, monthData.categoryTotals[o.id]?.[s.id]?.total || 0));
+      const valid = pcts.filter((v) => v != null);
+      const max = valid.length ? Math.max(...valid) : null;
+      const min = valid.length ? Math.min(...valid) : null;
+      return { ...s, pcts, spread: (max != null && min != null) ? max - min : 0, hasData: valid.some((v) => v > 0) };
+    }).filter((r) => r.hasData).sort((a, b) => b.spread - a.spread);
+  }, [monthData, outletsWithData]);
+
+  const itemRows = useMemo(() => {
+    if (!monthData || !drillCat || outletsWithData.length === 0) return [];
+    const itemIds = new Set();
+    outletsWithData.forEach((o) => Object.keys(monthData.categoryTotals[o.id]?.[drillCat]?.items || {}).forEach((id) => itemIds.add(id)));
+    return [...itemIds].map((id) => {
+      let name = id, unit = "";
+      const pcts = outletsWithData.map((o) => {
+        const it = monthData.categoryTotals[o.id]?.[drillCat]?.items?.[id];
+        if (it) { name = it.name; unit = it.unit; }
+        return pctOf(o.id, it?.cost || 0);
+      });
+      const valid = pcts.filter((v) => v != null);
+      const max = valid.length ? Math.max(...valid) : null;
+      const min = valid.length ? Math.min(...valid) : null;
+      return { id, name, unit, pcts, spread: (max != null && min != null) ? max - min : 0 };
+    }).filter((r) => r.pcts.some((v) => v > 0)).sort((a, b) => b.spread - a.spread);
+  }, [monthData, drillCat, outletsWithData]);
+
+  // Colors each cell relative to the ROW's own average (not a fixed threshold — a
+  // category's "normal" % varies hugely, e.g. Packaging vs Vegetable), so the outlier
+  // for that specific row always stands out regardless of the category's typical size.
+  const cellColor = (val, rowVals) => {
+    if (val == null) return "#CCC";
+    const valid = rowVals.filter((v) => v != null);
+    if (valid.length < 2) return "#1A1A1A";
+    const avg = valid.reduce((s, v) => s + v, 0) / valid.length;
+    if (avg === 0) return "#1A1A1A";
+    const devPct = (val - avg) / avg * 100;
+    if (devPct > 30) return "#DC2626";
+    if (devPct > 15) return "#B45309";
+    if (devPct < -20) return "#16A34A";
+    return "#1A1A1A";
+  };
+
+  const drillSection = drillCat ? DEMAND_SECTIONS.find((s) => s.id === drillCat) : null;
+  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 COGS Compare</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
+        </div>
+        <select value={selMonth} onChange={(e) => { setSelMonth(e.target.value); setDrillCat(null); }}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}...</div>}
+
+      {!loading && outletsWithData.length === 0 && (
+        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {monthLabel}</div>
+      )}
+
+      {!loading && outletsWithData.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", display: "flex", alignItems: "center", gap: 10 }}>
+            {drillCat ? (<>
+              <button onClick={() => setDrillCat(null)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>← Categories</button>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{drillSection?.emoji} {drillSection?.titleHi} — item-wise</div>
+            </>) : (
+              <div style={{ fontSize: 13, fontWeight: 700 }}>Category-wise · {monthLabel} · tap a row to see item-wise</div>
+            )}
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 170 }}>{drillCat ? "Item" : "Category"}</th>
+                {outletsWithData.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{o.short}</th>)}
+              </tr></thead>
+              <tbody>
+                {!drillCat && categoryRows.map((r) => (
+                  <tr key={r.id} onClick={() => setDrillCat(r.id)} style={{ borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
+                    <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.emoji} {r.titleHi} <span style={{ color: "#BBB", fontSize: 10 }}>→</span></td>
+                    {r.pcts.map((v, i) => (
+                      <td key={i} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>{v != null ? `${v.toFixed(1)}%` : "—"}</td>
+                    ))}
+                  </tr>
+                ))}
+                {drillCat && itemRows.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
+                    {r.pcts.map((v, i) => (
+                      <td key={i} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>{v != null ? `${v.toFixed(2)}%` : "—"}</td>
+                    ))}
+                  </tr>
+                ))}
+                {drillCat && itemRows.length === 0 && (
+                  <tr><td colSpan={outletsWithData.length + 1} style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No {drillSection?.titleHi} consumption recorded this month</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const MoveSubmissionDate = () => {
   const [outlet, setOutlet] = useState(OUTLETS[0]?.id || null);
   const [fromDate, setFromDate] = useState(today());
@@ -7588,7 +7784,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date", "cogs_compare"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -7726,6 +7922,7 @@ export default function AnandaCafe() {
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
           { id: "move_date", label: "🔀 Move Submission Date", sub: "Fix a manager's wrong-date entry" },
+          { id: "cogs_compare", label: "📊 COGS Compare", sub: "Category & item cost % across outlets" },
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
@@ -7785,6 +7982,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
       {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
       {auditUnlocked && ownerTab === "move_date" && <MoveSubmissionDate />}
+      {auditUnlocked && ownerTab === "cogs_compare" && <CogsCompare />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
