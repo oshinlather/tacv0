@@ -4383,11 +4383,12 @@ const OutletActivityGrid = ({ mode }) => {
   const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — cleared once the
-  // save round-trips and the fetched dayWise value reflects it. Same inline-input pattern
-  // as Franchise Billing's Day by Day grid, but each blur persists a real correction here.
+  // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — only committed to
+  // the backend when "Save" is pressed (saveAllDrafts), not per-cell on blur, so correcting
+  // many cells doesn't fire a network request for each one.
   const [drafts, setDrafts] = useState({});
-  const [savingKey, setSavingKey] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [saving, setSaving] = useState(false);
   const currentUser = getCurrentUser();
   // Demand is a view-only rollup here (AM+PM merged per day) — corrections belong in the
   // Last 7 Days view where a single demand record can be targeted unambiguously.
@@ -4433,20 +4434,29 @@ const OutletActivityGrid = ({ mode }) => {
 
   const draftKey = (itemId, date) => `${itemId}|${date}`;
   const setDraft = (itemId, date, value) => setDrafts((prev) => ({ ...prev, [draftKey(itemId, date)]: value }));
-  const clearDraft = (itemId, date) => setDrafts((prev) => { const next = { ...prev }; delete next[draftKey(itemId, date)]; return next; });
 
-  const commitCell = async (itemId, date, rawVal) => {
-    const key = draftKey(itemId, date);
-    const newQty = Number(rawVal) || 0;
-    if (newQty === Math.round(((dayWise[itemId] || {})[date] || 0) * 100) / 100) { clearDraft(itemId, date); return; }
-    setSavingKey(key);
+  // Fires all pending cell edits together (one request per changed cell, in parallel)
+  // when "Save" is pressed, instead of one request per cell on blur.
+  const saveAllDrafts = async () => {
+    const entries = Object.entries(drafts).filter(([key, val]) => {
+      const [itemId, date] = key.split("|");
+      const existing = Math.round(((dayWise[itemId] || {})[date] || 0) * 100) / 100;
+      return (Number(val) || 0) !== existing;
+    });
+    if (entries.length === 0) { setDrafts({}); setEditMode(false); return; }
+    setSaving(true);
     try {
-      await api.editItemQty(selOutlet, date, itemId, newQty, undefined, isClosing ? "closing_stock" : "wastage");
-      clearDraft(itemId, date);
+      await Promise.all(entries.map(([key, val]) => {
+        const [itemId, date] = key.split("|");
+        return api.editItemQty(selOutlet, date, itemId, Number(val) || 0, undefined, isClosing ? "closing_stock" : "wastage");
+      }));
+      setDrafts({});
+      setEditMode(false);
       load();
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSavingKey(null); }
+    } catch (e) { alert("Error saving: " + e.message); }
+    finally { setSaving(false); }
   };
+  const cancelEdits = () => { setDrafts({}); setEditMode(false); };
 
   // Per-item, per-day qty — { item_id: { date: qty } }. Closing-stock keys carry a cs_
   // prefix (cs_butter); normalize to the bare item id so lookups match either source.
@@ -4496,9 +4506,9 @@ const OutletActivityGrid = ({ mode }) => {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <div>
           <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>{modeTitle}</h3>
-          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {modeLabel} per item, all outlets — month-wise{canRecord ? " · click a value to correct it" : ""}</p>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Day-wise {modeLabel} per item, all outlets — month-wise{canRecord ? " · tap ✏️ Edit to correct values" : ""}</p>
         </div>
-        <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+        <select value={selMonth} onChange={(e) => { setSelMonth(e.target.value); setDrafts({}); setEditMode(false); }}
           style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
@@ -4506,7 +4516,7 @@ const OutletActivityGrid = ({ mode }) => {
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
-          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+          <button key={o.id} onClick={() => { setSelOutlet(o.id); setDrafts({}); setEditMode(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
       </div>
 
@@ -4528,7 +4538,16 @@ const OutletActivityGrid = ({ mode }) => {
               <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
               <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
             </div>
-            <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              {canRecord && !editMode && (
+                <button onClick={() => setEditMode(true)} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 12, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+              )}
+              {canRecord && editMode && (<>
+                <button onClick={cancelEdits} disabled={saving} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 700, color: "#888", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>✕ Cancel</button>
+                <button onClick={saveAllDrafts} disabled={saving} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#16A34A", fontSize: 12, fontWeight: 700, color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳ Saving..." : `💾 Save${Object.keys(drafts).length > 0 ? ` (${Object.keys(drafts).length})` : ""}`}</button>
+              </>)}
+              <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
+            </div>
           </div>
 
           {items.length === 0 ? (
@@ -4551,16 +4570,14 @@ const OutletActivityGrid = ({ mode }) => {
                         const key = draftKey(i.id, ds);
                         const hasDraft = drafts[key] !== undefined;
                         const shown = hasDraft ? drafts[key] : (v > 0 ? Math.round(v * 100) / 100 : "");
-                        const isSaving = savingKey === key;
-                        if (!canRecord) {
+                        if (!canRecord || !editMode) {
                           return <td key={ds} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v > 0 ? "#1A1A1A" : "#DDD" }}>{v > 0 ? Math.round(v * 100) / 100 : "—"}</td>;
                         }
                         return (
                           <td key={ds} style={{ ...tdS, textAlign: "right", padding: "4px 6px" }}>
-                            <input type="number" inputMode="decimal" step="any" value={shown} placeholder="—" disabled={isSaving}
+                            <input type="number" inputMode="decimal" step="any" value={shown} placeholder="—" disabled={saving}
                               onChange={(e) => setDraft(i.id, ds, e.target.value)}
-                              onBlur={(e) => commitCell(i.id, ds, e.target.value)}
-                              style={{ width: 44, padding: "3px 4px", borderRadius: 5, border: hasDraft ? "1px solid #2563EB" : "1px solid #E8E8E4", background: isSaving ? "#F5F5F3" : (hasDraft ? "#EFF6FF" : "transparent"), fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: hasDraft ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: hasDraft ? 700 : 400 }} />
+                              style={{ width: 44, padding: "3px 4px", borderRadius: 5, border: hasDraft ? "1px solid #2563EB" : "1px solid #E8E8E4", background: saving ? "#F5F5F3" : (hasDraft ? "#EFF6FF" : "transparent"), fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: hasDraft ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: hasDraft ? 700 : 400 }} />
                           </td>
                         );
                       })}
