@@ -4444,12 +4444,23 @@ const OutletActivityGrid = ({ mode }) => {
       return (Number(val) || 0) !== existing;
     });
     if (entries.length === 0) { setDrafts({}); setEditMode(false); return; }
+
+    // Group by date and send ONE request per date (not one per cell) — firing many
+    // parallel single-cell edits at the same date's row let concurrent requests race:
+    // each reads the row before any of them write, so whichever finishes last wins and
+    // silently discards every other cell's change. Batching per date makes each date's
+    // save a single atomic read-modify-write.
+    const byDate = {};
+    entries.forEach(([key, val]) => {
+      const [itemId, date] = key.split("|");
+      (byDate[date] = byDate[date] || []).push({ item_id: itemId, new_qty: Number(val) || 0 });
+    });
+
     setSaving(true);
     try {
-      await Promise.all(entries.map(([key, val]) => {
-        const [itemId, date] = key.split("|");
-        return api.editItemQty(selOutlet, date, itemId, Number(val) || 0, undefined, isClosing ? "closing_stock" : "wastage");
-      }));
+      await Promise.all(Object.entries(byDate).map(([date, edits]) =>
+        api.editItemQtyBatch(selOutlet, date, edits, isClosing ? "closing_stock" : "wastage")
+      ));
       setDrafts({});
       setEditMode(false);
       load();
@@ -4575,7 +4586,7 @@ const OutletActivityGrid = ({ mode }) => {
                         }
                         return (
                           <td key={ds} style={{ ...tdS, textAlign: "right", padding: "4px 6px" }}>
-                            <input type="number" inputMode="decimal" step="any" value={shown} placeholder="—" disabled={saving}
+                            <input type="number" inputMode="decimal" step="any" min="0" value={shown} placeholder="—" disabled={saving}
                               onChange={(e) => setDraft(i.id, ds, e.target.value)}
                               style={{ width: 44, padding: "3px 4px", borderRadius: 5, border: hasDraft ? "1px solid #2563EB" : "1px solid #E8E8E4", background: saving ? "#F5F5F3" : (hasDraft ? "#EFF6FF" : "transparent"), fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: hasDraft ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: hasDraft ? 700 : 400 }} />
                           </td>

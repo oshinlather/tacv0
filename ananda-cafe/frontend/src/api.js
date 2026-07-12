@@ -182,6 +182,10 @@ const api = {
   // Qty Corrections (owner edit of dispatched/wastage/closing-stock item qty)
   editItemQty: (outlet_id, date, item_id, new_qty, reason, record_type) =>
     patch("/api/qty-edit", { outlet_id, date, item_id, new_qty, reason, record_type }),
+  // Batch version — one atomic read-modify-write per date instead of one per cell, so
+  // saving many cells for the same date can't race and clobber each other.
+  editItemQtyBatch: (outlet_id, date, edits, record_type, reason) =>
+    patch("/api/qty-edit-batch", { outlet_id, date, edits, record_type, reason }),
   getCorrections: (params) => get("/api/corrections", params),
   // Auth
   login: (phone, pin) => post("/api/auth/login", { phone, pin }),

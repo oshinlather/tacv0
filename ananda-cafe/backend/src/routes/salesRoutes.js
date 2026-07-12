@@ -1677,6 +1677,111 @@ router.patch('/qty-edit', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/qty-edit-batch — Owner/Store manager saves multiple item edits for ONE
+// outlet+date+record_type in a single request. Exists specifically to avoid a read-
+// modify-write race: /qty-edit reads the row, merges in one field, and writes it back —
+// firing that per-cell in parallel (as the Closing Stock/Wastage grid's batch "Save"
+// does) means several requests read the SAME pre-edit row, and whichever write lands
+// last wins, silently discarding every other concurrent edit to that row. This endpoint
+// reads the row once, applies every edit to one in-memory copy, and writes once, so
+// there's only ever a single write per row no matter how many cells changed.
+router.patch('/qty-edit-batch', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    const { outlet_id, date, record_type, edits, reason } = req.body;
+    if (!outlet_id || !date || !Array.isArray(edits) || edits.length === 0) {
+      return res.status(400).json({ error: 'outlet_id, date, and a non-empty edits[] are required' });
+    }
+    for (const e of edits) {
+      if (!e.item_id || e.new_qty === undefined || e.new_qty === null || isNaN(Number(e.new_qty))) {
+        return res.status(400).json({ error: `Invalid edit for item '${e.item_id}': new_qty must be a number` });
+      }
+      if (Number(e.new_qty) < 0) {
+        return res.status(400).json({ error: `${e.item_id}: quantity cannot be negative` });
+      }
+    }
+
+    const correctorName = req.headers['x-user-name'] ||
+      (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
+      'owner';
+
+    if (record_type === 'closing_stock') {
+      const { data: row, error: loadErr } = await supabase.from('closing_stocks')
+        .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+      if (loadErr) throw loadErr;
+
+      const items = { ...(row?.items || {}) };
+      const corrections = [];
+      for (const { item_id, new_qty } of edits) {
+        const key = Object.keys(items).find(k => k === item_id || k === `cs_${item_id}`) || `cs_${item_id}`;
+        const oldQty = Number(items[key]) || 0;
+        items[key] = Number(new_qty);
+        corrections.push({ item_id, old_qty: oldQty, new_qty: Number(new_qty) });
+      }
+
+      if (row) {
+        const { error: updateErr } = await supabase.from('closing_stocks').update({ items }).eq('id', row.id);
+        if (updateErr) throw updateErr;
+      } else {
+        const { error: insertErr } = await supabase.from('closing_stocks').insert({
+          outlet_id, date, items, submitted_by: null, submitted_at: new Date().toISOString(),
+        });
+        if (insertErr) throw insertErr;
+      }
+      await supabase.from('qty_corrections').insert(corrections.map(c => ({
+        demand_id: null, outlet_id, date, item_id: c.item_id, old_qty: c.old_qty, new_qty: c.new_qty,
+        unit: null, reason: reason || null, corrected_by: correctorName,
+      })));
+      return res.json({ ok: true, updated: corrections.length });
+    }
+
+    if (record_type === 'wastage') {
+      const { data: rows, error: loadErr } = await supabase.from('demands')
+        .select('id, items').eq('outlet_id', outlet_id).eq('date', date).eq('type', 'wastage');
+      if (loadErr) throw loadErr;
+      const targetRows = (rows || []).map(r => ({ id: r.id, items: { ...(r.items || {}) } }));
+
+      const corrections = [];
+      const changedRowIds = new Set();
+      let newRowItems = null;
+      for (const { item_id, new_qty } of edits) {
+        let target = targetRows.find(r => r.items[item_id] !== undefined) || targetRows[0];
+        if (target) {
+          const oldQty = Number(target.items[item_id]) || 0;
+          target.items[item_id] = Number(new_qty);
+          changedRowIds.add(target.id);
+          corrections.push({ demand_id: target.id, item_id, old_qty: oldQty, new_qty: Number(new_qty) });
+        } else {
+          if (!newRowItems) newRowItems = {};
+          const oldQty = Number(newRowItems[item_id]) || 0;
+          newRowItems[item_id] = Number(new_qty);
+          corrections.push({ demand_id: null, item_id, old_qty: oldQty, new_qty: Number(new_qty), _new: true });
+        }
+      }
+      for (const row of targetRows) {
+        if (!changedRowIds.has(row.id)) continue;
+        const { error: updateErr } = await supabase.from('demands').update({ items: row.items }).eq('id', row.id);
+        if (updateErr) throw updateErr;
+      }
+      if (newRowItems) {
+        const { data: created, error: insertErr } = await supabase.from('demands').insert({
+          outlet_id, date, type: 'wastage', status: 'submitted', items: newRowItems,
+          submitted_by: correctorName, submitted_at: new Date().toISOString(),
+        }).select().single();
+        if (insertErr) throw insertErr;
+        corrections.forEach((c) => { if (c._new) c.demand_id = created.id; });
+      }
+      await supabase.from('qty_corrections').insert(corrections.map(c => ({
+        demand_id: c.demand_id, outlet_id, date, item_id: c.item_id, old_qty: c.old_qty, new_qty: c.new_qty,
+        unit: null, reason: reason || null, corrected_by: correctorName,
+      })));
+      return res.json({ ok: true, updated: corrections.length });
+    }
+
+    res.status(400).json({ error: `Unsupported record_type '${record_type}' for batch edit` });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/corrections — Owner: list recent qty corrections
 router.get('/corrections', async (req, res) => {
   try {
