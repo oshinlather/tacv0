@@ -73,10 +73,19 @@ const api = {
   getIssuanceAudit: (date) => get(`/api/issuance-audit/${date}`),
 
   // ── RM Audit ──
-  getRMAudit: (date) => get(`/api/audit/${date}`),
+  getRMAudit: (date, outlet) => get(`/api/audit/${date}`, outlet ? { outlet } : {}),
 
   // ── PetPooja Recipes ──
   getRecipesPetpooja: () => get("/api/recipes/petpooja"),
+
+  // ── Dish Recipes (editable — Sales x Recipe leakage audit) ──
+  getRecipes: (all) => get("/api/recipes", all ? { all: "true" } : {}),
+  createRecipe: (data) => post("/api/recipes", data),
+  updateRecipe: (id, data) => patch(`/api/recipes/${id}`, data),
+  deleteRecipe: (id) => del(`/api/recipes/${id}`),
+  addRecipeIngredient: (recipeId, data) => post(`/api/recipes/${recipeId}/ingredients`, data),
+  updateRecipeIngredient: (id, data) => patch(`/api/recipes/ingredients/${id}`, data),
+  deleteRecipeIngredient: (id) => del(`/api/recipes/ingredients/${id}`),
 
   // ── Orders / Dashboard ──
   getOrders: (params) => get("/api/orders", params),

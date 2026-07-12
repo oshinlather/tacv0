@@ -26,7 +26,28 @@ const OUTLET_MAP = {
 'The Ananda Cafe (Sector - 31)': 'sec31',
 'The Ananda Cafe(Sec 56, Huda Market)': 'sec56',
 'The Ananda Cafe - Elan Mall': 'elan',
+'The Ananda Cafe (sector 14, Gurgaon)': 'sec14',
+'The Ananda Cafe (Siddharth vihar)': 'gaursid',
 };
+
+// Supabase/PostgREST caps a single select at 1000 rows — a single busy day's line items
+// across 6 outlets can easily exceed that, and a plain .select() silently truncates
+// instead of erroring, undercounting revenue/theoretical-consumption with no warning.
+// Every daily_sales read needs to page through with .range() until a page comes back short.
+async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
+  const rows = [];
+  const PAGE = 1000;
+  for (let pageFrom = 0; ; pageFrom += PAGE) {
+    let query = supabase.from('daily_sales').select(select || '*').range(pageFrom, pageFrom + PAGE - 1);
+    query = date ? query.eq('sale_date', date) : query.gte('sale_date', from).lte('sale_date', to);
+    if (outlet_code) query = query.eq('outlet_code', outlet_code);
+    const { data: page, error } = await query;
+    if (error) throw error;
+    rows.push(...page);
+    if (page.length < PAGE) break;
+  }
+  return rows;
+}
 
 // ────────────────────────────────────────────────────────────
 // 3A. POST /api/sales/upload — Upload PetPooja CSV
@@ -213,7 +234,7 @@ res.status(500).json({ error: err.message });
 // ────────────────────────────────────────────────────────────
 router.get('/recipes', async (req, res) => {
 try {
-const { data: recipes, error } = await supabase
+let query = supabase
 .from('recipes')
 .select(`
        id, item_name, item_type, category, status,
@@ -221,8 +242,9 @@ const { data: recipes, error } = await supabase
          id, raw_material, qty, unit, qty_kg
        )
      `)
-.eq('status', 'Active')
 .order('item_name');
+if (req.query.all !== 'true') query = query.eq('status', 'Active');
+const { data: recipes, error } = await query;
 
 if (error) throw error;
 res.json(recipes);
@@ -231,30 +253,111 @@ res.status(500).json({ error: err.message });
 }
 });
 
+// Converts a recipe-ingredient qty into the kg-equivalent computeRMAudit sums directly —
+// GM/KG/LTR/ML get a numeric qty_kg; countable items (Piece/Pcs) get null so they're
+// skipped from the raw-material weight total (packaging isn't costed by weight).
+function ingredientQtyKg(qty, unit) {
+  const u = (unit || '').trim().toUpperCase();
+  const n = Number(qty) || 0;
+  if (['GM', 'G', 'GMS', 'GRAM', 'GRAMS'].includes(u)) return n / 1000;
+  if (['KG', 'KGS'].includes(u)) return n;
+  if (['LTR.', 'LTR', 'L', 'LITRE', 'LITER'].includes(u)) return n;
+  if (['ML'].includes(u)) return n / 1000;
+  return null; // Piece, Pcs, etc. — countable, not weighed
+}
+
+// ── POST /api/recipes — Create a new dish recipe (owner-only, master data)
+router.post('/recipes', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { item_name, item_type, category } = req.body;
+    if (!item_name || !category) return res.status(400).json({ error: 'item_name and category are required' });
+    const { data, error } = await supabase.from('recipes').insert({
+      item_name, item_type: item_type || 'Item', category, status: 'Active',
+    }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/recipes/:id — Update a dish recipe's name/category/status (owner-only)
+router.patch('/recipes/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const updates = {};
+    if (req.body.item_name !== undefined) updates.item_name = req.body.item_name;
+    if (req.body.category !== undefined) updates.category = req.body.category;
+    if (req.body.status !== undefined) updates.status = req.body.status;
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('recipes').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/recipes/:id — Soft-delete (status='Inactive') a dish recipe (owner-only)
+router.delete('/recipes/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { error } = await supabase.from('recipes').update({ status: 'Inactive', updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/recipes/:id/ingredients — Add an ingredient to a dish recipe (owner-only)
+router.post('/recipes/:id/ingredients', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { raw_material, qty, unit } = req.body;
+    if (!raw_material || qty === undefined) return res.status(400).json({ error: 'raw_material and qty are required' });
+    const { data, error } = await supabase.from('recipe_ingredients').insert({
+      recipe_id: req.params.id, raw_material, qty: Number(qty), unit: unit || 'GM',
+      qty_kg: ingredientQtyKg(qty, unit), area: 'All',
+    }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/recipes/ingredients/:id — Update one ingredient's qty/unit/name (owner-only)
+router.patch('/recipes/ingredients/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { raw_material, qty, unit } = req.body;
+    const updates = {};
+    if (raw_material !== undefined) updates.raw_material = raw_material;
+    if (qty !== undefined) updates.qty = Number(qty);
+    if (unit !== undefined) updates.unit = unit;
+    if (qty !== undefined || unit !== undefined) {
+      const { data: existing } = await supabase.from('recipe_ingredients').select('qty, unit').eq('id', req.params.id).single();
+      updates.qty_kg = ingredientQtyKg(qty !== undefined ? qty : existing?.qty, unit !== undefined ? unit : existing?.unit);
+    }
+    const { data, error } = await supabase.from('recipe_ingredients').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/recipes/ingredients/:id — Remove an ingredient from a dish recipe (owner-only)
+router.delete('/recipes/ingredients/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { error } = await supabase.from('recipe_ingredients').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ────────────────────────────────────────────────────────────
 // 3D. GET /api/audit/:date — Raw Material Audit
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
     if (!await requireOwner(req, res)) return;
-const { date } = req.params;
-
-// Get precomputed audit
-const { data: audit, error } = await supabase
-.from('rm_audit')
-.select('*')
-.eq('audit_date', date)
-.order('should_consume', { ascending: false });
-
-if (error) throw error;
-
-if (audit && audit.length > 0) {
-return res.json({ date, items: audit });
-}
-
-// If not computed yet, compute on the fly
-const result = await computeRMAudit(date);
-res.json({ date, items: result });
+    const { date } = req.params;
+    const outlets = await computeRMAudit(date, req.query.outlet);
+    res.json({ date, outlets });
 } catch (err) {
 res.status(500).json({ error: err.message });
 }
@@ -544,86 +647,113 @@ return pnlRows;
 // ────────────────────────────────────────────────────────────
 // HELPER: Compute RM Audit
 // ────────────────────────────────────────────────────────────
-async function computeRMAudit(date) {
-const { data: sales } = await supabase
-.from('daily_sales')
-.select('item_name, item_quantity')
-.eq('sale_date', date);
+// Recipe raw-material name (free text, entered via the recipe editor) → the real
+// demand_items id that carries actual outlet-level consumption. Only unambiguous matches
+// are listed — everything else surfaces as "unmapped_ingredients" in the audit response
+// rather than being silently guessed, since a wrong mapping would be worse than a missing
+// one for a leakage figure the owner is relying on to be precise.
+const RECIPE_RAW_MATERIAL_MAP = {
+  'onion': 'onions',
+  'cheese': 'cheese',
+  'butter': 'butter',
+  'deshi ghee': 'desi_ghee',
+  'desi ghee': 'desi_ghee',
+  'dosa batter': 'dosa_batter',
+  'idli batter': 'idli_batter',
+  'podi masala': 'podi_masala',
+  'red chutney': 'red_chutney',
+  'white chutney': 'white_chutney',
+  'sambhar': 'sambhar',
+  'paper bowl': 'paper_bowl',
+  'spoon': 'bio_spoon',
+  'banana leaf': 'banana_leaves',
+  'packing bowl 250 ml': 'container_250ml',
+};
 
-const { data: recipes } = await supabase
-.from('recipes')
-.select('item_name, recipe_ingredients ( raw_material, qty_kg, unit )');
-
-if (!sales || !recipes) return [];
-
-const recipeMap = {};
-recipes.forEach(r => { recipeMap[r.item_name] = r.recipe_ingredients; });
-
-// Aggregate sales
-const salesMap = {};
-sales.forEach(s => {
-salesMap[s.item_name] = (salesMap[s.item_name] || 0) + s.item_quantity;
-});
-
-// Calculate theoretical consumption
-const rmTotals = {};
-Object.entries(salesMap).forEach(([itemName, qty]) => {
-const ingredients = recipeMap[itemName];
-if (!ingredients) return;
-
-ingredients.forEach(ing => {
-if (!ing.qty_kg) return; // skip packaging (Piece items)
-const key = ing.raw_material;
-if (!rmTotals[key]) {
-rmTotals[key] = { raw_material: key, unit: 'Kg', should_consume: 0 };
+// Dish names: PetPooja exports and recipe entries can differ in case/spacing/trailing
+// punctuation ("Cheese  Dosa" vs "Cheese Dosa", "Ghee Masala Dosa." vs "Ghee Masala Dosa")
+// — normalize both sides the same way before matching so real dishes aren't silently
+// dropped just because of formatting.
+function normalizeDishName(s) {
+  return (s || '').toLowerCase().trim().replace(/\.+$/, '').replace(/\s+/g, ' ');
 }
-rmTotals[key].should_consume += ing.qty_kg * qty;
-});
-});
+function normalizeIngredientName(s) {
+  return (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
 
-// Get actual issued from inventory_movements (stock_out for this date)
-const { data: movements } = await supabase.from('inventory_movements')
-  .select('item_id, quantity')
-  .eq('type', 'stock_out')
-  .gte('created_at', `${date}T00:00:00`)
-  .lt('created_at', `${date}T23:59:59`);
+// Theoretical (recipe) consumption vs ACTUAL outlet-level consumption — the same
+// Yesterday Closing + Dispatched − Wastage − Today Closing figure P&L and COGS Compare
+// already show (via computeStockUsageForDate), not Base Kitchen's internal issuance
+// records. Computed per outlet so leakage can be compared outlet-to-outlet, since every
+// outlet cooks from the same recipes and dispatches from the same base kitchen.
+async function computeRMAudit(date, outletFilter) {
+  const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+  const targetOutlets = outletFilter && outletFilter !== 'all' ? [outletFilter] : outletIds;
 
-// Also get inventory item names for matching
-const { data: invItems } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+  const sales = await fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' });
+  const { data: recipes } = await supabase.from('recipes')
+    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
 
-// Build actual issued map by item name (matching RM audit raw_material names)
-const actualMap = {};
-(movements || []).forEach(m => {
-  const invItem = (invItems || []).find(i => i.id === m.item_id);
-  if (invItem) {
-    const name = invItem.name;
-    actualMap[name] = (actualMap[name] || 0) + Math.abs(Number(m.quantity));
+  const recipeByNormName = {};
+  (recipes || []).forEach(r => { recipeByNormName[normalizeDishName(r.item_name)] = r; });
+
+  const stockUsage = await computeStockUsageForDate(date, outletFilter);
+  const actualByOutlet = {};
+  stockUsage.outlets.forEach(o => { actualByOutlet[o.outlet_id] = o; });
+
+  const results = [];
+  for (const oid of targetOutlets) {
+    const salesByDish = {};
+    (sales || []).filter(s => s.outlet_code === oid).forEach(s => {
+      salesByDish[s.item_name] = (salesByDish[s.item_name] || 0) + Number(s.item_quantity || 0);
+    });
+
+    const unmatchedDishes = [];
+    const theoretical = {}; // normalized raw_material -> { raw_material, unit, qty_kg, qty_count }
+    Object.entries(salesByDish).forEach(([dishName, qty]) => {
+      const recipe = recipeByNormName[normalizeDishName(dishName)];
+      if (!recipe) { unmatchedDishes.push({ item_name: dishName, qty }); return; }
+      (recipe.recipe_ingredients || []).forEach(ing => {
+        const key = normalizeIngredientName(ing.raw_material);
+        if (!theoretical[key]) theoretical[key] = { raw_material: ing.raw_material, unit: ing.unit, qty_kg: 0, qty_count: 0 };
+        if (ing.qty_kg != null) theoretical[key].qty_kg += Number(ing.qty_kg) * qty;
+        else theoretical[key].qty_count += Number(ing.qty || 0) * qty;
+      });
+    });
+
+    const actualById = {};
+    (actualByOutlet[oid]?.items || []).forEach(it => { actualById[it.item_id] = it; });
+
+    const unmappedIngredients = new Set();
+    const items = Object.values(theoretical).map(t => {
+      const key = normalizeIngredientName(t.raw_material);
+      const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
+      if (!mappedId) { unmappedIngredients.add(t.raw_material); return null; }
+      const actualItem = actualById[mappedId];
+      const shouldConsume = t.qty_kg > 0 ? t.qty_kg : t.qty_count;
+      const actualQty = actualItem ? actualItem.used : null;
+      const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
+      const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
+      return {
+        raw_material: t.raw_material,
+        item_id: mappedId,
+        unit: t.qty_kg > 0 ? 'Kg' : (actualItem?.unit || t.unit || 'Pcs'),
+        should_consume: Math.round(shouldConsume * 1000) / 1000,
+        actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
+        variance, variance_pct: variancePct,
+      };
+    }).filter(Boolean).sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
+
+    results.push({
+      outlet_id: oid, date,
+      items,
+      unmatched_dishes: unmatchedDishes.sort((a, b) => b.qty - a.qty),
+      unmapped_ingredients: [...unmappedIngredients],
+      dishes_sold: Object.keys(salesByDish).length,
+      dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
+    });
   }
-});
-
-const auditRows = Object.values(rmTotals).map(rm => {
-  const actual = actualMap[rm.raw_material] || null;
-  const variance = actual != null ? Math.round((actual - rm.should_consume) * 10000) / 10000 : null;
-  const variancePct = actual != null && rm.should_consume > 0 ? Math.round((variance / rm.should_consume) * 1000) / 10 : null;
-  return {
-    audit_date: date,
-    outlet_code: null,
-    raw_material: rm.raw_material,
-    unit: rm.unit,
-    should_consume: Math.round(rm.should_consume * 10000) / 10000,
-    actual_issued: actual != null ? Math.round(actual * 10000) / 10000 : null,
-    variance: variance,
-    variance_pct: variancePct,
-  };
-});
-
-// Save to DB
-await supabase.from('rm_audit').delete().eq('audit_date', date);
-if (auditRows.length > 0) {
-await supabase.from('rm_audit').insert(auditRows);
-}
-
-return auditRows;
+  return results;
 }
 
 // ────────────────────────────────────────────────────────────
@@ -1819,21 +1949,10 @@ router.get('/orders/:id/challan', async (req, res) => {
 router.get('/sales', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
-    const { date, outlet } = req.query;
-    if (!date) return res.status(400).json({ error: 'date query param required' });
+    const { date, from, to, outlet } = req.query;
+    if (!date && !(from && to)) return res.status(400).json({ error: 'date, or from+to, query param required' });
 
-    let query = supabase
-      .from('daily_sales')
-      .select('*')
-      .eq('sale_date', date)
-      .order('item_total', { ascending: false });
-
-    if (outlet && outlet !== 'all') {
-      query = query.eq('outlet_code', outlet);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
+    const data = await fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined });
 
     // Aggregate by item
     const itemMap = {};
@@ -2490,12 +2609,12 @@ router.get('/pnl/live/:date', async (req, res) => {
 //          Variable Cost = Used × Rate
 // ============================================================
 
-router.get('/stock-usage/:date', async (req, res) => {
-  try {
-    if (!await requireOwner(req, res)) return;
-    const { date } = req.params;
-    const { outlet } = req.query;
-
+// Extracted so /api/audit/:date (recipe-based leakage audit) can reuse the exact same
+// per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
+// possibly-drifting computation. Internal function — no req/res, no auth check (callers
+// that expose this over HTTP are responsible for their own requireOwner).
+async function computeStockUsageForDate(date, outlet) {
+  {
     const prevDate = new Date(date);
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = prevDate.toISOString().split('T')[0];
@@ -2822,7 +2941,15 @@ router.get('/stock-usage/:date', async (req, res) => {
       results.unshift(summary);
     }
 
-    res.json({ date, outlets: results });
+    return { date, outlets: results };
+  }
+}
+
+router.get('/stock-usage/:date', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const result = await computeStockUsageForDate(req.params.date, req.query.outlet);
+    res.json(result);
   } catch (err) {
     console.error('Stock usage error:', err);
     res.status(500).json({ error: err.message });

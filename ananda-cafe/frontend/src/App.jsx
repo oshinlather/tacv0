@@ -6287,7 +6287,9 @@ const StoreMgr = ({ onBack }) => {
 //  SALES UPLOAD — PetPooja CSV
 // ═════════════════════════════════════════════════════════════════════════════
 const SalesUpload = () => {
-  const [selDay, setSelDay] = useState(0);
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's uploads are usually still incomplete
+  const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
+  const [selOutlet, setSelOutlet] = useState(null); // null = All Outlets
   const [sales, setSales] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -6295,16 +6297,30 @@ const SalesUpload = () => {
   const [useCustomDate, setUseCustomDate] = useState(false);
   const fileRef = useRef(null);
 
-  const dateStr = useMemo(() => {
-    return istDateAgo(selDay);
-  }, [selDay]);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
 
   const loadSales = useCallback(() => {
     setLoading(true);
-    api.getSales({ date: dateStr }).then(setSales).catch(() => setSales(null)).finally(() => setLoading(false));
-  }, [dateStr]);
+    const params = selMonth
+      ? { from: `${selMonth}-01`, to: (selMonth === today().slice(0, 7)) ? today() : `${selMonth}-31`, outlet: selOutlet || "all" }
+      : { date: dateStr, outlet: selOutlet || "all" };
+    api.getSales(params).then(setSales).catch(() => setSales(null)).finally(() => setLoading(false));
+  }, [dateStr, selMonth, selOutlet]);
 
   useEffect(loadSales, [loadSales]);
+  const periodLabel = selMonth ? (monthOptions.find((m) => m.value === selMonth)?.label || selMonth) : (selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr);
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -6358,12 +6374,22 @@ const SalesUpload = () => {
           </div>
         )}
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-        {Array.from({ length: 10 }, (_, i) => {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
-          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
+        <select value={selMonth || ""} onChange={(e) => setSelMonth(e.target.value || null)}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
+          <option value="">📅 Month view...</option>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
       </div>
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading sales...</div>}
       {sales && !loading && (
@@ -6394,7 +6420,10 @@ const SalesUpload = () => {
           {sales.items && (
             <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
               <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Item-wise Sales</span>
+                <div>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Item-wise Sales</span>
+                  <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{selOutlet ? OUTLETS.find((o) => o.id === selOutlet)?.name : "All Outlets"} · {periodLabel}</div>
+                </div>
                 <span style={{ fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{fmt(sales.total_revenue || 0)}</span>
               </div>
               <div style={{ overflowX: "auto" }}>
@@ -6428,67 +6457,121 @@ const SalesUpload = () => {
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
 const RMAuditPanel = () => {
-  const [selDay, setSelDay] = useState(0);
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showUnmatched, setShowUnmatched] = useState(false);
 
-  const dateStr = useMemo(() => {
-    return istDateAgo(selDay);
-  }, [selDay]);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
   useEffect(() => {
     setLoading(true);
-    api.getRMAudit(dateStr).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
-  }, [dateStr]);
+    setShowUnmatched(false);
+    api.getRMAudit(dateStr, selOutlet).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+  }, [dateStr, selOutlet]);
+
+  const outletData = audit?.outlets?.[0] || null;
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
 
   return (
     <div>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Raw Material Audit</h3>
-        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume vs Actually Issued</p>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume, checked against actual outlet consumption (same figure P&L uses). The gap is leakage — over-portioning, unrecorded wastage, or theft.</p>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-        {Array.from({ length: 10 }, (_, i) => {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.toISOString().split("T")[0].slice(5);
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
           return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
       </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+      </div>
+
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing audit...</div>}
-      {audit?.items && !loading && (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={thS}>Raw Material</th><th style={thS}>Unit</th>
-                <th style={{ ...thS, textAlign: "right" }}>Should Consume</th>
-                <th style={{ ...thS, textAlign: "right" }}>Actual Issued</th>
-                <th style={{ ...thS, textAlign: "right" }}>Variance</th>
-              </tr></thead>
-              <tbody>
-                {audit.items.map((item, i) => {
-                  const hasActual = item.actual_issued != null;
-                  const variance = hasActual ? item.actual_issued - item.should_consume : null;
-                  const isOver = variance > 0;
-                  return (
-                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                      <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material}</td>
-                      <td style={{ ...tdS, color: "#888" }}>{item.unit}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(item.should_consume).toFixed(2)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{hasActual ? Number(item.actual_issued).toFixed(2) : "—"}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
-                        {hasActual ? `${isOver ? "+" : ""}${Number(variance).toFixed(2)}` : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+
+      {!loading && outletData && (
+        <>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dishes Sold</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{outletData.dishes_sold}</div>
+            </div>
+            <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Matched to Recipe</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: outletData.dishes_matched === outletData.dishes_sold ? "#16A34A" : "#B45309" }}>{outletData.dishes_matched} / {outletData.dishes_sold}</div>
+            </div>
           </div>
-          <div style={{ padding: "10px 16px", background: "#FAFAF8", fontSize: 11, color: "#888" }}>
-            "Actual Issued" connects to issuance records. Shows — until data is available.
-          </div>
-        </div>
+
+          {outletData.items.length === 0 && outletData.dishes_sold === 0 && (
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales data uploaded for {outletName} on {dateStr}</div>
+          )}
+
+          {outletData.items.length > 0 && (
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Raw Material</th><th style={thS}>Unit</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Should Consume</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Actual Consumed</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Leakage</th>
+                  </tr></thead>
+                  <tbody>
+                    {outletData.items.map((item, i) => {
+                      const hasActual = item.actual_consumed != null;
+                      const isOver = hasActual && item.variance > 0;
+                      return (
+                        <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                          <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material}</td>
+                          <td style={{ ...tdS, color: "#888" }}>{item.unit}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(item.should_consume).toFixed(2)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
+                            {hasActual ? `${isOver ? "+" : ""}${Number(item.variance).toFixed(2)}${item.variance_pct != null ? ` (${isOver ? "+" : ""}${item.variance_pct}%)` : ""}` : "no closing stock data"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {(outletData.unmatched_dishes.length > 0 || outletData.unmapped_ingredients.length > 0) && (
+            <div style={{ background: "#FFFBEB", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden" }}>
+              <div onClick={() => setShowUnmatched(!showUnmatched)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>⚠️ {outletData.unmatched_dishes.length} dish(es) with no recipe, {outletData.unmapped_ingredients.length} ingredient(s) not linked to inventory — excluded from the numbers above</div>
+                <span style={{ fontSize: 11, color: "#92400E" }}>{showUnmatched ? "▲ hide" : "▼ show"}</span>
+              </div>
+              {showUnmatched && (
+                <div style={{ padding: "0 16px 14px" }}>
+                  {outletData.unmatched_dishes.length > 0 && (<>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Sold but no recipe — add these in Dish Recipes</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      {outletData.unmatched_dishes.map((d, i) => (
+                        <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{d.item_name} <strong>× {d.qty}</strong></span>
+                      ))}
+                    </div>
+                  </>)}
+                  {outletData.unmapped_ingredients.length > 0 && (<>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Recipe ingredients not linked to a tracked inventory item</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {outletData.unmapped_ingredients.map((name, i) => (
+                        <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{name}</span>
+                      ))}
+                    </div>
+                  </>)}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -6784,81 +6867,163 @@ const OutletRecipeManager = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  PETPOOJA RECIPES — from PetPooja recipe export
 // ═════════════════════════════════════════════════════════════════════════════
-const PetPoojaRecipes = () => {
+const RECIPE_UNITS = ["GM", "KG", "ML", "Ltr.", "Piece"];
+
+// Editable per-dish recipes (item_name -> ingredients with qty/unit) — feeds the Sales x
+// Recipe leakage audit. Each ingredient is its own DB row, so unlike the Closing
+// Stock/Wastage grid (one JSON blob per date) there's no shared-row race condition to
+// worry about; edits commit individually as soon as a field is changed.
+const DishRecipesPanel = () => {
   const [recipes, setRecipes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
+  const [editingRecipe, setEditingRecipe] = useState(null);
+  const [newIngredient, setNewIngredient] = useState({ raw_material: "", qty: "", unit: "GM" });
+  const [savingIngredient, setSavingIngredient] = useState(null);
+  const [addingDish, setAddingDish] = useState(false);
+  const [newDishName, setNewDishName] = useState("");
+  const [newDishCategory, setNewDishCategory] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    api.getRecipesPetpooja().then(setRecipes).catch(() => setRecipes([])).finally(() => setLoading(false));
-  }, []);
+  const load = () => { setLoading(true); api.getRecipes(true).then((r) => setRecipes(r || [])).catch(() => setRecipes([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
 
-  const normUnit = (qty, unit) => {
-    const u = (unit || "").toUpperCase();
-    if (["GM", "G", "GMS"].includes(u)) return { qty: qty / 1000, unit: "Kg" };
-    if (["LTR.", "LTR", "L"].includes(u)) return { qty, unit: "Ltr" };
-    return { qty, unit };
-  };
+  const categories = useMemo(() => [...new Set(recipes.map((r) => r.category))].filter(Boolean).sort(), [recipes]);
 
   const filtered = recipes.filter((r) => {
+    if (r.status !== "Active") return false;
     if (!search) return true;
     const q = search.toLowerCase();
-    return r.item_name.toLowerCase().includes(q) ||
-      r.recipe_ingredients?.some((m) => m.raw_material.toLowerCase().includes(q));
+    return r.item_name.toLowerCase().includes(q) || r.recipe_ingredients?.some((m) => m.raw_material.toLowerCase().includes(q));
   });
+
+  const startEditing = (id) => { setEditingRecipe(id); setNewIngredient({ raw_material: "", qty: "", unit: "GM" }); };
+
+  const addDish = async () => {
+    if (!newDishName.trim() || !newDishCategory.trim()) return;
+    setSaving(true);
+    try {
+      await api.createRecipe({ item_name: newDishName.trim(), category: newDishCategory.trim(), item_type: "Item" });
+      setNewDishName(""); setNewDishCategory(""); setAddingDish(false);
+      load();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const deleteDish = async (id, name) => {
+    if (!window.confirm(`Delete recipe for "${name}"? This can be re-added later, but sold quantities of this dish will show as unmatched in the audit until then.`)) return;
+    try { await api.deleteRecipe(id); load(); } catch (e) { alert("Failed: " + e.message); }
+  };
+
+  const addIngredient = async (recipeId) => {
+    if (!newIngredient.raw_material.trim() || !newIngredient.qty) return;
+    setSaving(true);
+    try {
+      await api.addRecipeIngredient(recipeId, { raw_material: newIngredient.raw_material.trim(), qty: Number(newIngredient.qty), unit: newIngredient.unit });
+      setNewIngredient({ raw_material: "", qty: "", unit: newIngredient.unit });
+      load();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const updateIngredient = async (ingId, field, value) => {
+    setSavingIngredient(ingId);
+    try { await api.updateRecipeIngredient(ingId, { [field]: value }); load(); }
+    catch (e) { alert("Failed: " + e.message); }
+    finally { setSavingIngredient(null); }
+  };
+
+  const removeIngredient = async (ingId) => {
+    try { await api.deleteRecipeIngredient(ingId); load(); } catch (e) { alert("Failed: " + e.message); }
+  };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading recipes...</div>;
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📖 PetPooja Recipes</h3>
-        <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Item-level recipes from PetPooja export — used for RM audit</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📖 Dish Recipes</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Per-dish ingredient breakdown — dish name must match the sales sheet exactly. Feeds the Sales vs Consumption audit.</p>
+        </div>
+        <button onClick={() => setAddingDish(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Dish</button>
       </div>
+
+      {addingDish && (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <input value={newDishName} onChange={(e) => setNewDishName(e.target.value)} placeholder="Dish name (must match POS/sales sheet exactly)"
+              style={{ flex: "2 1 200px", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+            <input value={newDishCategory} onChange={(e) => setNewDishCategory(e.target.value)} placeholder="Category (e.g. Dosas)" list="recipe-categories"
+              style={{ flex: "1 1 140px", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+            <datalist id="recipe-categories">{categories.map((c) => <option key={c} value={c} />)}</datalist>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={addDish} disabled={saving || !newDishName.trim() || !newDishCategory.trim()} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "Saving..." : "Save Dish"}</button>
+            <button onClick={() => { setAddingDish(false); setNewDishName(""); setNewDishCategory(""); }} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
-        <input type="text" placeholder="Search items or ingredients..." value={search} onChange={(e) => setSearch(e.target.value)}
+        <input type="text" placeholder="Search dishes or ingredients..." value={search} onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
-        <span style={{ fontSize: 12, color: "#888", whiteSpace: "nowrap" }}>{filtered.length} recipes</span>
+        <span style={{ fontSize: 12, color: "#888", whiteSpace: "nowrap" }}>{filtered.length} dishes</span>
       </div>
-      {filtered.map((r, i) => {
-        const isOpen = expanded === i;
-        const food = (r.recipe_ingredients || []).filter((m) => { const n = normUnit(m.qty, m.unit); return n.unit !== "Piece" && n.unit !== "Pcs"; });
-        const pack = (r.recipe_ingredients || []).filter((m) => { const n = normUnit(m.qty, m.unit); return n.unit === "Piece" || n.unit === "Pcs"; });
+
+      {filtered.map((r) => {
+        const isOpen = expanded === r.id;
+        const isEditing = editingRecipe === r.id;
         return (
-          <div key={i} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
-            <div onClick={() => setExpanded(isOpen ? null : i)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div key={r.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 8, overflow: "hidden" }}>
+            <div onClick={() => setExpanded(isOpen ? null : r.id)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 13 }}>{r.item_name}</span>
-                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, fontWeight: 700,
-                  background: r.item_type === "Item" ? "#F0FDF4" : "#FFFBEB",
-                  color: r.item_type === "Item" ? "#16A34A" : "#B45309" }}>{r.item_type}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 5, fontWeight: 700, background: "#F5F3FF", color: "#7C3AED" }}>{r.category}</span>
               </div>
-              <span style={{ fontSize: 12, color: "#888" }}>{r.recipe_ingredients?.length || 0} items {isOpen ? "▲" : "▼"}</span>
+              <span style={{ fontSize: 12, color: "#888" }}>{r.recipe_ingredients?.length || 0} ingredients {isOpen ? "▲" : "▼"}</span>
             </div>
             {isOpen && (
               <div style={{ padding: "0 16px 14px", borderTop: "1px solid #F0F0EC" }}>
-                <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, margin: "10px 0 6px", textTransform: "uppercase", letterSpacing: 0.5 }}>Food Ingredients</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 6 }}>
-                  {food.map((m, j) => {
-                    const n = normUnit(m.qty, m.unit);
-                    return (
-                      <div key={j} style={{ background: "#FAFAF8", borderRadius: 8, padding: "6px 10px", fontSize: 12, display: "flex", justifyContent: "space-between" }}>
-                        <span>{m.raw_material}</span>
-                        <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{n.qty.toFixed(3)} {n.unit}</span>
-                      </div>
-                    );
-                  })}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, margin: "10px 0" }}>
+                  {!isEditing ? (
+                    <button onClick={() => startEditing(r.id)} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 11, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                  ) : (
+                    <button onClick={() => setEditingRecipe(null)} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>✓ Done</button>
+                  )}
+                  <button onClick={() => deleteDish(r.id, r.item_name)} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 700, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>🗑️ Delete Dish</button>
                 </div>
-                {pack.length > 0 && (
-                  <>
-                    <div style={{ fontSize: 11, color: "#888", fontWeight: 700, margin: "10px 0 6px", textTransform: "uppercase", letterSpacing: 0.5 }}>Packaging</div>
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {pack.map((m, j) => (
-                        <span key={j} style={{ background: "#FAFAF8", borderRadius: 6, padding: "4px 8px", fontSize: 11, color: "#888" }}>{m.raw_material} × {m.qty}</span>
-                      ))}
-                    </div>
-                  </>
+                {(r.recipe_ingredients || []).map((m) => (
+                  <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
+                    {isEditing ? (<>
+                      <input defaultValue={m.raw_material} onBlur={(e) => e.target.value.trim() && e.target.value !== m.raw_material && updateIngredient(m.id, "raw_material", e.target.value.trim())} disabled={savingIngredient === m.id}
+                        style={{ flex: 2, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                      <input type="number" inputMode="decimal" defaultValue={m.qty} onBlur={(e) => Number(e.target.value) > 0 && Number(e.target.value) !== Number(m.qty) && updateIngredient(m.id, "qty", e.target.value)} disabled={savingIngredient === m.id}
+                        style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                      <select defaultValue={m.unit} onChange={(e) => updateIngredient(m.id, "unit", e.target.value)} disabled={savingIngredient === m.id}
+                        style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+                        {RECIPE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                      <button onClick={() => removeIngredient(m.id)} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>✕</button>
+                    </>) : (<>
+                      <span style={{ flex: 1, fontSize: 12 }}>{m.raw_material}</span>
+                      <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'", fontSize: 12, color: "#B45309" }}>{m.qty} {m.unit}</span>
+                    </>)}
+                  </div>
+                ))}
+                {isEditing && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0 0" }}>
+                    <input value={newIngredient.raw_material} onChange={(e) => setNewIngredient((p) => ({ ...p, raw_material: e.target.value }))} placeholder="New ingredient..."
+                      style={{ flex: 2, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                    <input type="number" inputMode="decimal" value={newIngredient.qty} onChange={(e) => setNewIngredient((p) => ({ ...p, qty: e.target.value }))} placeholder="Qty"
+                      style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                    <select value={newIngredient.unit} onChange={(e) => setNewIngredient((p) => ({ ...p, unit: e.target.value }))}
+                      style={{ padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+                      {RECIPE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                    <button onClick={() => addIngredient(r.id)} disabled={saving || !newIngredient.raw_material.trim() || !newIngredient.qty} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>+ Add</button>
+                  </div>
                 )}
               </div>
             )}
@@ -7814,7 +7979,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "audit", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -7910,8 +8075,8 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","sales","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -7923,7 +8088,6 @@ export default function AnandaCafe() {
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
-          { id: "sales", label: "📤 Sales", sub: "Sales upload & summary" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -7957,11 +8121,10 @@ export default function AnandaCafe() {
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "corrections", label: "🧾 Corrections Log", sub: "Owner edits of dispatched qty" },
-          { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
           { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
-          { id: "pp_recipes", label: "🍳 PetPooja Recipes", sub: "Item-level from PetPooja" },
+          { id: "pp_recipes", label: "📖 Dish Recipes", sub: "Per-dish ingredients — editable" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setAuditDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -7989,6 +8152,7 @@ export default function AnandaCafe() {
     </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "sales" && <SalesUpload />}
+      {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
@@ -8009,7 +8173,6 @@ export default function AnandaCafe() {
         </div>
       )}
       {auditUnlocked && ownerTab === "corrections" && <CorrectionsLog />}
-      {auditUnlocked && ownerTab === "audit" && <RMAuditPanel />}
       {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
       {auditUnlocked && ownerTab === "move_date" && <MoveSubmissionDate />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
@@ -8018,7 +8181,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
       {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}
       {auditUnlocked && ownerTab === "recipes" && <RecipesPanel />}
-      {auditUnlocked && ownerTab === "pp_recipes" && <PetPoojaRecipes />}
+      {auditUnlocked && ownerTab === "pp_recipes" && <DishRecipesPanel />}
       {auditUnlocked && ownerTab === "users" && <UsersPanel />}
     </div>
   </div>);
