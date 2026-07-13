@@ -6496,17 +6496,52 @@ const RMAuditPanel = () => {
   const [loading, setLoading] = useState(false);
   const [showUnmatched, setShowUnmatched] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
+  // Quick "add recipe" modal, opened by clicking an unmatched-dish pill — lets the
+  // owner create the recipe (and its ingredients) without leaving the audit screen.
+  const [quickRecipe, setQuickRecipe] = useState(null); // { dishName, soldQty, category, rows: [{raw_material, qty, unit}] }
+  const [savingRecipe, setSavingRecipe] = useState(false);
+  const [recipeCategories, setRecipeCategories] = useState([]);
+  const [rawMaterialNames, setRawMaterialNames] = useState([]); // known ingredient names, for dropdown-while-typing
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
-  useEffect(() => {
+  const loadAudit = () => {
     setLoading(true);
-    setShowUnmatched(false);
     api.getRMAudit(dateStr, selOutlet).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
-  }, [dateStr, selOutlet]);
+  };
+
+  useEffect(() => { setShowUnmatched(false); loadAudit(); }, [dateStr, selOutlet]);
+
+  useEffect(() => {
+    api.getRecipes(true).then((rs) => {
+      setRecipeCategories([...new Set((rs || []).map((r) => r.category))].filter(Boolean).sort());
+      setRawMaterialNames([...new Set((rs || []).flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material)))].filter(Boolean).sort());
+    }).catch(() => {});
+  }, []);
 
   const outletData = audit?.outlets?.[0] || null;
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+
+  const openQuickRecipe = (dishName, soldQty) => setQuickRecipe({ dishName, soldQty, category: "", rows: [{ raw_material: "", qty: "", unit: "GM" }] });
+  const updateQuickRow = (idx, field, value) => setQuickRecipe((p) => ({ ...p, rows: p.rows.map((r, i) => (i === idx ? { ...r, [field]: value } : r)) }));
+  const addQuickRow = () => setQuickRecipe((p) => ({ ...p, rows: [...p.rows, { raw_material: "", qty: "", unit: p.rows[p.rows.length - 1]?.unit || "GM" }] }));
+  const removeQuickRow = (idx) => setQuickRecipe((p) => ({ ...p, rows: p.rows.filter((_, i) => i !== idx) }));
+
+  const saveQuickRecipe = async () => {
+    if (!quickRecipe) return;
+    const validRows = quickRecipe.rows.filter((r) => r.raw_material.trim() && Number(r.qty) > 0);
+    if (!quickRecipe.category.trim() || validRows.length === 0) return;
+    setSavingRecipe(true);
+    try {
+      const created = await api.createRecipe({ item_name: quickRecipe.dishName, category: quickRecipe.category.trim(), item_type: "Item" });
+      for (const r of validRows) {
+        await api.addRecipeIngredient(created.id, { raw_material: r.raw_material.trim(), qty: Number(r.qty), unit: r.unit });
+      }
+      setQuickRecipe(null);
+      loadAudit();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSavingRecipe(false); }
+  };
 
   return (
     <div>
@@ -6612,10 +6647,10 @@ const RMAuditPanel = () => {
               {showUnmatched && (
                 <div style={{ padding: "0 16px 14px" }}>
                   {outletData.unmatched_dishes.length > 0 && (<>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Sold but no recipe — add these in Dish Recipes</div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Sold but no recipe — tap one to add it</div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                       {outletData.unmatched_dishes.map((d, i) => (
-                        <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{d.item_name} <strong>× {d.qty}</strong></span>
+                        <button key={i} onClick={() => openQuickRecipe(d.item_name, d.qty)} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>{d.item_name} <strong>× {d.qty}</strong> <span style={{ color: "#D97706" }}>＋</span></button>
                       ))}
                     </div>
                   </>)}
@@ -6633,6 +6668,44 @@ const RMAuditPanel = () => {
           )}
         </>
       )}
+
+      {quickRecipe && (<>
+        <div onClick={() => !savingRecipe && setQuickRecipe(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+        <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(480px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>📖 Add Recipe</div>
+          <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{quickRecipe.dishName} <span style={{ color: "#BBB" }}>· sold {quickRecipe.soldQty}× on {dateStr}</span></div>
+
+          <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Category</label>
+          <input value={quickRecipe.category} onChange={(e) => setQuickRecipe((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Dosas" list="rm-audit-recipe-categories"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", margin: "4px 0 14px" }} />
+          <datalist id="rm-audit-recipe-categories">{recipeCategories.map((c) => <option key={c} value={c} />)}</datalist>
+
+          <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</label>
+          <div style={{ margin: "4px 0 10px" }}>
+            {quickRecipe.rows.map((r, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                <input value={r.raw_material} onChange={(e) => updateQuickRow(idx, "raw_material", e.target.value)} placeholder="Ingredient (raw material)" list="rm-audit-raw-materials"
+                  style={{ flex: 2, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                <input type="number" inputMode="decimal" value={r.qty} onChange={(e) => updateQuickRow(idx, "qty", e.target.value)} placeholder="Qty"
+                  style={{ width: 64, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                <select value={r.unit} onChange={(e) => updateQuickRow(idx, "unit", e.target.value)}
+                  style={{ padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+                  {RECIPE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <button onClick={() => removeQuickRow(idx)} disabled={quickRecipe.rows.length === 1} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, cursor: quickRecipe.rows.length === 1 ? "default" : "pointer", flexShrink: 0, opacity: quickRecipe.rows.length === 1 ? 0.4 : 1 }}>✕</button>
+              </div>
+            ))}
+            <datalist id="rm-audit-raw-materials">{rawMaterialNames.map((n) => <option key={n} value={n} />)}</datalist>
+            <button onClick={addQuickRow} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>+ Add ingredient</button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button onClick={saveQuickRecipe} disabled={savingRecipe || !quickRecipe.category.trim() || !quickRecipe.rows.some((r) => r.raw_material.trim() && Number(r.qty) > 0)}
+              style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: savingRecipe ? 0.7 : 1 }}>{savingRecipe ? "Saving..." : "Save Recipe"}</button>
+            <button onClick={() => setQuickRecipe(null)} disabled={savingRecipe} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          </div>
+        </div>
+      </>)}
     </div>
   );
 };
