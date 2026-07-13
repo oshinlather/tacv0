@@ -6588,8 +6588,28 @@ const RMAuditPanel = () => {
             <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
               <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Matched to Recipe</div>
               <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: outletData.dishes_matched === outletData.dishes_sold ? "#16A34A" : "#B45309" }}>{outletData.dishes_matched} / {outletData.dishes_sold}</div>
+              <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>dish types</div>
             </div>
+            {outletData.sales_coverage_pct != null && (() => {
+              const cov = outletData.sales_coverage_pct;
+              const covColor = cov >= 80 ? "#16A34A" : cov >= 50 ? "#B45309" : "#DC2626";
+              const covBg = cov >= 80 ? "#F0FDF4" : cov >= 50 ? "#FFFBEB" : "#FEF2F2";
+              const covBorder = cov >= 80 ? "#BBF7D0" : cov >= 50 ? "#FDE68A" : "#FECACA";
+              return (
+                <div style={{ flex: "1 1 140px", background: covBg, borderRadius: 12, padding: "12px 16px", border: `1px solid ${covBorder}`, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Sales Volume Covered</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: covColor }}>{cov}%</div>
+                  <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{outletData.sales_qty_matched} / {outletData.sales_qty_total} units sold</div>
+                </div>
+              );
+            })()}
           </div>
+
+          {outletData.sales_coverage_pct != null && outletData.sales_coverage_pct < 100 && (
+            <div style={{ padding: "10px 14px", borderRadius: 10, background: outletData.sales_coverage_pct < 50 ? "#FEF2F2" : "#FFFBEB", border: `1px solid ${outletData.sales_coverage_pct < 50 ? "#FECACA" : "#FDE68A"}`, fontSize: 12, color: outletData.sales_coverage_pct < 50 ? "#991B1B" : "#92400E", marginBottom: 16 }}>
+              ⚠️ The numbers below are based on only <strong>{outletData.sales_coverage_pct}%</strong> of {outletName}'s actual sales volume — the rest ({outletData.unmatched_dishes.length} dish types, {outletData.sales_qty_total - outletData.sales_qty_matched} units) has no recipe yet, so it contributes nothing to "should consume". A low number here understates should-consume and inflates leakage % for reasons that have nothing to do with real over-consumption — <strong>don't compare leakage % across outlets until their coverage is similar.</strong> Add the missing recipes below to fix this.
+            </div>
+          )}
 
           {outletData.items.length === 0 && outletData.dishes_sold === 0 && (
             <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales data uploaded for {outletName} on {dateStr}</div>
@@ -6936,6 +6956,140 @@ const DishRecipesPanel = () => {
           </div>
         );
       })}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  DISH COSTING — ingredient-by-ingredient COGS at current rate card prices,
+//  vs. the dish's recent actual selling price. Answers "what does one of these
+//  cost right now, and what's our margin" — separate from P&L's per-day dispatch
+//  costing, this always reflects current prices for browsing/what-if checks.
+// ═════════════════════════════════════════════════════════════════════════════
+const DishCostingPanel = () => {
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const [costing, setCosting] = useState(null);
+  const [costLoading, setCostLoading] = useState(false);
+  const [editingRate, setEditingRate] = useState(null); // rate_card_id being edited
+  const [editValue, setEditValue] = useState("");
+  const [savingRate, setSavingRate] = useState(false);
+
+  useEffect(() => {
+    api.getRecipes(true).then((r) => setRecipes((r || []).filter((x) => x.status === "Active"))).catch(() => setRecipes([])).finally(() => setLoading(false));
+  }, []);
+
+  const loadCost = (id) => {
+    setSelectedId(id);
+    setCostLoading(true);
+    api.getDishCost(id).then(setCosting).catch(() => setCosting(null)).finally(() => setCostLoading(false));
+  };
+
+  const saveRate = async (rateCardId) => {
+    if (!editValue || Number(editValue) <= 0) return;
+    setSavingRate(true);
+    try {
+      await api.updateRate(rateCardId, { price: Number(editValue) });
+      setEditingRate(null);
+      loadCost(selectedId); // refresh so the new price flows through immediately
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSavingRate(false); }
+  };
+
+  const q = search.trim().toLowerCase();
+  const filtered = q ? recipes.filter((r) => r.item_name.toLowerCase().includes(q)) : recipes;
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading dishes...</div>;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Dish Costing</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Pick a dish to see its ingredient-by-ingredient cost at current rate card prices, against its recent actual selling price.</p>
+      </div>
+
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 Search dishes..."
+        style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 10, boxSizing: "border-box" }} />
+
+      <select value={selectedId || ""} onChange={(e) => e.target.value && loadCost(e.target.value)}
+        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 16 }}>
+        <option value="">Select a dish...</option>
+        {filtered.map((r) => <option key={r.id} value={r.id}>{r.item_name}</option>)}
+      </select>
+
+      {costLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing cost...</div>}
+
+      {!costLoading && costing && (
+        <>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>COGS</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>₹{costing.total_cost}</div>
+              {costing.unpriced_count > 0 && <div style={{ fontSize: 9, color: "#DC2626", marginTop: 2 }}>+{costing.unpriced_count} unpriced</div>}
+            </div>
+            <div style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Selling Price</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{costing.selling_price ? `₹${costing.selling_price.latest}` : "—"}</div>
+              {costing.selling_price && costing.selling_price.min !== costing.selling_price.max && (
+                <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>range ₹{costing.selling_price.min}–{costing.selling_price.max}</div>
+              )}
+              {!costing.selling_price && <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>no recent sales</div>}
+            </div>
+            <div style={{ flex: "1 1 120px", background: costing.margin == null ? "#fff" : costing.margin >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 12, padding: "12px 16px", border: `1px solid ${costing.margin == null ? "#E8E8E4" : costing.margin >= 0 ? "#BBF7D0" : "#FECACA"}`, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Margin</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: costing.margin == null ? "#999" : costing.margin >= 0 ? "#16A34A" : "#DC2626" }}>{costing.margin != null ? `₹${costing.margin} (${costing.margin_pct}%)` : "—"}</div>
+              {costing.unpriced_count > 0 && <div style={{ fontSize: 9, color: "#DC2626", marginTop: 2 }}>understated</div>}
+            </div>
+          </div>
+
+          {costing.unpriced_count > 0 && (
+            <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>
+              ⚠️ {costing.unpriced_count} ingredient(s) below have no usable price — COGS and margin above are understated by however much those actually cost. Fix them in Rate Card (or add pieces-per-packet conversions) to close the gap.
+            </div>
+          )}
+
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Ingredient</th>
+                <th style={{ ...thS, textAlign: "right" }}>Qty</th>
+                <th style={{ ...thS, textAlign: "right" }}>Rate</th>
+                <th style={{ ...thS, textAlign: "right" }}>Cost</th>
+              </tr></thead>
+              <tbody>
+                {costing.ingredients.map((ing, i) => {
+                  const isEditingThis = editingRate === ing.rate_card_id;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC", background: ing.priced ? "#fff" : "#FFFBEB" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{ing.raw_material}{ing.via_bk_recipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (via BK recipe)</span>}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{ing.qty} {ing.unit}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                        {isEditingThis ? (
+                          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                            <input autoFocus type="number" inputMode="decimal" value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === "Enter") saveRate(ing.rate_card_id); if (e.key === "Escape") setEditingRate(null); }}
+                              style={{ width: 60, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                            <button onClick={() => saveRate(ing.rate_card_id)} disabled={savingRate} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                          </span>
+                        ) : ing.rate_card_id ? (
+                          <span onClick={() => { setEditingRate(ing.rate_card_id); setEditValue(String(ing.rate)); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit rate card price">
+                            ₹{ing.rate}/{ing.rate_unit}
+                          </span>
+                        ) : ing.rate != null ? `₹${ing.rate}/${ing.rate_unit}` : "—"}
+                      </td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ing.priced ? "#B45309" : "#DC2626" }}>
+                        {ing.priced ? `₹${ing.cost}` : (ing.reason || "no price")}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 };
@@ -7885,7 +8039,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -8031,6 +8185,7 @@ export default function AnandaCafe() {
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
           { id: "recipes", label: "📖 BK Recipes", sub: "Standard recipe management" },
           { id: "pp_recipes", label: "📖 Dish Recipes", sub: "Per-dish ingredients — editable" },
+          { id: "dish_cost", label: "💰 Dish Costing", sub: "COGS per dish vs selling price" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setAuditDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -8088,6 +8243,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}
       {auditUnlocked && ownerTab === "recipes" && <RecipesPanel />}
       {auditUnlocked && ownerTab === "pp_recipes" && <DishRecipesPanel />}
+      {auditUnlocked && ownerTab === "dish_cost" && <DishCostingPanel />}
       {auditUnlocked && ownerTab === "users" && <UsersPanel />}
     </div>
   </div>);

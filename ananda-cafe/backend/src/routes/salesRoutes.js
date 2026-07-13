@@ -253,6 +253,20 @@ res.status(500).json({ error: err.message });
 }
 });
 
+// ── GET /api/recipes/:id/cost — Ingredient-by-ingredient COGS at current rate card
+// prices, plus the dish's recent actual selling price from uploaded sales — answers
+// "what does one of these cost right now, and what's our margin on it."
+router.get('/recipes/:id/cost', async (req, res) => {
+  try {
+    const costing = await computeDishCost(req.params.id);
+    if (!costing) return res.status(404).json({ error: 'Recipe not found' });
+    const sellingPrice = await getSellingPriceInfo(costing.item_name);
+    const margin = sellingPrice ? Math.round((sellingPrice.latest - costing.total_cost) * 100) / 100 : null;
+    const marginPct = margin != null && sellingPrice.latest > 0 ? Math.round((margin / sellingPrice.latest) * 1000) / 10 : null;
+    res.json({ ...costing, selling_price: sellingPrice, margin, margin_pct: marginPct });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Converts a recipe-ingredient qty into the kg-equivalent computeRMAudit sums directly —
 // GM/KG/LTR/ML get a numeric qty_kg; countable items (Piece/Pcs) get null so they're
 // skipped from the raw-material weight total (packaging isn't costed by weight).
@@ -752,6 +766,16 @@ async function computeRMAudit(date, outletFilter) {
       };
     }).filter(Boolean).sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
+    // Dish-TYPE match count (dishes_matched/dishes_sold below) can look fine even when a
+    // huge chunk of actual VOLUME sold is unmatched — a handful of high-volume dishes with
+    // no recipe understates should_consume far more than the type count suggests, which in
+    // turn inflates that outlet's leakage % for reasons that have nothing to do with real
+    // over-consumption. Surface coverage by volume too, so a low-coverage outlet's numbers
+    // aren't compared like-for-like against a high-coverage one.
+    const qtySoldTotal = Object.values(salesByDish).reduce((s, q) => s + q, 0);
+    const qtySoldUnmatched = unmatchedDishes.reduce((s, d) => s + d.qty, 0);
+    const qtySoldMatched = qtySoldTotal - qtySoldUnmatched;
+
     results.push({
       outlet_id: oid, date,
       items,
@@ -759,9 +783,140 @@ async function computeRMAudit(date, outletFilter) {
       unmapped_ingredients: [...unmappedIngredients],
       dishes_sold: Object.keys(salesByDish).length,
       dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
+      sales_qty_total: qtySoldTotal,
+      sales_qty_matched: qtySoldMatched,
+      sales_coverage_pct: qtySoldTotal > 0 ? Math.round((qtySoldMatched / qtySoldTotal) * 1000) / 10 : null,
     });
   }
   return results;
+}
+
+// Raw-material-id → rate-card id, for BK-prepared items' OWN ingredients (Dosa Batter's
+// rice/urad dal/etc, not the dish's ingredients). This is a separate, deliberate copy of
+// the mapping the live P&L uses internally (salesRoutes.js ~line 2313) rather than a shared
+// import — P&L pricing is safety-critical (real money, tied to actual dispatch that day),
+// so this dish-costing tool (a "what would this cost right now" browsing calculator,
+// decoupled from any day's dispatch) is kept intentionally independent of it.
+const BK_INGREDIENT_TO_RATE = {
+  amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
+  chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
+  coriander_raw: 'coriander_leaves', curry_leaves_raw: 'curry_leaves',
+  deggi_mirch_raw: 'deggi_mirch', desi_ghee_raw: 'desi_ghee',
+  dhaniya_whole_raw: 'dhaniya_whole', drumstick_raw: 'drumstick',
+  fortune_refined_raw: 'fortune_refined', garam_masala_raw: 'garam_masala',
+  garlic_raw: 'garlic', ginger_raw: 'ginger', golden_sela_rice: 'golden_sela_rice',
+  green_chilli_raw: 'green_chillies', gur_raw: 'gur',
+  haldi_raw: 'haldi_powder', hing_raw: 'hing_powder',
+  ilaychi_raw: 'ilaychi', imli_raw: 'imli',
+  jeera_raw: 'jeera', kaju_raw: 'kaju', kali_mirch_raw: 'kali_mirch',
+  kesar_raw: 'kesar', kishmish_raw: 'kishmish',
+  meetha_soda_raw: 'meetha_soda', methi_dana_raw: 'methi_dana',
+  milk_raw: 'milk', milkmaid_raw: 'milkmaid', mint_raw: 'mint',
+  mustard_raw: 'mustard_seeds', onions_raw: 'onions',
+  peanuts_raw: 'peanuts', petha_raw: 'petha', pineapple_raw: 'pineapple',
+  poha_raw: 'poha', red_chilli_powder_raw: 'red_chilli_powder',
+  rice_powder_raw: 'rice_powder', roasted_chana_raw: 'roasted_chana',
+  roasted_karipatta_raw: 'roasted_karipatta', roasted_peanuts_raw: 'roasted_peanuts',
+  safed_til_raw: 'safed_til', salt_raw: 'salt',
+  sambhar_masala_raw: 'sambhar_masala_777', semiyan_raw: 'semiyan',
+  sona_masoori_raw: 'sona_masoori_rice', sugar_raw: 'sugar',
+  tadka_raw: 'tadka', tomatoes_raw: 'tomatoes',
+  upma_sooji_raw: 'upma_sooji', urad_daal: 'urad_daal_whole',
+  whole_red_chilli_raw: 'whole_red_chilli',
+};
+
+const PIECE_UNITS = new Set(['piece', 'pcs', 'pc']);
+function unitsCompatible(a, b) {
+  const ua = (a || '').toLowerCase(), ub = (b || '').toLowerCase();
+  if (ua === ub) return true;
+  return PIECE_UNITS.has(ua) && PIECE_UNITS.has(ub);
+}
+
+// Cost of one dish, ingredient by ingredient, at CURRENT rate card prices — not tied to any
+// day's dispatch (that's what P&L's variable cost is for). Two-level lookup, same precedence
+// P&L uses: a dish ingredient (e.g. "Dosa Batter") is priced directly if the rate card has it;
+// otherwise, if it's itself a BK-prepared recipe, its cost is derived from ITS ingredients
+// (BK_INGREDIENT_TO_RATE) divided by the BK recipe's yield. Anything neither of those two can
+// resolve is reported as unpriced rather than guessed.
+async function computeDishCost(recipeId) {
+  const { data: recipe } = await supabase.from('recipes')
+    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single();
+  if (!recipe) return null;
+
+  const { data: rates } = await supabase.from('rate_card').select('*').eq('active', true);
+  const rateMap = {};
+  (rates || []).forEach(r => { rateMap[r.id] = r; });
+
+  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
+  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+  const bkIngredientsByRecipe = {};
+  (bkIngredients || []).forEach(i => { (bkIngredientsByRecipe[i.recipe_id] = bkIngredientsByRecipe[i.recipe_id] || []).push(i); });
+
+  const bkCostCache = {};
+  const bkCostPerUnit = (bkId) => {
+    if (bkCostCache[bkId] !== undefined) return bkCostCache[bkId];
+    const bk = (bkRecipes || []).find(r => r.id === bkId);
+    if (!bk) return (bkCostCache[bkId] = null);
+    let total = 0, hasUnpriced = false;
+    (bkIngredientsByRecipe[bkId] || []).forEach(ing => {
+      const rmId = ing.raw_material_id;
+      const rateId = rateMap[rmId] ? rmId : (BK_INGREDIENT_TO_RATE[rmId] && rateMap[BK_INGREDIENT_TO_RATE[rmId]] ? BK_INGREDIENT_TO_RATE[rmId] : null);
+      if (rateId) total += Number(ing.qty || 0) * Number(rateMap[rateId].price);
+      else hasUnpriced = true;
+    });
+    const yieldQty = Number(bk.yield_qty) || 1;
+    return (bkCostCache[bkId] = { perUnit: yieldQty > 0 ? total / yieldQty : 0, unit: bk.yield_unit, hasUnpriced });
+  };
+
+  const ingredients = (recipe.recipe_ingredients || []).map(ing => {
+    const key = normalizeIngredientName(ing.raw_material);
+    const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
+    const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit };
+
+    if (!mappedId) return { ...base, priced: false, reason: 'not linked to any rate card item or BK recipe', cost: null, rate: null };
+
+    if (rateMap[mappedId]) {
+      const rate = rateMap[mappedId];
+      let qty = Number(ing.qty || 0), unit = ing.unit;
+      const u = (unit || '').toLowerCase(), ru = (rate.unit || '').toLowerCase();
+      if (u === 'gm' && ru === 'kg') { qty = qty / 1000; unit = 'Kg'; }
+      else if (u === 'ml' && (ru === 'ltr' || ru === 'ltr.')) { qty = qty / 1000; unit = 'Ltr'; }
+      if (!unitsCompatible(unit, rate.unit)) {
+        return { ...base, priced: false, reason: `priced per ${rate.unit}, recipe uses ${ing.unit} — conversion not configured`, cost: null, rate: rate.price, rate_unit: rate.unit };
+      }
+      return { ...base, priced: true, rate: rate.price, rate_unit: rate.unit, cost: Math.round(qty * rate.price * 100) / 100, rate_card_id: mappedId };
+    }
+
+    const bk = bkCostPerUnit(mappedId);
+    if (bk && bk.perUnit > 0) {
+      const qtyKg = ing.qty_kg != null ? Number(ing.qty_kg) : Number(ing.qty || 0) / 1000;
+      return { ...base, priced: true, rate: Math.round(bk.perUnit * 100) / 100, rate_unit: bk.unit, cost: Math.round(qtyKg * bk.perUnit * 100) / 100, via_bk_recipe: true };
+    }
+    return { ...base, priced: false, reason: 'no rate card price and no BK recipe found', cost: null, rate: null };
+  });
+
+  const totalCost = ingredients.reduce((s, i) => s + (i.cost || 0), 0);
+  return { item_name: recipe.item_name, ingredients, total_cost: Math.round(totalCost * 100) / 100, unpriced_count: ingredients.filter(i => !i.priced).length };
+}
+
+// Recent actual selling price for a dish, straight from uploaded sales rows — not a
+// configured/static "menu price" field (the system doesn't have one), so this is always
+// derived from what it was actually sold for, most recently, across any outlet/channel.
+async function getSellingPriceInfo(itemName) {
+  const { data } = await supabase.from('daily_sales')
+    .select('sale_date, item_price')
+    .ilike('item_name', itemName)
+    .order('sale_date', { ascending: false })
+    .limit(50);
+  const prices = (data || []).map(d => Number(d.item_price)).filter((p) => p > 0);
+  if (prices.length === 0) return null;
+  return {
+    latest: prices[0],
+    latest_date: data[0].sale_date,
+    min: Math.min(...prices),
+    max: Math.max(...prices),
+    sample_count: prices.length,
+  };
 }
 
 // ────────────────────────────────────────────────────────────
