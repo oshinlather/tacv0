@@ -34,6 +34,12 @@ const istDateAgo = (days) => { const ist = istNow(); ist.setDate(ist.getDate() -
 // Must read via getUTCHours(), not getHours() — istNow()'s Date object only carries
 // correct IST digits when read through UTC-based getters.
 const istHour = () => istNow().getUTCHours();
+// Closing Stock / Wastage are "end of day" screens — a manager opening them between
+// midnight and 6AM (the cafe is shut) is almost always closing out YESTERDAY's business,
+// not starting a fresh entry for the new calendar day. Default to yesterday in that
+// window so a late-night submission doesn't silently land under the new date; the
+// DatePicker is still right there to override.
+const smartDefaultDate = () => (istHour() < 6 ? istDateAgo(1) : today());
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
   const h = istHour();
@@ -5089,7 +5095,7 @@ const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC 
 // ═════════════════════════════════════════════════════════════════════════════
 const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
-  const [selectedDate, setSelectedDate] = useState(today()); // for back-dating wastage/closing/purchase
+  const [selectedDate, setSelectedDate] = useState(smartDefaultDate()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   // Morning demand is ambiguous right after midnight — managers working through the
   // night don't mentally distinguish "today" from "tomorrow". So instead of guessing
@@ -5110,7 +5116,16 @@ const OutletMgr = ({ onBack }) => {
   const [quickVendor, setQuickVendor] = useState(""); const [quickType, setQuickType] = useState("new_purchase"); const [quickPhotos, setQuickPhotos] = useState([]);
   const [quickNote, setQuickNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash"); const [quickSaving, setQuickSaving] = useState(false);
   const [todaysPurchases, setTodaysPurchases] = useState([]); const [purchaseToast, setPurchaseToast] = useState(null);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(today()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
+  // True right after the smart default has kicked in (past midnight, date still sitting on
+  // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
+  // moment the manager picks a date themselves, since selectedDate then stops matching.
+  const midnightSmartDefaultActive = istHour() < 6 && selectedDate === istDateAgo(1);
+  const MidnightBanner = () => midnightSmartDefaultActive ? (
+    <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>
+      🌙 It's past midnight — defaulted to <b>yesterday's</b> date since you're likely closing out yesterday's business. Tap a date above if that's wrong.
+    </div>
+  ) : null;
   // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
   const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
 
@@ -5344,6 +5359,7 @@ const OutletMgr = ({ onBack }) => {
     return (<div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{selectedDate}</span></div>
       <DatePicker value={selectedDate} onChange={(d) => { setSelectedDate(d); setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); }} />
+      <MidnightBanner />
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Sales</div>
@@ -5477,6 +5493,7 @@ const OutletMgr = ({ onBack }) => {
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
+    <MidnightBanner />
     <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
     {wastageQuery ? (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
@@ -5829,6 +5846,7 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
       <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>Fill items you have in stock. Skip items that are zero or not applicable.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
+      <MidnightBanner />
       <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 10, boxSizing: "border-box" }} />
       {csQuery ? (
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
