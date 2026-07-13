@@ -6502,6 +6502,7 @@ const RMAuditPanel = () => {
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [recipeCategories, setRecipeCategories] = useState([]);
   const [rawMaterialNames, setRawMaterialNames] = useState([]); // known ingredient names, for dropdown-while-typing
+  const [allRecipes, setAllRecipes] = useState([]); // full recipes (with ingredients), for "copy from" source
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
@@ -6514,6 +6515,7 @@ const RMAuditPanel = () => {
 
   useEffect(() => {
     api.getRecipes(true).then((rs) => {
+      setAllRecipes(rs || []);
       setRecipeCategories([...new Set((rs || []).map((r) => r.category))].filter(Boolean).sort());
       setRawMaterialNames([...new Set((rs || []).flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material)))].filter(Boolean).sort());
     }).catch(() => {});
@@ -6526,6 +6528,19 @@ const RMAuditPanel = () => {
   const updateQuickRow = (idx, field, value) => setQuickRecipe((p) => ({ ...p, rows: p.rows.map((r, i) => (i === idx ? { ...r, [field]: value } : r)) }));
   const addQuickRow = () => setQuickRecipe((p) => ({ ...p, rows: [...p.rows, { raw_material: "", qty: "", unit: p.rows[p.rows.length - 1]?.unit || "GM" }] }));
   const removeQuickRow = (idx) => setQuickRecipe((p) => ({ ...p, rows: p.rows.filter((_, i) => i !== idx) }));
+  // Copies another dish's ingredients in as a starting point — tweak qty/add/remove from there,
+  // instead of typing every ingredient from scratch for dishes that share most of their recipe.
+  const copyFromRecipe = (sourceId) => {
+    const src = allRecipes.find((r) => r.id === sourceId);
+    if (!src) return;
+    setQuickRecipe((p) => ({
+      ...p,
+      category: p.category.trim() || src.category || "",
+      rows: (src.recipe_ingredients || []).length > 0
+        ? src.recipe_ingredients.map((i) => ({ raw_material: i.raw_material, qty: String(i.qty), unit: i.unit }))
+        : p.rows,
+    }));
+  };
 
   const saveQuickRecipe = async () => {
     if (!quickRecipe) return;
@@ -6681,6 +6696,15 @@ const RMAuditPanel = () => {
           <datalist id="rm-audit-recipe-categories">{recipeCategories.map((c) => <option key={c} value={c} />)}</datalist>
 
           <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</label>
+          {allRecipes.length > 0 && (
+            <select value="" onChange={(e) => e.target.value && copyFromRecipe(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px dashed #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontSize: 12, fontWeight: 600, fontFamily: "inherit", margin: "4px 0 8px" }}>
+              <option value="">📋 Copy ingredients from another dish...</option>
+              {allRecipes.filter((r) => (r.recipe_ingredients || []).length > 0).sort((a, b) => a.item_name.localeCompare(b.item_name)).map((r) => (
+                <option key={r.id} value={r.id}>{r.item_name} ({r.recipe_ingredients.length} ingredients)</option>
+              ))}
+            </select>
+          )}
           <div style={{ margin: "4px 0 10px" }}>
             {quickRecipe.rows.map((r, idx) => (
               <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
