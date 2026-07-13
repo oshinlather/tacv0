@@ -6561,14 +6561,23 @@ const RMAuditPanel = () => {
                       const isOver = hasActual && item.variance > 0;
                       const isOpen = expandedItem === item.raw_material;
                       const ab = item.actual_breakdown;
+                      const hasSoldBreakdown = (item.should_consume_breakdown || []).length > 0;
                       return (<Fragment key={i}>
-                        <tr onClick={() => setExpandedItem(isOpen ? null : item.raw_material)} style={{ borderBottom: isOpen ? "none" : "1px solid #F0F0EC", cursor: "pointer" }}>
-                          <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material} <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span></td>
-                          <td style={{ ...tdS, color: "#888" }}>{item.unit}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(item.should_consume).toFixed(2)}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A" }}>
+                        <tr onClick={() => hasSoldBreakdown && setExpandedItem(isOpen ? null : item.raw_material)} style={{ borderBottom: "none", cursor: hasSoldBreakdown ? "pointer" : "default" }}>
+                          <td style={{ ...tdS, fontWeight: 600, paddingBottom: 2 }}>{item.raw_material} {hasSoldBreakdown && <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>}</td>
+                          <td style={{ ...tdS, color: "#888", paddingBottom: 2 }}>{item.unit}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB", paddingBottom: 2 }}>{Number(item.should_consume).toFixed(2)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", paddingBottom: 2 }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A", paddingBottom: 2 }}>
                             {hasActual ? `${isOver ? "+" : ""}${Number(item.variance).toFixed(2)}${item.variance_pct != null ? ` (${isOver ? "+" : ""}${item.variance_pct}%)` : ""}` : "no closing stock data"}
+                          </td>
+                        </tr>
+                        {/* Actual-consumed math, always visible — same convention as P&L's "(50 + 250) − 0 − 40 = 260 Kg" line */}
+                        <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                          <td colSpan={5} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
+                            {ab
+                              ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
+                              : "no closing stock submitted — actual consumption can't be computed"}
                           </td>
                         </tr>
                         {isOpen && (
@@ -6583,14 +6592,6 @@ const RMAuditPanel = () => {
                               <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
                                 = {Number(item.should_consume).toFixed(2)} {item.unit}
                               </div>
-                              {ab && (<>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, margin: "12px 0 4px" }}>Actual Consumed — same formula as P&L</div>
-                                <div style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace" }}>
-                                  ({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}
-                                </div>
-                                <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>(Yesterday Closing + Today Dispatched) − Wastage − Today Closing</div>
-                              </>)}
-                              {!ab && <div style={{ fontSize: 11, color: "#999", marginTop: 12 }}>No closing stock submitted for this outlet on this date — actual consumption can't be computed.</div>}
                             </td>
                           </tr>
                         )}
