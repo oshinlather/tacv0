@@ -63,7 +63,7 @@ router.post("/closing-stock", async (req, res) => {
 
   const { data, error } = await supabase
     .from("closing_stocks")
-    .upsert({ outlet_id, date: todayIST(), items, items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null, submitted_by }, { onConflict: "outlet_id,date" })
+    .upsert({ outlet_id, date: todayIST(), items, items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null, submitted_by, submitted_at: new Date().toISOString() }, { onConflict: "outlet_id,date" })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });

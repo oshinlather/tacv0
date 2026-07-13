@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from "react";
 import api from "./api";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -5232,7 +5232,22 @@ const OutletMgr = ({ onBack }) => {
     } finally { setSaving(false); }
   };
 
-  const waMsg = (e) => { let m = `📋 *The The Ananda Cafe — ${e.type === "closing" ? "Closing Stock" : "Demand"}*\n🏪 ${oData?.name}\n📅 ${e.date} | ⏰ ${e.time}\n`; if (e.type === "photo") m += `📷 ${Object.keys(e.images || {}).length} photos\n`; if (e.note) m += `📝 ${e.note}\n`; m += `✅ Sent via App`; window.open(`https://wa.me/?text=${encodeURIComponent(m)}`, "_blank"); };
+  // Same convention as System Logs — "business date" (the date this action is FOR) shown
+  // separately from "logged" (when it was actually submitted), since the two can differ
+  // for a late-night or corrected entry.
+  const toISTDateTime = (ts) => {
+    if (!ts) return "";
+    const ist = new Date(new Date(ts).getTime() + 330 * 60000);
+    return ist.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "UTC" });
+  };
+  const waMsg = (e) => {
+    const typeLabel = e.type === "closing" ? "Closing Stock" : e.type === "wastage" ? "Wastage" : "Demand";
+    let m = `📋 *The Ananda Cafe — ${typeLabel}*\n🏪 ${oData?.name}\n📅 Business Date: ${e.date}\n🕐 Logged: ${e.submitted_at ? toISTDateTime(e.submitted_at) : `${e.date}, ${e.time}`}\n`;
+    if (e.type === "photo") m += `📷 ${Object.keys(e.images || {}).length} photos\n`;
+    if (e.note) m += `📝 ${e.note}\n`;
+    m += `✅ Sent via App`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(m)}`, "_blank");
+  };
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div><div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Please wait</div></div></div> : null;
 
@@ -6462,6 +6477,7 @@ const RMAuditPanel = () => {
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showUnmatched, setShowUnmatched] = useState(false);
+  const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
@@ -6525,9 +6541,11 @@ const RMAuditPanel = () => {
                     {outletData.items.map((item, i) => {
                       const hasActual = item.actual_consumed != null;
                       const isOver = hasActual && item.variance > 0;
-                      return (
-                        <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                          <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material}</td>
+                      const isOpen = expandedItem === item.raw_material;
+                      const ab = item.actual_breakdown;
+                      return (<Fragment key={i}>
+                        <tr onClick={() => setExpandedItem(isOpen ? null : item.raw_material)} style={{ borderBottom: isOpen ? "none" : "1px solid #F0F0EC", cursor: "pointer" }}>
+                          <td style={{ ...tdS, fontWeight: 600 }}>{item.raw_material} <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span></td>
                           <td style={{ ...tdS, color: "#888" }}>{item.unit}</td>
                           <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{Number(item.should_consume).toFixed(2)}</td>
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
@@ -6535,7 +6553,30 @@ const RMAuditPanel = () => {
                             {hasActual ? `${isOver ? "+" : ""}${Number(item.variance).toFixed(2)}${item.variance_pct != null ? ` (${isOver ? "+" : ""}${item.variance_pct}%)` : ""}` : "no closing stock data"}
                           </td>
                         </tr>
-                      );
+                        {isOpen && (
+                          <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                            <td colSpan={5} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
+                              {(item.should_consume_breakdown || []).map((b, j) => (
+                                <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
+                                  {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+                                </div>
+                              ))}
+                              <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+                                = {Number(item.should_consume).toFixed(2)} {item.unit}
+                              </div>
+                              {ab && (<>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, margin: "12px 0 4px" }}>Actual Consumed — same formula as P&L</div>
+                                <div style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace" }}>
+                                  ({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}
+                                </div>
+                                <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>(Yesterday Closing + Today Dispatched) − Wastage − Today Closing</div>
+                              </>)}
+                              {!ab && <div style={{ fontSize: 11, color: "#999", marginTop: 12 }}>No closing stock submitted for this outlet on this date — actual consumption can't be computed.</div>}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>);
                     })}
                   </tbody>
                 </table>

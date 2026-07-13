@@ -709,15 +709,18 @@ async function computeRMAudit(date, outletFilter) {
     });
 
     const unmatchedDishes = [];
-    const theoretical = {}; // normalized raw_material -> { raw_material, unit, qty_kg, qty_count }
+    // normalized raw_material -> { raw_material, unit, qty_kg, qty_count, breakdown: [{dish, qty_sold, per_dish, subtotal}] }
+    const theoretical = {};
     Object.entries(salesByDish).forEach(([dishName, qty]) => {
       const recipe = recipeByNormName[normalizeDishName(dishName)];
       if (!recipe) { unmatchedDishes.push({ item_name: dishName, qty }); return; }
       (recipe.recipe_ingredients || []).forEach(ing => {
         const key = normalizeIngredientName(ing.raw_material);
-        if (!theoretical[key]) theoretical[key] = { raw_material: ing.raw_material, unit: ing.unit, qty_kg: 0, qty_count: 0 };
-        if (ing.qty_kg != null) theoretical[key].qty_kg += Number(ing.qty_kg) * qty;
-        else theoretical[key].qty_count += Number(ing.qty || 0) * qty;
+        if (!theoretical[key]) theoretical[key] = { raw_material: ing.raw_material, unit: ing.unit, qty_kg: 0, qty_count: 0, breakdown: [] };
+        const perDish = ing.qty_kg != null ? Number(ing.qty_kg) : Number(ing.qty || 0);
+        if (ing.qty_kg != null) theoretical[key].qty_kg += perDish * qty;
+        else theoretical[key].qty_count += perDish * qty;
+        theoretical[key].breakdown.push({ dish: dishName, qty_sold: qty, per_dish: perDish, subtotal: Math.round(perDish * qty * 1000) / 1000 });
       });
     });
 
@@ -739,7 +742,12 @@ async function computeRMAudit(date, outletFilter) {
         item_id: mappedId,
         unit: t.qty_kg > 0 ? 'Kg' : (actualItem?.unit || t.unit || 'Pcs'),
         should_consume: Math.round(shouldConsume * 1000) / 1000,
+        should_consume_breakdown: t.breakdown.sort((a, b) => b.subtotal - a.subtotal),
         actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
+        actual_breakdown: actualItem ? {
+          prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
+          wastage: actualItem.wastage, closing: actualItem.closing,
+        } : null,
         variance, variance_pct: variancePct,
       };
     }).filter(Boolean).sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
