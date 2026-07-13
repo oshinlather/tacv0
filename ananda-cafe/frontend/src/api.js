@@ -161,13 +161,6 @@ const api = {
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),
   getStockUsage: (date, outlet) => get(`/api/stock-usage/${date}`, outlet ? { outlet } : {}),
 
-  // ── Outlet Recipes ──
-  getOutletRecipes: () => get("/api/outlet-recipes"),
-  addOutletRecipe: (data) => post("/api/outlet-recipes", data),
-  updateOutletRecipe: (id, data) => patch(`/api/outlet-recipes/${id}`, data),
-  deleteOutletRecipe: (id) => del(`/api/outlet-recipes/${id}`),
-  saveOutletRecipeIngredients: (id, ingredients) => post(`/api/outlet-recipes/${id}/ingredients`, { ingredients }),
-  deleteOutletRecipeIngredient: (recipeId, ingredientId) => del(`/api/outlet-recipes/${recipeId}/ingredients/${ingredientId}`),
   // RM Order Config
   getRmOrderConfig: () => get("/api/rm-order-config"),
   saveRmOrderConfig: (items) => post("/api/rm-order-config", { items }),

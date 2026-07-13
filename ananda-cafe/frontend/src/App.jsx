@@ -6734,292 +6734,6 @@ const RMAuditPanel = () => {
   );
 };
 
-// ═════════════════════════════════════════════════════════════════════════════
-//  OUTLET RECIPE MANAGER — Store Manager fills recipes for all menu items
-//  Ingredients come from BK items (Food section) + Raw Materials
-//  All quantities in grams per serving
-// ═════════════════════════════════════════════════════════════════════════════
-const OutletRecipeManager = () => {
-  const [recipes, setRecipes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [selRecipe, setSelRecipe] = useState(null); // selected recipe to edit
-  const [editIngredients, setEditIngredients] = useState([]); // working copy
-  const [saving, setSaving] = useState(false);
-  const [addingItem, setAddingItem] = useState(false); // show add new menu item form
-  const [newItemName, setNewItemName] = useState("");
-  const [newItemCategory, setNewItemCategory] = useState("Dosas");
-  const [ingredientSearch, setIngredientSearch] = useState("");
-  const [filterStatus, setFilterStatus] = useState("all"); // all, filled, empty
-
-  const load = () => { setLoading(true); api.getOutletRecipes().then(setRecipes).catch(() => setRecipes([])).finally(() => setLoading(false)); };
-  useEffect(load, []);
-
-  // Build searchable ingredient list from BK items (food section) + Raw Materials
-  const ingredientOptions = useMemo(() => {
-    const opts = [];
-    // BK prepared items (from Food section of DEMAND_SECTIONS)
-    const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
-    (foodSection?.items || []).forEach((item) => {
-      opts.push({ id: item.id, name: item.name, type: "BK Item", unit: "gm" });
-    });
-    // Raw materials
-    RAW_MATERIALS.forEach((r) => {
-      // Avoid duplicates if already in BK items
-      if (!opts.find((o) => o.id === r.id)) {
-        opts.push({ id: r.id, name: r.name, type: "Raw Material", unit: "gm" });
-      }
-    });
-    // Direct demand items (vegetables, masala, grocery, dairy, etc.)
-    // Use actual item unit — Pkt for packaging, Pcs for countable items, gm for weight items
-    const gmUnits = new Set(["kg", "gm", "g", "gram", "grams", "ltr", "liter", "litre", "ml"]);
-    DEMAND_SECTIONS.filter((s) => s.id !== "food").forEach((sec) => {
-      sec.items.forEach((item) => {
-        if (!opts.find((o) => o.id === item.id)) {
-          const itemUnit = item.unit || "gm";
-          const useGm = gmUnits.has(itemUnit.toLowerCase());
-          opts.push({ id: item.id, name: item.name, type: sec.titleHi, unit: useGm ? "gm" : itemUnit });
-        }
-      });
-    });
-    return opts.sort((a, b) => a.name.localeCompare(b.name));
-  }, []);
-
-  const categories = [...new Set(recipes.map((r) => r.category))].sort();
-  const filledCount = recipes.filter((r) => r.recipe_ingredients && r.recipe_ingredients.length > 0).length;
-  const emptyCount = recipes.length - filledCount;
-
-  const filteredRecipes = recipes.filter((r) => {
-    if (search && !r.item_name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filterStatus === "filled" && (!r.recipe_ingredients || r.recipe_ingredients.length === 0)) return false;
-    if (filterStatus === "empty" && r.recipe_ingredients && r.recipe_ingredients.length > 0) return false;
-    return true;
-  });
-
-  const openRecipe = (recipe) => {
-    setSelRecipe(recipe);
-    setEditIngredients((recipe.recipe_ingredients || []).map((i) => ({
-      id: i.id, raw_material: i.raw_material, qty: i.qty, unit: i.unit || "gm", qty_kg: i.qty_kg
-    })));
-    setIngredientSearch("");
-  };
-
-  const saveIngredients = async () => {
-    if (!selRecipe) return;
-    setSaving(true);
-    try {
-      const ings = editIngredients.map((i) => ({
-        raw_material: i.raw_material,
-        qty: Number(i.qty) || 0,
-        unit: "gm",
-        qty_kg: (Number(i.qty) || 0) / 1000,
-      }));
-      await api.saveOutletRecipeIngredients(selRecipe.id, ings);
-      load();
-      setSelRecipe(null);
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSaving(false); }
-  };
-
-  const addIngredient = (opt) => {
-    if (editIngredients.find((i) => i.raw_material === opt.name)) return; // already added
-    setEditIngredients((p) => [...p, { id: null, raw_material: opt.name, qty: "", unit: opt.unit || "gm", qty_kg: 0 }]);
-    setIngredientSearch("");
-  };
-
-  const updateIngQty = (idx, qty) => {
-    setEditIngredients((p) => p.map((ing, i) => i === idx ? { ...ing, qty: qty, qty_kg: (Number(qty) || 0) / 1000 } : ing));
-  };
-
-  const removeIngredient = (idx) => {
-    setEditIngredients((p) => p.filter((_, i) => i !== idx));
-  };
-
-  const addMenuItem = async () => {
-    if (!newItemName.trim()) return;
-    try {
-      await api.addOutletRecipe({ item_name: newItemName.trim(), category: newItemCategory });
-      setNewItemName(""); setAddingItem(false); load();
-    } catch (e) { alert("Error: " + e.message); }
-  };
-
-  const deleteMenuItem = async (id, name) => {
-    if (!confirm(`Remove "${name}" from menu?`)) return;
-    try { await api.deleteOutletRecipe(id); load(); } catch (e) { alert("Error: " + e.message); }
-  };
-
-  // ── RECIPE EDITOR VIEW ──
-  if (selRecipe) {
-    const iq = ingredientSearch.trim().toLowerCase();
-    const matches = iq ? ingredientOptions.filter((o) =>
-      o.name.toLowerCase().includes(iq) && !editIngredients.find((i) => i.raw_material === o.name)
-    ).slice(0, 8) : [];
-
-    return (
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <BackBtn onClick={() => setSelRecipe(null)} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 800 }}>{selRecipe.item_name}</div>
-            <div style={{ fontSize: 11, color: "#888" }}>{selRecipe.category} — {editIngredients.length} ingredients</div>
-          </div>
-        </div>
-
-        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>
-          ℹ️ Enter quantity in <strong>grams per serving</strong>. For example: Dosa Batter 120gm, Sambhar 80gm for one Plain Dosa.
-        </div>
-
-        {/* Current ingredients */}
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#666", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</span>
-            <span style={{ fontSize: 11, color: "#999" }}>{editIngredients.length} items</span>
-          </div>
-          {editIngredients.length === 0 && (
-            <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No ingredients yet — search and add below</div>
-          )}
-          {editIngredients.map((ing, idx) => (
-            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
-              <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{ing.raw_material}</span>
-              <input type="number" inputMode="numeric" min="0" placeholder="gm" value={ing.qty}
-                onChange={(e) => updateIngQty(idx, e.target.value)}
-                style={{ width: 70, padding: "6px 4px", borderRadius: 6, border: ing.qty ? "2px solid #16A34A" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: "#fff" }} />
-              <span style={{ fontSize: 10, color: "#999", width: 20 }}>{ing.unit || "gm"}</span>
-              <button onClick={() => removeIngredient(idx)} style={{ width: 24, height: 24, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-            </div>
-          ))}
-        </div>
-
-        {/* Add ingredient search */}
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ padding: "10px 14px" }}>
-            <input autoFocus value={ingredientSearch} onChange={(e) => setIngredientSearch(e.target.value)}
-              placeholder="Search BK items, raw materials, vegetables..."
-              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#F0FDF4", boxSizing: "border-box" }} />
-          </div>
-          {iq && matches.length > 0 && (
-            <div style={{ borderTop: "1px solid #E8E8E4", maxHeight: 250, overflowY: "auto" }}>
-              {matches.map((opt) => (
-                <button key={opt.id} onClick={() => addIngredient(opt)} style={{ width: "100%", padding: "10px 14px", border: "none", borderBottom: "1px solid #F5F5F3", background: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{opt.name}</span>
-                  <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 3, background: opt.type === "BK Item" ? "#FFFBEB" : "#EFF6FF", color: opt.type === "BK Item" ? "#B45309" : "#2563EB", fontWeight: 700 }}>{opt.type}</span>
-                </button>
-              ))}
-              {/* Free-text add at bottom of suggestions */}
-              {!matches.find((m) => m.name.toLowerCase() === iq) && (
-                <button onClick={() => {
-                  if (editIngredients.find((i) => i.raw_material.toLowerCase() === ingredientSearch.trim().toLowerCase())) return;
-                  setEditIngredients((p) => [...p, { id: null, raw_material: ingredientSearch.trim(), qty: "", unit: "gm", qty_kg: 0 }]);
-                  setIngredientSearch("");
-                }} style={{ width: "100%", padding: "10px 14px", border: "none", borderTop: "1px dashed #FDE68A", background: "#FFFDF5", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, color: "#B45309", fontSize: 12, fontWeight: 700 }}>
-                  + Add "{ingredientSearch.trim()}" as new ingredient
-                </button>
-              )}
-            </div>
-          )}
-          {iq && matches.length === 0 && (
-            <div style={{ padding: "8px 14px", borderTop: "1px solid #E8E8E4" }}>
-              <button onClick={() => {
-                if (editIngredients.find((i) => i.raw_material.toLowerCase() === ingredientSearch.trim().toLowerCase())) return;
-                setEditIngredients((p) => [...p, { id: null, raw_material: ingredientSearch.trim(), qty: "", unit: "gm", qty_kg: 0 }]);
-                setIngredientSearch("");
-              }} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px dashed #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-                + Add "{ingredientSearch.trim()}" as new ingredient
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Save button */}
-        <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-          <button onClick={saveIngredients} disabled={saving}
-            style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: saving ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-            {saving ? "⏳ Saving..." : `💾 Save Recipe (${editIngredients.filter((i) => i.qty > 0).length} ingredients)`}
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // ── MAIN LIST VIEW ──
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading recipes...</div>;
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div>
-          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🍳 Outlet Recipes</h3>
-          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Add ingredients for each menu item (qty in grams per serving)</p>
-        </div>
-        <button onClick={() => setAddingItem(!addingItem)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 12, fontWeight: 700, color: "#16A34A", cursor: "pointer", fontFamily: "inherit" }}>{addingItem ? "Cancel" : "+ Add Item"}</button>
-      </div>
-
-      {/* Add new menu item */}
-      {addingItem && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, padding: "10px 12px", background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", flexWrap: "wrap" }}>
-          <input value={newItemName} onChange={(e) => setNewItemName(e.target.value)} placeholder="Item name (e.g., Medu Vada)"
-            style={{ flex: "1 1 150px", padding: "8px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
-          <select value={newItemCategory} onChange={(e) => setNewItemCategory(e.target.value)}
-            style={{ padding: "8px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
-            {[...categories, "Dosas", "Idli And Vada", "Rice Items", "Beverages", "Desserts", "Snacks", "Combos", "Other"].filter((v, i, a) => a.indexOf(v) === i).sort().map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          <button onClick={addMenuItem} disabled={!newItemName.trim()} style={{ padding: "8px 16px", borderRadius: 6, border: "none", background: newItemName.trim() ? "#16A34A" : "#D0D0CC", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newItemName.trim() ? "pointer" : "not-allowed", fontFamily: "inherit" }}>Add</button>
-        </div>
-      )}
-
-      {/* Status filter pills */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-        <button onClick={() => setFilterStatus("all")} style={{ flex: 1, background: filterStatus === "all" ? "#1A1A1A" : "#fff", borderRadius: 10, padding: "10px 8px", border: filterStatus === "all" ? "none" : "1px solid #E8E8E4", textAlign: "center", cursor: "pointer" }}>
-          <div style={{ fontSize: 9, color: filterStatus === "all" ? "#999" : "#999", fontWeight: 600, textTransform: "uppercase" }}>All</div>
-          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "all" ? "#fff" : "#1A1A1A" }}>{recipes.length}</div>
-        </button>
-        <button onClick={() => setFilterStatus("filled")} style={{ flex: 1, background: filterStatus === "filled" ? "#16A34A" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: filterStatus === "filled" ? "none" : "1px solid #BBF7D0", textAlign: "center", cursor: "pointer" }}>
-          <div style={{ fontSize: 9, color: filterStatus === "filled" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase" }}>Filled</div>
-          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "filled" ? "#fff" : "#16A34A" }}>{filledCount}</div>
-        </button>
-        <button onClick={() => setFilterStatus("empty")} style={{ flex: 1, background: filterStatus === "empty" ? "#DC2626" : emptyCount > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 10, padding: "10px 8px", border: filterStatus === "empty" ? "none" : `1px solid ${emptyCount > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center", cursor: "pointer" }}>
-          <div style={{ fontSize: 9, color: filterStatus === "empty" ? "rgba(255,255,255,0.7)" : "#999", fontWeight: 600, textTransform: "uppercase" }}>Empty</div>
-          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: filterStatus === "empty" ? "#fff" : emptyCount > 0 ? "#DC2626" : "#16A34A" }}>{emptyCount}</div>
-        </button>
-      </div>
-
-      {/* Search */}
-      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu items..."
-        style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
-
-      {/* Recipe list grouped by category */}
-      {categories.filter((cat) => filteredRecipes.some((r) => r.category === cat)).map((cat) => {
-        const catRecipes = filteredRecipes.filter((r) => r.category === cat);
-        return (
-          <div key={cat} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>{cat} ({catRecipes.length})</div>
-            <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-              {catRecipes.map((r, idx) => {
-                const hasFilled = r.recipe_ingredients && r.recipe_ingredients.length > 0;
-                return (
-                  <div key={r.id} onClick={() => openRecipe(r)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderBottom: idx < catRecipes.length - 1 ? "1px solid #F0F0EC" : "none", cursor: "pointer", background: hasFilled ? "transparent" : "#FFFDF5" }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 5, background: hasFilled ? "#16A34A" : "#E0E0DC", flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{r.item_name}</div>
-                      {hasFilled && <div style={{ fontSize: 10, color: "#16A34A" }}>{r.recipe_ingredients.length} ingredients</div>}
-                      {!hasFilled && <div style={{ fontSize: 10, color: "#B45309" }}>⚠ No recipe — tap to add</div>}
-                    </div>
-                    <button onClick={(e) => { e.stopPropagation(); deleteMenuItem(r.id, r.item_name); }} style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, cursor: "pointer", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>×</button>
-                    <span style={{ color: "#CCC", fontSize: 12 }}>→</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {filteredRecipes.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No items match your filter</div>}
-    </div>
-  );
-};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  PETPOOJA RECIPES — from PetPooja recipe export
@@ -7042,11 +6756,16 @@ const DishRecipesPanel = () => {
   const [newDishName, setNewDishName] = useState("");
   const [newDishCategory, setNewDishCategory] = useState("");
   const [saving, setSaving] = useState(false);
+  const [copyingInto, setCopyingInto] = useState(null); // recipe id currently receiving a copied-in ingredient set
 
   const load = () => { setLoading(true); api.getRecipes(true).then((r) => setRecipes(r || [])).catch(() => setRecipes([])).finally(() => setLoading(false)); };
   useEffect(load, []);
 
   const categories = useMemo(() => [...new Set(recipes.map((r) => r.category))].filter(Boolean).sort(), [recipes]);
+  // Known ingredient names across every recipe — offered as a dropdown while typing so a
+  // new ingredient reuses an existing exact spelling instead of drifting (e.g. "Desi Ghee"
+  // vs "Deshi Ghee" ending up as two different, non-matching entries).
+  const rawMaterialNames = useMemo(() => [...new Set(recipes.flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material)))].filter(Boolean).sort(), [recipes]);
 
   const filtered = recipes.filter((r) => {
     if (r.status !== "Active") return false;
@@ -7091,6 +6810,25 @@ const DishRecipesPanel = () => {
     finally { setSavingIngredient(null); }
   };
 
+  // Copies another dish's ingredients in as a starting point (skipping any already present
+  // by name) — lets similar dishes (e.g. Button Idli, Ghee Idli) share most of a recipe
+  // instead of typing every ingredient out by hand for each one.
+  const copyIngredientsFrom = async (targetRecipe, sourceId) => {
+    const source = recipes.find((r) => r.id === sourceId);
+    if (!source) return;
+    const existingNames = new Set((targetRecipe.recipe_ingredients || []).map((i) => i.raw_material.toLowerCase()));
+    const toAdd = (source.recipe_ingredients || []).filter((i) => !existingNames.has(i.raw_material.toLowerCase()));
+    if (toAdd.length === 0) return;
+    setCopyingInto(targetRecipe.id);
+    try {
+      for (const ing of toAdd) {
+        await api.addRecipeIngredient(targetRecipe.id, { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit });
+      }
+      load();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setCopyingInto(null); }
+  };
+
   const removeIngredient = async (ingId) => {
     try { await api.deleteRecipeIngredient(ingId); load(); } catch (e) { alert("Failed: " + e.message); }
   };
@@ -7106,6 +6844,8 @@ const DishRecipesPanel = () => {
         </div>
         <button onClick={() => setAddingDish(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Dish</button>
       </div>
+
+      <datalist id="dish-recipe-raw-materials">{rawMaterialNames.map((n) => <option key={n} value={n} />)}</datalist>
 
       {addingDish && (
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 14, marginBottom: 14 }}>
@@ -7151,10 +6891,19 @@ const DishRecipesPanel = () => {
                   )}
                   <button onClick={() => deleteDish(r.id, r.item_name)} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 700, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>🗑️ Delete Dish</button>
                 </div>
+                {isEditing && recipes.some((x) => x.id !== r.id && (x.recipe_ingredients || []).length > 0) && (
+                  <select value="" onChange={(e) => e.target.value && copyIngredientsFrom(r, e.target.value)} disabled={copyingInto === r.id}
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px dashed #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontSize: 12, fontWeight: 600, fontFamily: "inherit", margin: "0 0 10px" }}>
+                    <option value="">{copyingInto === r.id ? "Copying..." : "📋 Copy ingredients from another dish..."}</option>
+                    {recipes.filter((x) => x.id !== r.id && (x.recipe_ingredients || []).length > 0).sort((a, b) => a.item_name.localeCompare(b.item_name)).map((x) => (
+                      <option key={x.id} value={x.id}>{x.item_name} ({x.recipe_ingredients.length} ingredients)</option>
+                    ))}
+                  </select>
+                )}
                 {(r.recipe_ingredients || []).map((m) => (
                   <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
                     {isEditing ? (<>
-                      <input defaultValue={m.raw_material} onBlur={(e) => e.target.value.trim() && e.target.value !== m.raw_material && updateIngredient(m.id, "raw_material", e.target.value.trim())} disabled={savingIngredient === m.id}
+                      <input defaultValue={m.raw_material} list="dish-recipe-raw-materials" onBlur={(e) => e.target.value.trim() && e.target.value !== m.raw_material && updateIngredient(m.id, "raw_material", e.target.value.trim())} disabled={savingIngredient === m.id}
                         style={{ flex: 2, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
                       <input type="number" inputMode="decimal" defaultValue={m.qty} onBlur={(e) => Number(e.target.value) > 0 && Number(e.target.value) !== Number(m.qty) && updateIngredient(m.id, "qty", e.target.value)} disabled={savingIngredient === m.id}
                         style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
@@ -7171,7 +6920,7 @@ const DishRecipesPanel = () => {
                 ))}
                 {isEditing && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0 0" }}>
-                    <input value={newIngredient.raw_material} onChange={(e) => setNewIngredient((p) => ({ ...p, raw_material: e.target.value }))} placeholder="New ingredient..."
+                    <input value={newIngredient.raw_material} onChange={(e) => setNewIngredient((p) => ({ ...p, raw_material: e.target.value }))} placeholder="New ingredient..." list="dish-recipe-raw-materials"
                       style={{ flex: 2, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
                     <input type="number" inputMode="decimal" value={newIngredient.qty} onChange={(e) => setNewIngredient((p) => ({ ...p, qty: e.target.value }))} placeholder="Qty"
                       style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
@@ -8081,7 +7830,7 @@ const StoreRecipesView = () => {
         <button onClick={() => setTab("outlet")} style={{ flex: 1, padding: "10px", borderRadius: 10, border: tab === "outlet" ? "none" : "1px solid #BBF7D0", background: tab === "outlet" ? "#16A34A" : "#F0FDF4", color: tab === "outlet" ? "#fff" : "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🍳 Outlet Recipes</button>
       </div>
       {tab === "bk" && <RecipesPanel />}
-      {tab === "outlet" && <OutletRecipeManager />}
+      {tab === "outlet" && <DishRecipesPanel />}
     </div>
   );
 };
