@@ -50,6 +50,9 @@ const getDemandWindow = () => {
 const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 const fmt = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
 const pct = (n) => (n || 0).toFixed(1) + "%";
+// Mirrors the backend's normalizeDishName (salesRoutes.js) so PetPooja sales rows key
+// into the same /api/recipes/costs-bulk map the server built from recipe item_names.
+const normalizeDishName = (s) => (s || "").toLowerCase().trim().replace(/\.+$/, "").replace(/\s+/g, " ");
 
 // ─── P&L LINE ITEMS (from user's Excel) ─────────────────────────────────────
 const PNL_REVENUE = [
@@ -6328,9 +6331,13 @@ const SalesUpload = () => {
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadDate, setUploadDate] = useState(today());
   const [useCustomDate, setUseCustomDate] = useState(false);
+  const [dishCosts, setDishCosts] = useState({}); // normalized dish name -> { total_cost, unpriced_count }
   const fileRef = useRef(null);
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  // Current rate-card costing, not date-specific — load once, not per date/outlet flip.
+  useEffect(() => { api.getAllDishCosts().then(setDishCosts).catch(() => setDishCosts({})); }, []);
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -6354,6 +6361,20 @@ const SalesUpload = () => {
 
   useEffect(loadSales, [loadSales]);
   const periodLabel = selMonth ? (monthOptions.find((m) => m.value === selMonth)?.label || selMonth) : (selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr);
+
+  // Each sales row priced from the bulk dish-cost map — unpriced dishes (no recipe match)
+  // show as "—" rather than a guessed cost, same convention as the RM Audit / P&L screens.
+  const itemsWithCost = useMemo(() => (sales?.items || []).map((item) => {
+    const costInfo = dishCosts[normalizeDishName(item.item_name)];
+    const unitCost = costInfo ? costInfo.total_cost : null;
+    const cost = unitCost != null ? unitCost * item.qty : null;
+    const margin = cost != null ? item.revenue - cost : null;
+    return { ...item, unitCost, cost, margin };
+  }), [sales, dishCosts]);
+
+  const totalCogs = itemsWithCost.reduce((s, i) => s + (i.cost || 0), 0);
+  const pricedRevenue = itemsWithCost.filter((i) => i.cost != null).reduce((s, i) => s + (i.revenue || 0), 0);
+  const totalMargin = pricedRevenue - totalCogs;
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -6443,6 +6464,8 @@ const SalesUpload = () => {
               { l: "Total Revenue", v: fmt(sales.total_revenue || 0), c: "#16A34A" },
               { l: "Items Sold", v: sales.total_items || 0, c: "#2563EB" },
               { l: "Orders", v: sales.total_orders || 0, c: "#B45309" },
+              { l: "Est. COGS", v: fmt(totalCogs), c: "#DC2626" },
+              { l: "Est. Margin", v: fmt(totalMargin), c: "#16A34A" },
             ].map((s, i) => (
               <div key={i} style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
                 <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
@@ -6464,15 +6487,18 @@ const SalesUpload = () => {
                   <thead><tr style={{ background: "#FAFAF8" }}>
                     <th style={thS}>#</th><th style={thS}>Item</th><th style={thS}>Category</th>
                     <th style={{ ...thS, textAlign: "right" }}>Qty</th><th style={{ ...thS, textAlign: "right" }}>Revenue</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Cost</th><th style={{ ...thS, textAlign: "right" }}>Margin</th>
                   </tr></thead>
                   <tbody>
-                    {sales.items.map((item, i) => (
+                    {itemsWithCost.map((item, i) => (
                       <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
                         <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
                         <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}</td>
                         <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
                         <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
                         <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>

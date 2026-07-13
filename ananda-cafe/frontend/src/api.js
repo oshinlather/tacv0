@@ -87,6 +87,7 @@ const api = {
   updateRecipeIngredient: (id, data) => patch(`/api/recipes/ingredients/${id}`, data),
   deleteRecipeIngredient: (id) => del(`/api/recipes/ingredients/${id}`),
   getDishCost: (recipeId) => get(`/api/recipes/${recipeId}/cost`),
+  getAllDishCosts: () => get("/api/recipes/costs-bulk"),
 
   // ── Orders / Dashboard ──
   getOrders: (params) => get("/api/orders", params),

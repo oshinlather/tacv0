@@ -267,6 +267,15 @@ router.get('/recipes/:id/cost', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/recipes/costs-bulk — Cost for every active dish at once, keyed by normalized
+// dish name. Used by the sales table to show cost/margin per row without one request per item.
+router.get('/recipes/costs-bulk', async (req, res) => {
+  try {
+    const costs = await computeAllDishCosts();
+    res.json(costs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Converts a recipe-ingredient qty into the kg-equivalent computeRMAudit sums directly —
 // GM/KG/LTR/ML get a numeric qty_kg; countable items (Piece/Pcs) get null so they're
 // skipped from the raw-material weight total (packaging isn't costed by weight).
@@ -838,37 +847,30 @@ function unitsCompatible(a, b) {
 // otherwise, if it's itself a BK-prepared recipe, its cost is derived from ITS ingredients
 // (BK_INGREDIENT_TO_RATE) divided by the BK recipe's yield. Anything neither of those two can
 // resolve is reported as unpriced rather than guessed.
-async function computeDishCost(recipeId) {
-  const { data: recipe } = await supabase.from('recipes')
-    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single();
-  if (!recipe) return null;
-
-  const { data: rates } = await supabase.from('rate_card').select('*').eq('active', true);
-  const rateMap = {};
-  (rates || []).forEach(r => { rateMap[r.id] = r; });
-
-  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
-  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
-  const bkIngredientsByRecipe = {};
-  (bkIngredients || []).forEach(i => { (bkIngredientsByRecipe[i.recipe_id] = bkIngredientsByRecipe[i.recipe_id] || []).push(i); });
-
-  const bkCostCache = {};
-  const bkCostPerUnit = (bkId) => {
-    if (bkCostCache[bkId] !== undefined) return bkCostCache[bkId];
+// Builds a memoized "cost per 1 unit of yield" lookup for BK-prepared items (Dosa Batter,
+// Sambhar, chutneys), shared across every dish being costed in one call so a BK item used
+// by many dishes (e.g. Dosa Batter) is only priced once, not once per dish.
+function buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) {
+  const cache = {};
+  return (bkId) => {
+    if (cache[bkId] !== undefined) return cache[bkId];
     const bk = (bkRecipes || []).find(r => r.id === bkId);
-    if (!bk) return (bkCostCache[bkId] = null);
-    let total = 0, hasUnpriced = false;
+    if (!bk) return (cache[bkId] = null);
+    let total = 0;
     (bkIngredientsByRecipe[bkId] || []).forEach(ing => {
       const rmId = ing.raw_material_id;
       const rateId = rateMap[rmId] ? rmId : (BK_INGREDIENT_TO_RATE[rmId] && rateMap[BK_INGREDIENT_TO_RATE[rmId]] ? BK_INGREDIENT_TO_RATE[rmId] : null);
       if (rateId) total += Number(ing.qty || 0) * Number(rateMap[rateId].price);
-      else hasUnpriced = true;
     });
     const yieldQty = Number(bk.yield_qty) || 1;
-    return (bkCostCache[bkId] = { perUnit: yieldQty > 0 ? total / yieldQty : 0, unit: bk.yield_unit, hasUnpriced });
+    return (cache[bkId] = { perUnit: yieldQty > 0 ? total / yieldQty : 0, unit: bk.yield_unit });
   };
+}
 
-  const ingredients = (recipe.recipe_ingredients || []).map(ing => {
+// Pure per-recipe costing — no DB calls — so it can run once per dish inside a bulk loop
+// without re-fetching rate_card/bk_recipes for every dish.
+function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit) {
+  const ingredients = (recipeIngredients || []).map(ing => {
     const key = normalizeIngredientName(ing.raw_material);
     const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
     const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit };
@@ -896,7 +898,41 @@ async function computeDishCost(recipeId) {
   });
 
   const totalCost = ingredients.reduce((s, i) => s + (i.cost || 0), 0);
-  return { item_name: recipe.item_name, ingredients, total_cost: Math.round(totalCost * 100) / 100, unpriced_count: ingredients.filter(i => !i.priced).length };
+  return { ingredients, total_cost: Math.round(totalCost * 100) / 100, unpriced_count: ingredients.filter(i => !i.priced).length };
+}
+
+async function loadCostingContext() {
+  const { data: rates } = await supabase.from('rate_card').select('*').eq('active', true);
+  const rateMap = {};
+  (rates || []).forEach(r => { rateMap[r.id] = r; });
+  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
+  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+  const bkIngredientsByRecipe = {};
+  (bkIngredients || []).forEach(i => { (bkIngredientsByRecipe[i.recipe_id] = bkIngredientsByRecipe[i.recipe_id] || []).push(i); });
+  return { rateMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
+}
+
+async function computeDishCost(recipeId) {
+  const { data: recipe } = await supabase.from('recipes')
+    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single();
+  if (!recipe) return null;
+  const { rateMap, bkCostPerUnit } = await loadCostingContext();
+  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit);
+  return { item_name: recipe.item_name, ...costed };
+}
+
+// Cost for every active dish at once, keyed by normalized dish name — lets a sales table
+// (many item rows) show cost-per-item without one API round trip per row.
+async function computeAllDishCosts() {
+  const { data: recipes } = await supabase.from('recipes')
+    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
+  const { rateMap, bkCostPerUnit } = await loadCostingContext();
+  const byNormName = {};
+  (recipes || []).forEach(r => {
+    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit);
+    byNormName[normalizeDishName(r.item_name)] = { item_name: r.item_name, ...costed };
+  });
+  return byNormName;
 }
 
 // Recent actual selling price for a dish, straight from uploaded sales rows — not a
