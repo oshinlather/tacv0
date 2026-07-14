@@ -105,6 +105,7 @@ const DEMAND_SECTIONS = [
       { id: "sevya_payasam", name: "Sevya Payasam", unit: "Kg" },
       { id: "rasam", name: "Rasam", unit: "Kg" },
       { id: "onion_masala", name: "Onion Masala", unit: "Kg" },
+      { id: "aloo_masala", name: "Aloo Masala", unit: "Kg" },
       { id: "dosa_batter", name: "Dosa Batter", unit: "Batch" },
       { id: "roasted_chana", name: "Roasted Chana", unit: "Kg" },
       { id: "garlic_paste", name: "Garlic Paste", unit: "Kg" },
