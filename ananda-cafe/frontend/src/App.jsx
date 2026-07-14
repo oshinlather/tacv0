@@ -922,7 +922,7 @@ const DailyPnL = () => {
     if (!editItem.reason) { alert("Please pick a reason for the change"); return; }
     setEditSaving(true);
     try {
-      await api.editItemQty(selOutlet, dateStr, editItem.item_id, newQty, editItem.reason);
+      await api.editItemQty(selOutlet, dateStr, editItem.item_id, newQty, editItem.reason, editItem.recordType);
       setEditItem(null);
       await fetchPnl();
     } catch (e) {
@@ -1162,14 +1162,15 @@ const DailyPnL = () => {
                             {isStockBased && (
                               <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
                                 Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
+                                {editItem.isClosingEdit && <div style={{ marginTop: 4, color: "#B45309", fontWeight: 600 }}>Used = Prev closing + Dispatched − Wastage − Today closing, so correcting Today closing below is what actually moves the Used/Cost figure.</div>}
                               </div>
                             )}
                             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>Current:</span>
-                              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{displayQty} {displayUnit}</span>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{editItem.isClosingEdit ? "Current closing:" : "Current:"}</span>
+                              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{editItem.isClosingEdit ? (item.closing || 0) : displayQty} {displayUnit}</span>
                             </div>
                             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>New qty:</span>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{editItem.isClosingEdit ? "New closing:" : "New qty:"}</span>
                               <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
                                 onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
                                 style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
@@ -1201,10 +1202,21 @@ const DailyPnL = () => {
                             </span>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6, fontSize: 11 }}>{fmt(displayCost)}</span>
                             <button
-                              onClick={() => setEditItem({ _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id, value: String(displayQty), reason: "", name: item.name, unit: displayUnit })}
-                              title="Edit today's quantity (this date only)"
+                              onClick={() => setEditItem({
+                                _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id,
+                                // Stock-based rows show a computed "used" figure (opening − closing), not a
+                                // stored quantity — the only leg of that formula this quick-edit can safely
+                                // correct is today's closing stock, since editing "used" directly has no
+                                // single underlying record to write to (see qty-edit's 'demand' branch, which
+                                // would otherwise overwrite raw dispatch_items in the wrong unit).
+                                value: String(isStockBased ? (item.closing || 0) : displayQty),
+                                reason: "", name: item.name, unit: displayUnit,
+                                recordType: isStockBased ? 'closing_stock' : undefined,
+                                isClosingEdit: isStockBased,
+                              })}
+                              title={isStockBased ? "Correct today's closing stock (this date only)" : "Edit today's quantity (this date only)"}
                               style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginRight: 4 }}
-                            >✏️ Qty</button>
+                            >✏️ {isStockBased ? "Closing" : "Qty"}</button>
                             {isStockBased && item.has_rate_card && (
                               <button
                                 onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}
