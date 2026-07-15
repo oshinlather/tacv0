@@ -1157,21 +1157,43 @@ const DailyPnL = () => {
                         );
                       }
                       if (isEditing) {
+                        // Three independently-correctable legs of the consumed-material formula —
+                        // any one of them can be the actual data-entry mistake, so let the owner
+                        // pick which rather than only ever offering "closing stock".
+                        const LEGS = {
+                          closing: { label: "Closing", recordType: "closing_stock", value: item.closing || 0,
+                            note: "Used = Prev closing + Dispatched − Wastage − Today closing, so correcting Closing below moves the Used/Cost figure." },
+                          dispatched: { label: "Dispatched", recordType: "stock_dispatched", value: item.dispatched || 0,
+                            note: "Corrects the total dispatched from Base Kitchen this date — check against the actual challan." },
+                          wastage: { label: "Wastage", recordType: "stock_wastage", value: item.wastage || 0,
+                            note: "Corrects today's recorded spoilage/disposal for this item." },
+                        };
+                        const leg = editItem.leg || "closing";
                         return (
                           <div key={globalIdx} style={{ padding: "8px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {editItem.name || item.name}</div>
                             {isStockBased && (
-                              <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
-                                Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
-                                {editItem.isClosingEdit && <div style={{ marginTop: 4, color: "#B45309", fontWeight: 600 }}>Used = Prev closing + Dispatched − Wastage − Today closing, so correcting Today closing below is what actually moves the Used/Cost figure.</div>}
-                              </div>
+                              <>
+                                <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+                                  Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
+                                  <div style={{ marginTop: 4, color: "#B45309", fontWeight: 600 }}>{LEGS[leg].note}</div>
+                                </div>
+                                <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                                  {Object.entries(LEGS).map(([key, l]) => (
+                                    <button key={key} type="button"
+                                      onClick={() => setEditItem({ ...editItem, leg: key, recordType: l.recordType, value: String(l.value) })}
+                                      style={{ flex: 1, padding: "5px 4px", borderRadius: 6, border: leg === key ? "1.5px solid #B45309" : "1px solid #E0E0DC", background: leg === key ? "#FEF3C7" : "#fff", fontSize: 10, fontWeight: 700, color: leg === key ? "#92400E" : "#888", cursor: "pointer", fontFamily: "inherit" }}
+                                    >{l.label}</button>
+                                  ))}
+                                </div>
+                              </>
                             )}
                             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{editItem.isClosingEdit ? "Current closing:" : "Current:"}</span>
-                              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{editItem.isClosingEdit ? (item.closing || 0) : displayQty} {displayUnit}</span>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{isStockBased ? `Current ${LEGS[leg].label}:` : "Current:"}</span>
+                              <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{isStockBased ? LEGS[leg].value : displayQty} {displayUnit}</span>
                             </div>
                             <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{editItem.isClosingEdit ? "New closing:" : "New qty:"}</span>
+                              <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>{isStockBased ? `New ${LEGS[leg].label}:` : "New qty:"}</span>
                               <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value}
                                 onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
                                 style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
@@ -1205,19 +1227,19 @@ const DailyPnL = () => {
                             <button
                               onClick={() => setEditItem({
                                 _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id,
-                                // Stock-based rows show a computed "used" figure (opening − closing), not a
-                                // stored quantity — the only leg of that formula this quick-edit can safely
-                                // correct is today's closing stock, since editing "used" directly has no
-                                // single underlying record to write to (see qty-edit's 'demand' branch, which
-                                // would otherwise overwrite raw dispatch_items in the wrong unit).
+                                // Stock-based rows show a computed "used" figure (Prev closing + Dispatched
+                                // − Wastage − Today closing) — there's no single stored number to overwrite,
+                                // so the edit panel lets the owner pick which underlying leg to correct
+                                // (closing/dispatched/wastage). Default to closing since that's the leg
+                                // most often missing/wrong (see "closing stock missing" warning above).
                                 value: String(isStockBased ? (item.closing || 0) : displayQty),
                                 reason: "", name: item.name, unit: displayUnit,
                                 recordType: isStockBased ? 'closing_stock' : undefined,
-                                isClosingEdit: isStockBased,
+                                leg: isStockBased ? 'closing' : undefined,
                               })}
-                              title={isStockBased ? "Correct today's closing stock (this date only)" : "Edit today's quantity (this date only)"}
+                              title={isStockBased ? "Correct closing stock, dispatched, or wastage (this date only)" : "Edit today's quantity (this date only)"}
                               style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginRight: 4 }}
-                            >✏️ {isStockBased ? "Closing" : "Qty"}</button>
+                            >✏️ {isStockBased ? "Edit" : "Qty"}</button>
                             {isStockBased && item.has_rate_card && (
                               <button
                                 onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}

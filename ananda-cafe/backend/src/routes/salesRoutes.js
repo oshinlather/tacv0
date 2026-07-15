@@ -1837,10 +1837,75 @@ router.post('/move-submission-date', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Converts a raw stored quantity (recorded in some unit — often a demand-form unit like
+// Tin or Batch) to the item's rate-card display unit, same chain computeStockUsageForDate
+// uses (unit_conversions row, then an SI gm/kg or ml/ltr step). Scoped to one item so
+// qty-edit doesn't need to load the whole rate card / conversion table like the P&L
+// aggregation does.
+function unitFactor(rawUnit, conv, itemUnit) {
+  const du = (rawUnit || '').toLowerCase();
+  const iu = (itemUnit || '').toLowerCase();
+  let factor = 1, resolvedUnit = du;
+  if (conv && du === (conv.unit_type || '').toLowerCase()) {
+    factor = Number(conv.qty) || 1;
+    resolvedUnit = (conv.base_unit || '').toLowerCase();
+  }
+  if (resolvedUnit !== iu) {
+    if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && iu === 'kg') factor *= 0.001;
+    else if (resolvedUnit === 'kg' && (iu === 'gm' || iu === 'g')) factor *= 1000;
+    else if (resolvedUnit === 'ml' && (iu === 'ltr' || iu === 'l')) factor *= 0.001;
+    else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && iu === 'ml') factor *= 1000;
+  }
+  return factor || 1;
+}
+
+async function getItemUnitInfo(itemId) {
+  const [{ data: rate }, { data: demandItem }, { data: conv }] = await Promise.all([
+    supabase.from('rate_card').select('unit').eq('id', itemId).eq('active', true).maybeSingle(),
+    supabase.from('demand_items').select('unit').eq('id', itemId).maybeSingle(),
+    supabase.from('unit_conversions').select('unit_type, qty, base_unit').eq('item_id', itemId).eq('active', true).maybeSingle(),
+  ]);
+  const itemUnit = rate?.unit || demandItem?.unit || '';
+  const demandUnit = demandItem?.unit || itemUnit || '';
+  return { itemUnit, demandUnit, conv: conv || null };
+}
+
+// Shared by 'stock_dispatched' and 'stock_wastage': a stock-based P&L row's displayed
+// total (e.g. "Dispatched: 30 Kg") is a SUM of possibly several raw demand rows, each
+// recorded in its own unit — there's no single record to overwrite with the owner's
+// typed total the way the old code assumed. Instead this computes the CURRENT total in
+// display units, works out the delta from the desired total, converts that delta back
+// into one target row's raw unit, and adds it there — preserving every other row as-is
+// rather than clobbering all matching rows with the same (wrong-unit) value.
+async function applyStockLegDelta({ rows, itemId, column, desiredDisplayTotal, itemUnit, demandUnit, conv }) {
+  let currentDisplayTotal = 0;
+  rows.forEach(row => {
+    const raw = row[column]?.[itemId];
+    const rawQty = typeof raw === 'object' && raw !== null ? Number(raw.qty) : Number(raw);
+    const rawUnit = row.items_units?.[itemId] || demandUnit;
+    currentDisplayTotal += (rawQty || 0) * unitFactor(rawUnit, conv, itemUnit);
+  });
+
+  const deltaDisplay = desiredDisplayTotal - currentDisplayTotal;
+  const target = rows[0];
+  const targetRawUnit = target.items_units?.[itemId] || demandUnit;
+  const targetFactor = unitFactor(targetRawUnit, conv, itemUnit);
+  const targetOldRaw = target[column]?.[itemId];
+  const targetOldQty = typeof targetOldRaw === 'object' && targetOldRaw !== null ? Number(targetOldRaw.qty) : Number(targetOldRaw || 0);
+  const targetNewQty = Math.max(0, targetOldQty + deltaDisplay / targetFactor);
+
+  const newMap = { ...(target[column] || {}) };
+  newMap[itemId] = typeof targetOldRaw === 'object' && targetOldRaw !== null ? { ...targetOldRaw, qty: targetNewQty } : targetNewQty;
+
+  return { targetRowId: target.id, newMap, currentDisplayTotal };
+}
+
 // ── PATCH /api/qty-edit — Owner/Store manager edits a demand/dispatch/wastage/
 // closing-stock item qty. record_type selects the target: 'demand' (default,
 // dispatched/demand qty on a manual demand row), 'wastage' (demands table,
-// type='wastage'), or 'closing_stock' (its own table, cs_-prefixed item keys).
+// type='wastage'), 'closing_stock' (its own table, cs_-prefixed item keys),
+// 'stock_dispatched'/'stock_wastage' (P&L's consumed-material rows, which show a
+// converted/summed total rather than one raw record — see applyStockLegDelta).
 // Every edit is logged to qty_corrections for the Corrections Log / System Logs.
 router.patch('/qty-edit', async (req, res) => {
   try {
@@ -1859,6 +1924,56 @@ router.patch('/qty-edit', async (req, res) => {
     const correctorName = req.headers['x-user-name'] ||
       (await supabase.from('app_users').select('name').eq('id', req.headers['x-user-id']).single()).data?.name ||
       'owner';
+
+    if (record_type === 'stock_dispatched' || record_type === 'stock_wastage') {
+      const isWastage = record_type === 'stock_wastage';
+      const { itemUnit, demandUnit, conv } = await getItemUnitInfo(item_id);
+
+      const { data: allRows, error: loadErr } = await supabase.from('demands')
+        .select('id, type, status, items, dispatch_items, items_units')
+        .eq('outlet_id', outlet_id).eq('date', date);
+      if (loadErr) throw loadErr;
+
+      const candidateRows = isWastage
+        ? (allRows || []).filter(d => d.type === 'wastage')
+        : (allRows || []).filter(d => d.type !== 'closing' && d.type !== 'wastage');
+      const matching = candidateRows.filter(d => {
+        const map = isWastage ? (d.items || {}) : (d.dispatch_items || d.items || {});
+        return map[item_id] !== undefined;
+      });
+
+      if (matching.length === 0) {
+        // No baseline record to adjust — create one directly with the desired total,
+        // converted into the demand form's raw unit so it reads consistently later.
+        const factor = unitFactor(demandUnit, conv, itemUnit);
+        const rawQty = Number(new_qty) / factor;
+        const insertPayload = isWastage
+          ? { outlet_id, date, type: 'wastage', status: 'submitted', items: { [item_id]: rawQty }, items_units: { [item_id]: demandUnit }, submitted_by: correctorName, submitted_at: new Date().toISOString() }
+          : { outlet_id, date, type: 'manual', status: 'fulfilled', items: { [item_id]: rawQty }, dispatch_items: { [item_id]: rawQty }, items_units: { [item_id]: demandUnit }, submitted_by: correctorName, submitted_at: new Date().toISOString() };
+        const { error: insertErr } = await supabase.from('demands').insert(insertPayload);
+        if (insertErr) throw insertErr;
+        await supabase.from('qty_corrections').insert({
+          demand_id: null, outlet_id, date, item_id, old_qty: 0, new_qty: Number(new_qty),
+          unit: itemUnit, reason: reason || null, corrected_by: correctorName,
+        });
+        return res.json({ ok: true, updated: 1, created: true });
+      }
+
+      const column = isWastage ? 'items' : (matching[0].dispatch_items?.[item_id] !== undefined ? 'dispatch_items' : 'items');
+      const { targetRowId, newMap, currentDisplayTotal } = await applyStockLegDelta({
+        rows: matching, itemId: item_id, column, desiredDisplayTotal: Number(new_qty), itemUnit, demandUnit, conv,
+      });
+
+      const { error: updateErr } = await supabase.from('demands').update({ [column]: newMap }).eq('id', targetRowId);
+      if (updateErr) throw updateErr;
+
+      await supabase.from('qty_corrections').insert({
+        demand_id: targetRowId, outlet_id, date, item_id,
+        old_qty: Math.round(currentDisplayTotal * 1000) / 1000, new_qty: Number(new_qty),
+        unit: itemUnit, reason: reason || null, corrected_by: correctorName,
+      });
+      return res.json({ ok: true, updated: matching.length, adjusted_row: targetRowId });
+    }
 
     if (record_type === 'closing_stock') {
       const { data: row, error: loadErr } = await supabase.from('closing_stocks')
