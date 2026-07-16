@@ -3357,8 +3357,11 @@ router.post('/cash-handovers', async (req, res) => {
     if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { date, from_role, from_name, to_role, to_name, outlet_id, amount, note } = req.body;
     if (!date || !amount) return res.status(400).json({ error: "Date and amount required" });
+    // Every handover recorded by the app today is a custodian (Ravinder/Sahil/Ganga)
+    // submitting to an owner — neither frontend form sends from_role/to_role, only
+    // from_name/to_name, but the column is NOT NULL, so default it here.
     const { data, error } = await supabase.from('cash_handovers')
-      .insert({ date, from_role: from_role || null, from_name, to_role: to_role || null, to_name, outlet_id: outlet_id || null, amount: Number(amount), note })
+      .insert({ date, from_role: from_role || 'custodian', from_name, to_role: to_role || 'owner', to_name, outlet_id: outlet_id || null, amount: Number(amount), note })
       .select('*').single();
     if (error) throw error;
     res.json(data);
