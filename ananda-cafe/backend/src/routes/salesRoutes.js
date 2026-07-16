@@ -3442,7 +3442,9 @@ router.post('/paytm-actuals', async (req, res) => {
 
 router.get('/rm-order-config', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    // Store managers (e.g. whoever's generating a challan) need to read this to see
+    // the requirement the owner set — only setting it (POST below) stays owner-only.
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { data, error } = await supabase.from('rm_order_config').select('*');
     if (error) throw error;
     res.json(data || []);
@@ -3466,7 +3468,7 @@ router.post('/rm-order-config', async (req, res) => {
 
 router.get('/rm-order-config/suggest', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const tenDaysAgo = new Date();
     tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
     const { data: movements } = await supabase.from('inventory_movements')
@@ -3487,7 +3489,7 @@ router.get('/rm-order-config/suggest', async (req, res) => {
 
 router.get('/purchase-orders', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { status, limit } = req.query;
     let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
@@ -3500,7 +3502,7 @@ router.get('/purchase-orders', async (req, res) => {
 
 router.get('/purchase-orders/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { data, error } = await supabase.from('purchase_orders')
       .select('*').eq('id', req.params.id).single();
     if (error) throw error;
@@ -3510,7 +3512,9 @@ router.get('/purchase-orders/:id', async (req, res) => {
 
 router.post('/purchase-orders', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    // Store managers generate challans day-to-day; owner-only here was blocking the
+    // main use case entirely, not just the RM-requirement facilitator above.
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { items, notes, created_by } = req.body;
     const today = todayIST();
     const { data: existing } = await supabase.from('purchase_orders')
