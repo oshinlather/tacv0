@@ -12,6 +12,7 @@ let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
 const { requireAuth, requireOwner, requireRole, ensureOutletAccess, invalidateUser } = require('./authGuards');
 const { todayIST } = require('../helpers');
+const { creditStockIn } = require('../inventoryLedger');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -1318,7 +1319,7 @@ router.post('/outlet-sales', async (req, res) => {
     const { outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
             cancelled_orders, complimentary_amount, complimentary_reason, zomato_district,
             upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
-            cash_deposited, submitted_by, notes } = req.body;
+            cash_deposited, cash_deposited_to, submitted_by, notes } = req.body;
 
     const record = {
       outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
@@ -1338,7 +1339,10 @@ router.post('/outlet-sales', async (req, res) => {
       .select('cash_deposited, cash_collected, cash_expense').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
     const depositChanged = !existing || Number(existing.cash_deposited || 0) !== Number(cash_deposited || 0);
     if (depositChanged) {
-      record.cash_deposited_by = submitted_by || null;
+      // cash_deposited_to is the outlet manager's declared recipient (from the fixed
+      // CASH_RECIPIENTS list) — falls back to the submitter's own name only if they
+      // didn't pick one, so this stays backward-compatible with older clients.
+      record.cash_deposited_by = cash_deposited_to || submitted_by || null;
       record.cash_deposited_at = new Date().toISOString();
     }
     // Any of these changing on a past date shifts that day's closing balance, which
@@ -1557,7 +1561,17 @@ router.post('/purchases', async (req, res) => {
     
     // Write to Google Sheet (non-blocking)
     if (sheetsHelper && outlet_id) sheetsHelper.writeToSheet(supabase, outlet_id, 'purchase', submitted_by, { date: date || todayIST() }, { items: items || [], total: totalAmount, payment_mode }).catch(() => {});
-    
+
+    // Any line explicitly linked to an inventory item (optional — most cash-purchase
+    // lines stay free text) also credits the BK inventory ledger, same as a formal
+    // Stock In. This is how Cash Purchase items (Duster, Phenyl, etc., bought ad hoc
+    // rather than through a vendor order) stop silently drifting the running balance.
+    const linkedItems = (items || []).filter(i => i.item_id).map(i => ({ item_id: i.item_id, quantity: Number(i.quantity) || 0, total_price: Number(i.amount) || 0, unit_price: (Number(i.quantity) > 0 ? (Number(i.amount) || 0) / Number(i.quantity) : null) }));
+    if (linkedItems.length > 0) {
+      try { await creditStockIn(linkedItems, 'cash_purchase', submitted_by); }
+      catch (e) { console.error('Cash purchase inventory credit failed:', e.message); }
+    }
+
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3321,7 +3335,7 @@ router.get('/sheets/setup', async (req, res) => {
 
 router.get('/cash-handovers', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { month, date, from_role, to_role } = req.query;
     let query = supabase.from('cash_handovers').select('*').order('date', { ascending: false });
     if (date) query = query.eq('date', date);
@@ -3335,17 +3349,47 @@ router.get('/cash-handovers', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Append-only — a custodian (Ravinder/Sahil/Ganga) can hand over cash to an owner more
+// than once in a day, so this must not collapse multiple entries into one row the way
+// the old upsert (onConflict: date,outlet_id,from_role) did.
 router.post('/cash-handovers', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
     const { date, from_role, from_name, to_role, to_name, outlet_id, amount, note } = req.body;
     if (!date || !amount) return res.status(400).json({ error: "Date and amount required" });
     const { data, error } = await supabase.from('cash_handovers')
-      .upsert({ date, from_role, from_name, to_role, to_name, outlet_id: outlet_id || null, amount: Number(amount), note },
-        { onConflict: 'date,outlet_id,from_role' })
+      .insert({ date, from_role: from_role || null, from_name, to_role: to_role || null, to_name, outlet_id: outlet_id || null, amount: Number(amount), note })
       .select('*').single();
     if (error) throw error;
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/cash-handovers/custodian/:name — Custodian Ledger data source. Sums cash
+// an intermediate holder (Ravinder/Sahil/Ganga) has collected from outlets
+// (daily_outlet_sales.cash_deposited where cash_deposited_by = :name, across all outlets/
+// dates) against what they've since handed over to an owner (cash_handovers where
+// from_name = :name) to get their current running balance — same "collected minus
+// deposited" shape as the per-outlet Cash Ledger, one level up the chain.
+router.get('/cash-handovers/custodian/:name', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    const name = req.params.name;
+    const { data: collections, error: collErr } = await supabase.from('daily_outlet_sales')
+      .select('outlet_id, date, cash_deposited, cash_deposited_at')
+      .eq('cash_deposited_by', name).order('date', { ascending: false });
+    if (collErr) throw collErr;
+    const { data: handovers, error: hoErr } = await supabase.from('cash_handovers')
+      .select('*').eq('from_name', name).order('date', { ascending: false });
+    if (hoErr) throw hoErr;
+
+    const total_collected = (collections || []).reduce((s, c) => s + (Number(c.cash_deposited) || 0), 0);
+    const total_handed_over = (handovers || []).reduce((s, h) => s + (Number(h.amount) || 0), 0);
+
+    res.json({
+      name, total_collected, total_handed_over, balance: total_collected - total_handed_over,
+      collections: collections || [], handovers: handovers || [],
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

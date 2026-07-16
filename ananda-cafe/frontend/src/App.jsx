@@ -20,6 +20,12 @@ const OUTLETS = [
   { id: "gaursid", name: "Gaur Siddhartham (Franchise)", short: "GSID", franchise: true },
 ];
 const OWN_OUTLETS = OUTLETS.filter(o => !o.franchise);
+// Cash custody chain: outlet manager hands cash to one of these people (recorded in
+// daily_outlet_sales.cash_deposited_by); Ravinder/Sahil/Ganga are intermediate holders
+// with their own running ledger (see CustodianLedger) who eventually hand over to an owner.
+const CASH_OWNERS = ["Parveen Lather", "Oshin"];
+const CASH_CUSTODIANS = ["Ravinder", "Sahil", "Ganga"];
+const CASH_RECIPIENTS = [...CASH_OWNERS, ...CASH_CUSTODIANS];
 // Date.now() is an absolute instant (timezone-agnostic); shifting it by IST's fixed
 // +5:30 and reading it back via UTC-based methods gives correct IST wall-clock digits
 // regardless of what timezone the device running this code is set to. (Previously this
@@ -465,27 +471,50 @@ const UsersPanel = () => {
 //  dashboards (both roles can record a collection).
 // ═════════════════════════════════════════════════════════════════════════════
 const CashLedger = () => {
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selOutlet, setSelOutlet] = useState(OWN_OUTLETS[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [latestByOutlet, setLatestByOutlet] = useState({});
+  const [custodianBalances, setCustodianBalances] = useState({});
   const [editDate, setEditDate] = useState(null);
   const [editAmt, setEditAmt] = useState("");
   const [editBy, setEditBy] = useState("");
   const [saving, setSaving] = useState(false);
+  // Which custodian's complete ledger (collections + handovers history, record-handover
+  // form) is open in the modal below — reuses CustodianLedgerDetail so this shows the
+  // exact same fully-auditable trail as the standalone Custodian Ledger page.
+  const [editCustodian, setEditCustodian] = useState(null);
+  // "I'm Collecting Cash" — a first-class, owner-initiated action right on this
+  // dashboard: whoever is logged in (owner or store_mgr) can record cash they just
+  // physically collected, either straight from an outlet or from a custodian who was
+  // holding it, without having to drill into a specific outlet/custodian card first.
+  // Always attributed to the logged-in user, since they're the one doing the collecting.
+  const [showCollectCash, setShowCollectCash] = useState(false);
+  const [ccMode, setCcMode] = useState("outlet"); // outlet | custodian
+  const [ccOutlet, setCcOutlet] = useState(OWN_OUTLETS[0]?.id || null);
+  const [ccCustodian, setCcCustodian] = useState(CASH_CUSTODIANS[0]);
+  const [ccDate, setCcDate] = useState(today());
+  const [ccAmount, setCcAmount] = useState("");
+  const [ccNote, setCcNote] = useState("");
+  const [ccExisting, setCcExisting] = useState(null);
+  const [ccLoading, setCcLoading] = useState(false);
+  const [ccSaving, setCcSaving] = useState(false);
 
   const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
   const dates = Array.from({ length: daysInMonth }, (_, i) => `${selMonth}-${String(i + 1).padStart(2, "0")}`).filter((d) => d <= today());
 
-  // Available-cash summary cards across all outlets — each outlet's most recent
-  // recorded closing balance. Recording a collection cascades the corrected balance
-  // forward through subsequent days server-side (see /outlet-sales/cash-collection),
-  // so this stored snapshot stays accurate rather than going stale.
+  // Available-cash summary cards, own outlets only (franchises manage their own cash,
+  // not part of this internal custody chain) — each outlet's most recent recorded
+  // closing balance. Recording a collection cascades the corrected balance forward
+  // through subsequent days server-side (see /outlet-sales/cash-collection), so this
+  // stored snapshot stays accurate rather than going stale.
   const loadSummary = useCallback(() => {
     const tomorrow = istDateAgo(-1);
-    Promise.all(OUTLETS.map((o) => api.getLatestCash(o.id, tomorrow).catch(() => null)))
-      .then((rowsArr) => { const map = {}; OUTLETS.forEach((o, i) => { map[o.id] = rowsArr[i]; }); setLatestByOutlet(map); });
+    Promise.all(OWN_OUTLETS.map((o) => api.getLatestCash(o.id, tomorrow).catch(() => null)))
+      .then((rowsArr) => { const map = {}; OWN_OUTLETS.forEach((o, i) => { map[o.id] = rowsArr[i]; }); setLatestByOutlet(map); });
+    Promise.all(CASH_CUSTODIANS.map((name) => api.getCustodianLedger(name).catch(() => null)))
+      .then((rowsArr) => { const map = {}; CASH_CUSTODIANS.forEach((name, i) => { map[name] = rowsArr[i]; }); setCustodianBalances(map); });
   }, []);
   useEffect(loadSummary, [loadSummary]);
 
@@ -514,18 +543,47 @@ const CashLedger = () => {
     const r = rowFor(date);
     setEditDate(date);
     setEditAmt(r ? String(r.cash_deposited || 0) : "0");
-    setEditBy(currentUser?.name || "");
+    // Pre-fill with whoever's already recorded (if valid) rather than the logged-in
+    // user's own name — this modal records who physically has the cash, not who's typing.
+    setEditBy(CASH_RECIPIENTS.includes(r?.cash_deposited_by) ? r.cash_deposited_by : "");
   };
 
   const saveCollection = async () => {
     if (!editDate) return;
+    if (Number(editAmt) > 0 && !editBy) { alert("Please select who collected the cash"); return; }
     setSaving(true);
     try {
-      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || currentUser?.name });
+      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || null });
       setEditDate(null);
       loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
+  };
+
+  const loadCcExisting = useCallback(() => {
+    if (ccMode !== "outlet" || !ccOutlet || !ccDate) return;
+    setCcLoading(true);
+    api.getOutletSales({ outlet_id: ccOutlet, date: ccDate }).then((rows) => {
+      const r = rows && rows[0];
+      setCcExisting(r || null);
+      setCcAmount(r ? String(r.cash_deposited || 0) : "0");
+    }).catch(() => { setCcExisting(null); setCcAmount("0"); }).finally(() => setCcLoading(false));
+  }, [ccMode, ccOutlet, ccDate]);
+  useEffect(() => { if (showCollectCash) loadCcExisting(); }, [showCollectCash, loadCcExisting]);
+
+  const saveCollectCash = async () => {
+    if (ccAmount === "" || Number(ccAmount) < 0) return;
+    setCcSaving(true);
+    try {
+      if (ccMode === "outlet") {
+        await api.recordCashCollection({ outlet_id: ccOutlet, date: ccDate, cash_deposited: Number(ccAmount) || 0, collected_by: currentUser?.name || null });
+      } else {
+        await api.saveCashHandover({ date: ccDate, from_name: ccCustodian, to_name: currentUser?.name, amount: Number(ccAmount) || 0, note: ccNote || null });
+      }
+      setShowCollectCash(false); setCcAmount(""); setCcNote("");
+      loadMonth(); loadSummary();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCcSaving(false); }
   };
 
   return (<div>
@@ -534,9 +592,69 @@ const CashLedger = () => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Running cash balance per outlet — collected minus expense minus deposited/collected</p>
     </div>
 
-    {/* Available cash summary, all outlets */}
+    {/* "I'm Collecting Cash" — first-class action for whoever's logged in (owner or
+        store_mgr) to record cash they just collected, from an outlet directly or from
+        a custodian holding it, right here instead of only inside a specific card's view. */}
+    {canRecord && (
+      <button onClick={() => setShowCollectCash(!showCollectCash)} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: showCollectCash ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+        {showCollectCash ? "✕ Cancel" : `💰 I'm Collecting Cash (as ${currentUser?.name || "you"})`}
+      </button>
+    )}
+
+    {showCollectCash && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", padding: 16, marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          <button onClick={() => setCcMode("outlet")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "outlet" ? "none" : "1px solid #E0E0DC", background: ccMode === "outlet" ? "#1A1A1A" : "#fff", color: ccMode === "outlet" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🏪 From an Outlet</button>
+          <button onClick={() => setCcMode("custodian")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "custodian" ? "none" : "1px solid #E0E0DC", background: ccMode === "custodian" ? "#1A1A1A" : "#fff", color: ccMode === "custodian" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>👤 From a Custodian</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>{ccMode === "outlet" ? "Outlet" : "Custodian"}</div>
+            {ccMode === "outlet" ? (
+              <select value={ccOutlet} onChange={(e) => setCcOutlet(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                {OWN_OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            ) : (
+              <select value={ccCustodian} onChange={(e) => setCcCustodian(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                {CASH_CUSTODIANS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+          </div>
+          <div style={{ width: 120 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Date</div>
+            <input type="date" value={ccDate} onChange={(e) => setCcDate(e.target.value)} max={today()}
+              style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        </div>
+
+        {ccMode === "outlet" && (ccLoading ? <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>⏳ Checking existing record...</div> : ccExisting && Number(ccExisting.cash_deposited) > 0 && (
+          <div style={{ fontSize: 11, color: "#B45309", marginBottom: 8, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 8px" }}>
+            ⚠️ Already has ₹{fmt(ccExisting.cash_deposited)} recorded{ccExisting.cash_deposited_by ? ` (by ${ccExisting.cash_deposited_by})` : ""} for this date — this will overwrite it, not add to it.
+          </div>
+        ))}
+        {ccMode === "custodian" && (
+          <div style={{ fontSize: 11, color: "#6D28D9", marginBottom: 8, background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "6px 8px" }}>
+            {ccCustodian} is currently holding {fmt(custodianBalances[ccCustodian]?.balance || 0)}
+          </div>
+        )}
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected{ccMode === "outlet" ? " (total for the day)" : ""}</div>
+        <input type="number" inputMode="numeric" value={ccAmount} onChange={(e) => setCcAmount(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
+        {ccMode === "custodian" && (
+          <input value={ccNote} onChange={(e) => setCcNote(e.target.value)} placeholder="Note (optional)"
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+        )}
+        <button onClick={saveCollectCash} disabled={ccSaving || ccLoading || ccAmount === ""} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: !ccSaving && !ccLoading && ccAmount !== "" ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: !ccSaving && !ccLoading && ccAmount !== "" ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {ccSaving ? "⏳..." : `💾 Save — ₹${Number(ccAmount || 0).toLocaleString("en-IN")} collected from ${ccMode === "outlet" ? (OWN_OUTLETS.find((o) => o.id === ccOutlet)?.short || "") : ccCustodian}`}
+        </button>
+      </div>
+    )}
+
+    {/* Available cash summary — own outlets, plus each custodian's currently-held balance */}
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 20 }}>
-      {OUTLETS.map((o) => {
+      {OWN_OUTLETS.map((o) => {
         const r = latestByOutlet[o.id];
         const avail = r ? Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0) : 0;
         return (
@@ -544,6 +662,16 @@ const CashLedger = () => {
             <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: selOutlet === o.id ? "#fff" : "#1A1A1A" }}>{o.short}</div>
             <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: selOutlet === o.id ? "#fff" : (avail > 0 ? "#B45309" : "#16A34A") }}>{fmt(avail)}</div>
             <div style={{ fontSize: 9, color: selOutlet === o.id ? "#BBB" : "#999" }}>available</div>
+          </div>
+        );
+      })}
+      {CASH_CUSTODIANS.map((name) => {
+        const bal = custodianBalances[name]?.balance || 0;
+        return (
+          <div key={name} onClick={() => setEditCustodian(name)} style={{ background: "#FAFAF8", borderRadius: 10, border: "1px solid #E8E8E4", padding: "12px", textAlign: "center", cursor: "pointer" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: "#6B6459" }}>👤 {name}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: bal > 0 ? "#B45309" : "#16A34A" }}>{fmt(bal)}</div>
+            <div style={{ fontSize: 9, color: "#999" }}>holding</div>
           </div>
         );
       })}
@@ -610,14 +738,290 @@ const CashLedger = () => {
         <input type="number" inputMode="numeric" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
           style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
         <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Collected by</div>
-        <input value={editBy} onChange={(e) => setEditBy(e.target.value)} placeholder="e.g. AVP Rahul"
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
+        <select value={editBy} onChange={(e) => setEditBy(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box", background: "#fff", color: editBy ? "#1A1A1A" : "#999" }}>
+          <option value="">Select...</option>
+          {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
+        </select>
         <div style={{ display: "flex", gap: 6 }}>
           <button onClick={saveCollection} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
           <button onClick={() => setEditDate(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
         </div>
       </div>
     </>)}
+
+    {/* Complete custodian ledger modal — same collections+handovers history and
+        record-handover form as the standalone Custodian Ledger page, so it's fully
+        auditable from right here: what was collected from which outlet at what time,
+        and what's already been handed over to an owner and when. */}
+    {editCustodian && (<>
+      <div onClick={() => { setEditCustodian(null); loadSummary(); }} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#FAF9F6", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(680px, 92vw)", maxHeight: "88vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <div style={{ flex: 1, fontSize: 16, fontWeight: 800 }}>👤 {editCustodian} — Complete Ledger</div>
+          <button onClick={() => { setEditCustodian(null); loadSummary(); }} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
+        </div>
+        <CustodianLedgerDetail person={editCustodian} />
+      </div>
+    </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  CUSTODIAN LEDGER — one level up from CashLedger. Ravinder/Sahil/Ganga collect
+//  cash from outlets (tracked via daily_outlet_sales.cash_deposited_by, same field
+//  the outlet manager's Daily Sales form and CashLedger's Record Collection both
+//  write) and periodically hand their running total over to an owner. Balance =
+//  total collected − total handed over, same "collected minus deposited" shape as
+//  the per-outlet ledger, computed server-side by /api/cash-handovers/custodian/:name.
+//
+//  CustodianLedgerDetail is the actual ledger body (balance, record-handover form,
+//  full collections/handovers history with outlet + timestamp) — shared between the
+//  standalone CustodianLedger page and CashLedger's "view complete ledger" modal, so
+//  either entry point shows the exact same fully-auditable trail, not a summary.
+// ═════════════════════════════════════════════════════════════════════════════
+const CustodianLedgerDetail = ({ person }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+
+  // "Collect from Outlet" — the everyday action: pick an outlet, see what's already
+  // recorded for that date, correct/confirm the amount. Writes through the exact same
+  // recordCashCollection path CashLedger's own modal uses (outlet_id+date scoped,
+  // cash_deposited is an absolute value for that day, not additive) — so this needs to
+  // load the outlet's current figure first rather than blindly overwriting it.
+  const [showCollect, setShowCollect] = useState(false);
+  const [collectOutlet, setCollectOutlet] = useState(OWN_OUTLETS[0]?.id || null);
+  const [collectDate, setCollectDate] = useState(today());
+  const [collectAmount, setCollectAmount] = useState("");
+  const [collectExisting, setCollectExisting] = useState(null);
+  const [collectLoading, setCollectLoading] = useState(false);
+  const [collectSaving, setCollectSaving] = useState(false);
+
+  // "Submit to Owner" — hands the running total up the chain.
+  const [showHandover, setShowHandover] = useState(false);
+  const [hoAmount, setHoAmount] = useState("");
+  const [hoTo, setHoTo] = useState(CASH_OWNERS[0]);
+  const [hoNote, setHoNote] = useState("");
+  const [hoDate, setHoDate] = useState(today());
+  const [hoSaving, setHoSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    api.getCustodianLedger(person).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  };
+  useEffect(load, [person]);
+
+  const loadCollectExisting = useCallback(() => {
+    if (!collectOutlet || !collectDate) return;
+    setCollectLoading(true);
+    api.getOutletSales({ outlet_id: collectOutlet, date: collectDate }).then((rows) => {
+      const r = rows && rows[0];
+      setCollectExisting(r || null);
+      setCollectAmount(r ? String(r.cash_deposited || 0) : "0");
+    }).catch(() => { setCollectExisting(null); setCollectAmount("0"); }).finally(() => setCollectLoading(false));
+  }, [collectOutlet, collectDate]);
+  useEffect(() => { if (showCollect) loadCollectExisting(); }, [showCollect, loadCollectExisting]);
+
+  const saveCollect = async () => {
+    if (!collectOutlet || collectAmount === "") return;
+    setCollectSaving(true);
+    try {
+      await api.recordCashCollection({ outlet_id: collectOutlet, date: collectDate, cash_deposited: Number(collectAmount) || 0, collected_by: person });
+      setShowCollect(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCollectSaving(false); }
+  };
+
+  const recordHandover = async () => {
+    if (!hoAmount || Number(hoAmount) <= 0) return;
+    setHoSaving(true);
+    try {
+      await api.saveCashHandover({ date: hoDate, from_name: person, to_name: hoTo, amount: Number(hoAmount), note: hoNote || null });
+      setHoAmount(""); setHoNote(""); setShowHandover(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setHoSaving(false); }
+  };
+
+  // Date-wise ledger, same shape as the outlet Cash Ledger's month table (Opening / In /
+  // Out / Closing) — a custodian can have several collections (different outlets) and/or
+  // handovers on one day, so each date row lists its line items rather than just a total.
+  // Running balance must be computed over ALL history in chronological order first, then
+  // the selected month is sliced out for display — otherwise a month's Opening figure
+  // would be wrong for any month after the custodian's first-ever transaction.
+  const ledgerRows = useMemo(() => {
+    if (!data) return [];
+    const byDate = {};
+    (data.collections || []).forEach((c) => {
+      (byDate[c.date] = byDate[c.date] || []).push({ type: "in", label: OUTLETS.find((o) => o.id === c.outlet_id)?.short || c.outlet_id, amount: Number(c.cash_deposited) || 0, time: c.cash_deposited_at });
+    });
+    (data.handovers || []).forEach((h) => {
+      (byDate[h.date] = byDate[h.date] || []).push({ type: "out", label: `→ ${h.to_name}`, amount: Number(h.amount) || 0, time: h.created_at, note: h.note });
+    });
+    let running = 0;
+    return Object.keys(byDate).sort().map((date) => {
+      const items = byDate[date];
+      const dayIn = items.filter((i) => i.type === "in").reduce((s, i) => s + i.amount, 0);
+      const dayOut = items.filter((i) => i.type === "out").reduce((s, i) => s + i.amount, 0);
+      const opening = running;
+      running = running + dayIn - dayOut;
+      return { date, items, dayIn, dayOut, opening, closing: running };
+    }).reverse();
+  }, [data]);
+
+  const visibleRows = ledgerRows.filter((r) => r.date.startsWith(selMonth));
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+  if (!data) return null;
+
+  return (<>
+    <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+      {[
+        { l: "Total Collected", v: data.total_collected, c: "#16A34A" },
+        { l: "Handed Over", v: data.total_handed_over, c: "#2563EB" },
+        { l: "Currently Holding", v: data.balance, c: data.balance > 0 ? "#B45309" : "#16A34A" },
+      ].map((s, i) => (
+        <div key={i} style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{fmt(s.v)}</div>
+        </div>
+      ))}
+    </div>
+
+    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <button onClick={() => { setShowCollect(!showCollect); setShowHandover(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showCollect ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+        {showCollect ? "✕ Cancel" : "📥 Collect from Outlet"}
+      </button>
+      <button onClick={() => { setShowHandover(!showHandover); setShowCollect(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showHandover ? "#D0D0CC" : "#2563EB", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+        {showHandover ? "✕ Cancel" : "📤 Submit to Owner"}
+      </button>
+    </div>
+
+    {showCollect && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Outlet</div>
+            <select value={collectOutlet} onChange={(e) => setCollectOutlet(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+              {OWN_OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          </div>
+          <div style={{ width: 120 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Date</div>
+            <input type="date" value={collectDate} onChange={(e) => setCollectDate(e.target.value)} max={today()}
+              style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        </div>
+        {collectLoading ? <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>⏳ Checking existing record...</div> : collectExisting && Number(collectExisting.cash_deposited) > 0 && (
+          <div style={{ fontSize: 11, color: "#B45309", marginBottom: 8, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 8px" }}>
+            ⚠️ Already has ₹{fmt(collectExisting.cash_deposited)} recorded{collectExisting.cash_deposited_by ? ` (by ${collectExisting.cash_deposited_by})` : ""} for this date — editing below will overwrite it, not add to it.
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected (total for the day)</div>
+        <input type="number" inputMode="numeric" value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 12, boxSizing: "border-box" }} />
+        <button onClick={saveCollect} disabled={collectSaving || collectLoading} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: !collectSaving && !collectLoading ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: !collectSaving && !collectLoading ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {collectSaving ? "⏳..." : `💾 Save — ₹${Number(collectAmount || 0).toLocaleString("en-IN")} from ${OWN_OUTLETS.find((o) => o.id === collectOutlet)?.short || ""}`}
+        </button>
+      </div>
+    )}
+
+    {showHandover && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BFDBFE", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount</div>
+            <input type="number" inputMode="numeric" autoFocus value={hoAmount} onChange={(e) => setHoAmount(e.target.value)} placeholder="₹0"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ width: 120 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Date</div>
+            <input type="date" value={hoDate} onChange={(e) => setHoDate(e.target.value)} max={today()}
+              style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Submitted To</div>
+          <select value={hoTo} onChange={(e) => setHoTo(e.target.value)} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+            {CASH_OWNERS.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+        <input value={hoNote} onChange={(e) => setHoNote(e.target.value)} placeholder="Note (optional)"
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 12, boxSizing: "border-box" }} />
+        <button onClick={recordHandover} disabled={!hoAmount || hoSaving} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: hoAmount && !hoSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: hoAmount && !hoSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {hoSaving ? "⏳..." : `💾 Submit ₹${Number(hoAmount || 0).toLocaleString("en-IN")} to ${hoTo}`}
+        </button>
+      </div>
+    )}
+
+    {/* Month picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {/* Date-wise ledger */}
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead><tr style={{ background: "#FAFAF8" }}>
+            <th style={thS}>Date</th>
+            <th style={{ ...thS, textAlign: "right" }}>Opening</th>
+            <th style={{ ...thS, textAlign: "right" }}>+ Collected</th>
+            <th style={{ ...thS, textAlign: "right" }}>− Handed Over</th>
+            <th style={{ ...thS, textAlign: "right" }}>= Closing</th>
+          </tr></thead>
+          <tbody>
+            {visibleRows.length === 0 && (
+              <tr><td colSpan={5} style={{ padding: 30, textAlign: "center", color: "#999" }}>No activity in {selMonth}</td></tr>
+            )}
+            {visibleRows.map((row) => (
+              <Fragment key={row.date}>
+                <tr style={{ borderBottom: "1px solid #F0F0EC", background: "#FCFCFA" }}>
+                  <td style={{ ...tdS, fontWeight: 700 }}>{row.date}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt(row.opening)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{row.dayIn > 0 ? fmt(row.dayIn) : "—"}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{row.dayOut > 0 ? fmt(row.dayOut) : "—"}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: row.closing > 0 ? "#B45309" : "#16A34A" }}>{fmt(row.closing)}</td>
+                </tr>
+                {row.items.map((item, i) => (
+                  <tr key={i} style={{ borderBottom: i === row.items.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+                    <td colSpan={5} style={{ padding: "3px 14px 3px 28px", fontSize: 10, color: "#999" }}>
+                      {item.type === "in" ? "📥" : "📤"} {item.label}
+                      {item.time && <span> · {new Date(item.time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span>}
+                      {item.note && <span> · {item.note}</span>}
+                      <span style={{ float: "right", fontFamily: "'JetBrains Mono'", color: item.type === "in" ? "#16A34A" : "#2563EB", fontWeight: 600 }}>{item.type === "in" ? "+" : "−"}{fmt(item.amount)}</span>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </>);
+};
+
+const CustodianLedger = () => {
+  const [person, setPerson] = useState(CASH_CUSTODIANS[0]);
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>👤 Custodian Ledger</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Cash collected from outlets, minus what's already been handed over to an owner</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+      {CASH_CUSTODIANS.map((p) => (
+        <button key={p} onClick={() => setPerson(p)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: person === p ? "none" : "1px solid #E0E0DC", background: person === p ? "#1A1A1A" : "#fff", color: person === p ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{p}</button>
+      ))}
+    </div>
+
+    <CustodianLedgerDetail person={person} />
   </div>);
 };
 
@@ -2358,7 +2762,7 @@ const ORDER_VENDORS = [
   { id: "grocery_masala", label: "🛒 Grocery & Masala", categories: ["Grocery", "Food", "Masala"], period: "10day", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
   { id: "packaging_cleaning", label: "📦 Packaging & Cleaning", categories: ["Packaging", "Cleaning"], period: "10day", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
 ];
-const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCat, orderQty, setOrderQty, setView, setDraft, fmt }) => {
+const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCat, orderQty, setOrderQty, setView, setDraft, setPoMeta, fmt }) => {
   const [rmConfig, setRmConfig] = useState({});
   const [usageSuggestion, setUsageSuggestion] = useState({});
   const [rmLoading, setRmLoading] = useState(true);
@@ -2377,7 +2781,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   if (rmEditing && selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=items.filter(i=>v?.categories.includes(displayCategory(i.category))); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>setRmEditing(false)} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>⚙️ Set {v?.label} Requirement</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily requirement":"10-day requirement"}</div></div></div><div style={{padding:"10px 14px",borderRadius:10,background:"#EFF6FF",border:"1px solid #BFDBFE",fontSize:12,color:"#1D4ED8",marginBottom:14}}>Set qty needed for {v?.period==="daily"?"1 day":"10 days"}. Last 10d usage shown as suggestion.</div>{vi.map(item=>{const usage=Math.round((usageSuggestion[item.id]||0)*100)/100;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,background:rmDraft[item.id]>0?"#EFF6FF":"#FAFAF8",marginBottom:3}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>10d usage: <strong style={{color:usage>0?"#2563EB":"#CCC"}}>{usage||"—"}</strong>{v?.period==="daily"&&usage>0&&<span> · ~{Math.round(usage/10*100)/100}/day</span>}</div></div><input type="number" inputMode="numeric" min="0" placeholder="0" value={rmDraft[item.id]||""} onChange={e=>setRmDraft(p=>({...p,[item.id]:Math.max(0,+e.target.value||0)}))} style={{width:70,padding:"6px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:15,textAlign:"center",fontFamily:"inherit",fontWeight:700}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><button onClick={saveRmConfig} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:v?.color||"#2563EB",color:"#fff",fontWeight:800,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>💾 Save {v?.label} Config</button></div></div>); }
   if (selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=getVendorItems(v); const tot=vi.filter(i=>{const e=Number(orderQty[i.id]);return(!isNaN(e)?e:i.orderQtyCalc)>0}).length; const hasConfig=vi.some(i=>i.rmQty>0); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>{setSelVendor(null);setOrderQty({})}} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{v?.label} Order</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily order":"10-day RM order"}</div></div><button onClick={()=>setRmEditing(true)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${v?.border}`,background:v?.bg,fontSize:10,fontWeight:700,color:v?.color,cursor:"pointer",fontFamily:"inherit"}}>⚙️ Set Req</button></div>{!hasConfig&&<div style={{padding:20,textAlign:"center",background:v?.bg,borderRadius:14,border:`1px solid ${v?.border}`,marginBottom:16}}><div style={{fontSize:36,marginBottom:8}}>📦</div><div style={{fontSize:14,fontWeight:700,color:v?.color,marginBottom:4}}>Set {v?.period==="daily"?"daily":"10-day"} requirement first</div><button onClick={()=>setRmEditing(true)} style={{padding:"10px 20px",borderRadius:10,border:"none",background:v?.color,color:"#fff",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit",marginTop:8}}>⚙️ Set Requirement</button></div>}{hasConfig&&<><div style={{padding:"8px 12px",borderRadius:10,background:"#F0FDF4",border:"1px solid #BBF7D0",fontSize:11,color:"#166534",marginBottom:14,display:"flex",justifyContent:"space-between"}}><span>Order = {v?.period==="daily"?"Daily Req":"10-Day Req"} − Stock</span><span style={{fontWeight:700}}>{tot} items</span></div>{vi.map(item=>{const e=Number(orderQty[item.id]);const fq=!isNaN(e)&&e>=0?e:item.orderQtyCalc;const need=fq>0;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:need?v?.bg:"#FAFAF8",marginBottom:3,border:need?`1px solid ${v?.border}`:"1px solid transparent"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>Req: <strong>{item.rmQty}</strong> − Stock: <strong style={{color:Number(item.current_qty)===0?"#DC2626":"#888"}}>{item.current_qty}</strong> = <strong style={{color:v?.color}}>{item.orderQtyCalc}</strong> {item.unit}</div></div><input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id]??""} onChange={e=>setOrderQty(p=>({...p,[item.id]:e.target.value}))} style={{width:64,padding:"6px",borderRadius:8,border:need?`2px solid ${v?.color}`:"1px solid #E0E0DC",fontSize:16,textAlign:"center",fontFamily:"'JetBrains Mono'",fontWeight:800,background:"#fff"}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><div style={{display:"flex",gap:8}}><button onClick={()=>shareChallanWA(v)} style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>💬 WhatsApp</button><button onClick={()=>generateChallan(v)} disabled={challanSaving||tot===0} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:tot>0&&!challanSaving?v?.color:"#D0D0CC",color:"#fff",fontWeight:800,fontSize:14,cursor:tot>0?"pointer":"not-allowed",fontFamily:"inherit"}}>{challanSaving?"⏳...":`📝 Challan (${tot})`}</button></div></div></>}</div>); }
   const dailyV=ORDER_VENDORS.filter(v=>v.period==="daily");const rmV=ORDER_VENDORS.filter(v=>v.period==="10day");
-  return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div></div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{setDraft({});Object.entries(po.items||{}).forEach(([id,item])=>{setDraft(p=>({...p,[id]:item.order_qty}))});setView("stock_in")}} style={{padding:"10px 14px",borderRadius:10,background:"#FFFBEB",border:"1px solid #FDE68A",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><div><div style={{fontSize:13,fontWeight:700}}>{po.order_number}</div><div style={{fontSize:10,color:"#999"}}>{po.total_items} items · {po.notes||""} · {po.date}</div></div><span style={{fontSize:11,color:"#2563EB",fontWeight:600}}>📥 Receive →</span></div>)}</div>}<div style={{fontSize:12,fontWeight:700,color:"#16A34A",marginBottom:8}}>🔄 Daily Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8,marginBottom:20}}>{dailyV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📦 10-Day RM Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:8}}>{rmV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div></div>);
+  return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div></div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{setDraft({});Object.entries(po.items||{}).forEach(([id,item])=>{setDraft(p=>({...p,[id]:item.order_qty}))});setPoMeta({id:po.id,order_number:po.order_number,total_items:po.total_items});setView("stock_in")}} style={{padding:"10px 14px",borderRadius:10,background:"#FFFBEB",border:"1px solid #FDE68A",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><div><div style={{fontSize:13,fontWeight:700}}>{po.order_number}</div><div style={{fontSize:10,color:"#999"}}>{po.total_items} items · {po.notes||""} · {po.date}</div></div><span style={{fontSize:11,color:"#2563EB",fontWeight:600}}>📥 Receive →</span></div>)}</div>}<div style={{fontSize:12,fontWeight:700,color:"#16A34A",marginBottom:8}}>🔄 Daily Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8,marginBottom:20}}>{dailyV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📦 10-Day RM Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:8}}>{rmV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div></div>);
 };
 
 const Inventory = () => {
@@ -2410,6 +2814,8 @@ const Inventory = () => {
   const [addItemSearch, setAddItemSearch] = useState(""); // search text for add-item panel
   const [addItemQty, setAddItemQty] = useState(""); // qty for item being added
   const [showAddPanel, setShowAddPanel] = useState(false);
+  const [poMeta, setPoMeta] = useState(null); // { id, order_number, total_items } — set when Stock In is receiving a specific PO
+  const [stockOutWarning, setStockOutWarning] = useState(null); // items that went negative after the last stock-out
 
   // Auto-load stock out data when view changes
   useEffect(() => {
@@ -2577,7 +2983,10 @@ const Inventory = () => {
     }));
     if (entries.length === 0) return;
     setSaving(true);
-    try { await api.stockIn(entries, "purchase", getCurrentUser()?.name); setDraft({}); setStockInPrices({}); load(); setView("stock"); } catch (e) { alert("Error: " + e.message); }
+    try {
+      await api.stockIn(entries, "purchase", getCurrentUser()?.name, poMeta?.id);
+      setDraft({}); setStockInPrices({}); setPoMeta(null); load(); setView("stock");
+    } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
@@ -2586,7 +2995,7 @@ const Inventory = () => {
     if (entries.length === 0) return;
     setSaving(true);
     try {
-      await api.stockOut(entries, "issuance");
+      const result = await api.stockOut(entries, "issuance");
       // Save audit: original calculated vs actual issued
       if (Object.keys(originalReq).length > 0) {
         const auditEntries = entries.map(({ item_id, quantity }) => ({
@@ -2603,6 +3012,7 @@ const Inventory = () => {
           try { await api.updateOrderStatus(orderId, "issued"); } catch (e) { console.error("Status update failed:", e); }
         }
       }
+      setStockOutWarning(result?.went_negative?.length > 0 ? result.went_negative : null);
       setDraft({}); setOriginalReq({}); setIssuedForOrders([]); load(); setView("stock");
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
@@ -2723,7 +3133,12 @@ const Inventory = () => {
     const count = Object.values(draft).filter((v) => v > 0).length;
     const hasPreFill = Object.keys(originalReq).length > 0;
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); setOriginalReq({}); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? "📥 Stock In" : hasPreFill ? "📤 Smart Issue (from Requisition)" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); setOriginalReq({}); setPoMeta(null); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? (poMeta ? `📥 Receive ${poMeta.order_number}` : "📥 Stock In") : hasPreFill ? "📤 Smart Issue (from Requisition)" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      {isIn && poMeta && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", marginBottom: 14, fontSize: 12, color: "#166534" }}>
+          ✅ Receiving <strong>{poMeta.order_number}</strong> ({poMeta.total_items} items, pre-filled with ordered qty) — edit any quantity below to match what actually arrived, then submit. This marks the order received.
+        </div>
+      )}
       {hasPreFill && (
         <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", marginBottom: 14, fontSize: 12, color: "#2563EB" }}>
           ℹ️ Pre-filled from today's Raw Material Requisition. Edit quantities as needed — changes will be tracked in audit.
@@ -2756,7 +3171,7 @@ const Inventory = () => {
           <span style={{ fontSize: 12, fontWeight: 600, color: "#166534" }}>Total Purchase Value</span>
           <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{totalSpend.toLocaleString("en-IN")}</span>
         </div>) : null; })()}
-      <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : isIn ? `📥 Add Stock (${count} items)` : `📤 Issue Stock (${count} items)`}</button>
+      <button onClick={isIn ? submitStockIn : submitStockOut} disabled={count === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: count > 0 && !saving ? (isIn ? "#16A34A" : "#DC2626") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: count > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : isIn ? (poMeta ? `📥 Confirm Received (${count} items)` : `📥 Add Stock (${count} items)`) : `📤 Issue Stock (${count} items)`}</button>
       </div>
     </div>);
   }
@@ -2778,7 +3193,7 @@ const Inventory = () => {
 
   // ── ORDER CHALLAN VIEW — RM Order based ──
   if (view === "order_challan") {
-    return <OrderChallanView items={invItems} categories={categories} displayCategory={displayCategory} selCat={selCat} setSelCat={setSelCat} orderQty={orderQty} setOrderQty={setOrderQty} setView={setView} setDraft={setDraft} fmt={fmt} />;
+    return <OrderChallanView items={invItems} categories={categories} displayCategory={displayCategory} selCat={selCat} setSelCat={setSelCat} orderQty={orderQty} setOrderQty={setOrderQty} setView={setView} setDraft={setDraft} setPoMeta={setPoMeta} fmt={fmt} />;
   }
 
   // ── MAIN STOCK VIEW ──
@@ -2801,6 +3216,13 @@ const Inventory = () => {
       <button onClick={() => { setThresholds({}); setView("thresholds"); }} title="Thresholds" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>⚙️</button>
       <button onClick={load} title="Refresh" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>🔄</button>
     </div>
+
+    {stockOutWarning && (
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", marginBottom: 14, fontSize: 12, color: "#991B1B", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div>⚠️ {stockOutWarning.length} item(s) went negative after that issue — needs a physical recount: {stockOutWarning.map((w) => `${w.name} (${w.current_qty})`).join(", ")}</div>
+        <button onClick={() => setStockOutWarning(null)} style={{ border: "none", background: "transparent", color: "#991B1B", fontWeight: 700, cursor: "pointer", fontSize: 14, flexShrink: 0 }}>✕</button>
+      </div>
+    )}
 
     {/* ── INVENTORY SECTION ── */}
     {invSection === "inventory" && (<>
@@ -5142,7 +5564,7 @@ const OutletMgr = ({ onBack }) => {
   const [morningDeliveryDate, setMorningDeliveryDate] = useState(null);
   const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
-  const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" });
+  const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesSaving, setSalesSaving] = useState(false);
@@ -5342,7 +5764,7 @@ const OutletMgr = ({ onBack }) => {
       ]).then(([sales, prev]) => {
         if (sales && sales.length > 0) {
           const s = sales[0];
-          setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", notes: s.notes || "" });
+          setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", cash_deposited_to: s.cash_deposited_by || "", notes: s.notes || "" });
           setExistingData(s);
         }
         if (prev) {
@@ -5368,9 +5790,10 @@ const OutletMgr = ({ onBack }) => {
     const closingCash = prevCash + cash - n(salesData.cash_expense) - n(salesData.cash_deposited);
 
     const submitSales = async () => {
+      if (n(salesData.cash_deposited) > 0 && !salesData.cash_deposited_to) { alert("Please select who the cash was submitted to"); return; }
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
+        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
         alert(`✅ Daily sales saved!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}`);
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
@@ -5395,8 +5818,8 @@ const OutletMgr = ({ onBack }) => {
     );
 
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{selectedDate}</span></div>
-      <DatePicker value={selectedDate} onChange={(d) => { setSelectedDate(d); setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", notes: "" }); }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => { setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" }); setScreen("home"); }} /><div style={{ flex: 1, fontSize: 14, fontWeight: 800 }}>💰 Daily Sales</div><span style={{ fontSize: 10, color: "#999" }}>{selectedDate}</span></div>
+      <DatePicker value={selectedDate} onChange={(d) => { setSelectedDate(d); setSalesLoaded(false); setExistingData(null); setSalesData({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" }); }} />
       <MidnightBanner />
 
       <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
@@ -5450,6 +5873,21 @@ const OutletMgr = ({ onBack }) => {
         {salesRow("− Cash Expense", "cash_expense", "₹")}
         <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense note..." style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 11, fontFamily: "inherit", background: "#FAFAF8", marginBottom: 2, boxSizing: "border-box" }} />
         {salesRow("− Cash Deposited", "cash_deposited", "₹")}
+        {n(salesData.cash_deposited) > 0 && (<>
+          {existingData?.cash_deposited_by && Number(existingData.cash_deposited) === n(salesData.cash_deposited) && (
+            <div style={{ padding: "5px 8px", borderRadius: 6, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 10, color: "#166534", marginBottom: 4 }}>
+              ✅ Already recorded — collected by {existingData.cash_deposited_by}{existingData.cash_deposited_at ? ` at ${new Date(existingData.cash_deposited_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}` : ""}
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", padding: "4px 0 6px" }}>
+            <span style={{ flex: 1, fontSize: 12, color: "#555" }}>Submitted To</span>
+            <select value={salesData.cash_deposited_to} onChange={(e) => setSalesData((p) => ({ ...p, cash_deposited_to: e.target.value }))}
+              style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#fff", color: salesData.cash_deposited_to ? "#1A1A1A" : "#999" }}>
+              <option value="">Select...</option>
+              {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </div>
+        </>)}
         <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 4px", fontSize: 13, fontWeight: 800 }}>
           <span>💰 Closing Cash</span>
           <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 16 }}>₹{closingCash}</span>
@@ -5463,59 +5901,6 @@ const OutletMgr = ({ onBack }) => {
           {salesSaving ? "⏳..." : existingData ? "💾 Update" : "💰 Submit Sales"}
         </button>
       </div>
-    </div>);
-  }
-
-  if (screen === "cash_handover") {
-    const [chAmount, setChAmount] = useState("");
-    const [chNote, setChNote] = useState("");
-    const [chSaving, setChSaving] = useState(false);
-    const [chHistory, setChHistory] = useState([]);
-    
-    useEffect(() => {
-      api.getCashHandovers({ from_role: "outlet" }).then(data => {
-        setChHistory((data || []).filter(h => h.outlet_id === outlet).slice(0, 10));
-      }).catch(() => {});
-    }, []);
-
-    const submitHandover = async () => {
-      if (!chAmount) return;
-      setChSaving(true);
-      try {
-        await api.saveCashHandover({ date: selectedDate, from_role: "outlet", from_name: getCurrentUser()?.name || outlet, to_role: "store", to_name: "Store Manager", outlet_id: outlet, amount: chAmount, note: chNote });
-        alert(`✅ Cash handover recorded!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n💰 ₹${Number(chAmount).toLocaleString("en-IN")}`);
-        setScreen("done");
-      } catch (e) { alert("Error: " + e.message); }
-      finally { setChSaving(false); }
-    };
-
-    return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>💵 Cash Handover</div></div>
-      <DatePicker value={selectedDate} onChange={setSelectedDate} />
-      
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "20px", marginBottom: 16 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12, color: "#166534" }}>Amount handing over to Store Manager</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-          <span style={{ fontSize: 24, fontWeight: 800 }}>₹</span>
-          <input type="number" inputMode="numeric" placeholder="0" value={chAmount} onChange={e => setChAmount(e.target.value)}
-            style={{ flex: 1, padding: "14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 28, fontFamily: "'JetBrains Mono'", fontWeight: 800, textAlign: "center" }} />
-        </div>
-        <input placeholder="Note (optional)" value={chNote} onChange={e => setChNote(e.target.value)}
-          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
-        <button onClick={submitHandover} disabled={!chAmount || chSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: chAmount ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: chAmount ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-          {chSaving ? "⏳..." : `💵 Record Handover — ₹${Number(chAmount || 0).toLocaleString("en-IN")}`}
-        </button>
-      </div>
-
-      {chHistory.length > 0 && <>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#888", marginBottom: 8 }}>Recent Handovers</div>
-        {chHistory.map(h => (
-          <div key={h.id} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", marginBottom: 4 }}>
-            <div><div style={{ fontSize: 12, fontWeight: 600 }}>{h.date}</div><div style={{ fontSize: 10, color: "#999" }}>{h.from_name}</div></div>
-            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>₹{Number(h.amount).toLocaleString("en-IN")}</div>
-          </div>
-        ))}
-      </>}
     </div>);
   }
 
@@ -6065,15 +6450,22 @@ const StoreMgr = ({ onBack }) => {
   const [issueImages, setIssueImages] = useState({});
   const [issueNote, setIssueNote] = useState("");
   // Purchase state
-  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
+  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]);
   const [billImages, setBillImages] = useState({});
   const [purchaseNote, setPurchaseNote] = useState("");
   const [paymentMode, setPaymentMode] = useState("cash");
+  // Optional inventory link per purchase line — when set, this purchase also credits
+  // the BK inventory ledger (like a Stock In), instead of only logging the expense.
+  const [invItems, setInvItems] = useState([]);
+  const [linkPickerIdx, setLinkPickerIdx] = useState(null);
+  const [linkSearch, setLinkSearch] = useState("");
   // Shared
   const [subs, setSubs] = useState([]);
   const [last, setLast] = useState(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+
+  useEffect(() => { api.getInventory().then((d) => setInvItems(d || [])).catch(() => {}); }, []);
 
   const targets = [{ id: "bk", name: "BK Production", emoji: "🏭" }, ...OUTLETS.map((o) => ({ ...o, emoji: "🏪" }))];
   const todaySubs = subs.filter((s) => s.date === today());
@@ -6082,7 +6474,7 @@ const StoreMgr = ({ onBack }) => {
   const todayPurchaseTotal = todayPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
 
   const resetIssuance = () => { setIssueImages({}); setIssueNote(""); setIssueTo("bk"); setErr(null); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   const submitIssuance = async () => {
     setSaving(true); setErr(null);
@@ -6102,7 +6494,7 @@ const StoreMgr = ({ onBack }) => {
     setSaving(true); setErr(null);
     try {
       const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase" }));
+      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase", item_id: i.item_id || undefined }));
       const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote });
       // Upload bill photos
       for (const [label, base64] of Object.entries(billImages)) {
@@ -6118,7 +6510,7 @@ const StoreMgr = ({ onBack }) => {
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div></div></div> : null;
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
 
-  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase" }]);
+  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]);
   const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
   const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
 
@@ -6245,6 +6637,37 @@ const StoreMgr = ({ onBack }) => {
               <button onClick={() => removePurchaseRow(idx)} style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
             )}
           </div>
+          {/* Optional inventory link — most lines stay free text; linking makes this
+              purchase also credit BK inventory (needs Qty filled to know how much). */}
+          {row.item_id ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 10px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0" }}>
+              <span style={{ fontSize: 11, color: "#166534", fontWeight: 600, flex: 1 }}>🔗 Linked to inventory: {invItems.find((i) => i.id === row.item_id)?.name || row.item_id} — will credit stock{!row.qty && " (fill Qty to credit)"}</span>
+              <button onClick={() => updatePurchase(idx, "item_id", null)} style={{ border: "none", background: "transparent", color: "#166534", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>✕ Unlink</button>
+            </div>
+          ) : (
+            <div style={{ marginBottom: 8 }}>
+              <button onClick={() => { setLinkPickerIdx(linkPickerIdx === idx ? null : idx); setLinkSearch(""); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>🔗 Link to inventory item (optional)</button>
+              {linkPickerIdx === idx && (
+                <div style={{ marginTop: 6, border: "1px solid #E0E0DC", borderRadius: 10, background: "#fff", overflow: "hidden" }}>
+                  <input autoFocus value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} placeholder="Search inventory…"
+                    style={{ width: "100%", padding: "8px 10px", border: "none", borderBottom: "1px solid #F0F0EC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+                  <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                    {invItems.filter((i) => i.name.toLowerCase().includes(linkSearch.trim().toLowerCase())).slice(0, 30).map((i) => (
+                      <button key={i.id} onClick={() => {
+                        setPurchases((p) => p.map((r, ri) => ri === idx ? { ...r, item_id: i.id, item: i.name, unit: r.unit } : r));
+                        setLinkPickerIdx(null);
+                      }} style={{ width: "100%", padding: "7px 10px", border: "none", borderBottom: "1px solid #F5F5F3", background: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
+                        {i.name} <span style={{ color: "#999" }}>· {i.unit} · stock: {i.current_qty}</span>
+                      </button>
+                    ))}
+                    {invItems.filter((i) => i.name.toLowerCase().includes(linkSearch.trim().toLowerCase())).length === 0 && (
+                      <div style={{ padding: "10px", textAlign: "center", color: "#999", fontSize: 11 }}>No match</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Qty</div>
@@ -7408,6 +7831,262 @@ const MonthlyInventory = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  BK DAILY CLOSING STOCK — physical count vs system running balance, the audit
+//  leg outlets already have (closing_stocks + RM Audit) that Base Kitchen never did.
+//  Each row pre-fills with the system's current qty so counting is "confirm or
+//  correct" rather than typing 127 numbers from scratch — only rows the counter
+//  actually edits represent a real physical difference.
+// ═════════════════════════════════════════════════════════════════════════════
+const BKClosingStock = () => {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selDay, setSelDay] = useState(0); // 0 = Today
+  const [counts, setCounts] = useState({}); // { item_id: qty }
+  const [selCat, setSelCat] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState("count"); // count, audit
+  const [audit, setAudit] = useState(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+  const [adjustingId, setAdjustingId] = useState(null);
+
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  const displayCategory = (cat) => cat === "Food" ? "Grocery" : cat;
+
+  useEffect(() => { api.getInventory().then((d) => setItems(d || [])).catch(() => setItems([])).finally(() => setLoading(false)); }, []);
+
+  // Load this date's saved count (if any) — resubmitting shows what was last entered,
+  // not a blank slate; otherwise pre-fill every row with today's system qty.
+  useEffect(() => {
+    if (items.length === 0) return;
+    setMode("count");
+    api.getBkClosingStock(dateStr).then((saved) => {
+      if (saved?.items) { setCounts(saved.items); setAlreadySubmitted(true); }
+      else {
+        const fresh = {}; items.forEach((i) => { fresh[i.id] = i.current_qty || 0; });
+        setCounts(fresh); setAlreadySubmitted(false);
+      }
+    }).catch(() => {});
+  }, [dateStr, items]);
+
+  const loadAudit = () => {
+    setAuditLoading(true);
+    api.getBkInventoryAudit(dateStr).then(setAudit).catch(() => setAudit(null)).finally(() => setAuditLoading(false));
+  };
+
+  const categories = useMemo(() => [...new Set(items.map((i) => displayCategory(i.category)))].filter(Boolean).sort(), [items]);
+  const filtered = selCat ? items.filter((i) => displayCategory(i.category) === selCat) : items;
+  const editedCount = items.filter((i) => Number(counts[i.id]) !== Number(i.current_qty || 0)).length;
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await api.saveBkClosingStock(dateStr, counts, getCurrentUser()?.name);
+      setAlreadySubmitted(true);
+      setMode("audit"); loadAudit();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const adjustToCount = async (item_id, counted) => {
+    setAdjustingId(item_id);
+    try { await api.adjustStock(item_id, counted, "closing_stock_reconciliation"); loadAudit(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setAdjustingId(null); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (<div>
+    <div style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 BK Daily Closing Stock</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Physical count vs system balance — audits every stock-in/stock-out that happened today.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+      {Array.from({ length: 7 }, (_, i) => {
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+        return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+      })}
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      <button onClick={() => setMode("count")} style={{ flex: 1, padding: "8px 16px", borderRadius: 8, border: mode === "count" ? "none" : "1px solid #E0E0DC", background: mode === "count" ? "#1A1A1A" : "#fff", color: mode === "count" ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✏️ Count Entry</button>
+      <button onClick={() => { setMode("audit"); loadAudit(); }} style={{ flex: 1, padding: "8px 16px", borderRadius: 8, border: mode === "audit" ? "none" : "1px solid #E0E0DC", background: mode === "audit" ? "#1A1A1A" : "#fff", color: mode === "audit" ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🔍 Variance Report</button>
+    </div>
+
+    {mode === "count" && (<>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
+        ℹ️ {alreadySubmitted ? "Showing the count already submitted for this date." : "Every row is pre-filled with today's system quantity."} Just correct the ones that don't match what's physically on the shelf — {editedCount} differ from system right now.
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>
+        {categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}
+      </div>
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 80 }}>
+        {filtered.map((item, idx) => {
+          const isEdited = Number(counts[item.id]) !== Number(item.current_qty || 0);
+          return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < filtered.length - 1 ? "1px solid #F0F0EC" : "none", background: isEdited ? "#FFFBEB" : "#fff" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+              <div style={{ fontSize: 10, color: "#999" }}>System: {item.current_qty} {item.unit}</div>
+            </div>
+            <input type="number" inputMode="decimal" step="any" value={counts[item.id] ?? ""} onChange={(e) => setCounts((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Number(e.target.value) }))}
+              style={{ width: 70, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700, background: "#fff" }} />
+            <span style={{ fontSize: 9, color: "#999", width: 24 }}>{item.unit}</span>
+          </div>);
+        })}
+      </div>
+      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={submit} disabled={saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: !saving ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Saving..." : `📊 Submit Closing Stock (${editedCount} corrections)`}</button>
+      </div>
+    </>)}
+
+    {mode === "audit" && (
+      auditLoading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading audit...</div> :
+      !audit?.submitted ? <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No closing count submitted for {dateStr} yet</div></div> :
+      <div>
+        <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}>Submitted by {audit.submitted_by || "—"} at {audit.submitted_at ? new Date(audit.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "—"}</div>
+        {audit.categories.map((cat) => {
+          const mismatches = cat.items.filter((i) => i.variance !== null && i.variance !== 0);
+          if (mismatches.length === 0) return null;
+          return (<div key={cat.category} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({mismatches.length} mismatched)</span></div>
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+              {mismatches.map((i, idx) => (
+                <div key={i.item_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderBottom: idx < mismatches.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{i.name}</div>
+                    <div style={{ fontSize: 10, color: "#999" }}>System: {i.system} · Counted: {i.counted} {i.unit}</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: i.variance > 0 ? "#16A34A" : "#DC2626" }}>{i.variance > 0 ? "+" : ""}{i.variance}</div>
+                  <button onClick={() => adjustToCount(i.item_id, i.counted)} disabled={adjustingId === i.item_id} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 700, color: "#1A1A1A", cursor: "pointer", fontFamily: "inherit" }}>{adjustingId === i.item_id ? "⏳" : "✅ Adjust"}</button>
+                </div>
+              ))}
+            </div>
+          </div>);
+        })}
+        {audit.categories.every((cat) => cat.items.filter((i) => i.variance !== null && i.variance !== 0).length === 0) && (
+          <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Everything matches the system balance</div></div>
+        )}
+      </div>
+    )}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  INVENTORY LEDGER — owner-only. Date-wise Opening + Stock In − Stock Out = Expected
+//  Closing, tallied against the store manager's actual submitted closing count
+//  (BK Closing Stock), mismatches highlighted in red. Backed by GET /api/inventory/ledger,
+//  which anchors every day's figures to today's live balance and walks backward — so a
+//  past date shows what its balance actually was, not today's number reused everywhere.
+// ═════════════════════════════════════════════════════════════════════════════
+const InventoryLedger = () => {
+  const [mode, setMode] = useState("week"); // week, month
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expandedDate, setExpandedDate] = useState(null);
+
+  const range = useMemo(() => {
+    if (mode === "week") return { from: istDateAgo(6), to: today() };
+    const lastDay = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
+    const monthEnd = `${selMonth}-${String(lastDay).padStart(2, "0")}`;
+    return { from: `${selMonth}-01`, to: monthEnd < today() ? monthEnd : today() };
+  }, [mode, selMonth]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getInventoryLedger(range.from, range.to).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [range]);
+
+  const totalMismatched = data?.days?.reduce((s, d) => s + d.mismatched_count, 0) || 0;
+  const totalSubmittedDays = data?.days?.filter((d) => d.submitted).length || 0;
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 Inventory Ledger</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Opening + Stock In − Stock Out = Expected Closing, tallied against the store manager's actual count — mismatches in red</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+      <button onClick={() => setMode("week")} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: mode === "week" ? "none" : "1px solid #E0E0DC", background: mode === "week" ? "#1A1A1A" : "#fff", color: mode === "week" ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>📅 Last 7 Days</button>
+      <button onClick={() => setMode("month")} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: mode === "month" ? "none" : "1px solid #E0E0DC", background: mode === "month" ? "#1A1A1A" : "#fff", color: mode === "month" ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>🗓️ Monthly</button>
+    </div>
+
+    {mode === "month" && (
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+        <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); setSelMonth(d.toISOString().slice(0, 7)); }} disabled={selMonth >= today().slice(0, 7)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: selMonth >= today().slice(0, 7) ? "not-allowed" : "pointer", opacity: selMonth >= today().slice(0, 7) ? 0.4 : 1, fontFamily: "inherit", fontSize: 14 }}>→</button>
+      </div>
+    )}
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Failed to load — is the bk_closing_stock table set up?</div>
+    ) : (<>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Days Counted</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{totalSubmittedDays} / {data.days.length}</div>
+        </div>
+        <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Mismatches</div>
+          <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: totalMismatched > 0 ? "#DC2626" : "#16A34A" }}>{totalMismatched}</div>
+        </div>
+      </div>
+
+      {data.days.map((day) => {
+        const isExpanded = expandedDate === day.date;
+        return (
+          <div key={day.date} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${day.mismatched_count > 0 ? "#FECACA" : "#E8E8E4"}`, marginBottom: 8, overflow: "hidden" }}>
+            <div onClick={() => day.submitted && setExpandedDate(isExpanded ? null : day.date)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: day.submitted ? "pointer" : "default" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{day.date}</div>
+                {!day.submitted && <div style={{ fontSize: 10, color: "#999" }}>No closing stock submitted</div>}
+                {day.submitted && day.mismatched_count === 0 && <div style={{ fontSize: 10, color: "#16A34A" }}>✅ All items matched</div>}
+              </div>
+              {day.submitted && day.mismatched_count > 0 && (
+                <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>⚠️ {day.mismatched_count} mismatched</span>
+              )}
+              {day.submitted && <span style={{ fontSize: 12, color: "#999" }}>{isExpanded ? "▲" : "▼"}</span>}
+            </div>
+            {isExpanded && day.mismatched_count > 0 && (
+              <div style={{ borderTop: "1px solid #F0F0EC", overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Item</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Opening</th>
+                    <th style={{ ...thS, textAlign: "right" }}>+ In</th>
+                    <th style={{ ...thS, textAlign: "right" }}>− Out</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Expected</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Actual</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+                  </tr></thead>
+                  <tbody>
+                    {day.items.map((i) => (
+                      <tr key={i.item_id} style={{ borderBottom: "1px solid #F0F0EC", background: "#FEF2F2" }}>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{i.name} <span style={{ color: "#BBB", fontWeight: 400 }}>({i.unit})</span></td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{i.opening}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{i.stock_in > 0 ? `+${i.stock_in}` : "—"}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{i.stock_out > 0 ? `−${i.stock_out}` : "—"}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{i.expected_closing}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{i.actual_closing}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{i.variance > 0 ? "+" : ""}{i.variance}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MASTER DATA — Central item & recipe management
 // ═════════════════════════════════════════════════════════════════════════════
 // Standard units for master data forms (dropdown options)
@@ -8197,8 +8876,8 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
@@ -8209,6 +8888,8 @@ export default function AnandaCafe() {
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
+          { id: "bk_closing", label: "📊 BK Closing Stock", sub: "Daily count & audit" },
+          { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -8223,6 +8904,7 @@ export default function AnandaCafe() {
       <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
         {[{ id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
           { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
+          { id: "custodian_ledger", label: "👤 Custodian Ledger", sub: "Ravinder / Sahil / Ganga" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setPaymentsDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -8277,6 +8959,7 @@ export default function AnandaCafe() {
       {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
+      {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "cogs_compare" && <CogsCompare />}
       {ownerTab === "demands" && <DemandHistory />}
@@ -8287,6 +8970,8 @@ export default function AnandaCafe() {
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
+      {ownerTab === "bk_closing" && <BKClosingStock />}
+      {ownerTab === "inv_ledger" && <InventoryLedger />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>
@@ -8312,14 +8997,16 @@ export default function AnandaCafe() {
   if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={currentUser?.role === "outlet_mgr" ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
   if (app === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "demands" && <DemandHistory />}
       {storeView === "inventory" && <Inventory />}
+      {storeView === "bk_closing" && <BKClosingStock />}
       {storeView === "sales" && <SalesUpload />}
       {storeView === "cash" && <CashLedger />}
+      {storeView === "custodian_ledger" && <CustodianLedger />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData hideRecipes />}

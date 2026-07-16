@@ -105,7 +105,7 @@ const api = {
 
   // ── Inventory ──
   getInventory: (params) => get("/api/inventory", params),
-  stockIn: (items, reason, submitted_by) => post("/api/inventory/stock-in", { items, reason, submitted_by }),
+  stockIn: (items, reason, submitted_by, po_id) => post("/api/inventory/stock-in", { items, reason, submitted_by, po_id }),
   stockOut: (items, reason, submitted_by) => post("/api/inventory/stock-out", { items, reason, submitted_by }),
   adjustStock: (item_id, new_qty, reason) => post("/api/inventory/adjust", { item_id, new_qty, reason }),
   updateThreshold: (id, threshold) => patch(`/api/inventory/threshold/${id}`, { threshold }),
@@ -116,6 +116,10 @@ const api = {
   addInventoryItem: (data) => post("/api/inventory/items", data),
   updateInventoryItem: (id, data) => patch(`/api/inventory/items/${id}`, data),
   deleteInventoryItem: (id) => del(`/api/inventory/items/${id}`),
+  getBkClosingStock: (date) => get(`/api/inventory/closing-stock/${date}`),
+  saveBkClosingStock: (date, items, submitted_by) => post("/api/inventory/closing-stock", { date, items, submitted_by }),
+  getBkInventoryAudit: (date) => get(`/api/inventory/audit/${date}`),
+  getInventoryLedger: (from, to) => get("/api/inventory/ledger", { from, to }),
 
   // ── Master Data ──
   getMasterSections: () => get("/api/master/sections"),
@@ -183,6 +187,7 @@ const api = {
   // Cash Handovers
   getCashHandovers: (params) => get("/api/cash-handovers", params),
   saveCashHandover: (data) => post("/api/cash-handovers", data),
+  getCustodianLedger: (name) => get(`/api/cash-handovers/custodian/${encodeURIComponent(name)}`),
   // Qty Corrections (owner edit of dispatched/wastage/closing-stock item qty)
   editItemQty: (outlet_id, date, item_id, new_qty, reason, record_type) =>
     patch("/api/qty-edit", { outlet_id, date, item_id, new_qty, reason, record_type }),
