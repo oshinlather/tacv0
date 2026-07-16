@@ -3386,11 +3386,19 @@ router.get('/cash-handovers/custodian/:name', async (req, res) => {
       .select('*').eq('from_name', name).order('date', { ascending: false });
     if (hoErr) throw hoErr;
 
+    // to_role distinguishes a real handover up the chain (owner) from cash the
+    // custodian spent directly out of what they're holding (expense) — both reduce
+    // the running balance, but only the former counts as "handed over".
+    const ownerRows = (handovers || []).filter((h) => h.to_role !== 'expense');
+    const expenseRows = (handovers || []).filter((h) => h.to_role === 'expense');
+
     const total_collected = (collections || []).reduce((s, c) => s + (Number(c.cash_deposited) || 0), 0);
-    const total_handed_over = (handovers || []).reduce((s, h) => s + (Number(h.amount) || 0), 0);
+    const total_handed_over = ownerRows.reduce((s, h) => s + (Number(h.amount) || 0), 0);
+    const total_expenses = expenseRows.reduce((s, h) => s + (Number(h.amount) || 0), 0);
 
     res.json({
-      name, total_collected, total_handed_over, balance: total_collected - total_handed_over,
+      name, total_collected, total_handed_over, total_expenses,
+      balance: total_collected - total_handed_over - total_expenses,
       collections: collections || [], handovers: handovers || [],
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

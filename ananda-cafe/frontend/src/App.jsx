@@ -806,6 +806,16 @@ const CustodianLedgerDetail = ({ person }) => {
   const [hoDate, setHoDate] = useState(today());
   const [hoSaving, setHoSaving] = useState(false);
 
+  // "Cash Expense" — cash the custodian spends directly out of what they're holding
+  // (fuel, tea, small purchases) rather than handing it up to an owner. Recorded as a
+  // cash_handovers row with to_role='expense' so it still reduces the running balance
+  // but is tallied separately from real handovers.
+  const [showExpense, setShowExpense] = useState(false);
+  const [expAmount, setExpAmount] = useState("");
+  const [expNote, setExpNote] = useState("");
+  const [expDate, setExpDate] = useState(today());
+  const [expSaving, setExpSaving] = useState(false);
+
   const load = () => {
     setLoading(true);
     api.getCustodianLedger(person).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
@@ -845,6 +855,17 @@ const CustodianLedgerDetail = ({ person }) => {
     finally { setHoSaving(false); }
   };
 
+  const recordExpense = async () => {
+    if (!expAmount || Number(expAmount) <= 0 || !expNote.trim()) return;
+    setExpSaving(true);
+    try {
+      await api.saveCashHandover({ date: expDate, from_name: person, to_role: "expense", amount: Number(expAmount), note: expNote.trim() });
+      setExpAmount(""); setExpNote(""); setShowExpense(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setExpSaving(false); }
+  };
+
   // Date-wise ledger, same shape as the outlet Cash Ledger's month table (Opening / In /
   // Out / Closing) — a custodian can have several collections (different outlets) and/or
   // handovers on one day, so each date row lists its line items rather than just a total.
@@ -858,7 +879,8 @@ const CustodianLedgerDetail = ({ person }) => {
       (byDate[c.date] = byDate[c.date] || []).push({ type: "in", label: OUTLETS.find((o) => o.id === c.outlet_id)?.short || c.outlet_id, amount: Number(c.cash_deposited) || 0, time: c.cash_deposited_at });
     });
     (data.handovers || []).forEach((h) => {
-      (byDate[h.date] = byDate[h.date] || []).push({ type: "out", label: `→ ${h.to_name}`, amount: Number(h.amount) || 0, time: h.created_at, note: h.note });
+      const isExpense = h.to_role === "expense";
+      (byDate[h.date] = byDate[h.date] || []).push({ type: "out", isExpense, label: isExpense ? "🧾 Expense" : `→ ${h.to_name}`, amount: Number(h.amount) || 0, time: h.created_at, note: h.note });
     });
     let running = 0;
     return Object.keys(byDate).sort().map((date) => {
@@ -881,6 +903,7 @@ const CustodianLedgerDetail = ({ person }) => {
       {[
         { l: "Total Collected", v: data.total_collected, c: "#16A34A" },
         { l: "Handed Over", v: data.total_handed_over, c: "#2563EB" },
+        { l: "Spent on Expenses", v: data.total_expenses, c: "#B45309" },
         { l: "Currently Holding", v: data.balance, c: data.balance > 0 ? "#B45309" : "#16A34A" },
       ].map((s, i) => (
         <div key={i} style={{ flex: "1 1 120px", background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
@@ -891,11 +914,14 @@ const CustodianLedgerDetail = ({ person }) => {
     </div>
 
     <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-      <button onClick={() => { setShowCollect(!showCollect); setShowHandover(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showCollect ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+      <button onClick={() => { setShowCollect(!showCollect); setShowHandover(false); setShowExpense(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showCollect ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
         {showCollect ? "✕ Cancel" : "📥 Collect from Outlet"}
       </button>
-      <button onClick={() => { setShowHandover(!showHandover); setShowCollect(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showHandover ? "#D0D0CC" : "#2563EB", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+      <button onClick={() => { setShowHandover(!showHandover); setShowCollect(false); setShowExpense(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showHandover ? "#D0D0CC" : "#2563EB", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
         {showHandover ? "✕ Cancel" : "📤 Submit to Owner"}
+      </button>
+      <button onClick={() => { setShowExpense(!showExpense); setShowCollect(false); setShowHandover(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showExpense ? "#D0D0CC" : "#B45309", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+        {showExpense ? "✕ Cancel" : "🧾 Cash Expense"}
       </button>
     </div>
 
@@ -956,6 +982,29 @@ const CustodianLedgerDetail = ({ person }) => {
       </div>
     )}
 
+    {showExpense && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount</div>
+            <input type="number" inputMode="numeric" autoFocus value={expAmount} onChange={(e) => setExpAmount(e.target.value)} placeholder="₹0"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ width: 120 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Date</div>
+            <input type="date" value={expDate} onChange={(e) => setExpDate(e.target.value)} max={today()}
+              style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+        </div>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>What was it spent on? (required)</div>
+        <input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="e.g. diesel, auto fare, tea..."
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 12, boxSizing: "border-box" }} />
+        <button onClick={recordExpense} disabled={!expAmount || !expNote.trim() || expSaving} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: expAmount && expNote.trim() && !expSaving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: expAmount && expNote.trim() && !expSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {expSaving ? "⏳..." : `💾 Record ₹${Number(expAmount || 0).toLocaleString("en-IN")} expense`}
+        </button>
+      </div>
+    )}
+
     {/* Month picker */}
     <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
       <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
@@ -990,7 +1039,7 @@ const CustodianLedgerDetail = ({ person }) => {
                 {row.items.map((item, i) => (
                   <tr key={i} style={{ borderBottom: i === row.items.length - 1 ? "1px solid #F0F0EC" : "none" }}>
                     <td colSpan={5} style={{ padding: "3px 14px 3px 28px", fontSize: 10, color: "#999" }}>
-                      {item.type === "in" ? "📥" : "📤"} {item.label}
+                      {item.type === "in" ? "📥" : item.isExpense ? "" : "📤"} {item.label}
                       {item.time && <span> · {new Date(item.time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span>}
                       {item.note && <span> · {item.note}</span>}
                       <span style={{ float: "right", fontFamily: "'JetBrains Mono'", color: item.type === "in" ? "#16A34A" : "#2563EB", fontWeight: 600 }}>{item.type === "in" ? "+" : "−"}{fmt(item.amount)}</span>
@@ -1012,7 +1061,7 @@ const CustodianLedger = () => {
   return (<div>
     <div style={{ marginBottom: 16 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>👤 Custodian Ledger</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Cash collected from outlets, minus what's already been handed over to an owner</p>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Cash collected from outlets, minus what's been handed over to an owner or spent on expenses</p>
     </div>
 
     <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
