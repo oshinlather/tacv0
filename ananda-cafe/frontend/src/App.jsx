@@ -2344,6 +2344,21 @@ const convertToBase = (qty, unit, itemId, itemName) => {
   return { qty: Number(qty), unit, converted: false, factor: 1 };
 };
 
+// Converts qty from `fromUnit` to `toUnit` for a specific item via UNIT_CONVERSIONS —
+// used when a demand recorded a per-item unit override (items_units) that differs from
+// the item's default demand unit (e.g. Dosa Batter demanded in Kg instead of Batch), so
+// raw quantities entered in different units aren't summed together as if they matched.
+const normalizeUnit = (itemId, qty, fromUnit, toUnit) => {
+  if (!fromUnit || fromUnit === toUnit) return Number(qty) || 0;
+  const toEntries = UNIT_CONVERSIONS[toUnit];
+  const toMatch = toEntries && toEntries.find((c) => c.item_id === itemId);
+  if (toMatch && toMatch.base_unit === fromUnit && toMatch.qty) return (Number(qty) || 0) / toMatch.qty;
+  const fromEntries = UNIT_CONVERSIONS[fromUnit];
+  const fromMatch = fromEntries && fromEntries.find((c) => c.item_id === itemId);
+  if (fromMatch && fromMatch.base_unit === toUnit && fromMatch.qty) return (Number(qty) || 0) * fromMatch.qty;
+  return Number(qty) || 0;
+};
+
 // ─── Table styles ───────────────────────────────────────────────────────────
 const thS = { padding: "10px 14px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, borderBottom: "1px solid #E8E8E4" };
 const tdS = { padding: "10px 14px" };
@@ -2424,7 +2439,11 @@ const BaseKitchen = () => {
   const issuedOrders = cycleOrders.filter((o) => o.status === "issued");
   const activeOrders = showAll ? cycleOrders : pendingOrders;
 
-  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = o.items?.[bk.id] || 0; consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
+  // Some outlets demand a BK-prepared item (e.g. Dosa Batter) in Kg instead of the
+  // default Batch — items_units records that override. Without normalizing back to
+  // the default unit here, a 7 Kg demand would silently be counted as "7 Batch" in
+  // this table, which is exactly the outlet-vs-BK mismatch this fixes.
+  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
 
   const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
   const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
@@ -2485,7 +2504,7 @@ const BaseKitchen = () => {
           <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
-        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{d.total}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] || "—"}</td>)}</tr>); })}</tbody></table></div>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"}</td>)}</tr>); })}</tbody></table></div>
       </div>
 
     </div>
@@ -2895,7 +2914,7 @@ const Inventory = () => {
         const originalDemand = {}; // bkId → { raw: number, unit: string, converted: true/false } for UI display
         foodItems.forEach((item) => {
           let totalRaw = 0;
-          manualOrders.forEach((o) => { totalRaw += (o.items?.[item.id] || 0); });
+          manualOrders.forEach((o) => { totalRaw += normalizeUnit(item.id, o.items?.[item.id] || 0, o.items_units?.[item.id], item.unit); });
           if (totalRaw === 0) return;
           const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
           consolidatedKg[item.id] = conv.qty; // e.g. 36 Kg
@@ -2916,7 +2935,7 @@ const Inventory = () => {
           const issuedConsolidatedKg = {};
           foodItems.forEach((item) => {
             let totalRaw = 0;
-            issuedOrdersList.forEach((o) => { totalRaw += (o.items?.[item.id] || 0); });
+            issuedOrdersList.forEach((o) => { totalRaw += normalizeUnit(item.id, o.items?.[item.id] || 0, o.items_units?.[item.id], item.unit); });
             if (totalRaw === 0) return;
             const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
             issuedConsolidatedKg[item.id] = conv.qty;
@@ -2944,15 +2963,16 @@ const Inventory = () => {
         outletOrders.forEach((o) => {
           nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
             const qty = o.items?.[item.id] || 0;
+            const demandUnit = o.items_units?.[item.id] || item.unit;
             if (qty > 0) {
-              const conv = convertToBase(qty, item.unit, item.id, item.name);
+              const conv = convertToBase(qty, demandUnit, item.id, item.name);
               if (!directItems[item.id]) {
                 directItems[item.id] = {
                   name: item.name,
                   qty: 0,           // accumulated in BASE unit (for inventory deduction)
                   rawQty: 0,        // accumulated in ORIGINAL unit (for display)
                   unit: conv.unit,  // base unit
-                  rawUnit: item.unit, // original demand unit
+                  rawUnit: demandUnit, // original demand unit
                   converted: conv.converted,
                   factor: conv.factor,
                   category: sec.titleHi,
@@ -2971,10 +2991,11 @@ const Inventory = () => {
           issuedOutletOrders.forEach((o) => {
             nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
               const qty = o.items?.[item.id] || 0;
+              const demandUnit = o.items_units?.[item.id] || item.unit;
               if (qty > 0) {
-                const conv = convertToBase(qty, item.unit, item.id, item.name);
+                const conv = convertToBase(qty, demandUnit, item.id, item.name);
                 if (!directItems[item.id]) {
-                  directItems[item.id] = { name: item.name, qty: 0, rawQty: 0, unit: conv.unit, rawUnit: item.unit, converted: conv.converted, factor: conv.factor, category: sec.titleHi };
+                  directItems[item.id] = { name: item.name, qty: 0, rawQty: 0, unit: conv.unit, rawUnit: demandUnit, converted: conv.converted, factor: conv.factor, category: sec.titleHi };
                 }
                 completed[item.id] = true;
               }
@@ -3092,7 +3113,7 @@ const Inventory = () => {
       const consolidated = {};
       BK_ITEMS.forEach((bk) => {
         consolidated[bk.id] = { total: 0 };
-        pendingOrders.forEach((o) => { consolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+        pendingOrders.forEach((o) => { consolidated[bk.id].total += normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); });
       });
       const rawReq = {};
       Object.entries(consolidated).forEach(([bkId, data]) => {
@@ -3128,7 +3149,7 @@ const Inventory = () => {
         const issuedConsolidated = {};
         BK_ITEMS.forEach((bk) => {
           issuedConsolidated[bk.id] = { total: 0 };
-          issuedOrders.forEach((o) => { issuedConsolidated[bk.id].total += (o.items?.[bk.id] || 0); });
+          issuedOrders.forEach((o) => { issuedConsolidated[bk.id].total += normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); });
         });
         Object.entries(issuedConsolidated).forEach(([bkId, data]) => {
           const recipe = RECIPES[bkId];
@@ -4287,21 +4308,38 @@ const DemandHistory = () => {
   // Merge items from multiple demands in a slot into one view
   const mergeItems = (demandList) => {
     const merged = {};
+    const allItems = DEMAND_SECTIONS.flatMap(s => s.items);
+    // Convert a raw qty into the item's canonical/default unit using the per-demand
+    // unit override (items_units) if the manager picked something other than the
+    // default — e.g. Dosa Batter demanded in Kg needs /9 to become Batch, matching
+    // what BK actually works in and what this view labels everything as. Without
+    // this, a 7 Kg demand shows up as "7 Batch" (63 Kg), which is the mismatch
+    // between outlets and BK this exists to prevent.
+    const toDefaultUnit = (itemId, qty, fromUnit, defaultUnit) => {
+      if (!fromUnit || fromUnit === defaultUnit) return qty;
+      const conv = convMap[itemId];
+      if (conv && conv.qty) {
+        if (conv.fromUnit === defaultUnit && conv.baseUnit === fromUnit) return qty / conv.qty;
+        if (conv.baseUnit === defaultUnit && conv.fromUnit === fromUnit) return qty * conv.qty;
+      }
+      return qty;
+    };
     demandList.forEach(d => {
       const items = d.items || {};
+      const units = d.items_units || {};
       const dispItems = d.dispatch_items || null;
       const ids = new Set([...Object.keys(items), ...Object.keys(dispItems || {})]);
       ids.forEach(id => {
         if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, demandIds: [] };
-        merged[id].qty += Number(items[id]) || 0;
+        const defaultUnit = allItems.find(i => i.id === id)?.unit;
+        merged[id].qty += toDefaultUnit(id, Number(items[id]) || 0, units[id], defaultUnit);
         if (dispItems) {
           merged[id].hasDispatch = true;
-          merged[id].dispatchedQty += Number(dispItems[id]) || 0;
+          merged[id].dispatchedQty += toDefaultUnit(id, Number(dispItems[id]) || 0, units[id], defaultUnit);
         }
         if (!merged[id].demandIds.includes(d.id)) merged[id].demandIds.push(d.id);
       });
     });
-    const allItems = DEMAND_SECTIONS.flatMap(s => s.items);
 
     // Raw material → rate card mapping for recipe costing
     const rawToRate = {
@@ -4375,8 +4413,8 @@ const DemandHistory = () => {
         const mismatch = data.hasDispatch && Math.abs(data.dispatchedQty - data.qty) > 0.001;
         return {
           id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
-          qty: data.qty, demandIds: data.demandIds,
-          hasDispatch: data.hasDispatch, dispatchedQty: data.dispatchedQty, mismatch,
+          qty: Math.round(data.qty * 100) / 100, demandIds: data.demandIds,
+          hasDispatch: data.hasDispatch, dispatchedQty: Math.round(data.dispatchedQty * 100) / 100, mismatch,
           rate: Math.round(unitPrice * 100) / 100, rateUnit, cost,
           section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
         };
