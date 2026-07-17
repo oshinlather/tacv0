@@ -1712,6 +1712,26 @@ router.patch('/orders/:id/status', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/orders/:id/receive — Outlet manager confirms what they actually
+// received against a dispatched challan, closing the demand → dispatch → receipt
+// loop. received_items may differ from dispatch_items (shortage/damage found on
+// arrival) — kept as a separate field so neither side's record gets overwritten.
+router.patch('/orders/:id/receive', async (req, res) => {
+  try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const { data: order, error: fetchErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
+    if (fetchErr) throw fetchErr;
+    if (!ensureOutletAccess(_user, order.outlet_id, res)) return;
+    const { received_items } = req.body;
+    if (!received_items) return res.status(400).json({ error: "received_items required" });
+    const { error } = await supabase.from('demands').update({
+      received_items, received_by: _user.name, received_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================
 // DISPATCH CHALLAN — Save actual dispatched quantities
 // ============================================================

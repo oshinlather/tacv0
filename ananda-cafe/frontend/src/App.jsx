@@ -5395,6 +5395,34 @@ const OutletMgr = ({ onBack }) => {
   // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
   const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
 
+  // Dispatched Challan (outlet-side) — what BK sent to this outlet on a given date,
+  // read-only, plus a "confirm receipt" step that closes the demand → dispatch →
+  // receipt loop. received_items defaults to whatever was dispatched but is editable
+  // in case something arrived short or damaged.
+  const [dispatchedDate, setDispatchedDate] = useState(today());
+  const [dispatchedOrders, setDispatchedOrders] = useState([]);
+  const [dispatchedLoading, setDispatchedLoading] = useState(false);
+  const [openDispatchOrder, setOpenDispatchOrder] = useState(null);
+  const [receivedDraft, setReceivedDraft] = useState({});
+  const [receiptSaving, setReceiptSaving] = useState(false);
+  const loadDispatched = useCallback(() => {
+    if (!outlet) return;
+    setDispatchedLoading(true);
+    api.getOrders({ outlet_id: outlet, date: dispatchedDate, status: "fulfilled" })
+      .then((d) => setDispatchedOrders((d || []).filter((o) => o.type === "manual")))
+      .catch(() => setDispatchedOrders([]))
+      .finally(() => setDispatchedLoading(false));
+  }, [outlet, dispatchedDate]);
+  useEffect(() => { if (screen === "dispatched") loadDispatched(); }, [screen, loadDispatched]);
+  const confirmReceipt = async (order) => {
+    setReceiptSaving(true);
+    try {
+      await api.confirmReceipt(order.id, receivedDraft);
+      setOpenDispatchOrder(null); setReceivedDraft({}); loadDispatched();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setReceiptSaving(false); }
+  };
+
   // Per-item unit overrides for demand/wastage (draftUnits) and closing stock (closingUnits) —
   // only items with a defined unit_conversions row get a picker (e.g. Desi Ghee: Tin or Kg).
   const [conversions, setConversions] = useState({});
@@ -5555,9 +5583,91 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
+
+  // ── DISPATCHED CHALLANS (outlet-side) — view + confirm receipt ──
+  if (screen === "dispatched") {
+    const getName = (id) => { for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.name; } return getBk(id); };
+    const getUnit = (id) => { for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.unit; } return BK_ITEMS.find((b) => b.id === id)?.unit || ""; };
+
+    if (openDispatchOrder) {
+      const order = openDispatchOrder;
+      const demanded = order.items || {};
+      const dispatched = order.dispatch_items || demanded;
+      const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
+      const alreadyConfirmed = !!order.received_at;
+      return (<div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <BackBtn onClick={() => { setOpenDispatchOrder(null); setReceivedDraft({}); }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>{order.demand_slot === "morning" ? "🌅 Morning" : "🌙 Evening"} Challan</div>
+            <div style={{ fontSize: 11, color: "#999" }}>{order.date} · {allIds.length} items</div>
+          </div>
+        </div>
+        {alreadyConfirmed && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", marginBottom: 14, fontSize: 12, color: "#166534" }}>
+            ✅ Receipt confirmed by <strong>{order.received_by}</strong> at {new Date(order.received_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}
+          </div>
+        )}
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          {allIds.map((id) => {
+            const dem = demanded[id] || 0;
+            const disp = dispatched[id] || 0;
+            const short = disp < dem;
+            const recVal = alreadyConfirmed ? (order.received_items || {})[id] ?? disp : (receivedDraft[id] !== undefined ? receivedDraft[id] : disp);
+            return (
+              <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #F0F0EC" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{getName(id)}</div>
+                  <div style={{ fontSize: 11, color: "#999" }}>Demanded {dem} · Dispatched <span style={{ color: short ? "#DC2626" : "#16A34A", fontWeight: 700 }}>{disp}</span> {getUnit(id)}</div>
+                </div>
+                {alreadyConfirmed ? (
+                  <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{recVal}</div>
+                ) : (
+                  <input type="number" inputMode="decimal" value={receivedDraft[id] !== undefined ? receivedDraft[id] : disp}
+                    onChange={(e) => setReceivedDraft((p) => ({ ...p, [id]: Math.max(0, +e.target.value || 0) }))}
+                    style={{ width: 64, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {!alreadyConfirmed && (
+          <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+            <button onClick={() => confirmReceipt(order)} disabled={receiptSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: receiptSaving ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: receiptSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+              {receiptSaving ? "⏳ Saving..." : "✅ Confirm Receipt"}
+            </button>
+          </div>
+        )}
+      </div>);
+    }
+
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <BackBtn onClick={() => setScreen("home")} />
+        <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🚚 Dispatched Challans</div>
+      </div>
+      <DatePicker value={dispatchedDate} onChange={setDispatchedDate} />
+      <div style={{ height: 12 }} />
+      {dispatchedLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+      {!dispatchedLoading && dispatchedOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Nothing dispatched to you on this date</div>}
+      {!dispatchedLoading && dispatchedOrders.map((order) => {
+        const itemCount = Object.keys(order.items || {}).filter((id) => (order.items[id] || 0) > 0).length;
+        const confirmed = !!order.received_at;
+        return (
+          <div key={order.id} onClick={() => { setOpenDispatchOrder(order); setReceivedDraft({}); }} style={{ background: confirmed ? "#F0FDF4" : "#FFFBEB", borderRadius: 14, border: `1px solid ${confirmed ? "#BBF7D0" : "#FDE68A"}`, padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{order.demand_slot === "morning" ? "🌅 Morning" : "🌙 Evening"}</div>
+              <div style={{ fontSize: 12, color: "#999" }}>{itemCount} items</div>
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 700, color: confirmed ? "#16A34A" : "#B45309" }}>{confirmed ? "✅ Confirmed" : "⏳ Verify →"}</span>
+          </div>
+        );
+      })}
+    </div>);
+  }
 
   // ── DAILY SALES & CASH RECONCILIATION ──
   if (screen === "daily_sales") {
