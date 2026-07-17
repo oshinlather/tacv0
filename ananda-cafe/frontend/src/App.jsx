@@ -2839,6 +2839,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   const [rmDraft, setRmDraft] = useState({});
   const [pendingPOs, setPendingPOs] = useState([]);
   const [selVendor, setSelVendor] = useState(null);
+  const [vendorSearch, setVendorSearch] = useState("");
   // Which day this order is for — chosen up front so the challan, WhatsApp text, and
   // print all carry the intended delivery date instead of always today's date.
   const [selDate, setSelDate] = useState(today());
@@ -2850,7 +2851,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   const shareChallanWA = (v) => { const vi=getVendorItems(v); const lines=[`*🛒 The The Ananda Cafe — ${v.label} Order*`,`📅 ${selDate}`,""]; vi.forEach(item=>{const eq=Number(orderQty[item.id]);const fq=!isNaN(eq)&&eq>=0?eq:item.orderQtyCalc;if(fq>0)lines.push(`• ${item.name}: *${fq} ${item.unit}*`)}); lines.push("",`Total: ${lines.filter(l=>l.startsWith("•")).length} items`); window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`,"_blank") };
   if (rmLoading) return <div style={{textAlign:"center",padding:40,color:"#999"}}>⏳ Loading...</div>;
   if (rmEditing && selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=items.filter(i=>v?.categories.includes(displayCategory(i.category))); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>setRmEditing(false)} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>⚙️ Set {v?.label} Requirement</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily requirement":"10-day requirement"}</div></div></div><div style={{padding:"10px 14px",borderRadius:10,background:"#EFF6FF",border:"1px solid #BFDBFE",fontSize:12,color:"#1D4ED8",marginBottom:14}}>Set qty needed for {v?.period==="daily"?"1 day":"10 days"}. Last 10d usage shown as suggestion.</div>{vi.map(item=>{const usage=Math.round((usageSuggestion[item.id]||0)*100)/100;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,background:rmDraft[item.id]>0?"#EFF6FF":"#FAFAF8",marginBottom:3}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>10d usage: <strong style={{color:usage>0?"#2563EB":"#CCC"}}>{usage||"—"}</strong>{v?.period==="daily"&&usage>0&&<span> · ~{Math.round(usage/10*100)/100}/day</span>}</div></div><input type="number" inputMode="numeric" min="0" placeholder="0" value={rmDraft[item.id]||""} onChange={e=>setRmDraft(p=>({...p,[item.id]:Math.max(0,+e.target.value||0)}))} style={{width:70,padding:"6px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:15,textAlign:"center",fontFamily:"inherit",fontWeight:700}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><button onClick={saveRmConfig} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:v?.color||"#2563EB",color:"#fff",fontWeight:800,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>💾 Save {v?.label} Config</button></div></div>); }
-  if (selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=getVendorItems(v); const tot=vi.filter(i=>{const e=Number(orderQty[i.id]);return(!isNaN(e)?e:i.orderQtyCalc)>0}).length; const hasConfig=vi.some(i=>i.rmQty>0); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>{setSelVendor(null);setOrderQty({})}} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{v?.label} Order</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily order":"10-day RM order"} · 📅 {selDate}</div></div><button onClick={()=>setRmEditing(true)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${v?.border}`,background:v?.bg,fontSize:10,fontWeight:700,color:v?.color,cursor:"pointer",fontFamily:"inherit"}}>⚙️ Set Req</button></div>{!hasConfig&&<div style={{padding:"10px 14px",borderRadius:10,background:v?.bg,border:`1px solid ${v?.border}`,fontSize:11,color:v?.color,marginBottom:14}}>💡 No {v?.period==="daily"?"daily":"10-day"} requirement set for these items yet, so nothing's pre-filled — enter quantities manually below, or <span onClick={()=>setRmEditing(true)} style={{fontWeight:700,textDecoration:"underline",cursor:"pointer"}}>set requirement</span> to get auto-suggested amounts next time.</div>}<div style={{padding:"8px 12px",borderRadius:10,background:"#F0FDF4",border:"1px solid #BBF7D0",fontSize:11,color:"#166534",marginBottom:14,display:"flex",justifyContent:"space-between"}}><span>Order = {v?.period==="daily"?"Daily Req":"10-Day Req"} − Stock</span><span style={{fontWeight:700}}>{tot} items</span></div>{vi.map(item=>{const e=Number(orderQty[item.id]);const fq=!isNaN(e)&&e>=0?e:item.orderQtyCalc;const need=fq>0;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:need?v?.bg:"#FAFAF8",marginBottom:3,border:need?`1px solid ${v?.border}`:"1px solid transparent"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>Req: <strong>{item.rmQty}</strong> − Stock: <strong style={{color:Number(item.current_qty)===0?"#DC2626":"#888"}}>{item.current_qty}</strong> = <strong style={{color:v?.color}}>{item.orderQtyCalc}</strong> {item.unit}</div></div><input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id]??""} onChange={e=>setOrderQty(p=>({...p,[item.id]:e.target.value}))} style={{width:64,padding:"6px",borderRadius:8,border:need?`2px solid ${v?.color}`:"1px solid #E0E0DC",fontSize:16,textAlign:"center",fontFamily:"'JetBrains Mono'",fontWeight:800,background:"#fff"}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><div style={{display:"flex",gap:8}}><button onClick={()=>shareChallanWA(v)} style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>💬 WhatsApp</button><button onClick={()=>generateChallan(v)} disabled={challanSaving||tot===0} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:tot>0&&!challanSaving?v?.color:"#D0D0CC",color:"#fff",fontWeight:800,fontSize:14,cursor:tot>0?"pointer":"not-allowed",fontFamily:"inherit"}}>{challanSaving?"⏳...":`📝 Challan (${tot})`}</button></div></div></div>); }
+  if (selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=getVendorItems(v); const tot=vi.filter(i=>{const e=Number(orderQty[i.id]);return(!isNaN(e)?e:i.orderQtyCalc)>0}).length; const hasConfig=vi.some(i=>i.rmQty>0); const viVisible=vi.filter(i=>!vendorSearch.trim()||i.name.toLowerCase().includes(vendorSearch.trim().toLowerCase())); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>{setSelVendor(null);setOrderQty({});setVendorSearch("")}} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{v?.label} Order</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily order":"10-day RM order"} · 📅 {selDate}</div></div><button onClick={()=>setRmEditing(true)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${v?.border}`,background:v?.bg,fontSize:10,fontWeight:700,color:v?.color,cursor:"pointer",fontFamily:"inherit"}}>⚙️ Set Req</button></div>{!hasConfig&&<div style={{padding:"10px 14px",borderRadius:10,background:v?.bg,border:`1px solid ${v?.border}`,fontSize:11,color:v?.color,marginBottom:14}}>💡 No {v?.period==="daily"?"daily":"10-day"} requirement set for these items yet, so nothing's pre-filled — enter quantities manually below, or <span onClick={()=>setRmEditing(true)} style={{fontWeight:700,textDecoration:"underline",cursor:"pointer"}}>set requirement</span> to get auto-suggested amounts next time.</div>}<input value={vendorSearch} onChange={e=>setVendorSearch(e.target.value)} placeholder="🔍 Search items…" style={{width:"100%",padding:"9px 12px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:13,fontFamily:"inherit",marginBottom:10,boxSizing:"border-box"}} /><div style={{padding:"8px 12px",borderRadius:10,background:"#F0FDF4",border:"1px solid #BBF7D0",fontSize:11,color:"#166534",marginBottom:14,display:"flex",justifyContent:"space-between"}}><span>Order = {v?.period==="daily"?"Daily Req":"10-Day Req"} − Stock</span><span style={{fontWeight:700}}>{tot} items</span></div>{viVisible.map(item=>{const e=Number(orderQty[item.id]);const fq=!isNaN(e)&&e>=0?e:item.orderQtyCalc;const need=fq>0;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:need?v?.bg:"#FAFAF8",marginBottom:3,border:need?`1px solid ${v?.border}`:"1px solid transparent"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>Req: <strong>{item.rmQty}</strong> − Stock: <strong style={{color:Number(item.current_qty)===0?"#DC2626":"#888"}}>{item.current_qty}</strong> = <strong style={{color:v?.color}}>{item.orderQtyCalc}</strong> {item.unit}</div></div><input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id]??""} onChange={e=>setOrderQty(p=>({...p,[item.id]:e.target.value}))} style={{width:64,padding:"6px",borderRadius:8,border:need?`2px solid ${v?.color}`:"1px solid #E0E0DC",fontSize:16,textAlign:"center",fontFamily:"'JetBrains Mono'",fontWeight:800,background:"#fff"}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><div style={{display:"flex",gap:8}}><button onClick={()=>shareChallanWA(v)} style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>💬 WhatsApp</button><button onClick={()=>generateChallan(v)} disabled={challanSaving||tot===0} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:tot>0&&!challanSaving?v?.color:"#D0D0CC",color:"#fff",fontWeight:800,fontSize:14,cursor:tot>0?"pointer":"not-allowed",fontFamily:"inherit"}}>{challanSaving?"⏳...":`📝 Challan (${tot})`}</button></div></div></div>); }
   const dailyV=ORDER_VENDORS.filter(v=>v.period==="daily");const rmV=ORDER_VENDORS.filter(v=>v.period==="10day");
   return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div></div><div style={{padding:"12px 14px",borderRadius:12,background:"#fff",border:"1px solid #E0E0DC",marginBottom:20,display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:12,fontWeight:700,color:"#555"}}>📅 Ordering for</span><input type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} style={{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:14,fontFamily:"inherit",fontWeight:700}} />{selDate!==today()&&<span style={{fontSize:10,fontWeight:700,color:"#B45309",background:"#FFFBEB",padding:"4px 8px",borderRadius:6}}>{selDate<today()?"Past date":"Future date"}</span>}</div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{setDraft({});Object.entries(po.items||{}).forEach(([id,item])=>{setDraft(p=>({...p,[id]:item.order_qty}))});setPoMeta({id:po.id,order_number:po.order_number,total_items:po.total_items});setView("stock_in")}} style={{padding:"10px 14px",borderRadius:10,background:"#FFFBEB",border:"1px solid #FDE68A",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><div><div style={{fontSize:13,fontWeight:700}}>{po.order_number}</div><div style={{fontSize:10,color:"#999"}}>{po.total_items} items · {po.notes||""} · {po.date}</div></div><span style={{fontSize:11,color:"#2563EB",fontWeight:600}}>📥 Receive →</span></div>)}</div>}<div style={{fontSize:12,fontWeight:700,color:"#16A34A",marginBottom:8}}>🔄 Daily Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8,marginBottom:20}}>{dailyV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📦 10-Day RM Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:8}}>{rmV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div></div>);
 };
@@ -2865,9 +2866,9 @@ const Inventory = () => {
   const [movements, setMovements] = useState([]);
   const [thresholds, setThresholds] = useState({});
   const [orderQty, setOrderQty] = useState({});
-  const [rawReqData, setRawReqData] = useState({}); // raw material requisition from BK
   const [originalReq, setOriginalReq] = useState({}); // original calculated values for audit
   const [stockFilter, setStockFilter] = useState("all"); // all, low, out
+  const [itemSearch, setItemSearch] = useState(""); // free-text search, Stock In/Out screen
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [stockInPrices, setStockInPrices] = useState({}); // { item_id: total_price }
   const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false } — ticked for current issue
@@ -2884,132 +2885,19 @@ const Inventory = () => {
   const [removedItems, setRemovedItems] = useState({}); // ids removed from view: { id: true }
   const [addItemSearch, setAddItemSearch] = useState(""); // search text for add-item panel
   const [addItemQty, setAddItemQty] = useState(""); // qty for item being added
-  const [showAddPanel, setShowAddPanel] = useState(false);
+  const [showAddPanel, setShowAddPanel] = useState(true); // manual Stock Out — search is the primary way to add items, so keep it open
   const [poMeta, setPoMeta] = useState(null); // { id, order_number, total_items } — set when Stock In is receiving a specific PO
   const [stockOutWarning, setStockOutWarning] = useState(null); // items that went negative after the last stock-out
 
-  // Auto-load stock out data when view changes
+  // Manual Stock Out — no auto-calculation from recipes or outlet demand.
+  // The store manager searches for whatever item they're physically taking
+  // out (via the + Add panel below) and enters the quantity themselves.
   useEffect(() => {
-    setStockOutLoading(true);
-    const tomorrow = istDateAgo(-1);
-    Promise.all([
-      api.getOrders({ date: today() }),
-      api.getOrders({ date: tomorrow }),
-    ]).then(([todayOrders, tomorrowOrders]) => {
-      // Combine: today's orders + tomorrow morning demands
-      const ordersData = [
-        ...(todayOrders || []),
-        ...(tomorrowOrders || []).filter(d => d.demand_slot === "morning"),
-      ];
-      const manualOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
-      const issuedOrdersList = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
-      
-      // Build completedItems from issued orders
-      const completed = {};
-      
-      if (stockOutView === "bk") {
-        // BK raw materials from recipes — with unit conversion support.
-        // Example: demand "2 Batch Dosa Batter" → convert to 36 Kg → then compute raw materials.
-        const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
-        const foodItems = foodSection?.items || [];
-        // Consolidate demand across outlets, converted to base units (Kg for BK items)
-        const consolidatedKg = {}; // bkId → total Kg demanded
-        const originalDemand = {}; // bkId → { raw: number, unit: string, converted: true/false } for UI display
-        foodItems.forEach((item) => {
-          let totalRaw = 0;
-          manualOrders.forEach((o) => { totalRaw += normalizeUnit(item.id, o.items?.[item.id] || 0, o.items_units?.[item.id], item.unit); });
-          if (totalRaw === 0) return;
-          const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
-          consolidatedKg[item.id] = conv.qty; // e.g. 36 Kg
-          originalDemand[item.id] = { raw: totalRaw, unit: item.unit, baseQty: conv.qty, baseUnit: conv.unit, converted: conv.converted, itemName: item.name };
-        });
-        const rawReq = {};
-        Object.entries(consolidatedKg).forEach(([bkId, totalBaseQty]) => {
-          const recipe = RECIPES[bkId]; if (!recipe) return;
-          const batches = totalBaseQty / recipe.yieldQty;
-          recipe.ingredients.forEach((ing) => {
-            const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
-            if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg", inv_id: raw?.inv_id || null };
-            rawReq[ing.rawId].qty += ing.qty * batches;
-          });
-        });
-        // Also add items from ISSUED orders into rawReq (for display as struck through)
-        if (issuedOrdersList.length > 0) {
-          const issuedConsolidatedKg = {};
-          foodItems.forEach((item) => {
-            let totalRaw = 0;
-            issuedOrdersList.forEach((o) => { totalRaw += normalizeUnit(item.id, o.items?.[item.id] || 0, o.items_units?.[item.id], item.unit); });
-            if (totalRaw === 0) return;
-            const conv = convertToBase(totalRaw, item.unit, item.id, item.name);
-            issuedConsolidatedKg[item.id] = conv.qty;
-          });
-          Object.entries(issuedConsolidatedKg).forEach(([bkId, totalBaseQty]) => {
-            const recipe = RECIPES[bkId]; if (!recipe) return;
-            const batches = totalBaseQty / recipe.yieldQty;
-            recipe.ingredients.forEach((ing) => {
-              const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
-              if (!rawReq[ing.rawId]) rawReq[ing.rawId] = { name: raw?.name || ing.rawId, qty: 0, unit: raw?.unit || "Kg", inv_id: raw?.inv_id || null };
-              // Don't add qty — these are already issued, just need to show in the list
-              completed[ing.rawId] = true;
-            });
-          });
-        }
-        setCompletedItems(completed);
-        setStockOutData(rawReq);
-        setBkDemandDisplay(originalDemand);
-      } else {
-        // Direct items for specific outlet — with unit conversion.
-        // Example: outlet demands "1 Tin Fortune Oil" → deduct 15 Ltr from inventory.
-        const nonFoodSections = DEMAND_SECTIONS.filter((s) => s.id !== "food");
-        const outletOrders = manualOrders.filter((o) => o.outlet_id === stockOutView);
-        const directItems = {};
-        outletOrders.forEach((o) => {
-          nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
-            const qty = o.items?.[item.id] || 0;
-            const demandUnit = o.items_units?.[item.id] || item.unit;
-            if (qty > 0) {
-              const conv = convertToBase(qty, demandUnit, item.id, item.name);
-              if (!directItems[item.id]) {
-                directItems[item.id] = {
-                  name: item.name,
-                  qty: 0,           // accumulated in BASE unit (for inventory deduction)
-                  rawQty: 0,        // accumulated in ORIGINAL unit (for display)
-                  unit: conv.unit,  // base unit
-                  rawUnit: demandUnit, // original demand unit
-                  converted: conv.converted,
-                  factor: conv.factor,
-                  category: sec.titleHi,
-                };
-              }
-              directItems[item.id].qty += conv.qty;
-              directItems[item.id].rawQty += Number(qty);
-            }
-          }); });
-        });
-        setStockOutData(directItems);
-        setBkDemandDisplay({});
-        // Add items from issued orders for this outlet (for strikethrough display)
-        const issuedOutletOrders = issuedOrdersList.filter((o) => o.outlet_id === stockOutView);
-        if (issuedOutletOrders.length > 0) {
-          issuedOutletOrders.forEach((o) => {
-            nonFoodSections.forEach((sec) => { sec.items.forEach((item) => {
-              const qty = o.items?.[item.id] || 0;
-              const demandUnit = o.items_units?.[item.id] || item.unit;
-              if (qty > 0) {
-                const conv = convertToBase(qty, demandUnit, item.id, item.name);
-                if (!directItems[item.id]) {
-                  directItems[item.id] = { name: item.name, qty: 0, rawQty: 0, unit: conv.unit, rawUnit: demandUnit, converted: conv.converted, factor: conv.factor, category: sec.titleHi };
-                }
-                completed[item.id] = true;
-              }
-            }); });
-          });
-          setStockOutData({ ...directItems }); // re-set with issued items included
-        }
-        setCompletedItems(completed);
-      }
-    }).catch(() => setStockOutData(null)).finally(() => setStockOutLoading(false));
-  }, [stockOutView, items]);
+    setStockOutData({});
+    setBkDemandDisplay({});
+    setCompletedItems({});
+    setStockOutLoading(false);
+  }, [stockOutView]);
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -3063,115 +2951,18 @@ const Inventory = () => {
     finally { setSaving(false); }
   };
 
+  // Stock Out is a pure inventory operation — current_qty minus whatever's entered
+  // here, nothing else. No linkage to outlet demand or dispatch status.
   const submitStockOut = async () => {
     const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({ item_id, quantity }));
     if (entries.length === 0) return;
     setSaving(true);
     try {
       const result = await api.stockOut(entries, "issuance");
-      // Save audit: original calculated vs actual issued
-      if (Object.keys(originalReq).length > 0) {
-        const auditEntries = entries.map(({ item_id, quantity }) => ({
-          item_id,
-          item_name: items.find((i) => i.id === item_id)?.name || item_id,
-          calculated_qty: originalReq[item_id] || 0,
-          issued_qty: quantity,
-          variance: quantity - (originalReq[item_id] || 0),
-          date: today(),
-        }));
-        try { await api.saveIssuanceAudit(auditEntries); } catch (e) { console.error("Audit save failed:", e); }
-        // Mark orders as "issued" in database
-        for (const orderId of issuedForOrders) {
-          try { await api.updateOrderStatus(orderId, "issued"); } catch (e) { console.error("Status update failed:", e); }
-        }
-      }
       setStockOutWarning(result?.went_negative?.length > 0 ? result.went_negative : null);
-      setDraft({}); setOriginalReq({}); setIssuedForOrders([]); load(); setView("stock");
+      setDraft({}); setOriginalReq({}); load(); setView("stock");
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
-  };
-
-  const [issuedForOrders, setIssuedForOrders] = useState([]);
-
-  // Load raw material requisition from BK — PENDING orders only
-  const loadSmartStockOut = async () => {
-    try {
-      const tomorrow = istDateAgo(-1);
-      const [todayOrders, tomorrowOrders] = await Promise.all([
-        api.getOrders({ date: today() }),
-        api.getOrders({ date: tomorrow }),
-      ]);
-      const ordersData = [
-        ...(todayOrders || []),
-        ...(tomorrowOrders || []).filter(d => d.demand_slot === "morning"),
-      ];
-      const pendingOrders = ordersData.filter((d) => d.type === "manual" && d.items && (d.status === "submitted" || d.status === "received"));
-      const issuedOrders = ordersData.filter((d) => d.type === "manual" && d.items && d.status === "issued");
-
-      if (pendingOrders.length === 0 && issuedOrders.length === 0) {
-        alert("No demands for today.");
-        return;
-      }
-
-      const consolidated = {};
-      BK_ITEMS.forEach((bk) => {
-        consolidated[bk.id] = { total: 0 };
-        pendingOrders.forEach((o) => { consolidated[bk.id].total += normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); });
-      });
-      const rawReq = {};
-      Object.entries(consolidated).forEach(([bkId, data]) => {
-        const recipe = RECIPES[bkId];
-        if (!recipe || data.total === 0) return;
-        const batches = data.total / recipe.yieldQty;
-        recipe.ingredients.forEach((ing) => {
-          rawReq[ing.rawId] = (rawReq[ing.rawId] || 0) + ing.qty * batches;
-        });
-      });
-      // Match rawReq IDs to inventory item IDs and pre-fill draft
-      const newDraft = {};
-      const newOriginal = {};
-      Object.entries(rawReq).forEach(([rawId, qty]) => {
-        const raw = RAW_MATERIALS.find((r) => r.id === rawId);
-        if (!raw) return;
-        // Direct inventory item lookup via inv_id (DB-mapped)
-        const invItem = raw.inv_id ? items.find((i) => i.id === raw.inv_id) : null;
-        if (invItem) {
-          const rounded = Math.round(qty * 100) / 100;
-          newDraft[invItem.id] = rounded;
-          newOriginal[invItem.id] = rounded;
-        }
-      });
-      setDraft(newDraft);
-      setOriginalReq(newOriginal);
-      setRawReqData(rawReq);
-      setIssuedForOrders(pendingOrders.map((o) => o.id));
-      
-      // Calculate already-issued raw materials from issued orders (for strikethrough)
-      const alreadyIssued = {};
-      if (issuedOrders.length > 0) {
-        const issuedConsolidated = {};
-        BK_ITEMS.forEach((bk) => {
-          issuedConsolidated[bk.id] = { total: 0 };
-          issuedOrders.forEach((o) => { issuedConsolidated[bk.id].total += normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); });
-        });
-        Object.entries(issuedConsolidated).forEach(([bkId, data]) => {
-          const recipe = RECIPES[bkId];
-          if (!recipe || data.total === 0) return;
-          const batches = data.total / recipe.yieldQty;
-          recipe.ingredients.forEach((ing) => {
-            const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
-            if (!raw) return;
-            const invItem = raw.inv_id ? items.find((i) => i.id === raw.inv_id) : null;
-            if (invItem) alreadyIssued[ing.rawId] = true;
-          });
-        });
-      }
-      setCompletedItems(alreadyIssued);
-      
-      setView("stock_out");
-    } catch (e) {
-      alert("Failed to load requisition: " + e.message);
-    }
   };
 
   const saveThresholds = async () => {
@@ -3206,7 +2997,7 @@ const Inventory = () => {
     const count = Object.values(draft).filter((v) => v > 0).length;
     const hasPreFill = Object.keys(originalReq).length > 0;
     return (<div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); setOriginalReq({}); setPoMeta(null); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? (poMeta ? `📥 Receive ${poMeta.order_number}` : "📥 Stock In") : hasPreFill ? "📤 Smart Issue (from Requisition)" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => { setView("stock"); setDraft({}); setOriginalReq({}); setPoMeta(null); setItemSearch(""); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>{isIn ? (poMeta ? `📥 Receive ${poMeta.order_number}` : "📥 Stock In") : hasPreFill ? "📤 Smart Issue (from Requisition)" : "📤 Stock Out"}</div>{count > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: isIn ? "#F0FDF4" : "#FEF2F2", color: isIn ? "#16A34A" : "#DC2626", fontSize: 11, fontWeight: 700 }}>{count} items</span>}</div>
       {isIn && poMeta && (
         <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", marginBottom: 14, fontSize: 12, color: "#166534" }}>
           ✅ Receiving <strong>{poMeta.order_number}</strong> ({poMeta.total_items} items, pre-filled with ordered qty) — edit any quantity below to match what actually arrived, then submit. This marks the order received.
@@ -3217,8 +3008,9 @@ const Inventory = () => {
           ℹ️ Pre-filled from today's Raw Material Requisition. Edit quantities as needed — changes will be tracked in audit.
         </div>
       )}
+      <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search items…" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>
-      {filtered.map((item) => {
+      {filtered.filter((item) => !itemSearch.trim() || item.name.toLowerCase().includes(itemSearch.trim().toLowerCase())).map((item) => {
         const preFilled = originalReq[item.id];
         const isEdited = preFilled !== undefined && draft[item.id] !== preFilled;
         const qty = Number(draft[item.id]) || 0;
@@ -3382,12 +3174,12 @@ const Inventory = () => {
     {invSection === "stockout" && (<>
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {[{ id: "bk", label: "🏭 Kitchen", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
-          <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); setShowAddPanel(false); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+          <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); setShowAddPanel(true); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
         ))}
       </div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Raw materials for Kitchen" : `Direct items for ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
+          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Manual stock out — Kitchen" : `Manual stock out — ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
           {(() => {
             const mergedData = { ...(stockOutData || {}), ...extraItems };
             const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
@@ -3506,7 +3298,6 @@ const Inventory = () => {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, textDecoration: issued ? "line-through" : "none", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                       <span>{item.name}</span>
-                      {isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#EA580C", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Manual</span>}
                       {!isManual && isEdited && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#B45309", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Edited</span>}
                       {item.converted && !isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#2563EB", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Converted</span>}
                       {unitMismatch && <span title={`Inventory tracks in ${invItem.unit}, not ${item.unit}. Deduction may be off.`} style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#DC2626", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3, cursor: "help" }}>⚠ Unit Mismatch</span>}
@@ -3658,11 +3449,6 @@ const Inventory = () => {
               tickedIds.forEach(id => { c[id] = true; });
               return c;
             });
-            // Mark all related orders as "issued" so they don't show in stock out again
-            const orderIds = issuedForOrders || [];
-            for (const oid of orderIds) {
-              try { await api.updateOrderStatus(oid, "issued"); } catch (e) { console.error("Status update failed:", e); }
-            }
             setIssuedItems({}); setEditedQty({}); load();
           } catch (e) { alert("Error: " + e.message); }
           finally { setIssuing(false); }
