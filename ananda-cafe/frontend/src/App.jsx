@@ -2871,33 +2871,14 @@ const Inventory = () => {
   const [itemSearch, setItemSearch] = useState(""); // free-text search, Stock In/Out screen
   const [invSection, setInvSection] = useState("stockout"); // inventory, stockout
   const [stockInPrices, setStockInPrices] = useState({}); // { item_id: total_price }
-  const [issuedItems, setIssuedItems] = useState({}); // { rawId: true/false } — ticked for current issue
-  const [completedItems, setCompletedItems] = useState({}); // { rawId: true } — already issued, show as done
-  const [editedQty, setEditedQty] = useState({}); // { rawId: "edited value" }
-  const [issuing, setIssuing] = useState(false);
   const [editingItem, setEditingItem] = useState(null); // id of item being edited
   const [editQtyVal, setEditQtyVal] = useState("");
+  // Manual Stock Out — no auto-calculation from recipes or outlet demand. The store
+  // manager searches the full item list below, types the quantity physically taken
+  // out, and submits; stockOutView just labels which batch/destination it's for.
   const [stockOutView, setStockOutView] = useState("bk"); // bk, sec23, sec31, sec56, elan
-  const [stockOutData, setStockOutData] = useState(null);
-  const [stockOutLoading, setStockOutLoading] = useState(false);
-  const [bkDemandDisplay, setBkDemandDisplay] = useState({}); // BK view only: bkId → { raw, unit, baseQty, baseUnit, converted, itemName }
-  const [extraItems, setExtraItems] = useState({}); // manually added items: { tempId: { name, qty, unit, inv_id, manual: true } }
-  const [removedItems, setRemovedItems] = useState({}); // ids removed from view: { id: true }
-  const [addItemSearch, setAddItemSearch] = useState(""); // search text for add-item panel
-  const [addItemQty, setAddItemQty] = useState(""); // qty for item being added
-  const [showAddPanel, setShowAddPanel] = useState(true); // manual Stock Out — search is the primary way to add items, so keep it open
   const [poMeta, setPoMeta] = useState(null); // { id, order_number, total_items } — set when Stock In is receiving a specific PO
   const [stockOutWarning, setStockOutWarning] = useState(null); // items that went negative after the last stock-out
-
-  // Manual Stock Out — no auto-calculation from recipes or outlet demand.
-  // The store manager searches for whatever item they're physically taking
-  // out (via the + Add panel below) and enters the quantity themselves.
-  useEffect(() => {
-    setStockOutData({});
-    setBkDemandDisplay({});
-    setCompletedItems({});
-    setStockOutLoading(false);
-  }, [stockOutView]);
 
   const load = () => { setLoading(true); api.getInventory().then(setItems).catch(() => setItems([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -3174,289 +3155,44 @@ const Inventory = () => {
     {invSection === "stockout" && (<>
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
         {[{ id: "bk", label: "🏭 Kitchen", color: "#B45309" }, ...OUTLETS.map((o) => ({ id: o.id, label: "🏪 " + o.short, color: "#2563EB" }))].map((f) => (
-          <button key={f.id} onClick={() => { setStockOutView(f.id); setIssuedItems({}); setEditedQty({}); setExtraItems({}); setRemovedItems({}); setShowAddPanel(true); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
+          <button key={f.id} onClick={() => { setStockOutView(f.id); setDraft({}); setItemSearch(""); setSelCat(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: stockOutView === f.id ? 700 : 500, border: stockOutView === f.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: stockOutView === f.id ? f.color : "#fff", color: stockOutView === f.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{f.label}</button>
         ))}
       </div>
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Manual stock out — Kitchen" : `Manual stock out — ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
-          {(() => {
-            const mergedData = { ...(stockOutData || {}), ...extraItems };
-            const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
-            const tickedCount = visibleIds.filter((k) => issuedItems[k]).length;
-            const completedCount = Object.keys(completedItems).filter(k => completedItems[k] && mergedData[k]).length;
-            return visibleIds.length > 0 && <span style={{ fontSize: 11, color: completedCount > 0 ? "#16A34A" : "#DC2626", fontWeight: 700 }}>{completedCount}/{visibleIds.length} issued</span>;
-          })()}
-        </div>
-        {stockOutLoading && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
-        {/* BK demand summary — shows what demand triggered the raw material calc (with conversions) */}
-        {!stockOutLoading && stockOutView === "bk" && Object.keys(bkDemandDisplay).length > 0 && (
-          <div style={{ padding: "10px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A" }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📋 Demand Summary</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {Object.values(bkDemandDisplay).sort((a, b) => a.itemName.localeCompare(b.itemName)).map((d, i) => (
-                <span key={i} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#fff", border: "1px solid #FDE68A", color: "#92400E" }}>
-                  <strong>{d.itemName}</strong>{" "}
-                  <span style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>{d.raw} {d.unit}</span>
-                  {d.converted && (
-                    <span style={{ color: "#B45309", fontWeight: 600 }}> → {Math.round(d.baseQty * 100) / 100} {d.baseUnit}</span>
-                  )}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {/* Direct outlet conversion hint */}
-        {!stockOutLoading && stockOutView !== "bk" && stockOutData && Object.values(stockOutData).some((v) => v.converted) && (
-          <div style={{ padding: "8px 14px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", display: "flex", alignItems: "center", gap: 6 }}>
-            <span>🔄</span>
-            <span>Some items converted from demand unit to inventory base unit — see <strong>→</strong> arrows below</span>
-          </div>
-        )}
-        {/* Smart nudge: only appears when user has pending edits or manual additions */}
-        {!stockOutLoading && (() => {
-          const editCount = Object.keys(editedQty).length;
-          const manualCount = Object.keys(extraItems).filter((k) => !removedItems[k]).length;
-          if (editCount === 0 && manualCount === 0) return null;
-          const parts = [];
-          if (editCount > 0) parts.push(`${editCount} edit${editCount > 1 ? "s" : ""}`);
-          if (manualCount > 0) parts.push(`${manualCount} added`);
-          return (
-            <div style={{ padding: "8px 14px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", fontSize: 11, color: "#B45309", display: "flex", alignItems: "center", gap: 6 }}>
-              <span>💡</span>
-              <span><strong>{parts.join(" · ")}</strong> pending — changes save only when you tap <strong>Issue</strong> below</span>
-            </div>
-          );
-        })()}
-        {!stockOutLoading && (() => {
-          const mergedData = { ...(stockOutData || {}), ...extraItems };
-          const visibleEntries = Object.entries(mergedData).filter(([k]) => !removedItems[k]);
-          if (visibleEntries.length === 0) {
-            return <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items — use + Add below to add items manually</div>;
-          }
-          return (
-          <div>
-            {visibleEntries.sort((a, b) => a[1].name.localeCompare(b[1].name)).map(([id, item]) => {
-              const isManual = !!item.manual;
-              const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
-              const stock = invItem ? Number(invItem.current_qty) : null;
-
-              // Smart unit conversion: if recipe unit differs from inventory unit within same dimension,
-              // convert the qty to match inventory unit for accurate display and deduction.
-              // e.g., recipe says 0.2 Kg but inventory tracks in Gm → display 200 Gm
-              const getUnitFactor = (fromUnit, toUnit) => {
-                const f = String(fromUnit || "").toLowerCase();
-                const t = String(toUnit || "").toLowerCase();
-                if (f === t) return 1;
-                // Weight: Kg → Gm
-                if ((f === "kg") && (t === "gm" || t === "g" || t === "gram" || t === "grams")) return 1000;
-                // Weight: Gm → Kg
-                if ((f === "gm" || f === "g" || f === "gram" || f === "grams") && t === "kg") return 0.001;
-                // Volume: Ltr → Ml
-                if ((f === "ltr" || f === "liter" || f === "litre") && (t === "ml" || t === "milliliter")) return 1000;
-                // Volume: Ml → Ltr
-                if ((f === "ml" || f === "milliliter") && (t === "ltr" || t === "liter" || t === "litre")) return 0.001;
-                return 1; // incompatible or same — no conversion
-              };
-              const invUnit = invItem?.unit || item.unit;
-              const unitFactor = getUnitFactor(item.unit, invUnit);
-              const adjustedQty = typeof item.qty === "number" ? item.qty * unitFactor : item.qty;
-              const displayUnit = unitFactor !== 1 ? invUnit : item.unit;
-
-              const isLow = stock !== null && stock < adjustedQty;
-              const stockColor = stock === null ? "#BBB" : stock === 0 ? "#DC2626" : isLow ? "#DC2626" : "#16A34A";
-              const issued = issuedItems[id] || false;
-              const editQty = editedQty[id];
-              const displayQty = editQty !== undefined ? editQty : (typeof adjustedQty === "number" ? Math.round(adjustedQty * 100) / 100 : adjustedQty);
-              const isEdited = editQty !== undefined && Number(editQty) !== (typeof adjustedQty === "number" ? Math.round(adjustedQty * 100) / 100 : Number(adjustedQty));
-              // Unit mismatch warning: only show for truly incompatible units.
-              // Kg↔Gm and Ltr↔Ml are the same dimension — no warning needed.
-              const unitsCompatible = (a, b) => {
-                const na = String(a || "").toLowerCase();
-                const nb = String(b || "").toLowerCase();
-                if (na === nb) return true;
-                const weightUnits = new Set(["kg", "gm", "gram", "grams", "g"]);
-                const volumeUnits = new Set(["ltr", "liter", "litre", "ml", "milliliter"]);
-                if (weightUnits.has(na) && weightUnits.has(nb)) return true;
-                if (volumeUnits.has(na) && volumeUnits.has(nb)) return true;
-                return false;
-              };
-              const unitMismatch = invItem && item.unit && invItem.unit && !unitsCompatible(item.unit, invItem.unit);
-              const isDone = completedItems[id];
-              if (isDone) return (
-                <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: "#F0FDF4", opacity: 0.4 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: 6, background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span></span>
-                  <div style={{ flex: 1 }}><div style={{ fontSize: 12, fontWeight: 600, textDecoration: "line-through", color: "#999" }}>{item.name}</div></div>
-                  <span style={{ fontSize: 10, color: "#16A34A", fontWeight: 700 }}>ISSUED</span>
-                </div>
-              );
-              return (
-                <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #F0F0EC", background: issued ? "#F0FDF4" : isManual ? "#FFF7ED" : "transparent", opacity: issued ? 0.6 : 1 }}>
-                  <button onClick={() => setIssuedItems((p) => ({ ...p, [id]: !p[id] }))} style={{ width: 24, height: 24, borderRadius: 6, border: issued ? "2px solid #16A34A" : "2px solid #D0D0CC", background: issued ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
-                    {issued && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
-                  </button>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, textDecoration: issued ? "line-through" : "none", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                      <span>{item.name}</span>
-                      {!isManual && isEdited && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#B45309", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Edited</span>}
-                      {item.converted && !isManual && <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#2563EB", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3 }}>Converted</span>}
-                      {unitMismatch && <span title={`Inventory tracks in ${invItem.unit}, not ${item.unit}. Deduction may be off.`} style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", borderRadius: 3, background: "#DC2626", color: "#fff", textTransform: "uppercase", letterSpacing: 0.3, cursor: "help" }}>⚠ Unit Mismatch</span>}
-                    </div>
-                    {item.converted && !isManual && (
-                      <div style={{ fontSize: 9, color: "#2563EB", marginTop: 1, fontFamily: "'JetBrains Mono', monospace" }}>
-                        {item.rawQty} {item.rawUnit} → {Math.round(item.qty * 100) / 100} {item.unit}
-                      </div>
-                    )}
-                    {unitMismatch && (
-                      <div style={{ fontSize: 9, color: "#DC2626", marginTop: 1 }}>
-                        ⚠ Inventory unit: <strong>{invItem.unit}</strong> · demand base unit: <strong>{item.unit}</strong> — verify before issuing
-                      </div>
-                    )}
-                  </div>
-                  <div style={{ textAlign: "right", minWidth: 40, flexShrink: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: stockColor }}>{stock !== null ? stock : "—"}</div>
-                    <div style={{ fontSize: 9, color: "#999" }}>{displayUnit}</div>
-                  </div>
-                  <input type="number" inputMode="numeric" step="1" value={displayQty} onChange={(e) => setEditedQty((p) => ({ ...p, [id]: e.target.value }))} disabled={issued}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); const inputs = Array.from(document.querySelectorAll("[data-stockout-input]")); const idx = inputs.indexOf(e.target); if (idx < inputs.length - 1) inputs[idx + 1].focus(); } }}
-                    data-stockout-input
-                    style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309", background: issued ? "#F0FDF4" : "#fff" }} />
-                  <span style={{ fontSize: 10, color: "#999", width: 20, flexShrink: 0 }}>{displayUnit}</span>
-                  <button onClick={() => { setRemovedItems((p) => ({ ...p, [id]: true })); setIssuedItems((p) => { const c = { ...p }; delete c[id]; return c; }); setEditedQty((p) => { const c = { ...p }; delete c[id]; return c; }); if (isManual) { setExtraItems((p) => { const c = { ...p }; delete c[id]; return c; }); } }} title="Remove from list" style={{ width: 22, height: 22, borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 12, cursor: "pointer", padding: 0, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-                </div>
-              );
-            })}
-          </div>
-          );
-        })()}
-        {/* + Add Item panel */}
-        {!stockOutLoading && (
-          <div style={{ borderTop: "1px solid #E8E8E4", background: "#FAFAF8" }}>
-            {!showAddPanel ? (
-              <button onClick={() => setShowAddPanel(true)} style={{ width: "100%", padding: "14px 12px", border: "none", background: "#F0FDF4", fontSize: 13, fontWeight: 700, color: "#16A34A", cursor: "pointer", fontFamily: "inherit", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <span style={{ fontSize: 16 }}>＋</span> Add Extra Item / Override Qty
-              </button>
-            ) : (() => {
-              const q = addItemSearch.trim().toLowerCase();
-              const matches = q ? items.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 6) : [];
-              const exactMatch = matches.find((m) => m.name.toLowerCase() === q);
-              const mergedData = { ...(stockOutData || {}), ...extraItems };
-              const alreadyAdded = (invId) => Object.values(mergedData).some((v) => !removedItems[Object.keys(mergedData).find((k) => mergedData[k] === v)] && v.inv_id === invId);
-              const addFromInventory = (inv) => {
-                const tempId = `manual_${Date.now()}_${inv.id}`;
-                setExtraItems((p) => ({ ...p, [tempId]: { name: inv.name, qty: Number(addItemQty) || 1, unit: inv.unit, inv_id: inv.id, manual: true } }));
-                setAddItemSearch(""); setAddItemQty(""); setShowAddPanel(false);
-              };
-              const addAsFreeText = () => {
-                if (!addItemSearch.trim()) return;
-                const tempId = `manual_${Date.now()}_freetext`;
-                setExtraItems((p) => ({ ...p, [tempId]: { name: addItemSearch.trim(), qty: Number(addItemQty) || 1, unit: "", inv_id: null, manual: true } }));
-                setAddItemSearch(""); setAddItemQty(""); setShowAddPanel(false);
-                alert("⚠️ Added as free-text (no inventory match). Stock will NOT be deducted for this item — please add it to Inventory SKUs and re-issue.");
-              };
-              return (
-                <div style={{ padding: "10px 12px" }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: matches.length > 0 || (q && !exactMatch) ? 8 : 0 }}>
-                    <input autoFocus value={addItemSearch} onChange={(e) => setAddItemSearch(e.target.value)} placeholder="Search inventory…" style={{ flex: 1, padding: "7px 10px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-                    <input type="number" inputMode="numeric" min="0" step="0.01" value={addItemQty} onChange={(e) => setAddItemQty(e.target.value)} placeholder="Qty" style={{ width: 60, padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }} />
-                    <button onClick={() => { setShowAddPanel(false); setAddItemSearch(""); setAddItemQty(""); }} style={{ padding: "7px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>✕</button>
-                  </div>
-                  {q && matches.length > 0 && (
-                    <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #E0E0DC", overflow: "hidden" }}>
-                      {matches.map((inv) => {
-                        const used = alreadyAdded(inv.id);
-                        return (
-                          <button key={inv.id} onClick={() => !used && addFromInventory(inv)} disabled={used} style={{ width: "100%", padding: "8px 10px", border: "none", borderBottom: "1px solid #F5F5F3", background: used ? "#F5F5F3" : "#fff", textAlign: "left", cursor: used ? "not-allowed" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 8, opacity: used ? 0.5 : 1 }}>
-                            <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{inv.name}</span>
-                            <span style={{ fontSize: 10, color: "#999" }}>{inv.category}</span>
-                            <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: Number(inv.current_qty) === 0 ? "#DC2626" : "#16A34A" }}>{inv.current_qty} {inv.unit}</span>
-                            {used && <span style={{ fontSize: 9, color: "#999" }}>added</span>}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {q && matches.length === 0 && (
-                    <button onClick={addAsFreeText} style={{ width: "100%", padding: "9px 10px", borderRadius: 8, border: "1px dashed #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
-                      + Add "{addItemSearch}" as new item (free-text — won't deduct stock)
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
-        )}
-      </div>
-      {/* Issue button — sticky at bottom, only issues ticked items */}
       {(() => {
-        const mergedData = { ...(stockOutData || {}), ...extraItems };
-        const visibleIds = Object.keys(mergedData).filter((k) => !removedItems[k]);
-        if (visibleIds.length === 0) return null;
-        const tickedIds = visibleIds.filter((k) => issuedItems[k]);
-        const tickedCount = tickedIds.length;
-        return (
-        <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={async () => {
-          if (tickedCount === 0) { alert("Tick items to issue first"); return; }
-          // Build entries + per-entry source tracking
-          const rawEntries = tickedIds.map((id) => {
-            const item = mergedData[id];
-            if (!item) return null;
-            const calcQty = typeof item.qty === "number" ? Math.round(item.qty * 100) / 100 : Number(item.qty);
-            const qty = editedQty[id] !== undefined ? Number(editedQty[id]) : calcQty;
-            const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
-            if (!invItem || qty <= 0) return null;
-            // Determine source: manual (added by user), edited (recipe qty changed), recipe (unchanged)
-            const isManual = !!item.manual;
-            const isEdited = !isManual && editedQty[id] !== undefined && Number(editedQty[id]) !== calcQty;
-            const source = isManual ? "manual" : isEdited ? "edited" : "recipe";
-            return { item_id: invItem.id, quantity: qty, _calc: calcQty, _name: invItem.name, _source: source };
-          }).filter(Boolean);
-          if (rawEntries.length === 0) { alert("No matching inventory items found. Free-text items are skipped until added to Inventory SKUs."); return; }
-          // Warn if any free-text items were ticked but have no inv_id match
-          const skippedFreeText = tickedIds.filter((id) => {
-            const item = mergedData[id];
-            if (!item || !item.manual) return false;
-            const invItem = item.inv_id ? items.find((i) => i.id === item.inv_id) : items.find((i) => i.demand_item_id === id);
-            return !invItem;
-          });
-          if (skippedFreeText.length > 0) {
-            if (!confirm(`${skippedFreeText.length} free-text item(s) will NOT be deducted from inventory (no SKU match). Continue with the rest?`)) return;
-          }
-          const entries = rawEntries.map(({ item_id, quantity }) => ({ item_id, quantity }));
-          setIssuing(true);
-          try {
-            await api.stockOut(entries, "issuance");
-            const auditEntries = rawEntries.map(({ item_id, quantity, _calc, _name, _source }) => ({
-              item_id,
-              item_name: _name,
-              calculated_qty: _calc,
-              issued_qty: quantity,
-              variance: quantity - _calc,
-              source: _source,
-              date: today(),
-            }));
-            try { await api.saveIssuanceAudit(auditEntries); } catch (e) {}
-            const manualCount = rawEntries.filter((e) => e._source === "manual").length;
-            const editedCount = rawEntries.filter((e) => e._source === "edited").length;
-            let msg = `✅ ${entries.length} items issued from inventory`;
-            if (manualCount > 0) msg += ` (${manualCount} manual)`;
-            if (editedCount > 0) msg += ` (${editedCount} edited)`;
-            alert(msg);
-            // Mark issued items as completed (strikethrough)
-            setCompletedItems(p => {
-              const c = { ...p };
-              tickedIds.forEach(id => { c[id] = true; });
-              return c;
-            });
-            setIssuedItems({}); setEditedQty({}); load();
-          } catch (e) { alert("Error: " + e.message); }
-          finally { setIssuing(false); }
-        }} disabled={issuing || tickedCount === 0} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: issuing || tickedCount === 0 ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: issuing || tickedCount === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-          {issuing ? "⏳ Issuing..." : tickedCount === 0 ? "✅ Tick items to issue" : `📤 Issue ${tickedCount} items — Deduct from Inventory`}
-        </button>
+        const stockOutCount = Object.values(draft).filter((v) => v > 0).length;
+        const stockOutSearched = filtered.filter((item) => !itemSearch.trim() || item.name.toLowerCase().includes(itemSearch.trim().toLowerCase()));
+        return (<div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "#888" }}>{stockOutView === "bk" ? "Manual stock out — Kitchen" : `Manual stock out — ${OUTLETS.find((o) => o.id === stockOutView)?.name || stockOutView}`}</span>
+            {stockOutCount > 0 && <span style={{ fontSize: 11, color: "#DC2626", fontWeight: 700 }}>{stockOutCount} items</span>}
+          </div>
+          <div style={{ padding: "10px 14px 0" }}>
+            <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search items…" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+            <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+              <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>
+              {categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}
+            </div>
+          </div>
+          {stockOutSearched.length === 0 && <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items match</div>}
+          <div style={{ padding: "0 10px 10px" }}>
+            {stockOutSearched.map((item) => (
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
+                  <div style={{ fontSize: 10, color: "#999" }}>{item.current_qty} {item.unit} in stock</div>
+                </div>
+                <input type="number" inputMode="numeric" min="0" step="0.01" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+                <span style={{ fontSize: 9, color: "#999", width: 20 }}>{item.unit}</span>
+              </div>
+            ))}
+          </div>
         </div>);
       })()}
+      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={submitStockOut} disabled={saving || Object.values(draft).filter((v) => v > 0).length === 0} style={{ width: "100%", padding: "14px", borderRadius: 12, border: "none", background: saving || Object.values(draft).filter((v) => v > 0).length === 0 ? "#D0D0CC" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving || Object.values(draft).filter((v) => v > 0).length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          {saving ? "⏳ Issuing..." : `📤 Issue Stock (${Object.values(draft).filter((v) => v > 0).length} items) — Deduct from Inventory`}
+        </button>
+      </div>
     </>)}
   </div>);
 };
