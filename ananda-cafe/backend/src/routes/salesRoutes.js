@@ -3515,15 +3515,15 @@ router.post('/purchase-orders', async (req, res) => {
     // Store managers generate challans day-to-day; owner-only here was blocking the
     // main use case entirely, not just the RM-requirement facilitator above.
     if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
-    const { items, notes, created_by } = req.body;
-    const today = todayIST();
+    const { items, notes, created_by, date } = req.body;
+    const orderDate = date || todayIST();
     const { data: existing } = await supabase.from('purchase_orders')
-      .select('id').eq('date', today);
+      .select('id').eq('date', orderDate);
     const seq = (existing?.length || 0) + 1;
-    const orderNumber = `PO-${today}-${String(seq).padStart(3, '0')}`;
+    const orderNumber = `PO-${orderDate}-${String(seq).padStart(3, '0')}`;
     const totalItems = Object.keys(items || {}).length;
     const { data, error } = await supabase.from('purchase_orders').insert({
-      order_number: orderNumber, date: today, status: 'pending',
+      order_number: orderNumber, date: orderDate, status: 'pending',
       items: items || {}, total_items: totalItems, notes, created_by,
     }).select('*').single();
     if (error) throw error;
