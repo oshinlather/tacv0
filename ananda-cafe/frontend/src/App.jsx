@@ -2833,6 +2833,7 @@ const DriverChallans = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openOrder, setOpenOrder] = useState(null);
+  const [slotFilter, setSlotFilter] = useState("all"); // all | morning | evening
   useEffect(() => {
     setLoading(true);
     api.getOrders({ date: today(), status: "fulfilled" })
@@ -2879,10 +2880,16 @@ const DriverChallans = () => {
     </div>);
   }
 
+  const visibleOrders = orders.filter((o) => slotFilter === "all" || o.demand_slot === slotFilter);
   return (<div>
     <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Today's dispatched challans — tap one to see the items</div>
-    {orders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No challans dispatched today yet</div>}
-    {orders.map((order) => {
+    <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      {[{ id: "all", label: "All" }, { id: "morning", label: "🌅 Morning" }, { id: "evening", label: "🌙 Evening" }].map((f) => (
+        <button key={f.id} onClick={() => setSlotFilter(f.id)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: slotFilter === f.id ? "none" : "1px solid #E0E0DC", background: slotFilter === f.id ? "#1A1A1A" : "#fff", color: slotFilter === f.id ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{f.label}</button>
+      ))}
+    </div>
+    {visibleOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>{orders.length === 0 ? "No challans dispatched today yet" : "Nothing for this filter"}</div>}
+    {visibleOrders.map((order) => {
       const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
       const itemCount = Object.keys(order.items || {}).filter((id) => (order.items[id] || 0) > 0).length;
       return (
