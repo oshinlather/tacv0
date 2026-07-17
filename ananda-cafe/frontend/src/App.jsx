@@ -398,7 +398,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -411,7 +411,7 @@ const UsersPanel = () => {
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <input type="tel" placeholder="Phone (10 digits)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }].map(r => (
+        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }].map(r => (
           <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
         ))}
       </div>
@@ -2815,6 +2815,192 @@ const Dispatch = () => {
       </div>)}
     </div>
   );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  DRIVER PORTAL — two tabs, kept deliberately simple (large touch targets, no
+//  nested menus) since drivers aren't expected to be comfortable with the rest
+//  of the app's density.
+//  1. Dispatched Challans — read-only, today's fulfilled demands, item comparison.
+//  2. Vegetables — today's Vegetable purchase order; driver enters what they
+//     actually bought (qty may differ from demanded) and the price paid, with a
+//     live per-unit price shown as they type. Saved via PATCH on the purchase
+//     order's own items (bought_qty/total_price) — a metadata update only, it
+//     never touches inventory_stock, so it's safe to fill in over the course of
+//     the day without worrying about "receiving" semantics.
+// ═════════════════════════════════════════════════════════════════════════════
+const DriverChallans = () => {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openOrder, setOpenOrder] = useState(null);
+  useEffect(() => {
+    setLoading(true);
+    api.getOrders({ date: today(), status: "fulfilled" })
+      .then((d) => setOrders((d || []).filter((o) => o.type === "manual")))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const getName = (id) => getBk(id);
+  const getUnit = (id) => BK_ITEMS.find((b) => b.id === id)?.unit || "";
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>⏳ Loading...</div>;
+
+  if (openOrder) {
+    const order = openOrder;
+    const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+    const demanded = order.items || {};
+    const dispatched = order.dispatch_items || demanded;
+    const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <BackBtn onClick={() => setOpenOrder(null)} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 17, fontWeight: 800 }}>{outlet?.name || order.outlet_id}</div>
+          <div style={{ fontSize: 12, color: "#999" }}>{order.date} · {allIds.length} items</div>
+        </div>
+      </div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        {allIds.map((id) => {
+          const dem = demanded[id] || 0;
+          const disp = dispatched[id] || 0;
+          const short = disp < dem;
+          return (
+            <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderBottom: "1px solid #F0F0EC" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600 }}>{getName(id)}</div>
+                <div style={{ fontSize: 11, color: "#999" }}>{getUnit(id)}{short ? ` · demanded ${dem}` : ""}</div>
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: short ? "#DC2626" : "#16A34A" }}>{disp}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>);
+  }
+
+  return (<div>
+    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Today's dispatched challans — tap one to see the items</div>
+    {orders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No challans dispatched today yet</div>}
+    {orders.map((order) => {
+      const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+      const itemCount = Object.keys(order.items || {}).filter((id) => (order.items[id] || 0) > 0).length;
+      return (
+        <div key={order.id} onClick={() => setOpenOrder(order)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>{outlet?.name || order.outlet_id}</div>
+            <div style={{ fontSize: 12, color: "#999" }}>{itemCount} items · {order.demand_slot === "morning" ? "🌅 Morning" : "🌙 Evening"}</div>
+          </div>
+          <span style={{ fontSize: 22, color: "#CCC" }}>→</span>
+        </div>
+      );
+    })}
+  </div>);
+};
+
+const DriverVegetables = () => {
+  const [pos, setPos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [draftQty, setDraftQty] = useState({});
+  const [draftPrice, setDraftPrice] = useState({});
+  const [saving, setSaving] = useState(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getPurchaseOrders({ status: "pending", limit: 30 })
+      .then((d) => setPos((d || []).filter((po) => po.date === today() && po.notes === "🥬 Vegetables")))
+      .catch(() => setPos([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const saveItem = async (po, id) => {
+    const qty = Number(draftQty[id] ?? po.items[id].bought_qty ?? po.items[id].order_qty) || 0;
+    const price = Number(draftPrice[id] ?? po.items[id].total_price ?? 0) || 0;
+    if (qty <= 0 || price <= 0) { alert("Enter both quantity and price"); return; }
+    setSaving(id);
+    try {
+      const updatedItems = { ...po.items, [id]: { ...po.items[id], bought_qty: qty, total_price: price } };
+      await api.updatePurchaseOrder(po.id, { items: updatedItems });
+      setPos((prev) => prev.map((p) => (p.id === po.id ? { ...p, items: updatedItems } : p)));
+      setEditingId(null);
+      setDraftQty((p) => { const c = { ...p }; delete c[id]; return c; });
+      setDraftPrice((p) => { const c = { ...p }; delete c[id]; return c; });
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(null); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>⏳ Loading...</div>;
+  if (pos.length === 0) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No vegetable order for today yet</div>;
+
+  return (<div>
+    {pos.map((po) => {
+      const items = Object.entries(po.items || {});
+      const doneCount = items.filter(([, it]) => it.total_price > 0).length;
+      return (
+        <div key={po.id} style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#888" }}>🥬 Today's Vegetable Order</div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: doneCount === items.length ? "#16A34A" : "#B45309" }}>{doneCount}/{items.length} priced</div>
+          </div>
+          {items.map(([id, item]) => {
+            const savedDone = item.total_price > 0;
+            const inEdit = editingId === id || !savedDone;
+            if (!inEdit) {
+              const savedPerUnit = item.bought_qty > 0 ? Math.round((item.total_price / item.bought_qty) * 100) / 100 : 0;
+              return (
+                <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 12, padding: "14px 16px", marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>✅ {item.name}</div>
+                    <div style={{ fontSize: 12, color: "#16A34A", marginTop: 2 }}>{item.bought_qty} {item.unit} for ₹{item.total_price} · ₹{savedPerUnit}/{item.unit}</div>
+                  </div>
+                  <button onClick={() => setEditingId(id)} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#fff", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                </div>
+              );
+            }
+            const q = draftQty[id] ?? item.bought_qty ?? item.order_qty;
+            const pr = draftPrice[id] ?? item.total_price ?? "";
+            const perUnit = q > 0 && pr > 0 ? Math.round((pr / q) * 100) / 100 : 0;
+            return (
+              <div key={id} style={{ background: "#fff", border: "2px solid #16A34A", borderRadius: 12, padding: "14px 16px", marginBottom: 8 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{item.name}</div>
+                <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>Demanded: {item.order_qty} {item.unit}</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: "#999", marginBottom: 3 }}>Qty bought ({item.unit})</div>
+                    <input type="number" inputMode="decimal" value={q} onChange={(e) => setDraftQty((p) => ({ ...p, [id]: e.target.value }))}
+                      style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 800, boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: "#999", marginBottom: 3 }}>Price paid (₹)</div>
+                    <input type="number" inputMode="decimal" value={pr} onChange={(e) => setDraftPrice((p) => ({ ...p, [id]: e.target.value }))} placeholder="₹0"
+                      style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#16A34A", boxSizing: "border-box" }} />
+                  </div>
+                </div>
+                {perUnit > 0 && <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: "#2563EB", marginBottom: 10 }}>≈ ₹{perUnit} / {item.unit}</div>}
+                <button onClick={() => saveItem(po, id)} disabled={saving === id || !(Number(q) > 0) || !(Number(pr) > 0)} style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                  {saving === id ? "⏳ Saving..." : "💾 Save"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      );
+    })}
+  </div>);
+};
+
+const DriverPortal = () => {
+  const [tab, setTab] = useState("challans");
+  return (<div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+      <button onClick={() => setTab("challans")} style={{ flex: 1, padding: "18px 10px", borderRadius: 14, border: tab === "challans" ? "none" : "1px solid #E8E8E4", background: tab === "challans" ? "#1A1A1A" : "#fff", color: tab === "challans" ? "#fff" : "#888", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>🚚<br />Dispatched Challans</button>
+      <button onClick={() => setTab("veg")} style={{ flex: 1, padding: "18px 10px", borderRadius: 14, border: tab === "veg" ? "none" : "1px solid #E8E8E4", background: tab === "veg" ? "#16A34A" : "#fff", color: tab === "veg" ? "#fff" : "#888", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>🥬<br />Vegetables</button>
+    </div>
+    {tab === "challans" && <DriverChallans />}
+    {tab === "veg" && <DriverVegetables />}
+  </div>);
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -8374,7 +8560,7 @@ export default function AnandaCafe() {
     try {
       const params = new URLSearchParams(window.location.search);
       const role = params.get("role");
-      if (role === "outlet" || role === "store" || role === "owner") return role;
+      if (role === "outlet" || role === "store" || role === "owner" || role === "driver") return role;
     } catch (e) {}
     return null;
   });
@@ -8383,7 +8569,7 @@ export default function AnandaCafe() {
     try {
       const params = new URLSearchParams(window.location.search);
       const role = params.get("role");
-      if (role === "outlet" || role === "store" || role === "owner") return role;
+      if (role === "outlet" || role === "store" || role === "owner" || role === "driver") return role;
     } catch (e) {}
     return "launcher";
   });
@@ -8416,6 +8602,7 @@ export default function AnandaCafe() {
       if (currentUser.role === "owner") setApp("owner");
       else if (currentUser.role === "store_mgr") setApp("store");
       else if (currentUser.role === "outlet_mgr") setApp("outlet");
+      else if (currentUser.role === "driver") setApp("driver");
     }
   }, [currentUser]);
 
@@ -8480,7 +8667,7 @@ export default function AnandaCafe() {
   </div></div>);
 
   if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><img src="/logo.png" alt="The Ananda Cafe" style={{ width: 80, height: 80, borderRadius: "50%", marginBottom: 12, objectFit: "cover" }} /><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>The Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
-    {[{ id: "owner", icon: "👑", title: "Owner Dashboard", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "store", icon: "📦", title: "Base Kitchen Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div></div></button>))}
+    {[{ id: "owner", icon: "👑", title: "Owner Dashboard", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "store", icon: "📦", title: "Base Kitchen Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "driver", icon: "🚚", title: "Driver Portal", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div></div></button>))}
   </div></div>);
 
   if (app === "owner") return (<div style={PAGE}>{FONT}
@@ -8622,6 +8809,12 @@ export default function AnandaCafe() {
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "master" && <MasterData hideRecipes />}
+    </div>
+  </div>);
+  if (app === "driver") return (<div style={PAGE}>{FONT}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>🚚 Driver Portal</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "20px 18px 40px" }}>
+      <DriverPortal />
     </div>
   </div>);
   return null;

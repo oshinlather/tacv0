@@ -3489,7 +3489,8 @@ router.get('/rm-order-config/suggest', async (req, res) => {
 
 router.get('/purchase-orders', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    // Drivers read this to find their vegetable order for the day (see PATCH below).
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'driver')) return;
     const { status, limit } = req.query;
     let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
@@ -3533,6 +3534,10 @@ router.post('/purchase-orders', async (req, res) => {
 
 router.patch('/purchase-orders/:id', async (req, res) => {
   try {
+    // Was unguarded. Drivers use this to record bought_qty/total_price per item on
+    // their vegetable order (a metadata-only update to purchase_orders.items — it
+    // never touches inventory_stock, unlike the actual Stock-In/receive flow).
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'driver')) return;
     const updates = {};
     if (req.body.status !== undefined) updates.status = req.body.status;
     if (req.body.items !== undefined) updates.items = req.body.items;
