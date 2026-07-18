@@ -8731,6 +8731,14 @@ export default function AnandaCafe() {
     }
   }, [currentUser]);
 
+  // Outlet managers and drivers are locked to their own module — no back button, no
+  // launcher, and no reaching another module via a stray setApp call or a hand-typed
+  // ?role= URL param (that param is meant for owner testing/oversight only). This
+  // overrides whatever `app` is currently set to for those two roles; owner and
+  // store_mgr are unaffected and can still use ?role= to preview other views.
+  const lockedApp = currentUser?.role === "driver" ? "driver" : currentUser?.role === "outlet_mgr" ? "outlet" : null;
+  const effectiveApp = lockedApp || app;
+
   // Load master data from DB on startup — updates in-memory arrays
   useEffect(() => {
     Promise.all([
@@ -8791,11 +8799,11 @@ export default function AnandaCafe() {
     </div>
   </div></div>);
 
-  if (app === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><img src="/logo.png" alt="The Ananda Cafe" style={{ width: 80, height: 80, borderRadius: "50%", marginBottom: 12, objectFit: "cover" }} /><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>The Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
+  if (effectiveApp === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><img src="/logo.png" alt="The Ananda Cafe" style={{ width: 80, height: 80, borderRadius: "50%", marginBottom: 12, objectFit: "cover" }} /><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>The Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "store", icon: "📦", title: "Base Kitchen Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "driver", icon: "🚚", title: "Driver Portal", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div></div></button>))}
   </div></div>);
 
-  if (app === "owner") return (<div style={PAGE}>{FONT}
+  if (effectiveApp === "owner") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
@@ -8918,8 +8926,8 @@ export default function AnandaCafe() {
     </div>
   </div>);
 
-  if (app === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={currentUser?.role === "outlet_mgr" ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
-  if (app === "store") return (<div style={PAGE}>{FONT}
+  if (effectiveApp === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={currentUser?.role === "outlet_mgr" ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
+  if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
@@ -8936,8 +8944,8 @@ export default function AnandaCafe() {
       {storeView === "master" && <MasterData hideRecipes />}
     </div>
   </div>);
-  if (app === "driver") return (<div style={PAGE}>{FONT}
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>🚚 Driver Portal</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
+  if (effectiveApp === "driver") return (<div style={PAGE}>{FONT}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{currentUser?.role !== "driver" && !urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>🚚 Driver Portal</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "20px 18px 40px" }}>
       <DriverPortal />
     </div>
