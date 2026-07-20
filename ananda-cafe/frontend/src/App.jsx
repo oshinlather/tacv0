@@ -5461,13 +5461,21 @@ const OutletMgr = ({ onBack }) => {
   };
   const [draftUnits, setDraftUnits] = useState({}); // { item_id: unit } — only set when manager picks something other than default
   const [closingUnits, setClosingUnits] = useState({});
+  // Closing stock is reported by leftover weight/volume, not whole containers — e.g. Desi
+  // Ghee gets portioned into a kitchen vessel, so a manager reports "8 Kg" left, not
+  // "0.5 Tin". Defaulting the closing-stock picker to Tin (the demand/order unit) meant a
+  // manager who didn't notice and flip the tiny dropdown had their Kg figure silently read
+  // as Tins — a 15x inflation that fed straight into the next day's consumed-material P&L
+  // (e.g. Desi Ghee 8 -> 120). This map overrides just the closing-stock default; ordering
+  // still defaults to the container unit since outlets do order whole Tins from BK.
+  const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Ltr" };
   // Renders either a plain unit label (single unit) or a dropdown (item has an alternate
   // unit via unit_conversions, e.g. Desi Ghee: Tin or Kg)
-  const UnitPicker = ({ itemId, defaultUnit, unitsState, setUnitsState }) => {
+  const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState }) => {
     const options = getUnitOptions(itemId, defaultUnit);
     if (options.length < 2) return <span style={{ fontSize: 10, color: "#999", width: 28 }}>{defaultUnit}</span>;
     return (
-      <select value={unitsState[itemId] || defaultUnit} onChange={(e) => setUnitsState((p) => ({ ...p, [itemId]: e.target.value }))}
+      <select value={unitsState[itemId] || initialUnit || defaultUnit} onChange={(e) => setUnitsState((p) => ({ ...p, [itemId]: e.target.value }))}
         style={{ fontSize: 10, color: "#2563EB", width: 48, border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", padding: "2px 1px", fontFamily: "inherit", fontWeight: 600 }}>
         {options.map((u) => <option key={u} value={u}>{u}</option>)}
       </select>
@@ -5532,8 +5540,16 @@ const OutletMgr = ({ onBack }) => {
     setSaving(true); setErr(null);
     try {
       if (type === "closing") {
-        // Only send unit overrides for items actually filled in this submission
-        const closingItemsUnits = Object.fromEntries(Object.entries(closingUnits).filter(([id]) => closing[`cs_${id}`] !== undefined && closing[`cs_${id}`] !== ""));
+        // Send unit overrides for items actually filled in this submission — either the
+        // manager's explicit pick, or the closing-stock-specific default (see
+        // CLOSING_STOCK_UNIT_DEFAULTS) for items reported by weight rather than container.
+        const closingItemsUnits = Object.fromEntries(
+          Object.keys(closing)
+            .filter((csId) => closing[csId] !== undefined && closing[csId] !== "")
+            .map((csId) => csId.replace(/^cs_/, ""))
+            .filter((id) => closingUnits[id] || CLOSING_STOCK_UNIT_DEFAULTS[id])
+            .map((id) => [id, closingUnits[id] || CLOSING_STOCK_UNIT_DEFAULTS[id]])
+        );
         const result = await api.submitClosingStock({ outlet_id: outlet, items: closing, items_units: closingItemsUnits, date: selectedDate });
         const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
         setSubs((p) => [e, ...p]); setLast(e);
@@ -6201,7 +6217,7 @@ const OutletMgr = ({ onBack }) => {
       <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < arr.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
         <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-        <UnitPicker itemId={bareId} defaultUnit={item.unit} unitsState={closingUnits} setUnitsState={setClosingUnits} />
+        <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} />
       </div>); };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
