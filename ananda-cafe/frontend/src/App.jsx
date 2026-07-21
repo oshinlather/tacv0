@@ -4692,6 +4692,14 @@ const OutletActivityGrid = ({ mode }) => {
   const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
   const [bkItems, setBkItems] = useState([]); // inventory_items master — only needed for the BK tab
   useEffect(() => { if (isClosing) api.getInventory().then((d) => setBkItems(d || [])).catch(() => setBkItems([])); }, [isClosing]);
+  const isWastage = mode === "wastage";
+  // Flat, priced wastage rows for every outlet this month — one fetch covers both the
+  // all-outlets/per-outlet cost summary and the selected outlet's item-level cost column.
+  const [wastageCost, setWastageCost] = useState([]);
+  useEffect(() => {
+    if (!isWastage || !selMonth) return;
+    api.getWastageCost(`${selMonth}-01`).then((d) => setWastageCost((d || []).filter((r) => r.date.startsWith(selMonth)))).catch(() => setWastageCost([]));
+  }, [isWastage, selMonth]);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — only committed to
@@ -4824,11 +4832,25 @@ const OutletActivityGrid = ({ mode }) => {
   const modeLabel = isClosing ? "closing stock" : isDemand ? "demand" : "wastage";
   const modeTitle = isClosing ? "📊 Closing Stock" : isDemand ? "📋 Demand" : "🗑️ Wastage";
 
+  // Wastage cost — all-outlets total, per-outlet breakdown, and per-item cost for the
+  // selected outlet, all derived from the one month-wide fetch above.
+  const wastageAllOutletsTotal = useMemo(() => wastageCost.reduce((s, r) => s + (r.cost || 0), 0), [wastageCost]);
+  const wastageByOutlet = useMemo(() => {
+    const m = {};
+    wastageCost.forEach((r) => { m[r.outlet_id] = (m[r.outlet_id] || 0) + (r.cost || 0); });
+    return m;
+  }, [wastageCost]);
+  const wastageItemCostMap = useMemo(() => {
+    const m = {};
+    wastageCost.filter((r) => r.outlet_id === selOutlet).forEach((r) => { m[r.item_id] = (m[r.item_id] || 0) + (r.cost || 0); });
+    return m;
+  }, [wastageCost, selOutlet]);
+
   const downloadCSV = () => {
-    const headers = ["Item", "Unit", ...days.map((ds) => ds.slice(5)), "Total"];
+    const headers = ["Item", "Unit", ...days.map((ds) => ds.slice(5)), "Total", ...(isWastage ? ["Cost (₹)"] : [])];
     const rows = items.map((i) => {
       const perDay = days.map((ds) => Math.round(((dayWise[i.id] || {})[ds] || 0) * 100) / 100);
-      return [i.name, i.unit, ...perDay, Math.round(i.total * 100) / 100];
+      return [i.name, i.unit, ...perDay, Math.round(i.total * 100) / 100, ...(isWastage ? [Math.round(wastageItemCostMap[i.id] || 0)] : [])];
     });
     exportCSV(headers, rows, `${mode}_${selOutlet}_${selMonth}.csv`);
   };
@@ -4868,6 +4890,23 @@ const OutletActivityGrid = ({ mode }) => {
         </div>
       )}
 
+      {isWastage && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ background: "#FEF2F2", borderRadius: 12, border: "1px solid #FECACA", padding: "14px 16px", textAlign: "center", marginBottom: 10 }}>
+            <div style={{ fontSize: 10, color: "#991B1B", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Wasted — All Outlets · {monthLabel}</div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "#DC2626", fontFamily: "'JetBrains Mono', monospace" }}>{fmt(wastageAllOutletsTotal)}</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 8 }}>
+            {OUTLETS.map((o) => (
+              <div key={o.id} onClick={() => { setSelOutlet(o.id); setDrafts({}); setEditMode(false); }} style={{ background: "#fff", borderRadius: 10, border: selOutlet === o.id ? "2px solid #DC2626" : "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{o.short}</div>
+                <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{fmt(wastageByOutlet[o.id] || 0)}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
 
       {!loading && (
@@ -4896,14 +4935,16 @@ const OutletActivityGrid = ({ mode }) => {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead><tr style={{ background: "#FAFAF8" }}>
                   <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, width: 150, minWidth: 150 }}>Item</th>
-                  <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>Total</th>
+                  <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 80, minWidth: 80, boxShadow: isWastage ? "none" : "2px 0 4px rgba(0,0,0,0.04)" }}>Total</th>
+                  {isWastage && <th style={{ ...thS, position: "sticky", left: 230, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 90, minWidth: 90, boxShadow: "2px 0 4px rgba(0,0,0,0.04)", color: "#DC2626" }}>Cost (₹)</th>}
                   {days.map((ds) => <th key={ds} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{ds.slice(8)}</th>)}
                 </tr></thead>
                 <tbody>
                   {items.map((i) => (
                     <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
                       <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, whiteSpace: "nowrap", width: 150, minWidth: 150 }}>{i.name} <span style={{ color: "#BBB", fontSize: 9 }}>({i.unit})</span></td>
-                      <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
+                      <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: isWastage ? "none" : "2px 0 4px rgba(0,0,0,0.04)" }}>{Math.round(i.total * 100) / 100}</td>
+                      {isWastage && <td style={{ ...tdS, position: "sticky", left: 230, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626", width: 90, minWidth: 90, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{fmt(wastageItemCostMap[i.id] || 0)}</td>}
                       {days.map((ds) => {
                         const v = (dayWise[i.id] || {})[ds] || 0;
                         const key = draftKey(i.id, ds);

@@ -2957,45 +2957,41 @@ router.get('/pnl/live/:date', async (req, res) => {
 //          Variable Cost = Used × Rate
 // ============================================================
 
-// Extracted so /api/audit/:date (recipe-based leakage audit) can reuse the exact same
-// per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
-// possibly-drifting computation. Internal function — no req/res, no auth check (callers
-// that expose this over HTTP are responsible for their own requireOwner).
-async function computeStockUsageForDate(date, outlet) {
-  {
-    const prevDate = new Date(date);
-    prevDate.setDate(prevDate.getDate() - 1);
-    const prevDateStr = prevDate.toISOString().split('T')[0];
+// Rate card + BK recipe costing + unit conversions + the demand-unit-aware conversion
+// factor helper — the pricing setup computeStockUsageForDate needs, extracted so
+// /api/wastage/cost (and any other per-item costing endpoint) can reuse the exact same
+// rate-card/recipe/conversion resolution instead of a third, possibly-drifting copy of
+// this logic (RecipesPanel and CogsDash on the frontend already each have their own).
+async function buildCostingContext() {
+  // 1. Rate card
+  const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
+  const rateMap = {};
+  (rates || []).forEach(r => { rateMap[r.id] = r; });
 
-    // 1. Rate card
-    const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
-    const rateMap = {};
-    (rates || []).forEach(r => { rateMap[r.id] = r; });
+  // 1b. BK Recipes — for pricing BK prep items via recipe cost
+  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
+  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+  const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
+  const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
 
-    // 1b. BK Recipes — for pricing BK prep items via recipe cost
-    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
-    const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
-    const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
-    const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
+  // 1c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
+  const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
+  const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
+  (unitConversions || []).forEach(c => {
+    convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
+  });
 
-    // 1c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
-    const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
-    const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
-    (unitConversions || []).forEach(c => {
-      convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
-    });
+  // Build demand item name/unit maps
+  const demandNameMap = {};
+  const demandUnitMap = {};
+  (demandItemsRaw || []).forEach(i => { demandNameMap[i.id] = i.name; demandUnitMap[i.id] = i.unit; });
 
-    // Build demand item name/unit maps
-    const demandNameMap = {};
-    const demandUnitMap = {};
-    (demandItemsRaw || []).forEach(i => { demandNameMap[i.id] = i.name; demandUnitMap[i.id] = i.unit; });
-
-    // Build inventory → demand_item mapping
-    const invByName = {};
-    (invItemsList || []).forEach(i => {
-      if (i.demand_item_id) invByName[i.id] = i.demand_item_id;
-      if (i.name) invByName[i.name.toLowerCase()] = i.demand_item_id || i.id;
-    });
+  // Build inventory → demand_item mapping
+  const invByName = {};
+  (invItemsList || []).forEach(i => {
+    if (i.demand_item_id) invByName[i.id] = i.demand_item_id;
+    if (i.name) invByName[i.name.toLowerCase()] = i.demand_item_id || i.id;
+  });
 
     // Explicit raw material → rate card mapping
     // Recipe ingredients use _raw suffix IDs; rate card uses clean IDs.
@@ -3079,6 +3075,47 @@ async function computeStockUsageForDate(date, outlet) {
       bkRecipeMap[r.id] = { name: r.name || r.id, costPerKg, yieldQty };
     });
 
+    // Conversion factor from a specific recorded unit to a target (usually rate-card)
+    // unit — chains through unit_conversions then an SI step, same as everywhere else.
+    // `rawUnit` is whatever unit that particular entry was recorded in (may differ
+    // entry-to-entry now that managers can pick a unit per submission); falls back to
+    // the item's default demand unit when the entry predates that feature or didn't
+    // override it.
+    const convFactorFor = (itemId, rawUnit, targetUnit) => {
+      const du = (rawUnit || demandUnitMap[itemId] || targetUnit || '').toLowerCase();
+      const ru = (targetUnit || '').toLowerCase();
+      if (du === ru) return 1;
+      let factor = 1;
+      let resolvedUnit = du;
+      const conv = convMap[itemId];
+      if (conv && du === conv.fromUnit.toLowerCase()) {
+        factor = conv.qty;
+        resolvedUnit = (conv.baseUnit || '').toLowerCase();
+      }
+      if (resolvedUnit !== ru) {
+        if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') factor *= 0.001;
+        else if (resolvedUnit === 'kg' && (ru === 'gm' || ru === 'g')) factor *= 1000;
+        else if (resolvedUnit === 'ml' && (ru === 'ltr' || ru === 'l')) factor *= 0.001;
+        else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && ru === 'ml') factor *= 1000;
+      }
+      return factor;
+    };
+
+    return { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
+}
+
+// Extracted so /api/audit/:date (recipe-based leakage audit) can reuse the exact same
+// per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
+// possibly-drifting computation. Internal function — no req/res, no auth check (callers
+// that expose this over HTTP are responsible for their own requireOwner).
+async function computeStockUsageForDate(date, outlet) {
+  {
+    const prevDate = new Date(date);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = prevDate.toISOString().split('T')[0];
+
+    const { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
+
     // 2. Previous day closing stock (from closing_stocks table, NOT demands)
     const { data: prevClosing } = await supabase.from('closing_stocks')
       .select('outlet_id, items, items_units').eq('date', prevDateStr);
@@ -3099,31 +3136,6 @@ async function computeStockUsageForDate(date, outlet) {
     // 6. Compute per outlet
     const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
     const results = [];
-
-    // Conversion factor from a specific recorded unit to the item's rate-card unit —
-    // chains through unit_conversions then an SI step, same as everywhere else. `rawUnit`
-    // is whatever unit that particular entry was recorded in (may differ entry-to-entry
-    // now that managers can pick a unit per submission); falls back to the item's default
-    // demand unit when the entry predates that feature or didn't override it.
-    const convFactorFor = (itemId, rawUnit, targetUnit) => {
-      const du = (rawUnit || demandUnitMap[itemId] || targetUnit || '').toLowerCase();
-      const ru = (targetUnit || '').toLowerCase();
-      if (du === ru) return 1;
-      let factor = 1;
-      let resolvedUnit = du;
-      const conv = convMap[itemId];
-      if (conv && du === conv.fromUnit.toLowerCase()) {
-        factor = conv.qty;
-        resolvedUnit = (conv.baseUnit || '').toLowerCase();
-      }
-      if (resolvedUnit !== ru) {
-        if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') factor *= 0.001;
-        else if (resolvedUnit === 'kg' && (ru === 'gm' || ru === 'g')) factor *= 1000;
-        else if (resolvedUnit === 'ml' && (ru === 'ltr' || ru === 'l')) factor *= 0.001;
-        else if ((resolvedUnit === 'ltr' || resolvedUnit === 'l') && ru === 'ml') factor *= 1000;
-      }
-      return factor;
-    };
 
     // 'bk' isn't a real outlet_id in closing_stocks/demands — it's computed separately
     // below from bk_closing_stock/inventory_movements, so skip it here rather than
@@ -3373,6 +3385,52 @@ router.get('/stock-usage/:date', async (req, res) => {
     console.error('Stock usage error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── GET /api/wastage/cost — Day-wise wastage cost per item, all outlets or one, for a
+// date range. Same rate-card-first / BK-recipe-fallback costing as the consumed-material
+// formula, applied only to wastage entries — powers the owner's Wastage grid's cost view.
+router.get('/wastage/cost', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { from, outlet_id } = req.query;
+    if (!from) return res.status(400).json({ error: 'from is required' });
+
+    const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
+
+    let query = supabase.from('demands').select('outlet_id, date, items, items_units').eq('type', 'wastage').gte('date', from);
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    const { data: wastageRows, error } = await query;
+    if (error) throw error;
+
+    const results = [];
+    (wastageRows || []).forEach(row => {
+      Object.entries(row.items || {}).forEach(([itemId, qty]) => {
+        const rate = rateMap[itemId];
+        const bkRecipe = bkRecipeMap[itemId];
+        let unitPrice = 0, itemUnit = '', itemName = itemId, itemCategory = 'Other';
+        if (rate) {
+          unitPrice = Number(rate.price); itemUnit = rate.unit || ''; itemName = rate.name; itemCategory = rate.category || 'Other';
+        } else if (bkRecipe) {
+          unitPrice = bkRecipe.costPerKg; itemUnit = 'Kg'; itemName = bkRecipe.name; itemCategory = 'Food';
+        } else {
+          itemName = demandNameMap[itemId] || itemId.replace(/_/g, ' ');
+          itemUnit = demandUnitMap[itemId] || '';
+        }
+        const rawUnit = (row.items_units || {})[itemId] || null;
+        const factor = convFactorFor(itemId, rawUnit, itemUnit);
+        const convQty = (Number(qty) || 0) * factor;
+        results.push({
+          outlet_id: row.outlet_id, date: row.date, item_id: itemId, name: itemName,
+          category: itemCategory, unit: itemUnit, qty: Math.round(convQty * 1000) / 1000,
+          rate: Math.round(unitPrice * 100) / 100, cost: Math.round(convQty * unitPrice * 100) / 100,
+          has_rate_card: !!(rate || bkRecipe),
+        });
+      });
+    });
+
+    res.json(results);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 
