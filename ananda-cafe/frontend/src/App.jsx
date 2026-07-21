@@ -2098,6 +2098,7 @@ const DailyStockUsage = () => {
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
+        <button onClick={() => setSelOutlet("bk")} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === "bk" ? 700 : 500, border: selOutlet === "bk" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === "bk" ? "#1A1A1A" : "#fff", color: selOutlet === "bk" ? "#fff" : "#888" }}>🏭 Base Kitchen</button>
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing stock usage...</div>}
@@ -2129,7 +2130,7 @@ const DailyStockUsage = () => {
         {!selOutlet && allOutlets.filter((r) => r.outlet_id !== "all").length > 0 && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 20 }}>
             {allOutlets.filter((r) => r.outlet_id !== "all").map((r) => {
-              const oName = OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
+              const oName = r.outlet_id === "bk" ? "🏭 BK" : OUTLETS.find((o) => o.id === r.outlet_id)?.short || r.outlet_id;
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>{oName}</div>

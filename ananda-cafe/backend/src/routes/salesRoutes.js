@@ -3289,6 +3289,73 @@ async function computeStockUsageForDate(date, outlet) {
       results.unshift(summary);
     }
 
+    // BK's own "used" leg — same Opening = Prev Closing + Dispatched(=Stock In); Used =
+    // Opening - Closing shape as outlets, just sourced from bk_closing_stock (BK's daily
+    // count) and inventory_movements (stock_in = incoming supply) instead of
+    // closing_stocks/demands. Reuses the rate-card/unit-conversion setup above rather than
+    // a second, possibly-drifting computation. Kept out of the "All Outlets" summary above —
+    // BK preps for outlets rather than serving customers, so its consumption is a distinct
+    // stream, not part of the outlet total.
+    if (!outlet || outlet === 'all' || outlet === 'bk') {
+      const { data: invItems } = await supabase.from('inventory_items').select('id, name, category, unit, demand_item_id');
+      const { data: prevBkClosing } = await supabase.from('bk_closing_stock').select('items').eq('date', prevDateStr).maybeSingle();
+      const { data: todayBkClosing } = await supabase.from('bk_closing_stock').select('items').eq('date', date).maybeSingle();
+
+      // IST calendar day -> UTC timestamp bounds, so the query only scans that one day's
+      // rows instead of the whole inventory_movements history (same +5:30 convention as
+      // /api/inventory/ledger's istDate helper, just applied as a range filter here).
+      const dayStartUTC = new Date(`${date}T00:00:00+05:30`).toISOString();
+      const dayEndUTC = new Date(new Date(dayStartUTC).getTime() + 24 * 60 * 60 * 1000).toISOString();
+      const { data: bkStockIn } = await supabase.from('inventory_movements').select('item_id, quantity')
+        .eq('type', 'stock_in').gte('created_at', dayStartUTC).lt('created_at', dayEndUTC);
+
+      const stockInToday = {};
+      (bkStockIn || []).forEach(m => {
+        stockInToday[m.item_id] = (stockInToday[m.item_id] || 0) + (Number(m.quantity) || 0);
+      });
+
+      const prevItems = prevBkClosing?.items || {};
+      const todayItems = todayBkClosing?.items || {};
+
+      const bkItemDetails = [];
+      let bkTotalUsedCost = 0;
+      (invItems || []).forEach(item => {
+        const rate = rateMap[item.demand_item_id];
+        if (!rate) return; // no rate-card price for this item — can't cost it
+        const factor = convFactorFor(item.demand_item_id, item.unit, rate.unit);
+
+        const prevQty = (Number(prevItems[item.id]) || 0) * factor;
+        const stockInQty = (stockInToday[item.id] || 0) * factor;
+        const closingQty = (Number(todayItems[item.id]) || 0) * factor;
+        const openingQty = prevQty + stockInQty;
+        const usedQty = Math.max(0, openingQty - closingQty);
+        const usedCost = usedQty * Number(rate.price);
+
+        if (openingQty > 0 || closingQty > 0 || usedQty > 0) {
+          bkItemDetails.push({
+            item_id: item.id, name: item.name, category: item.category, unit: rate.unit,
+            prev_closing: Math.round(prevQty * 1000) / 1000, wastage: 0,
+            dispatched: Math.round(stockInQty * 1000) / 1000, closing: Math.round(closingQty * 1000) / 1000,
+            used: Math.round(usedQty * 1000) / 1000, has_rate_card: true,
+            rate: Math.round(Number(rate.price) * 100) / 100, used_cost: Math.round(usedCost * 100) / 100,
+          });
+          bkTotalUsedCost += usedCost;
+        }
+      });
+
+      const bkByCategory = {};
+      bkItemDetails.forEach(item => { bkByCategory[item.category] = (bkByCategory[item.category] || 0) + item.used_cost; });
+
+      results.push({
+        outlet_id: 'bk', date,
+        has_prev_closing: !!prevBkClosing, has_today_closing: !!todayBkClosing,
+        prev_closing_submitted: !!prevBkClosing, today_closing_submitted: !!todayBkClosing,
+        total_used_cost: Math.round(bkTotalUsedCost),
+        variable_cost_by_category: bkByCategory,
+        items: bkItemDetails.sort((a, b) => b.used_cost - a.used_cost),
+      });
+    }
+
     return { date, outlets: results };
   }
 }
