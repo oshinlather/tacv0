@@ -3125,7 +3125,11 @@ async function computeStockUsageForDate(date, outlet) {
       return factor;
     };
 
-    for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
+    // 'bk' isn't a real outlet_id in closing_stocks/demands — it's computed separately
+    // below from bk_closing_stock/inventory_movements, so skip it here rather than
+    // running this outlet-shaped query against tables that will just return nothing.
+    const outletLoopList = (!outlet || outlet === 'all') ? outletIds : (outlet === 'bk' ? [] : [outlet]);
+    for (const oid of outletLoopList) {
       const prevCS = (prevClosing || []).find(d => d.outlet_id === oid);
       const prevItems = prevCS?.items || {};
       const prevUnits = prevCS?.items_units || {};
