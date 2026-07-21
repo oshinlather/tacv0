@@ -226,6 +226,20 @@ router.post("/closing-stock", async (req, res) => {
   res.json(data);
 });
 
+// ── GET /api/inventory/closing-stock — BK closing stock history (month-wise), mirrors
+// GET /api/closing-stocks for outlets. Powers the owner's Closing Stock grid's BK tab.
+router.get("/closing-stock", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { from } = req.query;
+  let query = supabase.from("bk_closing_stock").select("*");
+  if (from) query = query.gte("date", from);
+  query = query.order("date", { ascending: false });
+  if (from) query = query.limit(500);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
 // ── GET /api/inventory/ledger — Owner-only. Date-wise Opening + Stock In − Stock Out =
 // Expected Closing, compared against the store manager's actual submitted closing count
 // (bk_closing_stock), for every date in [from, to] that has a submission. Unlike

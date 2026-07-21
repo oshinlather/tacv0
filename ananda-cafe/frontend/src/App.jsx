@@ -4667,6 +4667,17 @@ const FranchiseBilling = () => {
   );
 };
 
+// BK's own inventory_items.category values (Food, Vegetable, Packaging, Cleaning, Store) —
+// coarser than the outlet-facing DEMAND_SECTIONS scheme, since BK doesn't separately bucket
+// Masala/Grocery/Dairy/Gas the way outlet demand does. "Store" covers all of those.
+const BK_CATEGORY_META = {
+  Food: { emoji: "🍲", label: "Food (Prepared in BK)", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A" },
+  Vegetable: { emoji: "🥬", label: "Vegetables", color: "#15803D", bg: "#F0FDF4", border: "#BBF7D0" },
+  Packaging: { emoji: "📦", label: "Packaging & Disposal", color: "#1D4ED8", bg: "#EFF6FF", border: "#BFDBFE" },
+  Cleaning: { emoji: "🧹", label: "Cleaning", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
+  Store: { emoji: "🛒", label: "Grocery / Masala / Dairy / Gas", color: "#B91C1C", bg: "#FEF2F2", border: "#FECACA" },
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  CLOSING STOCK / WASTAGE — day-wise grid across all outlets, same layout as
 //  Franchise Billing's Day by Day view (items vertical, dates horizontal, CSV export)
@@ -4675,8 +4686,11 @@ const OutletActivityGrid = ({ mode }) => {
   const isClosing = mode === "closing";
   const isDemand = mode === "demand";
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const isBK = isClosing && selOutlet === "bk";
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
+  const [bkItems, setBkItems] = useState([]); // inventory_items master — only needed for the BK tab
+  useEffect(() => { if (isClosing) api.getInventory().then((d) => setBkItems(d || [])).catch(() => setBkItems([])); }, [isClosing]);
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   // Local typed-but-not-yet-saved value per cell, keyed "itemId|date" — only committed to
@@ -4687,8 +4701,11 @@ const OutletActivityGrid = ({ mode }) => {
   const [saving, setSaving] = useState(false);
   const currentUser = getCurrentUser();
   // Demand is a view-only rollup here (AM+PM merged per day) — corrections belong in the
-  // Last 7 Days view where a single demand record can be targeted unambiguously.
-  const canRecord = !isDemand && currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
+  // Last 7 Days view where a single demand record can be targeted unambiguously. BK is
+  // also view-only here — corrections for it already have a dedicated flow (BK Daily
+  // Closing Stock's Count Entry tab), which writes through inventory_stock/movements
+  // rather than this grid's outlet-oriented qty-edit endpoint.
+  const canRecord = !isDemand && !isBK && currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -4719,13 +4736,15 @@ const OutletActivityGrid = ({ mode }) => {
     if (!selOutlet || !selMonth) return;
     setLoading(true);
     const from = `${selMonth}-01`;
-    const req = isClosing
+    const req = isBK
+      ? api.getBkClosingStockRange(from)
+      : isClosing
       ? api.getClosingStocks({ outlet_id: selOutlet, from })
       : api.getOrders({ outlet_id: selOutlet, from }).then((data) => (data || []).filter((d) => d.type === (isDemand ? "manual" : "wastage") && d.status !== "draft"));
     req.then((data) => setRecords((data || []).filter((d) => d.date.startsWith(selMonth))))
       .catch(() => setRecords([]))
       .finally(() => setLoading(false));
-  }, [selOutlet, selMonth, isClosing, isDemand]);
+  }, [selOutlet, selMonth, isClosing, isDemand, isBK]);
   useEffect(load, [load]);
 
   const draftKey = (itemId, date) => `${itemId}|${date}`;
@@ -4786,15 +4805,20 @@ const OutletActivityGrid = ({ mode }) => {
     DEMAND_SECTIONS.forEach((s) => s.items.forEach((i) => { m[i.id] = s.id; }));
     return m;
   }, []);
+  const bkItemMap = useMemo(() => { const m = {}; bkItems.forEach((i) => { m[i.id] = i; }); return m; }, [bkItems]);
   const items = useMemo(() => {
     return Object.keys(dayWise).map((id) => {
-      const def = allDemandItems.find((i) => i.id === id);
       const total = Object.values(dayWise[id]).reduce((s, v) => s + v, 0);
+      if (isBK) {
+        const def = bkItemMap[id];
+        return { id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', total, category: def?.category || null };
+      }
+      const def = allDemandItems.find((i) => i.id === id);
       return { id, name: def?.name || id.replace(/_/g, ' '), unit: def?.unit || '', total, category: itemCategoryMap[id] || null };
     }).filter((i) => i.total > 0 && (!selCategory || i.category === selCategory)).sort((a, b) => b.total - a.total);
-  }, [dayWise, allDemandItems, itemCategoryMap, selCategory]);
+  }, [dayWise, allDemandItems, itemCategoryMap, selCategory, isBK, bkItemMap]);
 
-  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const outletName = isBK ? "Base Kitchen" : OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
   const modeLabel = isClosing ? "closing stock" : isDemand ? "demand" : "wastage";
   const modeTitle = isClosing ? "📊 Closing Stock" : isDemand ? "📋 Demand" : "🗑️ Wastage";
@@ -4823,16 +4847,23 @@ const OutletActivityGrid = ({ mode }) => {
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
-          <button key={o.id} onClick={() => { setSelOutlet(o.id); setDrafts({}); setEditMode(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+          <button key={o.id} onClick={() => { setSelOutlet(o.id); setSelCategory(null); setDrafts({}); setEditMode(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
+        {isClosing && (
+          <button onClick={() => { setSelOutlet("bk"); setSelCategory(null); setDrafts({}); setEditMode(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: isBK ? 700 : 500, border: isBK ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: isBK ? "#1A1A1A" : "#fff", color: isBK ? "#fff" : "#888" }}>🏭 Base Kitchen</button>
+        )}
       </div>
 
       {(isDemand || isClosing) && (
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
           <button onClick={() => setSelCategory(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCategory ? 700 : 500, border: !selCategory ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCategory ? "#1A1A1A" : "#fff", color: !selCategory ? "#fff" : "#888" }}>All Categories</button>
-          {DEMAND_SECTIONS.map((s) => (
-            <button key={s.id} onClick={() => setSelCategory(s.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCategory === s.id ? 700 : 500, border: selCategory === s.id ? "none" : `1px solid ${s.border}`, cursor: "pointer", fontFamily: "inherit", background: selCategory === s.id ? (s.color || "#1A1A1A") : (s.bg || "#fff"), color: selCategory === s.id ? "#fff" : (s.color || "#888") }}>{s.emoji} {s.titleHi}</button>
-          ))}
+          {isBK
+            ? Object.entries(BK_CATEGORY_META).map(([catId, meta]) => (
+                <button key={catId} onClick={() => setSelCategory(catId)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCategory === catId ? 700 : 500, border: selCategory === catId ? "none" : `1px solid ${meta.border}`, cursor: "pointer", fontFamily: "inherit", background: selCategory === catId ? meta.color : meta.bg, color: selCategory === catId ? "#fff" : meta.color }}>{meta.emoji} {meta.label}</button>
+              ))
+            : DEMAND_SECTIONS.map((s) => (
+                <button key={s.id} onClick={() => setSelCategory(s.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCategory === s.id ? 700 : 500, border: selCategory === s.id ? "none" : `1px solid ${s.border}`, cursor: "pointer", fontFamily: "inherit", background: selCategory === s.id ? (s.color || "#1A1A1A") : (s.bg || "#fff"), color: selCategory === s.id ? "#fff" : (s.color || "#888") }}>{s.emoji} {s.titleHi}</button>
+              ))}
         </div>
       )}
 

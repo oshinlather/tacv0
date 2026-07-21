@@ -119,6 +119,7 @@ const api = {
   deleteInventoryItem: (id) => del(`/api/inventory/items/${id}`),
   getBkClosingStock: (date) => get(`/api/inventory/closing-stock/${date}`),
   saveBkClosingStock: (date, items, submitted_by) => post("/api/inventory/closing-stock", { date, items, submitted_by }),
+  getBkClosingStockRange: (from) => get("/api/inventory/closing-stock", { from }),
   getBkInventoryAudit: (date) => get(`/api/inventory/audit/${date}`),
   getInventoryLedger: (from, to) => get("/api/inventory/ledger", { from, to }),
 
