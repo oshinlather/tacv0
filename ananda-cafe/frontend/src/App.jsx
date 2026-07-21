@@ -3131,8 +3131,16 @@ const Inventory = () => {
   const outOfStock = invItems.filter((i) => Number(i.current_qty) === 0);
 
   const submitStockIn = async () => {
+    // A PO's item id can go stale if the inventory catalog renamed/merged it after the PO
+    // was created (e.g. the vegetable veg_ id cleanup) — resolve via demand_item_id so
+    // stock lands on the current row instead of creating a new orphaned one.
+    const resolveId = (id) => {
+      if (invItems.some((inv) => inv.id === id)) return id;
+      const viaDemand = invItems.find((inv) => inv.demand_item_id === id);
+      return viaDemand ? viaDemand.id : id;
+    };
     const entries = Object.entries(draft).filter(([, q]) => q > 0).map(([item_id, quantity]) => ({
-      item_id, quantity,
+      item_id: resolveId(item_id), quantity,
       total_price: Number(stockInPrices[item_id]) || 0,
       unit_price: (Number(stockInPrices[item_id]) || 0) / quantity,
     }));
@@ -3204,8 +3212,19 @@ const Inventory = () => {
       )}
       <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search items…" style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
       {!poMeta && <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}><button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>{categories.map((c) => (<button key={c} onClick={() => setSelCat(c)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c ? 700 : 500, border: selCat === c ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c ? "#1A1A1A" : "#fff", color: selCat === c ? "#fff" : "#888" }}>{c}</button>))}</div>}
-      {/* Receiving a specific PO: only show that PO's items, not the whole inventory. */}
-      {(poMeta?.itemIds ? invItems.filter((item) => poMeta.itemIds.includes(item.id)) : filtered).filter((item) => !itemSearch.trim() || item.name.toLowerCase().includes(itemSearch.trim().toLowerCase())).map((item) => {
+      {/* Receiving a specific PO: only show that PO's items, not the whole inventory. Use
+          the live inventory_items record when the id still resolves (for current stock/
+          price), but fall back to the PO's own embedded name/unit/stock snapshot when it
+          doesn't — an item can get renamed or merged into a different id after the PO was
+          created, and silently dropping it would hide real bought_qty/total_price data
+          that's still sitting on the order. */}
+      {(poMeta?.itemIds
+        ? poMeta.itemIds.map((id) => invItems.find((inv) => inv.id === id) || {
+            id, name: poMeta.items?.[id]?.name || id.replace(/_/g, ' '), unit: poMeta.items?.[id]?.unit || '',
+            current_qty: poMeta.items?.[id]?.current_stock ?? 0, last_unit_price: null,
+          })
+        : filtered
+      ).filter((item) => !itemSearch.trim() || item.name.toLowerCase().includes(itemSearch.trim().toLowerCase())).map((item) => {
         const preFilled = originalReq[item.id];
         const isEdited = preFilled !== undefined && draft[item.id] !== preFilled;
         const qty = Number(draft[item.id]) || 0;
