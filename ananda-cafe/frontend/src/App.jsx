@@ -7452,6 +7452,98 @@ const RMAuditPanel = () => {
           </div>
         </div>
       </>)}
+
+      <ColdDrinkAuditSection dateStr={dateStr} />
+    </div>
+  );
+};
+
+// ── Cold Drink & Water Bottle Audit — a plain tally straight from daily_sales (no recipe
+// needed) of ₹10/₹20 cold-drink and water-bottle line items, one row per outlet, for
+// whichever date is selected above. Always shows all outlets, independent of the RM
+// Audit outlet filter, so the owner can compare outlets side by side and cross-check
+// against physical bottle stock without waiting on recipe matching.
+const COLD_DRINK_COLS = [
+  { key: "cold_drink_10", label: "Cold Drink ₹10" },
+  { key: "cold_drink_20", label: "Cold Drink ₹20" },
+  { key: "water_10", label: "Water ₹10" },
+  { key: "water_20", label: "Water ₹20" },
+];
+
+const ColdDrinkAuditSection = ({ dateStr }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [showItems, setShowItems] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getColdDrinkAudit(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const rows = OUTLETS.map((o) => ({ outlet: o, d: data?.outlets?.find((x) => x.outlet_code === o.id) }));
+  const grandQty = (field) => rows.reduce((s, r) => s + (r.d?.[field]?.qty || 0), 0);
+  const anyMatched = data?.matched_items && Object.values(data.matched_items).some((v) => v.length > 0);
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ marginBottom: 12 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🥤 Cold Drink & Water Audit</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>₹10/₹20 cold drink & water bottles sold on {dateStr}, straight from sales data — all outlets, independent of the outlet filter above.</p>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+
+      {!loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Outlet</th>
+                {COLD_DRINK_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+                <th style={{ ...thS, textAlign: "right" }}>Total Bottles</th>
+              </tr></thead>
+              <tbody>
+                {rows.map(({ outlet, d }) => {
+                  const total = COLD_DRINK_COLS.reduce((s, c) => s + (d?.[c.key]?.qty || 0), 0);
+                  return (
+                    <tr key={outlet.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{outlet.short}</td>
+                      {COLD_DRINK_COLS.map((c) => {
+                        const qty = d?.[c.key]?.qty || 0;
+                        return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: qty > 0 ? "#1A1A1A" : "#CCC" }}>{qty}</td>;
+                      })}
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{total}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: "#FAFAF8" }}>
+                  <td style={{ ...tdS, fontWeight: 800 }}>Total</td>
+                  {COLD_DRINK_COLS.map((c) => <td key={c.key} style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{grandQty(c.key)}</td>)}
+                  <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{COLD_DRINK_COLS.reduce((s, c) => s + grandQty(c.key), 0)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          {!data?.outlets?.length && <div style={{ padding: 16, textAlign: "center", color: "#999", fontSize: 12 }}>No sales data uploaded for {dateStr}</div>}
+        </div>
+      )}
+
+      {anyMatched && (
+        <div style={{ marginTop: 8 }}>
+          <span onClick={() => setShowItems(!showItems)} style={{ fontSize: 11, color: "#2563EB", cursor: "pointer", fontWeight: 600 }}>
+            {showItems ? "▲ hide" : "▼ show"} which PetPooja item names are counted in each column
+          </span>
+          {showItems && (
+            <div style={{ marginTop: 6, padding: "10px 14px", background: "#FAFAF8", borderRadius: 10, border: "1px solid #E8E8E4", fontSize: 11.5, color: "#555" }}>
+              {COLD_DRINK_COLS.map((c) => (
+                <div key={c.key} style={{ marginBottom: 4 }}>
+                  <strong>{c.label}:</strong> {(data.matched_items[c.key] || []).join(", ") || "—"}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

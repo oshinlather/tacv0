@@ -388,6 +388,63 @@ res.status(500).json({ error: err.message });
 });
 
 // ────────────────────────────────────────────────────────────
+// 3D-2. GET /api/audit/cold-drink/:date — Cold Drink & Water Bottle Audit
+// Straight tally from daily_sales (no recipe needed) of ₹10/₹20 cold-drink and
+// water-bottle line items, bucketed per outlet — a quick daily bottle-count check
+// against physical stock. Matching is on the item name (spaces stripped, so
+// "Small Colddrink" / "Cold Drink" both hit) plus the line's rounded item_price.
+// Always covers all outlets, regardless of the RM Audit outlet filter.
+// ────────────────────────────────────────────────────────────
+router.get('/audit/cold-drink/:date', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { date } = req.params;
+    const rows = await fetchAllDailySales({
+      date,
+      select: 'outlet_code, outlet, item_name, item_price, item_quantity, item_total',
+    });
+
+    const FIELDS = ['cold_drink_10', 'cold_drink_20', 'water_10', 'water_20'];
+    const empty = () => ({ qty: 0, revenue: 0 });
+    const buckets = {}; // outlet_code -> { outlet_code, outlet_name, cold_drink_10: {qty,revenue}, ... }
+    const matchedItems = { cold_drink_10: new Set(), cold_drink_20: new Set(), water_10: new Set(), water_20: new Set() };
+
+    for (const row of rows) {
+      const norm = (row.item_name || '').toLowerCase().replace(/\s+/g, '');
+      let type = null;
+      if (norm.includes('water')) type = 'water';
+      else if (norm.includes('colddrink')) type = 'cold_drink';
+      if (!type) continue;
+
+      const price = Math.round(Number(row.item_price) || 0);
+      if (price !== 10 && price !== 20) continue;
+
+      const field = `${type}_${price}`;
+      const outletCode = row.outlet_code || 'unknown';
+      if (!buckets[outletCode]) {
+        buckets[outletCode] = { outlet_code: outletCode, outlet_name: row.outlet || outletCode, cold_drink_10: empty(), cold_drink_20: empty(), water_10: empty(), water_20: empty() };
+      }
+      buckets[outletCode][field].qty += Number(row.item_quantity) || 0;
+      buckets[outletCode][field].revenue += Number(row.item_total) || 0;
+      matchedItems[field].add(row.item_name);
+    }
+
+    const outlets = Object.values(buckets).sort((a, b) => a.outlet_code.localeCompare(b.outlet_code));
+    const totals = { cold_drink_10: empty(), cold_drink_20: empty(), water_10: empty(), water_20: empty() };
+    outlets.forEach((o) => FIELDS.forEach((f) => { totals[f].qty += o[f].qty; totals[f].revenue += o[f].revenue; }));
+
+    res.json({
+      date,
+      outlets,
+      totals,
+      matched_items: Object.fromEntries(FIELDS.map((f) => [f, [...matchedItems[f]].sort()])),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // GET /api/pnl/computed/:date — Frontend getComputedPnl(date)
 // MUST be before /pnl/:date so Express doesn't match "computed" as a date
 // ────────────────────────────────────────────────────────────
