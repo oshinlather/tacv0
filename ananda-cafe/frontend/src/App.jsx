@@ -5677,12 +5677,12 @@ const OutletMgr = ({ onBack }) => {
         // Chef/Bainmarry save just their own category — merged server-side into today's
         // shared row without disturbing what the other role or the manager already saved.
         if (isDraftRole) {
-          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, submitted_by: currentUser?.name, status: "draft" });
+          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "draft" });
           setExistingRecord(result);
           alert(`✅ Your section saved — the manager will see it when finalizing.`);
           setScreen("home");
         } else {
-          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, submitted_by: currentUser?.name || outlet, status: "submitted" });
+          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "submitted" });
           const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
           alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(scopedClosing).length} items`);

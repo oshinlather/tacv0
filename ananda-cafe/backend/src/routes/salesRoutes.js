@@ -3282,9 +3282,10 @@ async function computeStockUsageForDate(date, outlet) {
     const { data: todayClosing } = await supabase.from('closing_stocks')
       .select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted');
 
-    // 4. Today wastage
+    // 4. Today wastage — status filter excludes a still-in-progress Chef/Bainmarry draft
+    // from being treated as real wastage until the manager finalizes it.
     const { data: todayWastage } = await supabase.from('demands')
-      .select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date);
+      .select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date).eq('status', 'submitted');
 
     // 5. Today dispatched
     const { data: todayOrders } = await supabase.from('demands')
