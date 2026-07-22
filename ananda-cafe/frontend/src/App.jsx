@@ -398,7 +398,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -410,12 +410,12 @@ const UsersPanel = () => {
     {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <input type="tel" placeholder="Phone (10 digits)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
-      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }].map(r => (
-          <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }].map(r => (
+          <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: "1 1 30%", padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
         ))}
       </div>
-      {newRole === "outlet_mgr" && <select value={newOutlet} onChange={(e) => setNewOutlet(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+      {["outlet_mgr", "chef", "bainmarry"].includes(newRole) && <select value={newOutlet} onChange={(e) => setNewOutlet(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
         <option value="">Select Outlet</option>
         {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>}
@@ -440,8 +440,8 @@ const UsersPanel = () => {
             <span onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4, cursor: "pointer" }} title="Tap to edit PIN">{u.pin}</span>
           )}
         </div>
-        {/* Outlet assignment for outlet managers */}
-        {u.role === "outlet_mgr" && (
+        {/* Outlet assignment for outlet managers, chefs, and bainmarry staff */}
+        {["outlet_mgr", "chef", "bainmarry"].includes(u.role) && (
           <div style={{ marginTop: 8 }}>
             <select value={u.outlet_id || ""} onChange={async (e) => { try { await api.updateUser(u.id, { outlet_id: e.target.value || null }); load(); } catch (err) { alert("Error: " + err.message); } }}
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: u.outlet_id ? "#1A1A1A" : "#999", fontWeight: 600 }}>
@@ -5475,7 +5475,36 @@ const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC 
 // ═════════════════════════════════════════════════════════════════════════════
 //  OUTLET MANAGER
 // ═════════════════════════════════════════════════════════════════════════════
+// Chef and Bainmarry punch a subset of DEMAND_SECTIONS' categories for Demand, Wastage,
+// and Closing Stock — everything else (Dairy, Cleaning, Gas included) stays Outlet
+// Manager-only. `null`/absent (owner, store_mgr, outlet_mgr) means unrestricted.
+const CATEGORY_SCOPE = {
+  chef: ["food", "vegetable", "masala", "grocery"],
+  bainmarry: ["packaging"],
+};
+
 const OutletMgr = ({ onBack }) => {
+  const currentUser = getCurrentUser();
+  const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
+  const isDraftRole = currentUser?.role === "chef" || currentUser?.role === "bainmarry";
+  // Item ids (optionally cs_-prefixed) belonging to the current role's category scope —
+  // used to strip out-of-scope keys before Chef/Bainmarry save their section, so their
+  // save never touches items outside their own categories. null = no filtering (manager).
+  const scopedItemIds = (prefix = "") => {
+    if (!roleCategoryScope) return null;
+    const sections = DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id));
+    return new Set(sections.flatMap((s) => s.items.map((i) => prefix + i.id)));
+  };
+  const filterToScope = (obj, prefix = "") => {
+    const idSet = scopedItemIds(prefix);
+    if (!idSet) return obj;
+    return Object.fromEntries(Object.entries(obj || {}).filter(([k]) => idSet.has(k)));
+  };
+  // Today's already-saved record (draft from Chef/Bainmarry, or already-finalized) for
+  // whichever of Demand/Wastage/Closing Stock is currently open — null if nothing yet.
+  const [existingRecord, setExistingRecord] = useState(null);
+  // true = showing the read-only "already submitted, tap Edit" recap instead of the form.
+  const [viewingSubmitted, setViewingSubmitted] = useState(false);
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState(smartDefaultDate()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
@@ -5637,34 +5666,68 @@ const OutletMgr = ({ onBack }) => {
         // Send unit overrides for items actually filled in this submission — either the
         // manager's explicit pick, or the closing-stock-specific default (see
         // CLOSING_STOCK_UNIT_DEFAULTS) for items reported by weight rather than container.
-        const closingItemsUnits = Object.fromEntries(
+        const closingItemsUnits = filterToScope(Object.fromEntries(
           Object.keys(closing)
             .filter((csId) => closing[csId] !== undefined && closing[csId] !== "")
             .map((csId) => csId.replace(/^cs_/, ""))
             .filter((id) => closingUnits[id] || CLOSING_STOCK_UNIT_DEFAULTS[id])
             .map((id) => [id, closingUnits[id] || CLOSING_STOCK_UNIT_DEFAULTS[id]])
-        );
-        const result = await api.submitClosingStock({ outlet_id: outlet, items: closing, items_units: closingItemsUnits, date: selectedDate });
-        const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
-        setSubs((p) => [e, ...p]); setLast(e);
-        alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(closing).length} items`);
+        ));
+        const scopedClosing = filterToScope(closing, "cs_");
+        // Chef/Bainmarry save just their own category — merged server-side into today's
+        // shared row without disturbing what the other role or the manager already saved.
+        if (isDraftRole) {
+          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, submitted_by: currentUser?.name, status: "draft" });
+          setExistingRecord(result);
+          alert(`✅ Your section saved — the manager will see it when finalizing.`);
+          setScreen("home");
+        } else {
+          const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, submitted_by: currentUser?.name || outlet, status: "submitted" });
+          const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
+          setSubs((p) => [e, ...p]); setLast(e);
+          alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(scopedClosing).length} items`);
+          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+        }
       } else if (type === "wastage") {
-        const draftItemsUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0));
-        const result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: getCurrentUser()?.name || outlet });
-        const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
-        setSubs((p) => [e, ...p]); setLast(e);
-        const wastageCount = Object.values(draft).filter(v => v > 0).length;
-        alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
+        const scopedDraft = filterToScope(draft);
+        const draftItemsUnits = filterToScope(Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0)));
+        if (isDraftRole) {
+          const result = await api.saveDemandDraft({ outlet_id: outlet, type: "wastage", date: selectedDate, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
+          setExistingRecord(result);
+          alert(`✅ Your section saved — the manager will see it when finalizing.`);
+          setScreen("home");
+        } else {
+          let result;
+          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (viewingSubmitted && existingRecord) result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
+          const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
+          setSubs((p) => [e, ...p]); setLast(e);
+          const wastageCount = Object.values(draft).filter(v => v > 0).length;
+          alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
+          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+        }
       } else {
         const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
         const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
-        const draftItemsUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0));
-        const result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: getCurrentUser()?.name || outlet });
-        const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
-        setSubs((p) => [e, ...p]); setLast(e);
-        alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
+        const scopedDraft = filterToScope(draft);
+        const draftItemsUnits = filterToScope(Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0)));
+        if (isDraftRole) {
+          const result = await api.saveDemandDraft({ outlet_id: outlet, type: "manual", date: deliveryDate, demand_slot: demandSlot, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
+          setExistingRecord(result);
+          alert(`✅ Your section saved — the manager will see it when finalizing.`);
+          setScreen("home");
+        } else {
+          let result;
+          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (viewingSubmitted && existingRecord) result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: currentUser?.name || outlet });
+          const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
+          setSubs((p) => [e, ...p]); setLast(e);
+          alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
+          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+        }
       }
-      reset(); setClosing({}); setClosingUnits({}); setScreen("done");
     } catch (error) {
       const errMsg = error.message || "Failed to submit";
       setErr(errMsg);
@@ -5692,11 +5755,11 @@ const OutletMgr = ({ onBack }) => {
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div><div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Please wait</div></div></div> : null;
 
-  // Auto-select outlet for assigned outlet managers
+  // Auto-select outlet for assigned outlet managers, chefs, and bainmarry staff
   useEffect(() => {
     if (screen === "pick") {
       const user = getCurrentUser();
-      if (user?.outlet_id && user?.role === "outlet_mgr") {
+      if (user?.outlet_id && ["outlet_mgr", "chef", "bainmarry"].includes(user?.role)) {
         const assignedOutlet = OUTLETS.find(o => o.id === user.outlet_id);
         if (assignedOutlet) {
           setOutlet(user.outlet_id);
@@ -5705,6 +5768,45 @@ const OutletMgr = ({ onBack }) => {
       }
     }
   }, [screen]);
+
+  // Fetch today's already-saved record (draft or finalized) whenever Demand, Wastage, or
+  // Closing Stock is opened, so the screen shows what's already there — pre-filled and
+  // editable — instead of always starting blank. This is what lets Chef's/Bainmarry's
+  // saves show up for the Outlet Manager, and lets anyone reopen an already-finalized
+  // day's entry instead of silently risking a duplicate submission.
+  useEffect(() => {
+    if (!outlet) return;
+    setExistingRecord(null); setViewingSubmitted(false);
+    if (screen === "wastage") {
+      api.getOrders({ outlet_id: outlet, date: selectedDate }).then((rows) => {
+        const rec = (rows || []).find((r) => r.type === "wastage");
+        if (!rec) return;
+        setExistingRecord(rec);
+        setDraft(rec.items || {});
+        setDraftUnits(rec.items_units || {});
+        setViewingSubmitted(rec.status === "submitted");
+      }).catch(() => {});
+    } else if (screen === "close") {
+      api.getClosingStocks({ outlet_id: outlet, date: selectedDate }).then((rows) => {
+        const rec = (rows || [])[0];
+        if (!rec) return;
+        setExistingRecord(rec);
+        setClosing(rec.items || {});
+        setClosingUnits(rec.items_units || {});
+        setViewingSubmitted((rec.status || "submitted") === "submitted");
+      }).catch(() => {});
+    } else if (screen === "manual" && demandSlot) {
+      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+      api.getOrders({ outlet_id: outlet, date: deliveryDate }).then((rows) => {
+        const rec = (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot);
+        if (!rec) return;
+        setExistingRecord(rec);
+        setDraft(rec.items || {});
+        setDraftUnits(rec.items_units || {});
+        setViewingSubmitted(rec.status === "submitted");
+      }).catch(() => {});
+    }
+  }, [screen, outlet, selectedDate, demandSlot, morningDeliveryDate]);
 
   if (screen === "pick") {
     const user = getCurrentUser();
@@ -5715,7 +5817,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }].map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -5952,7 +6054,7 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = DEMAND_SECTIONS.filter((sec) => sec.id === "food");
+  if (screen === "wastage") { const ft = Object.values(draft).filter((v) => v > 0).length; const wastageSections = roleCategoryScope ? DEMAND_SECTIONS.filter((sec) => roleCategoryScope.includes(sec.id)) : DEMAND_SECTIONS;
     // Items to hide from wastage (not relevant for disposal tracking)
     const wastageHidden = new Set(["roasted_peanuts", "roasted_chana", "roasted_karipatta", "podi_masala", "upma_sooji"]);
     const wastageFilterItems = (items) => items.filter((i) => !wastageHidden.has(i.id));
@@ -5962,8 +6064,23 @@ const OutletMgr = ({ onBack }) => {
     const wastageItemRow = (item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>);
     return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
-    <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
+    {viewingSubmitted && !isDraftRole ? (<>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for {selectedDate} — {ft} items. Tap Edit to change.</div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+        {Object.entries(existingRecord?.items || {}).filter(([, q]) => q > 0).map(([id, q]) => (
+          <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+            <span>{DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id)?.name || id}</span>
+            <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{q}</span>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+    </>) : (<>
+    {isDraftRole && existingRecord?.status === "submitted" && (
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized today's wastage — showing what was submitted.</div>
+    )}
+    <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 14 }}>⚠️ Record every item that was thrown away, expired, or disposed. Tracked for audit.</div>
     <MidnightBanner />
     <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
     {wastageQuery ? (
@@ -5990,8 +6107,11 @@ const OutletMgr = ({ onBack }) => {
     <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
       <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason for wastage (expired, dropped, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
       <ErrBar />
-      <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Submitting..." : `🗑️ Record Wastage (${ft} items)`}</button>
+      {(!isDraftRole || existingRecord?.status !== "submitted") && (
+        <button onClick={() => submit("wastage")} disabled={ft === 0 || saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#DC2626" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳ Saving..." : isDraftRole ? `💾 Save My Section (${ft} items)` : existingRecord?.status === "draft" ? `✅ Finalize & Submit (${ft})` : existingRecord?.status === "submitted" ? `✅ Update Submission (${ft})` : `🗑️ Record Wastage (${ft} items)`}</button>
+      )}
     </div>
+    </>)}
   </div>); }
 
   if (screen === "manual" && !demandSlot && pickingMorningDate) {
@@ -6055,21 +6175,35 @@ const OutletMgr = ({ onBack }) => {
     const isStaffFood = expSec === "__staff_food";
     const isStaffDress = expSec === "__staff_dress";
     const isRegular = !isStaffFood && !isStaffDress;
-    const activeSec = isRegular ? (DEMAND_SECTIONS.find((s) => s.id === expSec) || DEMAND_SECTIONS[0]) : null;
-    if (!expSec) setExpSec(DEMAND_SECTIONS[0].id);
+    // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas and
+    // Staff Food/Dress stay Outlet Manager-only); everyone else sees everything.
+    const visibleSections = roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS;
+    const activeSec = isRegular ? (visibleSections.find((s) => s.id === expSec) || visibleSections[0]) : null;
+    if (!expSec) setExpSec(visibleSections[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
     const manualHidden = new Set(["white_chutney", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
-    // Save current category items to DB as draft
-    // Save current category locally (no DB call — just mark as saved)
+    // Persists just this one category's items as today's shared draft (merged
+    // server-side, so this doesn't disturb what another category/role already saved),
+    // then auto-advances to the next not-yet-saved category.
     const saveCategory = async (secId) => {
-      setSavedSections((p) => ({ ...p, [secId]: true }));
-      // Auto-advance to next unsaved category
-      const currentIdx = DEMAND_SECTIONS.findIndex((s) => s.id === secId);
-      const nextUnsaved = DEMAND_SECTIONS.slice(currentIdx + 1).find((s) => !savedSections[s.id]);
-      if (nextUnsaved) setExpSec(nextUnsaved.id);
+      setSaving(true); setErr(null);
+      try {
+        const sec = visibleSections.find((s) => s.id === secId);
+        const secItemIds = new Set(filterManualItems(sec.items).map((i) => i.id));
+        const secItems = Object.fromEntries(Object.entries(draft).filter(([id]) => secItemIds.has(id)));
+        const secUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => secItemIds.has(id) && draft[id] > 0));
+        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+        const result = await api.saveDemandDraft({ outlet_id: outlet, type: "manual", date: deliveryDate, demand_slot: demandSlot, items: secItems, items_units: secUnits, submitted_by: currentUser?.name });
+        setExistingRecord(result);
+        setSavedSections((p) => ({ ...p, [secId]: true }));
+        const currentIdx = visibleSections.findIndex((s) => s.id === secId);
+        const nextUnsaved = visibleSections.slice(currentIdx + 1).find((s) => !savedSections[s.id]);
+        if (nextUnsaved) setExpSec(nextUnsaved.id);
+      } catch (e) { setErr(e.message); alert("Error saving: " + e.message); }
+      finally { setSaving(false); }
     };
 
     const submitStaffFood = async () => {
@@ -6108,21 +6242,35 @@ const OutletMgr = ({ onBack }) => {
 
     return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
+    {viewingSubmitted && !isDraftRole ? (<>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for this slot — {ft} items. Tap Edit to change.</div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+        {Object.entries(existingRecord?.items || {}).filter(([, q]) => q > 0).map(([id, q]) => (
+          <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+            <span>{DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id)?.name || id}</span>
+            <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{q}</span>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+    </>) : (<>
+    {isDraftRole && existingRecord?.status === "submitted" && (
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized this slot's demand — showing what was submitted.</div>
+    )}
     {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
-      {DEMAND_SECTIONS.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; const isSaved = savedSections[sec.id]; return (
-        <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? 700 : 500, border: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: (expSec || DEMAND_SECTIONS[0].id) === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+      {visibleSections.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; const isSaved = savedSections[sec.id]; return (
+        <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || visibleSections[0].id) === sec.id ? 700 : 500, border: (expSec || visibleSections[0].id) === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || visibleSections[0].id) === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: (expSec || visibleSections[0].id) === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
           {isSaved && <span style={{ fontSize: 10 }}>✅</span>}<span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
-      {/* Staff Food pill */}
-      <button onClick={() => setExpSec("__staff_food")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffFood ? 700 : 500, border: isStaffFood ? "none" : "1px solid #FED7AA", cursor: "pointer", fontFamily: "inherit", background: isStaffFood ? "#D97706" : "#fff", color: isStaffFood ? "#fff" : "#D97706", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+      {/* Staff Food/Dress stay Outlet Manager-only, not part of Chef/Bainmarry's scope */}
+      {!isDraftRole && <button onClick={() => setExpSec("__staff_food")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffFood ? 700 : 500, border: isStaffFood ? "none" : "1px solid #FED7AA", cursor: "pointer", fontFamily: "inherit", background: isStaffFood ? "#D97706" : "#fff", color: isStaffFood ? "#fff" : "#D97706", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
         <span>🍛</span>Staff Food{staffFoodCount > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffFoodCount}</span>}
-      </button>
-      {/* Staff Dress pill */}
-      <button onClick={() => setExpSec("__staff_dress")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffDress ? 700 : 500, border: isStaffDress ? "none" : "1px solid #C4B5FD", cursor: "pointer", fontFamily: "inherit", background: isStaffDress ? "#7C3AED" : "#fff", color: isStaffDress ? "#fff" : "#7C3AED", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+      </button>}
+      {!isDraftRole && <button onClick={() => setExpSec("__staff_dress")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffDress ? 700 : 500, border: isStaffDress ? "none" : "1px solid #C4B5FD", cursor: "pointer", fontFamily: "inherit", background: isStaffDress ? "#7C3AED" : "#fff", color: isStaffDress ? "#fff" : "#7C3AED", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
         <span>👕</span>Staff Dress{staffDress.length > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffDress.length}</span>}
-      </button>
+      </button>}
     </div>
 
     {/* ── REGULAR DEMAND SECTIONS ── */}
@@ -6139,7 +6287,7 @@ const OutletMgr = ({ onBack }) => {
       {/* Sticky footer — Save + Submit side by side */}
       <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-          {DEMAND_SECTIONS.map((sec) => {
+          {visibleSections.map((sec) => {
             const isSaved = savedSections[sec.id];
             const hasFilled = filterManualItems(sec.items).some((i) => draft[i.id] > 0);
             return <div key={sec.id} style={{ flex: 1, height: 4, borderRadius: 2, background: isSaved ? "#16A34A" : hasFilled ? "#FDE68A" : "#E0E0DC" }} />;
@@ -6147,10 +6295,12 @@ const OutletMgr = ({ onBack }) => {
         </div>
         <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => saveCategory(activeSec.id)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
-            {savedSections[activeSec.id] ? "✅ Update" : "💾 Save"}
-          </button>
-          <button onClick={() => submit("manual")} disabled={ft === 0} style={{ flex: 2, padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>✅ Submit All ({ft})</button>
+          {(!isDraftRole || existingRecord?.status !== "submitted") && (
+            <button onClick={() => saveCategory(activeSec.id)} disabled={saving} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+              {saving ? "⏳..." : savedSections[activeSec.id] ? "✅ Update" : "💾 Save"}
+            </button>
+          )}
+          {!isDraftRole && <button onClick={() => submit("manual")} disabled={ft === 0} style={{ flex: 2, padding: "14px", borderRadius: 14, border: "none", background: ft > 0 ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{existingRecord?.status === "draft" ? `✅ Finalize & Submit (${ft})` : existingRecord?.status === "submitted" ? `✅ Update Submission (${ft})` : `✅ Submit All (${ft})`}</button>}
         </div>
       </div>
     </>)}
@@ -6246,6 +6396,7 @@ const OutletMgr = ({ onBack }) => {
         </div>
       </div>
     )}
+    </>)}
   </div>); }
 
   if (screen === "purchase") {
@@ -6298,11 +6449,12 @@ const OutletMgr = ({ onBack }) => {
   }
 
   if (screen === "close") {
-    const csSections = DEMAND_SECTIONS;
+    const csSections = roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS;
     const csActiveSec = csSections.find((s) => s.id === expSec) || csSections[0];
     if (!expSec) setExpSec(csSections[0].id);
     const csItems = csActiveSec.items.filter((i) => !CLOSING_HIDDEN.has(i.id)).map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit }));
-    const allFilled = CLOSING_STOCK.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
+    const scopedClosingStock = roleCategoryScope ? CLOSING_STOCK.filter((i) => roleCategoryScope.includes(i.section)) : CLOSING_STOCK;
+    const allFilled = scopedClosingStock.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const secFilled = csItems.filter((i) => closing[i.id] !== undefined && closing[i.id] !== "").length;
     const canSubmit = allFilled > 0;
     const csQuery = itemSearch.trim().toLowerCase();
@@ -6315,8 +6467,23 @@ const OutletMgr = ({ onBack }) => {
       </div>); };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
-      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>Fill items you have in stock. Skip items that are zero or not applicable.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
+      {viewingSubmitted && !isDraftRole ? (<>
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for {selectedDate} — {allFilled} items. Tap Edit to change.</div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+          {Object.entries(existingRecord?.items || {}).filter(([, q]) => q !== undefined && q !== "").map(([id, q]) => (
+            <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+              <span>{DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id.replace(/^cs_/, ""))?.name || id}</span>
+              <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{q}</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+      </>) : (<>
+      {isDraftRole && (existingRecord?.status || "submitted") === "submitted" && existingRecord && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized today's closing stock — showing what was submitted.</div>
+      )}
+      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>Fill items you have in stock. Skip items that are zero or not applicable.</div>
       <MidnightBanner />
       <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 10, boxSizing: "border-box" }} />
       {csQuery ? (
@@ -6335,9 +6502,12 @@ const OutletMgr = ({ onBack }) => {
         {csItems.map((item, idx) => csItemRow(item, idx, csItems))}
       </div>
       </>)}
-      <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={() => submit("closing")} disabled={!canSubmit} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: canSubmit ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{canSubmit ? `📊 Submit Closing Stock (${allFilled} items)` : "Fill at least 1 item"}</button>
-      </div>
+      {(!isDraftRole || (existingRecord?.status || "submitted") !== "submitted") && (
+        <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+          <button onClick={() => submit("closing")} disabled={!canSubmit} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: canSubmit ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{!canSubmit ? "Fill at least 1 item" : isDraftRole ? `💾 Save My Section (${allFilled} items)` : existingRecord?.status === "draft" ? `✅ Finalize & Submit (${allFilled})` : existingRecord?.status === "submitted" ? `✅ Update Submission (${allFilled})` : `📊 Submit Closing Stock (${allFilled} items)`}</button>
+        </div>
+      )}
+      </>)}
     </div>); }
   return null;
 };
@@ -8861,7 +9031,7 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "driver" ? "driver" : currentUser?.role === "outlet_mgr" ? "outlet" : null;
+  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : null;
   const effectiveApp = lockedApp || app;
 
   // Load master data from DB on startup — updates in-memory arrays
@@ -9051,7 +9221,7 @@ export default function AnandaCafe() {
     </div>
   </div>);
 
-  if (effectiveApp === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={currentUser?.role === "outlet_mgr" ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
+  if (effectiveApp === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>

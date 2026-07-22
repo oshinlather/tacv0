@@ -31,6 +31,11 @@ const api = {
   updateDemandDraft: (id, data) => patch(`/api/demands/${id}/draft`, data),
   uploadDemandPhoto: (demandId, section, base64) =>
     post(`/api/demands/${demandId}/photos`, { section, base64 }),
+  // Chef/Bainmarry save their category-scoped items into today's shared draft (merges,
+  // doesn't overwrite); Outlet Manager finalizes it or edits an already-finalized one.
+  saveDemandDraft: (data) => patch("/api/demands/draft", data),
+  finalizeDemand: (id, data) => patch(`/api/demands/${id}/finalize`, data),
+  updateDemand: (id, data) => patch(`/api/demands/${id}`, data),
 
   // ── Closing Stock ──
   submitClosingStock: (data) => post("/api/demands/closing-stock", data),

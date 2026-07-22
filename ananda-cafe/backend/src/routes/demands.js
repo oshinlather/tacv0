@@ -54,21 +54,41 @@ router.post("/:id/photos", async (req, res) => {
   res.json({ ...data, url: urlData?.signedUrl });
 });
 
-// Closing stock — outlet_mgr submits for their outlet
+// Closing stock — outlet_mgr/chef/bainmarry submit for their outlet. Merges the incoming
+// items/items_units into whatever's already saved for today rather than overwriting —
+// Chef (food/vegetable/masala/grocery) and Bainmarry (packaging) both save into the same
+// day's row without erasing each other's contribution. `status` distinguishes a
+// still-in-progress save ('draft', from Chef/Bainmarry) from the Outlet Manager's final
+// submission ('submitted', also the default so plain single-manager submits behave as
+// before this role split existed).
 router.post("/closing-stock", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  const { outlet_id, items, items_units, submitted_by, date } = req.body;
+  if (!["owner", "store_mgr", "outlet_mgr", "chef", "bainmarry"].includes(user.role)) {
+    return res.status(403).json({ error: "Insufficient permissions" });
+  }
+  const { outlet_id, items, items_units, submitted_by, date, status } = req.body;
   if (!ensureOutletAccess(user, outlet_id, res)) return;
+  const effectiveDate = date || todayIST();
+
+  const { data: existing } = await supabase.from("closing_stocks").select("items, items_units")
+    .eq("outlet_id", outlet_id).eq("date", effectiveDate).maybeSingle();
+  const mergedItems = { ...(existing?.items || {}), ...(items || {}) };
+  const mergedUnits = { ...(existing?.items_units || {}), ...(items_units || {}) };
 
   const { data, error } = await supabase
     .from("closing_stocks")
-    .upsert({ outlet_id, date: date || todayIST(), items, items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null, submitted_by, submitted_at: new Date().toISOString() }, { onConflict: "outlet_id,date" })
+    .upsert({
+      outlet_id, date: effectiveDate, items: mergedItems,
+      items_units: Object.keys(mergedUnits).length > 0 ? mergedUnits : null,
+      submitted_by, submitted_at: new Date().toISOString(),
+      status: status || "submitted",
+    }, { onConflict: "outlet_id,date" })
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
   // Write to Google Sheet (non-blocking)
-  if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, "closing", submitted_by, { date: data.date }, items).catch(() => {});
+  if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, "closing", submitted_by, { date: data.date }, mergedItems).catch(() => {});
   res.json(data);
 });
 

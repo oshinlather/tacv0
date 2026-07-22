@@ -78,12 +78,14 @@ async function requireRole(req, res, ...allowedRoles) {
   return true;
 }
 
-// For routes that return/modify outlet data: outlet_mgr can only touch their
-// own outlet. Owner and store_mgr are unrestricted.
+// For routes that return/modify outlet data: outlet_mgr, chef, and bainmarry can only
+// touch their own outlet (chef/bainmarry punch category-scoped demand/wastage/closing
+// stock for one outlet, same as outlet_mgr). Owner and store_mgr are unrestricted.
 // Call this AFTER requireAuth has returned a user.
 // Returns true if access OK, else sends 403 and returns false.
+const OUTLET_SCOPED_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
 function ensureOutletAccess(user, requestedOutletId, res) {
-  if (user.role !== 'outlet_mgr') return true; // owner & store_mgr unrestricted
+  if (!OUTLET_SCOPED_ROLES.includes(user.role)) return true; // owner & store_mgr unrestricted
   if (!requestedOutletId) return true; // no outlet specified; caller handles
   if (requestedOutletId !== user.outlet_id) {
     res.status(403).json({ error: "Cannot access another outlet's data" });

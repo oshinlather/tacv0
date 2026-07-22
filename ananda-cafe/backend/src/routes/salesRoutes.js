@@ -1528,6 +1528,105 @@ router.post('/demands', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/demands/draft — Chef/Bainmarry (and the manager) save their scoped
+// category's items into today's shared draft record, merging into whatever's already
+// there from the other role rather than overwriting it. Creates the draft row if this is
+// the first save of the day for this outlet/date/type/slot. Used by Demand and Wastage —
+// Closing Stock has its own upsert-by-day route in demands.js.
+router.patch('/demands/draft', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!['owner', 'store_mgr', 'outlet_mgr', 'chef', 'bainmarry'].includes(user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const { outlet_id, type, items, items_units, demand_slot, submitted_by } = req.body;
+    const date = req.body.date || todayIST();
+    if (!outlet_id || !type) return res.status(400).json({ error: 'outlet_id and type are required' });
+    if (!ensureOutletAccess(user, outlet_id, res)) return;
+
+    let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type);
+    query = demand_slot ? query.eq('demand_slot', demand_slot) : query.is('demand_slot', null);
+    const { data: existingRows, error: findErr } = await query.order('submitted_at', { ascending: false }).limit(1);
+    if (findErr) throw findErr;
+    const existing = existingRows?.[0];
+
+    const mergedItems = { ...(existing?.items || {}), ...(items || {}) };
+    const mergedUnits = { ...(existing?.items_units || {}), ...(items_units || {}) };
+    const cleanUnits = Object.keys(mergedUnits).length > 0 ? mergedUnits : null;
+
+    if (existing) {
+      const { data, error } = await supabase.from('demands')
+        .update({ items: mergedItems, items_units: cleanUnits })
+        .eq('id', existing.id).select('*').single();
+      if (error) throw error;
+      return res.json(data);
+    }
+
+    const { data, error } = await supabase.from('demands').insert({
+      outlet_id, type, items: mergedItems, items_units: cleanUnits,
+      date, demand_slot: demand_slot || null,
+      submitted_by: submitted_by || user.name || null,
+      status: 'draft', submitted_at: new Date().toISOString(),
+    }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/demands/:id/finalize — Outlet Manager (or store_mgr/owner) turns today's
+// accumulated draft into the real submission. Optionally accepts final item edits too, so
+// the manager can correct something in the same action as finalizing.
+router.patch('/demands/:id/finalize', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!['owner', 'store_mgr', 'outlet_mgr'].includes(user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+
+    const { items, items_units, submitted_by } = req.body;
+    const updates = { status: 'submitted', submitted_at: new Date().toISOString() };
+    if (items) updates.items = items;
+    if (items_units !== undefined) updates.items_units = items_units && Object.keys(items_units).length > 0 ? items_units : null;
+    if (submitted_by) updates.submitted_by = submitted_by;
+
+    const { data, error } = await supabase.from('demands').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/demands/:id — Full items replace, for the Outlet Manager editing an
+// already-finalized same-day submission without creating a duplicate row. Distinct from
+// the owner-only historical qty-edit correction tool (/qty-edit) — this is same-day,
+// same-outlet self-service editing.
+router.patch('/demands/:id', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!['owner', 'store_mgr', 'outlet_mgr'].includes(user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+
+    const { items, items_units, submitted_by } = req.body;
+    const updates = {};
+    if (items) updates.items = items;
+    if (items_units !== undefined) updates.items_units = items_units && Object.keys(items_units).length > 0 ? items_units : null;
+    if (submitted_by) updates.submitted_by = submitted_by;
+
+    const { data, error } = await supabase.from('demands').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── POST /api/purchases — Create cash purchase (flexible schema)
 router.post('/purchases', async (req, res) => {
   try {
@@ -3116,13 +3215,15 @@ async function computeStockUsageForDate(date, outlet) {
 
     const { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
 
-    // 2. Previous day closing stock (from closing_stocks table, NOT demands)
+    // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
+    // filter excludes a still-in-progress Chef/Bainmarry draft from being treated as the
+    // day's real closing figure.
     const { data: prevClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items, items_units').eq('date', prevDateStr);
+      .select('outlet_id, items, items_units').eq('date', prevDateStr).eq('status', 'submitted');
 
     // 3. Today closing stock
     const { data: todayClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items, items_units').eq('date', date);
+      .select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted');
 
     // 4. Today wastage
     const { data: todayWastage } = await supabase.from('demands')
