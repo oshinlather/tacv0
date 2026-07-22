@@ -5508,6 +5508,14 @@ const OutletMgr = ({ onBack }) => {
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState(smartDefaultDate()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
+  // Local write-through cache for whatever's typed into Demand/Wastage/Closing Stock but
+  // not yet saved to the server — a forced reload (to pick up a deploy, a crash, a flaky
+  // connection) must not wipe out someone's already-filled-in entry with no way back.
+  // Cleared once that same data is confirmed saved.
+  const wipKey = (kind, outletId, date, slot) => `ananda_wip_${kind}_${outletId}_${date}_${slot || ""}`;
+  const loadWip = (key) => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) { return {}; } };
+  const saveWip = (key, items) => { try { if (items && Object.keys(items).length > 0) localStorage.setItem(key, JSON.stringify(items)); else localStorage.removeItem(key); } catch (e) {} };
+  const clearWip = (key) => { try { localStorage.removeItem(key); } catch (e) {} };
   // Morning demand is ambiguous right after midnight — managers working through the
   // night don't mentally distinguish "today" from "tomorrow". So instead of guessing
   // from the clock, ask explicitly which calendar date the morning delivery is for.
@@ -5679,12 +5687,14 @@ const OutletMgr = ({ onBack }) => {
         if (isDraftRole) {
           const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "draft" });
           setExistingRecord(result);
+          clearWip(wipKey("closing", outlet, selectedDate));
           alert(`✅ Your section saved — the manager will see it when finalizing.`);
           setScreen("home");
         } else {
           const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "submitted" });
           const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
+          clearWip(wipKey("closing", outlet, selectedDate));
           alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(scopedClosing).length} items`);
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
@@ -5694,6 +5704,7 @@ const OutletMgr = ({ onBack }) => {
         if (isDraftRole) {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "wastage", date: selectedDate, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
           setExistingRecord(result);
+          clearWip(wipKey("wastage", outlet, selectedDate));
           alert(`✅ Your section saved — the manager will see it when finalizing.`);
           setScreen("home");
         } else {
@@ -5704,6 +5715,7 @@ const OutletMgr = ({ onBack }) => {
           const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
           const wastageCount = Object.values(draft).filter(v => v > 0).length;
+          clearWip(wipKey("wastage", outlet, selectedDate));
           alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
@@ -5715,6 +5727,7 @@ const OutletMgr = ({ onBack }) => {
         if (isDraftRole) {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "manual", date: deliveryDate, demand_slot: demandSlot, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
           setExistingRecord(result);
+          clearWip(wipKey("manual", outlet, deliveryDate, demandSlot));
           alert(`✅ Your section saved — the manager will see it when finalizing.`);
           setScreen("home");
         } else {
@@ -5724,6 +5737,7 @@ const OutletMgr = ({ onBack }) => {
           else result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
+          clearWip(wipKey("manual", outlet, deliveryDate, demandSlot));
           alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
@@ -5778,40 +5792,56 @@ const OutletMgr = ({ onBack }) => {
     if (!outlet) return;
     setExistingRecord(null); setViewingSubmitted(false);
     if (screen === "wastage") {
+      const key = wipKey("wastage", outlet, selectedDate);
+      const wip = loadWip(key);
       api.getOrders({ outlet_id: outlet, date: selectedDate }).then((rows) => {
         // Only draft/submitted — never pick up an already-received/fulfilled row here,
         // that's a separate completed record, not today's shared draft.
         const rec = (rows || []).find((r) => r.type === "wastage" && ["draft", "submitted"].includes(r.status));
-        if (!rec) return;
-        setExistingRecord(rec);
-        setDraft(rec.items || {});
-        setDraftUnits(rec.items_units || {});
-        setViewingSubmitted(rec.status === "submitted");
-      }).catch(() => {});
+        if (rec) setExistingRecord(rec);
+        // Local not-yet-saved values win over whatever's already on the server — that's
+        // the whole point of restoring them.
+        setDraft({ ...(rec?.items || {}), ...wip });
+        setDraftUnits(rec?.items_units || {});
+        setViewingSubmitted(rec?.status === "submitted");
+      }).catch(() => { setDraft(wip); });
     } else if (screen === "close") {
+      const key = wipKey("closing", outlet, selectedDate);
+      const wip = loadWip(key);
       api.getClosingStocks({ outlet_id: outlet, date: selectedDate }).then((rows) => {
         const rec = (rows || [])[0];
-        if (!rec) return;
-        setExistingRecord(rec);
-        setClosing(rec.items || {});
-        setClosingUnits(rec.items_units || {});
-        setViewingSubmitted((rec.status || "submitted") === "submitted");
-      }).catch(() => {});
+        if (rec) setExistingRecord(rec);
+        setClosing({ ...(rec?.items || {}), ...wip });
+        setClosingUnits(rec?.items_units || {});
+        setViewingSubmitted((rec?.status || "submitted") === "submitted");
+      }).catch(() => { setClosing(wip); });
     } else if (screen === "manual" && demandSlot) {
       const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+      const key = wipKey("manual", outlet, deliveryDate, demandSlot);
+      const wip = loadWip(key);
       api.getOrders({ outlet_id: outlet, date: deliveryDate }).then((rows) => {
         // Only draft/submitted — a demand already received/issued/fulfilled by BK is a
         // separate completed order, not today's shared draft, and must never be reopened
         // and silently rewritten here.
         const rec = (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot && ["draft", "submitted"].includes(r.status));
-        if (!rec) return;
-        setExistingRecord(rec);
-        setDraft(rec.items || {});
-        setDraftUnits(rec.items_units || {});
-        setViewingSubmitted(rec.status === "submitted");
-      }).catch(() => {});
+        if (rec) setExistingRecord(rec);
+        setDraft({ ...(rec?.items || {}), ...wip });
+        setDraftUnits(rec?.items_units || {});
+        setViewingSubmitted(rec?.status === "submitted");
+      }).catch(() => { setDraft(wip); });
     }
   }, [screen, outlet, selectedDate, demandSlot, morningDeliveryDate]);
+
+  // Write-through: whatever's typed persists to localStorage immediately, independent of
+  // the save button, so it survives a reload even if the user never successfully saves.
+  useEffect(() => { if (screen === "wastage" && outlet) saveWip(wipKey("wastage", outlet, selectedDate), draft); }, [draft, screen, outlet, selectedDate]);
+  useEffect(() => { if (screen === "close" && outlet) saveWip(wipKey("closing", outlet, selectedDate), closing); }, [closing, screen, outlet, selectedDate]);
+  useEffect(() => {
+    if (screen === "manual" && outlet && demandSlot) {
+      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+      saveWip(wipKey("manual", outlet, deliveryDate, demandSlot), draft);
+    }
+  }, [draft, screen, outlet, demandSlot, morningDeliveryDate]);
 
   if (screen === "pick") {
     const user = getCurrentUser();
