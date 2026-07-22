@@ -1607,7 +1607,12 @@ router.patch('/demands/draft', async (req, res) => {
     items = await filterItemsToRoleScope(user.role, items);
     items_units = await filterItemsToRoleScope(user.role, items_units);
 
-    let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type);
+    // status='draft' is deliberate — without it, this would find and silently rewrite the
+    // most recent row for this outlet/date/type/slot regardless of state, including one
+    // that's already submitted/received/fulfilled (e.g. a morning demand already dispatched
+    // by BK). Only an actual still-open draft is safe to merge into; anything else must
+    // start a fresh row.
+    let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type).eq('status', 'draft');
     query = demand_slot ? query.eq('demand_slot', demand_slot) : query.is('demand_slot', null);
     const { data: existingRows, error: findErr } = await query.order('submitted_at', { ascending: false }).limit(1);
     if (findErr) throw findErr;

@@ -5779,7 +5779,9 @@ const OutletMgr = ({ onBack }) => {
     setExistingRecord(null); setViewingSubmitted(false);
     if (screen === "wastage") {
       api.getOrders({ outlet_id: outlet, date: selectedDate }).then((rows) => {
-        const rec = (rows || []).find((r) => r.type === "wastage");
+        // Only draft/submitted — never pick up an already-received/fulfilled row here,
+        // that's a separate completed record, not today's shared draft.
+        const rec = (rows || []).find((r) => r.type === "wastage" && ["draft", "submitted"].includes(r.status));
         if (!rec) return;
         setExistingRecord(rec);
         setDraft(rec.items || {});
@@ -5798,7 +5800,10 @@ const OutletMgr = ({ onBack }) => {
     } else if (screen === "manual" && demandSlot) {
       const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
       api.getOrders({ outlet_id: outlet, date: deliveryDate }).then((rows) => {
-        const rec = (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot);
+        // Only draft/submitted — a demand already received/issued/fulfilled by BK is a
+        // separate completed order, not today's shared draft, and must never be reopened
+        // and silently rewritten here.
+        const rec = (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot && ["draft", "submitted"].includes(r.status));
         if (!rec) return;
         setExistingRecord(rec);
         setDraft(rec.items || {});
