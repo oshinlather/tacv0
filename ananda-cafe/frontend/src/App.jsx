@@ -6502,7 +6502,7 @@ const OutletMgr = ({ onBack }) => {
         {csItems.map((item, idx) => csItemRow(item, idx, csItems))}
       </div>
       </>)}
-      {(!isDraftRole || (existingRecord?.status || "submitted") !== "submitted") && (
+      {(!isDraftRole || !existingRecord || existingRecord.status !== "submitted") && (
         <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
           <button onClick={() => submit("closing")} disabled={!canSubmit} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: canSubmit ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{!canSubmit ? "Fill at least 1 item" : isDraftRole ? `💾 Save My Section (${allFilled} items)` : existingRecord?.status === "draft" ? `✅ Finalize & Submit (${allFilled})` : existingRecord?.status === "submitted" ? `✅ Update Submission (${allFilled})` : `📊 Submit Closing Stock (${allFilled} items)`}</button>
         </div>
