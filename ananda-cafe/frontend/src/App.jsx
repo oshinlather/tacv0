@@ -1136,9 +1136,11 @@ const PaytmRecon = () => {
       <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
     </div>
 
-    {/* Outlet pills */}
+    {/* Outlet pills — GSID also settles via Paytm and needs reconciling here, unlike the
+        rest of OWN_OUTLETS's exclusions (cash-custody flows) which don't apply to it; ELAN
+        stays excluded since it wasn't asked for. */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto" }}>
-      {OWN_OUTLETS.map(o => (
+      {[...OWN_OUTLETS, ...OUTLETS.filter(o => o.id === "gaursid")].map(o => (
         <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{o.short}</button>
       ))}
     </div>
