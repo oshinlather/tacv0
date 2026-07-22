@@ -99,10 +99,53 @@ function invalidateUser(userId) {
   userCache.delete(userId);
 }
 
+// Chef/Bainmarry are gated to a subset of DEMAND_SECTIONS' categories in the frontend
+// (App.jsx's CATEGORY_SCOPE) — Chef gets food/vegetable/masala/grocery, Bainmarry gets
+// packaging, everything else (Dairy/Cleaning/Gas included) stays Outlet Manager-only.
+// Mirrored here so the restriction is also enforced server-side, not just by what the
+// React UI chooses to send.
+const CATEGORY_SCOPE = {
+  chef: ['food', 'vegetable', 'masala', 'grocery'],
+  bainmarry: ['packaging'],
+};
+
+// demand_items.section_id lookup, cached briefly — small table (~150 rows), but no
+// need to hit it on every draft/closing-stock save.
+let demandItemSectionCache = null; // { map, expires }
+const SECTION_CACHE_TTL_MS = 60_000;
+async function getDemandItemSectionMap() {
+  if (demandItemSectionCache && demandItemSectionCache.expires > Date.now()) return demandItemSectionCache.map;
+  const { data } = await supabase.from('demand_items').select('id, section_id');
+  const map = {};
+  (data || []).forEach((d) => { map[d.id] = d.section_id; });
+  demandItemSectionCache = { map, expires: Date.now() + SECTION_CACHE_TTL_MS };
+  return map;
+}
+
+// Server-side backstop for Chef/Bainmarry's category gating: drops any item whose
+// known category (via demand_items.section_id) falls outside the role's CATEGORY_SCOPE,
+// so a direct API call can't write to a category the UI wouldn't have shown. Roles
+// without a CATEGORY_SCOPE entry (owner/store_mgr/outlet_mgr) are unrestricted. Items
+// missing from the catalog are passed through unchanged — demand_items isn't perfectly
+// in sync with the frontend's item list, so treating "unknown" as in-scope avoids
+// rejecting a legitimate save over catalog drift. `idPrefix` strips a prefix (e.g. "cs_"
+// for closing stock item keys) before the lookup.
+async function filterItemsToRoleScope(role, items, idPrefix = '') {
+  const scope = CATEGORY_SCOPE[role];
+  if (!scope || !items) return items;
+  const sectionMap = await getDemandItemSectionMap();
+  return Object.fromEntries(Object.entries(items).filter(([key]) => {
+    const bareId = idPrefix && key.startsWith(idPrefix) ? key.slice(idPrefix.length) : key;
+    const section = sectionMap[bareId];
+    return !section || scope.includes(section);
+  }));
+}
+
 module.exports = {
   requireAuth,
   requireOwner,
   requireRole,
   ensureOutletAccess,
   invalidateUser,
+  filterItemsToRoleScope,
 };

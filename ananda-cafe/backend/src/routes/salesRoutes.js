@@ -10,7 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
-const { requireAuth, requireOwner, requireRole, ensureOutletAccess, invalidateUser } = require('./authGuards');
+const { requireAuth, requireOwner, requireRole, ensureOutletAccess, invalidateUser, filterItemsToRoleScope } = require('./authGuards');
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const multer = require('multer');
@@ -1597,10 +1597,15 @@ router.patch('/demands/draft', async (req, res) => {
     if (!['owner', 'store_mgr', 'outlet_mgr', 'chef', 'bainmarry'].includes(user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
-    const { outlet_id, type, items, items_units, demand_slot, submitted_by } = req.body;
+    let { outlet_id, type, items, items_units, demand_slot, submitted_by } = req.body;
     const date = req.body.date || todayIST();
     if (!outlet_id || !type) return res.status(400).json({ error: 'outlet_id and type are required' });
     if (!ensureOutletAccess(user, outlet_id, res)) return;
+
+    // Server-side backstop matching the frontend's CATEGORY_SCOPE — a direct API call
+    // can't smuggle in items outside Chef/Bainmarry's own category this way either.
+    items = await filterItemsToRoleScope(user.role, items);
+    items_units = await filterItemsToRoleScope(user.role, items_units);
 
     let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type);
     query = demand_slot ? query.eq('demand_slot', demand_slot) : query.is('demand_slot', null);

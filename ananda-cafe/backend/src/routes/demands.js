@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
-const { requireAuth, ensureOutletAccess } = require("./authGuards");
+const { requireAuth, ensureOutletAccess, filterItemsToRoleScope } = require("./authGuards");
 let sheetsHelper = null;
 try { sheetsHelper = require("../googleSheets"); } catch (e) { console.log("Google Sheets module not found — sheet sync disabled"); }
 
@@ -67,9 +67,14 @@ router.post("/closing-stock", async (req, res) => {
   if (!["owner", "store_mgr", "outlet_mgr", "chef", "bainmarry"].includes(user.role)) {
     return res.status(403).json({ error: "Insufficient permissions" });
   }
-  const { outlet_id, items, items_units, submitted_by, date, status } = req.body;
+  let { outlet_id, items, items_units, submitted_by, date, status } = req.body;
   if (!ensureOutletAccess(user, outlet_id, res)) return;
   const effectiveDate = date || todayIST();
+
+  // Server-side backstop matching the frontend's CATEGORY_SCOPE — items are cs_-prefixed
+  // here, items_units are not.
+  items = await filterItemsToRoleScope(user.role, items, "cs_");
+  items_units = await filterItemsToRoleScope(user.role, items_units);
 
   const { data: existing } = await supabase.from("closing_stocks").select("items, items_units")
     .eq("outlet_id", outlet_id).eq("date", effectiveDate).maybeSingle();
