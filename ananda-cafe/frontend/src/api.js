@@ -36,6 +36,7 @@ const api = {
   saveDemandDraft: (data) => patch("/api/demands/draft", data),
   finalizeDemand: (id, data) => patch(`/api/demands/${id}/finalize`, data),
   updateDemand: (id, data) => patch(`/api/demands/${id}`, data),
+  cancelDemand: (id, reason) => patch(`/api/demands/${id}/cancel`, { reason }),
 
   // ── Closing Stock ──
   submitClosingStock: (data) => post("/api/demands/closing-stock", data),

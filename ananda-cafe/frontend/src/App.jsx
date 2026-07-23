@@ -2590,6 +2590,35 @@ const Dispatch = () => {
     setExtraItems((p) => { const c = { ...(p[order.id] || {}) }; delete c[itemId]; return { ...p, [order.id]: c }; });
     setCheckedItems((p) => { const c = { ...(p[order.id] || {}) }; delete c[itemId]; return { ...p, [order.id]: c }; });
   };
+  const [cancelling, setCancelling] = useState(null); // order id, or `${orderId}_${itemId}` while a cancel is in flight
+
+  // Store decided it's not sending this one item — written off the actual demand record
+  // (not just skipped for today), so it stops resurfacing as "carried over" tomorrow. A
+  // phoned-in item that was never saved just gets dropped locally, no API call needed.
+  const cancelItem = async (order, itemId) => {
+    if (isExtraItem(order, itemId)) { removeExtraItem(order, itemId); return; }
+    if (!confirm(`Remove ${getItemName(itemId)} from this demand? The outlet will need to re-order it if they still need it.`)) return;
+    setCancelling(`${order.id}_${itemId}`);
+    try {
+      const remaining = { ...(order.items || {}) };
+      delete remaining[itemId];
+      if (Object.keys(remaining).length === 0) await api.cancelDemand(order.id, "last item removed");
+      else await api.updateDemand(order.id, { items: remaining });
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCancelling(null); }
+  };
+
+  // Whole order written off — the store has decided none of it is going out.
+  const cancelOrder = async (order) => {
+    if (!confirm(`Cancel this entire demand from ${OUTLETS.find((o) => o.id === order.outlet_id)?.name || order.outlet_id}? Nothing will be marked as dispatched.`)) return;
+    setCancelling(order.id);
+    try {
+      await api.cancelDemand(order.id);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCancelling(null); }
+  };
 
   const doDispatch = async (order) => {
     const itemEntries = Object.entries(orderItems(order)).filter(([, q]) => q > 0);
@@ -2771,6 +2800,7 @@ const Dispatch = () => {
                 {isCarriedOver && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>⚠️ Since {order.date}</span>}
                 {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
                 {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
+                <button onClick={() => cancelOrder(order)} disabled={cancelling === order.id} title="Not sending any of this — cancel the whole demand" style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{cancelling === order.id ? "⏳" : "✕"}</button>
               </div>
             </div>
 
@@ -2827,7 +2857,7 @@ const Dispatch = () => {
                             disabled={checked}
                             style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: checked ? "#F0FDF4" : "#fff" }} />
                           <span style={{ fontSize: 10, color: "#999", width: 28 }}>{getItemUnit(id)}</span>
-                          {isExtra && <button onClick={() => removeExtraItem(order, id)} style={{ padding: "2px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>🗑️</button>}
+                          <button onClick={() => cancelItem(order, id)} disabled={cancelling === `${order.id}_${id}`} title={isExtra ? "Remove" : "Not sending this — cancel it"} style={{ padding: "2px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>{isExtra ? "🗑️" : "✕"}</button>
                         </div>
                       );
                     })}

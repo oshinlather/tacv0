@@ -1702,6 +1702,27 @@ router.patch('/demands/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/demands/:id/cancel — Write off a demand the store has decided not to
+// dispatch (no longer needed, duplicate, mistake) — distinct from 'fulfilled' so it can
+// never be mistaken for goods that actually went out. Appends a note rather than
+// overwriting so the original demand context isn't lost from the record.
+router.patch('/demands/:id/cancel', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!['owner', 'store_mgr'].includes(user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    const { data: existing, error: findErr } = await supabase.from('demands').select('note').eq('id', req.params.id).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    const { reason } = req.body;
+    const note = (existing.note ? existing.note + ' | ' : '') + `CANCELLED by ${user.name}${reason ? ': ' + reason : ''}`;
+    const { data, error } = await supabase.from('demands').update({ status: 'cancelled', note }).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── POST /api/purchases — Create cash purchase (flexible schema)
 router.post('/purchases', async (req, res) => {
   try {
