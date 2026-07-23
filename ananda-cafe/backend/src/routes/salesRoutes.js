@@ -781,6 +781,7 @@ async function computeRMAudit(date, outletFilter) {
   const stockUsage = await computeStockUsageForDate(date, outletFilter);
   const actualByOutlet = {};
   stockUsage.outlets.forEach(o => { actualByOutlet[o.outlet_id] = o; });
+  const { rateMap, convFactorFor } = await buildCostingContext();
 
   const results = [];
   for (const oid of targetOutlets) {
@@ -814,14 +815,21 @@ async function computeRMAudit(date, outletFilter) {
       const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
       if (!mappedId) { unmappedIngredients.add(t.raw_material); return null; }
       const actualItem = actualById[mappedId];
-      const shouldConsume = t.qty_kg > 0 ? t.qty_kg : t.qty_count;
+      // Count-based ingredients (qty_kg null) are recorded per-dish in the recipe's own
+      // unit (e.g. "Piece" for Spoon) which can be a finer unit than what's actually
+      // tracked/priced (e.g. "Pkt" of 100) — convert through unit_conversions before
+      // comparing, same as the actual-consumption side already does. Without this,
+      // "should consume" silently reports a raw piece count mislabeled with the bulk unit.
+      const targetUnit = actualItem?.unit || rateMap[mappedId]?.unit || t.unit;
+      const countUnitFactor = t.unit && targetUnit ? convFactorFor(mappedId, targetUnit, t.unit) : 1;
+      const shouldConsume = t.qty_kg > 0 ? t.qty_kg : t.qty_count / (countUnitFactor || 1);
       const actualQty = actualItem ? actualItem.used : null;
       const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
       const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
       return {
         raw_material: t.raw_material,
         item_id: mappedId,
-        unit: t.qty_kg > 0 ? 'Kg' : (actualItem?.unit || t.unit || 'Pcs'),
+        unit: t.qty_kg > 0 ? 'Kg' : (targetUnit || 'Pcs'),
         should_consume: Math.round(shouldConsume * 1000) / 1000,
         should_consume_breakdown: t.breakdown.sort((a, b) => b.subtotal - a.subtotal),
         actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
