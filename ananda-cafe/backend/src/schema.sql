@@ -164,6 +164,51 @@ CREATE TABLE petpooja_sync (
 );
 
 -- ═══════════════════════════════════════════════════════════════
+--  BOOKS LEDGER — 2026-07 migration
+--  Owner-facing bookkeeping ledger under Payments › Books. Sourced primarily
+--  from the "TAC - Books" WhatsApp group (staff drop a one-line expense or a
+--  UPI/Paytm screenshot in there all day) plus manual entries. Every expense
+--  gets a proper accounting category; advances to staff/vendors are tracked
+--  as outstanding until explicitly marked settled, same idea as the existing
+--  Custodian Ledger (cash_handovers) but for personal/vendor advances rather
+--  than cash-collection custody.
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE books_ledger (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  entry_date DATE NOT NULL,
+  entry_time TIME,
+  submitted_by TEXT,                -- WhatsApp sender name, e.g. 'Parveen Lather'
+  description TEXT NOT NULL,        -- short description, e.g. "electric wires"
+  category TEXT NOT NULL CHECK (category IN (
+    'cogs_dairy', 'cogs_vegetables', 'cogs_other',
+    'utilities_electric', 'utilities_gas', 'utilities_water',
+    'repairs_maintenance', 'labor_porter', 'staff_advance',
+    'vendor_payment', 'uncategorized'
+  )),
+  amount DECIMAL(12,2) NOT NULL,
+  payment_mode TEXT,                -- 'cash','upi','paytm','gpay','bank_transfer'
+  vendor_or_recipient TEXT,         -- e.g. 'TEJRAM', 'Neeraj Trading Company'
+  is_advance BOOLEAN DEFAULT FALSE,
+  advance_to TEXT,                  -- person name, only when is_advance = true
+  settled BOOLEAN DEFAULT FALSE,
+  settled_date DATE,
+  settled_note TEXT,
+  outlet_id TEXT REFERENCES outlets(id),  -- nullable — best-effort guess from the message
+  source TEXT DEFAULT 'whatsapp' CHECK (source IN ('whatsapp', 'manual')),
+  raw_message TEXT,                 -- original WhatsApp text, kept for the audit trail
+  needs_review BOOLEAN DEFAULT FALSE, -- true when amount/category was uncertain at import
+  created_by UUID REFERENCES app_users(id), -- confirmed present in the live DB (used by authGuards.js)
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_books_ledger_date ON books_ledger(entry_date);
+CREATE INDEX idx_books_ledger_category ON books_ledger(category);
+CREATE INDEX idx_books_ledger_advance ON books_ledger(is_advance, settled);
+
+ALTER TABLE books_ledger ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role access" ON books_ledger FOR ALL USING (true);
+
+-- ═══════════════════════════════════════════════════════════════
 --  INDEXES for fast queries
 -- ═══════════════════════════════════════════════════════════════
 CREATE INDEX idx_demands_outlet_date ON demands(outlet_id, date);

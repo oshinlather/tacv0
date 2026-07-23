@@ -12,6 +12,7 @@ const petpoojaRouter = require("./routes/petpooja");
 const ordersRouter = require("./routes/orders");
 const inventoryRouter = require("./routes/inventory");
 const salesRoutes = require('./routes/salesRoutes');
+const booksRouter = require("./routes/books");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -38,6 +39,7 @@ app.use("/api/pnl", pnlRouter);
 app.use("/api/petpooja", petpoojaRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/inventory", inventoryRouter);
+app.use("/api/books", booksRouter);
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {
