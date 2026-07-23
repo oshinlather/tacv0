@@ -2527,19 +2527,36 @@ const Dispatch = () => {
   const [expandedCat, setExpandedCat] = useState({});
   const [challanOrder, setChallanOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
-  const load = () => { 
-    setLoading(true); 
+  // Items the store manager adds on the phone that weren't in the original written demand
+  // (a forgotten item, called in after submission) — merged into the order's item list for
+  // display/dispatch, but never written back onto the original demand record itself.
+  const [extraItems, setExtraItems] = useState({}); // { orderId: { itemId: qty } }
+  const [addingItemTo, setAddingItemTo] = useState(null); // order id currently showing the add-item picker
+  const [itemSearch, setItemSearch] = useState("");
+  // Anything still pending (not yet fulfilled) is fetched regardless of date — a demand
+  // that slipped through yesterday shouldn't quietly disappear once the date rolls over.
+  // "Dispatched Today" stays scoped to today so it doesn't fill up with weeks of history.
+  const load = () => {
+    setLoading(true);
     const tomorrow = istDateAgo(-1);
-    Promise.all([api.getOrders({ date: today() }), api.getOrders({ date: tomorrow })]).then(([t, tm]) => {
-      setOrders([...(t || []), ...(tm || []).filter(d => d.demand_slot === "morning")]);
-    }).catch(() => setOrders([])).finally(() => setLoading(false)); 
+    const windowStart = istDateAgo(13);
+    api.getOrders({ from: windowStart }).then((all) => {
+      setOrders((all || []).filter((d) => d.date <= tomorrow && (d.date !== tomorrow || d.demand_slot === "morning")));
+    }).catch(() => setOrders([])).finally(() => setLoading(false));
   };
   useEffect(load, []);
 
-  const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet));
-  const done = orders.filter((o) => o.status === "fulfilled" && (!selOutlet || o.outlet_id === selOutlet));
+  // Oldest first — a demand that's been sitting unfulfilled since yesterday (or earlier)
+  // surfaces above today's, so it isn't missed a second time.
+  const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet)).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  const done = orders.filter((o) => o.status === "fulfilled" && o.date === today() && (!selOutlet || o.outlet_id === selOutlet));
   const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received" || o.status === "issued");
-  const allDone = orders.filter((o) => o.status === "fulfilled");
+  const allDone = orders.filter((o) => o.status === "fulfilled" && o.date === today());
+
+  // The order's original demand plus whatever's been phoned in and added here — this is
+  // what every item-listing/counting/dispatching codepath below should treat as "the order".
+  const orderItems = (order) => ({ ...(order.items || {}), ...(extraItems[order.id] || {}) });
+  const isExtraItem = (order, id) => (order.items?.[id] || 0) <= 0 && extraItems[order.id]?.[id] !== undefined;
 
   const getDispQty = (oid, iid, demandedQty) => {
     if (dispatchQty[oid]?.[iid] !== undefined) return dispatchQty[oid][iid];
@@ -2559,8 +2576,23 @@ const Dispatch = () => {
   };
   const getCheckedCount = (oid, itemEntries) => itemEntries.filter(([id]) => isChecked(oid, id)).length;
 
+  // Adds a phoned-in item to this order — merged into its item list, category expanded so
+  // it's immediately visible. Left unchecked with an editable qty, same as every other
+  // item here: the store manager types the real qty they were told, then ticks it like any
+  // other line, rather than trusting a guessed default.
+  const addExtraItem = (order, itemId) => {
+    setExtraItems((p) => ({ ...p, [order.id]: { ...(p[order.id] || {}), [itemId]: 1 } }));
+    const sec = DEMAND_SECTIONS.find((s) => s.items.some((i) => i.id === itemId));
+    if (sec) setExpandedCat((p) => ({ ...p, [`${order.id}_${sec.id}`]: true }));
+    setAddingItemTo(null); setItemSearch("");
+  };
+  const removeExtraItem = (order, itemId) => {
+    setExtraItems((p) => { const c = { ...(p[order.id] || {}) }; delete c[itemId]; return { ...p, [order.id]: c }; });
+    setCheckedItems((p) => { const c = { ...(p[order.id] || {}) }; delete c[itemId]; return { ...p, [order.id]: c }; });
+  };
+
   const doDispatch = async (order) => {
-    const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
+    const itemEntries = Object.entries(orderItems(order)).filter(([, q]) => q > 0);
     // Only dispatch CHECKED items
     const dispItems = {};
     const remainingItems = {};
@@ -2580,6 +2612,7 @@ const Dispatch = () => {
       await api.dispatchOrder(order.id, dispItems, getCurrentUser()?.name || "store", remainingItems);
       setCheckedItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
       setDispatchQty((p) => { const c = { ...p }; delete c[order.id]; return c; });
+      setExtraItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
       load();
     } catch (e) { alert("Error: " + e.message); }
     finally { setDispatching(null); }
@@ -2710,17 +2743,23 @@ const Dispatch = () => {
       {/* ── PENDING ORDERS ── */}
       {pending.map((order) => {
         const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
-        const itemEntries = order.items ? Object.entries(order.items).filter(([, q]) => q > 0) : [];
+        const mergedItems = orderItems(order);
+        const itemEntries = Object.entries(mergedItems).filter(([, q]) => q > 0);
         const hasItems = itemEntries.length > 0;
-        const categories = hasItems ? getItemsByCategory(order.items) : [];
+        const categories = hasItems ? getItemsByCategory(mergedItems) : [];
         const filledCount = hasItems ? itemEntries.filter(([id, q]) => Number(getDispQty(order.id, id, q)) > 0).length : 0;
         const hasShortage = hasItems && itemEntries.some(([id, q]) => Number(getDispQty(order.id, id, q)) < q);
         const checkedCount = hasItems ? getCheckedCount(order.id, itemEntries) : 0;
         const allChecked = hasItems && checkedCount === itemEntries.length;
+        const isCarriedOver = order.date !== today();
+        const isAddingItem = addingItemTo === order.id;
+        const itemSearchResults = isAddingItem && itemSearch.trim()
+          ? DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ ...i, sectionId: sec.id }))).filter((i) => i.name.toLowerCase().includes(itemSearch.trim().toLowerCase()) && !(mergedItems[i.id] > 0)).slice(0, 8)
+          : [];
 
         return (
           <div key={order.id} style={{ marginBottom: 10 }}>
-          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ background: "#fff", borderRadius: 12, border: isCarriedOver ? "1px solid #FDE68A" : "1px solid #E8E8E4", overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2729,6 +2768,7 @@ const Dispatch = () => {
                 <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {isCarriedOver && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>⚠️ Since {order.date}</span>}
                 {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
                 {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
               </div>
@@ -2765,18 +2805,29 @@ const Dispatch = () => {
                       const isShort = Number(dispVal) < qty;
                       const isZero = Number(dispVal) === 0;
                       const checked = isChecked(order.id, id);
+                      const isExtra = isExtraItem(order, id);
                       return (
-                        <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10, marginBottom: 2, background: checked ? "#F0FDF4" : isZero ? "#FEF2F2" : isShort ? "#FFFBEB" : "transparent", opacity: checked ? 0.7 : 1 }}>
+                        <div key={id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 8px", borderRadius: 10, marginBottom: 2, background: isExtra ? "#EFF6FF" : checked ? "#F0FDF4" : isZero ? "#FEF2F2" : isShort ? "#FFFBEB" : "transparent", opacity: checked ? 0.7 : 1 }}>
                           <button onClick={() => toggleCheck(order.id, id)} style={{ width: 24, height: 24, borderRadius: 6, border: checked ? "2px solid #16A34A" : "2px solid #D0D0CC", background: checked ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
                             {checked && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
                           </button>
-                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A", textDecoration: checked ? "line-through" : "none" }}>{getItemName(id)}</span>
-                          <span style={{ width: 50, textAlign: "center", fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#888" }}>{qty}</span>
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A", textDecoration: checked ? "line-through" : "none" }}>
+                            {getItemName(id)}
+                            {isExtra && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 3, fontSize: 8, fontWeight: 700, background: "#2563EB", color: "#fff" }}>➕ PHONED IN</span>}
+                          </span>
+                          {isExtra ? (
+                            <input type="number" inputMode="numeric" min="0" value={qty}
+                              onChange={(e) => { const v = Math.max(0, Number(e.target.value) || 0); setExtraItems((p) => ({ ...p, [order.id]: { ...(p[order.id] || {}), [id]: v } })); }}
+                              style={{ width: 50, padding: "5px 4px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#2563EB", background: "#fff" }} />
+                          ) : (
+                            <span style={{ width: 50, textAlign: "center", fontSize: 14, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#888" }}>{qty}</span>
+                          )}
                           <input type="number" inputMode="numeric" min="0" value={dispVal}
                             onChange={(e) => setDQ(order.id, id, Math.max(0, Number(e.target.value) || 0))}
                             disabled={checked}
                             style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: checked ? "#F0FDF4" : "#fff" }} />
                           <span style={{ fontSize: 10, color: "#999", width: 28 }}>{getItemUnit(id)}</span>
+                          {isExtra && <button onClick={() => removeExtraItem(order, id)} style={{ padding: "2px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>🗑️</button>}
                         </div>
                       );
                     })}
@@ -2784,6 +2835,29 @@ const Dispatch = () => {
                 </div>
               );
             }) : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
+
+            {/* Phoned-in item, forgotten at demand time — add it straight into this dispatch */}
+            <div style={{ padding: "8px 18px 12px", borderTop: hasItems ? "1px solid #F0F0EC" : "none" }}>
+              {!isAddingItem ? (
+                <button onClick={() => { setAddingItemTo(order.id); setItemSearch(""); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px dashed #BFDBFE", background: "#EFF6FF", fontSize: 11, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>📞 + Add Item (phoned in)</button>
+              ) : (
+                <div style={{ position: "relative" }}>
+                  <input autoFocus value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="Search item to add..."
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+                  <button onClick={() => { setAddingItemTo(null); setItemSearch(""); }} style={{ position: "absolute", right: 6, top: 6, padding: "2px 6px", border: "none", background: "transparent", color: "#999", fontSize: 12, cursor: "pointer" }}>✕</button>
+                  {itemSearch.trim() && (
+                    <div style={{ marginTop: 4, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 8, overflow: "hidden", maxHeight: 180, overflowY: "auto" }}>
+                      {itemSearchResults.length === 0 && <div style={{ padding: "10px 12px", fontSize: 12, color: "#999" }}>No match</div>}
+                      {itemSearchResults.map((it) => (
+                        <button key={it.id} onClick={() => addExtraItem(order, it.id)} style={{ display: "block", width: "100%", textAlign: "left", padding: "8px 12px", border: "none", borderBottom: "1px solid #F5F5F3", background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
+                          {it.name} <span style={{ color: "#BBB", fontSize: 10 }}>({it.unit})</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {/* Dispatch button — sticky at page bottom, outside overflow card */}
           <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
@@ -5548,6 +5622,33 @@ const OutletMgr = ({ onBack }) => {
     finally { setReceiptSaving(false); }
   };
 
+  // What's still owed to this outlet from the last week — items demanded but never
+  // dispatched at all (still sitting pending), plus items dispatched short of what was
+  // asked (partial). Surfaced on Home so a manager sees it without having to remember to
+  // dig back through Dispatched Challans by date.
+  const [stillOwed, setStillOwed] = useState([]); // [{ id, name, unit, qty, date, kind: "not_sent"|"short" }]
+  useEffect(() => {
+    if (!outlet) return;
+    api.getOrders({ outlet_id: outlet, from: istDateAgo(7) }).then((rows) => {
+      const owed = {}; // id -> { qty, date (most recent), kind }
+      (rows || []).filter((r) => r.type === "manual").forEach((r) => {
+        if (["submitted", "received", "issued"].includes(r.status)) {
+          Object.entries(r.items || {}).forEach(([id, qty]) => {
+            if (qty > 0 && (!owed[id] || r.date > owed[id].date)) owed[id] = { qty, date: r.date, kind: "not_sent" };
+          });
+        } else if (r.status === "fulfilled") {
+          const dispatched = r.dispatch_items || {};
+          Object.entries(r.items || {}).forEach(([id, qty]) => {
+            const short = qty - (dispatched[id] || 0);
+            if (short > 0 && (!owed[id] || r.date > owed[id].date)) owed[id] = { qty: short, date: r.date, kind: "short" };
+          });
+        }
+      });
+      const allItems = DEMAND_SECTIONS.flatMap((s) => s.items);
+      setStillOwed(Object.entries(owed).map(([id, v]) => ({ id, name: allItems.find((i) => i.id === id)?.name || id, unit: allItems.find((i) => i.id === id)?.unit || "", ...v })));
+    }).catch(() => setStillOwed([]));
+  }, [outlet]);
+
   // Per-item unit overrides for demand/wastage (draftUnits) and closing stock (closingUnits) —
   // only items with a defined unit_conversions row get a picker (e.g. Desi Ghee: Tin or Kg).
   const [conversions, setConversions] = useState({});
@@ -5824,6 +5925,17 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
+    {stillOwed.length > 0 && (
+      <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 6 }}>⚠️ Not yet received — order again today if still needed</div>
+        {stillOwed.map((it) => (
+          <div key={it.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#92400E", padding: "2px 0" }}>
+            <span>{it.name} {it.kind === "short" ? "(short-dispatched)" : "(never sent)"}</span>
+            <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{it.qty} {it.unit} <span style={{ color: "#C2884B", fontWeight: 400 }}>· {it.date}</span></span>
+          </div>
+        ))}
+      </div>
+    )}
     {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
