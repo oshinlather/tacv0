@@ -6,7 +6,7 @@ const { requireRole } = require("./authGuards");
 
 // Issuances = BK → outlet handovers. Owner + store_mgr only.
 async function gate(req, res) {
-  return await requireRole(req, res, "owner", "store_mgr");
+  return await requireRole(req, res, "owner", "store_mgr", "avp");
 }
 
 router.get("/", async (req, res) => {

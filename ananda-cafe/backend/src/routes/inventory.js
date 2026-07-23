@@ -7,7 +7,7 @@ const { requireRole, requireOwner } = require("./authGuards");
 // All inventory operations are BK/store operations — restricted to owner + store_mgr.
 // Tiny helper to keep each route terse.
 async function gate(req, res) {
-  return await requireRole(req, res, "owner", "store_mgr");
+  return await requireRole(req, res, "owner", "store_mgr", "avp");
 }
 
 // Get all inventory items with current stock + threshold status

@@ -398,7 +398,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -411,7 +411,7 @@ const UsersPanel = () => {
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <input type="tel" placeholder="Phone (10 digits)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }].map(r => (
+        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }, { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }].map(r => (
           <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: "1 1 30%", padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
         ))}
       </div>
@@ -9289,6 +9289,64 @@ const StoreRecipesView = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  SCOPED DASHBOARD — AVP / Head Chef: a curated slice of the Owner Dashboard +
+//  Base Kitchen Manager, not the full thing. AVP gets the whole BK module (same tabs
+//  store_mgr sees) plus COGS Compare and RM Audit; Head Chef gets just the latter two.
+//  Backend guards for these specific endpoints were widened to match (see authGuards
+//  call sites for 'avp'/'head_chef') — everything else stays owner-only.
+// ═════════════════════════════════════════════════════════════════════════════
+const SCOPED_ROLE_TABS = {
+  avp: [
+    { id: "store", label: "🏭 Base Kitchen Manager" },
+    { id: "cogs_compare", label: "📊 COGS Compare" },
+    { id: "audit", label: "🔍 RM Audit" },
+  ],
+  head_chef: [
+    { id: "cogs_compare", label: "📊 COGS Compare" },
+    { id: "audit", label: "🔍 RM Audit" },
+  ],
+};
+const ScopedDashboard = () => {
+  const currentUser = getCurrentUser();
+  const tabs = SCOPED_ROLE_TABS[currentUser?.role] || [];
+  const [tab, setTab] = useState(tabs[0]?.id || null);
+  const [storeView, setStoreView] = useState("bk");
+  const doLogout = () => { localStorage.removeItem("ananda_user"); window.location.reload(); };
+
+  return (<div style={PAGE}>{FONT}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 16, fontWeight: 800 }}>{currentUser?.role === "avp" ? "🧭 AVP Dashboard" : "🧑‍🍳 Head Chef Dashboard"}</div>
+        <div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div>
+      </div>
+      <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>
+    </div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>
+      {tabs.map((t) => (<button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: tab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+    </div>
+    {tab === "store" ? (
+      <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      </div>
+    ) : null}
+    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 18px" }}>
+      {tab === "store" && storeView === "bk" && <BaseKitchen />}
+      {tab === "store" && storeView === "dispatch" && <Dispatch />}
+      {tab === "store" && storeView === "demands" && <DemandHistory />}
+      {tab === "store" && storeView === "inventory" && <Inventory />}
+      {tab === "store" && storeView === "bk_closing" && <BKClosingStock />}
+      {tab === "store" && storeView === "sales" && <SalesUpload />}
+      {tab === "store" && storeView === "cash" && <CashLedger />}
+      {tab === "store" && storeView === "custodian_ledger" && <CustodianLedger />}
+      {tab === "store" && storeView === "actions" && <StoreMgr onBack={null} />}
+      {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
+      {tab === "cogs_compare" && <CogsCompare />}
+      {tab === "audit" && <RMAuditPanel />}
+    </div>
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -9372,7 +9430,7 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : null;
+  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef"].includes(currentUser?.role) ? "scoped" : null;
   const effectiveApp = lockedApp || app;
 
   // Load master data from DB on startup — updates in-memory arrays
@@ -9563,6 +9621,7 @@ export default function AnandaCafe() {
   </div>);
 
   if (effectiveApp === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
+  if (effectiveApp === "scoped") return <ScopedDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>

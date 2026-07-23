@@ -7,7 +7,7 @@ const { requireRole } = require("./authGuards");
 // NOTE: Most of these routes are shadowed by salesRoutes.js (which also has guards),
 // but we guard here too as defense-in-depth in case route mounting order changes.
 async function gate(req, res) {
-  return await requireRole(req, res, "owner", "store_mgr");
+  return await requireRole(req, res, "owner", "store_mgr", "avp");
 }
 
 router.get("/", async (req, res) => {

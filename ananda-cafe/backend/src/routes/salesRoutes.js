@@ -378,7 +378,7 @@ router.delete('/recipes/ingredients/:id', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { date } = req.params;
     const outlets = await computeRMAudit(date, req.query.outlet);
     res.json({ date, outlets });
@@ -397,7 +397,7 @@ res.status(500).json({ error: err.message });
 // ────────────────────────────────────────────────────────────
 router.get('/audit/cold-drink/:date', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { date } = req.params;
     const rows = await fetchAllDailySales({
       date,
@@ -1432,7 +1432,7 @@ router.post('/outlet-sales', async (req, res) => {
 // there's one shared number regardless of who records it — not two competing ones.
 router.patch('/outlet-sales/cash-collection', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { outlet_id, date, cash_deposited, collected_by, note } = req.body;
     if (!outlet_id || !date || cash_deposited === undefined) {
       return res.status(400).json({ error: 'outlet_id, date, and cash_deposited are required' });
@@ -2138,7 +2138,7 @@ async function applyStockLegDelta({ rows, itemId, column, desiredDisplayTotal, i
 // Every edit is logged to qty_corrections for the Corrections Log / System Logs.
 router.patch('/qty-edit', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { outlet_id, date, item_id, new_qty, reason, record_type } = req.body;
     if (!outlet_id || !date || !item_id) {
       return res.status(400).json({ error: 'outlet_id, date, and item_id are required' });
@@ -2360,7 +2360,7 @@ router.patch('/qty-edit', async (req, res) => {
 // there's only ever a single write per row no matter how many cells changed.
 router.patch('/qty-edit-batch', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { outlet_id, date, record_type, edits, reason } = req.body;
     if (!outlet_id || !date || !Array.isArray(edits) || edits.length === 0) {
       return res.status(400).json({ error: 'outlet_id, date, and a non-empty edits[] are required' });
@@ -2773,7 +2773,7 @@ router.delete('/fixed-costs', async (req, res) => {
 // ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
 router.get('/pnl/live/:date', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { date } = req.params;
     const { outlet } = req.query; // optional outlet filter
 
@@ -3576,7 +3576,7 @@ async function computeStockUsageForDate(date, outlet) {
 
 router.get('/stock-usage/:date', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const result = await computeStockUsageForDate(req.params.date, req.query.outlet);
     res.json(result);
   } catch (err) {
@@ -3682,7 +3682,7 @@ router.get('/sheets/setup', async (req, res) => {
 
 router.get('/cash-handovers', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { month, date, from_role, to_role } = req.query;
     let query = supabase.from('cash_handovers').select('*').order('date', { ascending: false });
     if (date) query = query.eq('date', date);
@@ -3701,7 +3701,7 @@ router.get('/cash-handovers', async (req, res) => {
 // the old upsert (onConflict: date,outlet_id,from_role) did.
 router.post('/cash-handovers', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { date, from_role, from_name, to_role, to_name, outlet_id, amount, note } = req.body;
     if (!date || !amount) return res.status(400).json({ error: "Date and amount required" });
     // Every handover recorded by the app today is a custodian (Ravinder/Sahil/Ganga)
@@ -3723,7 +3723,7 @@ router.post('/cash-handovers', async (req, res) => {
 // deposited" shape as the per-outlet Cash Ledger, one level up the chain.
 router.get('/cash-handovers/custodian/:name', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const name = req.params.name;
     const { data: collections, error: collErr } = await supabase.from('daily_outlet_sales')
       .select('outlet_id, date, cash_deposited, cash_deposited_at')
@@ -3791,7 +3791,7 @@ router.get('/rm-order-config', async (req, res) => {
   try {
     // Store managers (e.g. whoever's generating a challan) need to read this to see
     // the requirement the owner set — only setting it (POST below) stays owner-only.
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { data, error } = await supabase.from('rm_order_config').select('*');
     if (error) throw error;
     res.json(data || []);
@@ -3815,7 +3815,7 @@ router.post('/rm-order-config', async (req, res) => {
 
 router.get('/rm-order-config/suggest', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const tenDaysAgo = new Date();
     tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
     const { data: movements } = await supabase.from('inventory_movements')
@@ -3837,7 +3837,7 @@ router.get('/rm-order-config/suggest', async (req, res) => {
 router.get('/purchase-orders', async (req, res) => {
   try {
     // Drivers read this to find their vegetable order for the day (see PATCH below).
-    if (!await requireRole(req, res, 'owner', 'store_mgr', 'driver')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'driver')) return;
     const { status, limit } = req.query;
     let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
@@ -3850,7 +3850,7 @@ router.get('/purchase-orders', async (req, res) => {
 
 router.get('/purchase-orders/:id', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { data, error } = await supabase.from('purchase_orders')
       .select('*').eq('id', req.params.id).single();
     if (error) throw error;
@@ -3862,7 +3862,7 @@ router.post('/purchase-orders', async (req, res) => {
   try {
     // Store managers generate challans day-to-day; owner-only here was blocking the
     // main use case entirely, not just the RM-requirement facilitator above.
-    if (!await requireRole(req, res, 'owner', 'store_mgr')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
     const { items, notes, created_by, date } = req.body;
     const orderDate = date || todayIST();
     const { data: existing } = await supabase.from('purchase_orders')
@@ -3884,7 +3884,7 @@ router.patch('/purchase-orders/:id', async (req, res) => {
     // Was unguarded. Drivers use this to record bought_qty/total_price per item on
     // their vegetable order (a metadata-only update to purchase_orders.items — it
     // never touches inventory_stock, unlike the actual Stock-In/receive flow).
-    if (!await requireRole(req, res, 'owner', 'store_mgr', 'driver')) return;
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'driver')) return;
     const updates = {};
     if (req.body.status !== undefined) updates.status = req.body.status;
     if (req.body.items !== undefined) updates.items = req.body.items;
