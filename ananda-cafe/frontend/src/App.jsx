@@ -7353,14 +7353,18 @@ const RMAuditPanel = () => {
           )}
 
           {outletData.items.length > 0 && (
-            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            // No overflow:hidden/overflowX:auto wrapper here (unlike other tables in this
+            // file) — either one establishes a new containing block for any sticky
+            // descendant, which silently breaks the header's position:sticky. Corners are
+            // rounded on the header cells themselves instead of clipped via the wrapper.
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 12 }}>
+                <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12.5 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>
-                    <th style={thS}>Raw Material</th><th style={thS}>Unit</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Should Consume</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Actual Consumed</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Leakage</th>
+                    <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5, borderTopLeftRadius: 14 }}>Raw Material</th>
+                    <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Unit</th>
+                    <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Should Consume</th>
+                    <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Actual Consumed</th>
+                    <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5, borderTopRightRadius: 14 }}>Leakage</th>
                   </tr></thead>
                   <tbody>
                     {outletData.items.map((item, i) => {
@@ -7406,7 +7410,6 @@ const RMAuditPanel = () => {
                     })}
                   </tbody>
                 </table>
-              </div>
             </div>
           )}
 
