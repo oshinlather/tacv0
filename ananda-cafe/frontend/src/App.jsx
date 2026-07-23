@@ -7043,12 +7043,48 @@ const SalesUpload = () => {
   const [uploadDate, setUploadDate] = useState(today());
   const [useCustomDate, setUseCustomDate] = useState(false);
   const [dishCosts, setDishCosts] = useState({}); // normalized dish name -> { total_cost, unpriced_count }
+  const [recipes, setRecipes] = useState([]); // for dish-name -> recipe id, to expand into ingredient breakdown
+  const [expandedItem, setExpandedItem] = useState(null); // item_name of the row showing its ingredient breakdown
+  const [costDetails, setCostDetails] = useState({}); // recipe_id -> full getDishCost() ingredient breakdown
+  const [costDetailsLoading, setCostDetailsLoading] = useState(null); // recipe_id currently loading
+  const [editingRate, setEditingRate] = useState(null); // rate_card_id being edited inline from the expanded row
+  const [editValue, setEditValue] = useState("");
+  const [savingRate, setSavingRate] = useState(false);
   const fileRef = useRef(null);
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
   // Current rate-card costing, not date-specific — load once, not per date/outlet flip.
   useEffect(() => { api.getAllDishCosts().then(setDishCosts).catch(() => setDishCosts({})); }, []);
+  useEffect(() => { api.getRecipes(true).then((r) => setRecipes(r || [])).catch(() => setRecipes([])); }, []);
+  const recipeByNormName = useMemo(() => {
+    const m = {};
+    recipes.forEach((r) => { m[normalizeDishName(r.item_name)] = r; });
+    return m;
+  }, [recipes]);
+
+  const toggleExpand = (itemName, recipeId) => {
+    if (expandedItem === itemName) { setExpandedItem(null); return; }
+    setExpandedItem(itemName);
+    if (recipeId && !costDetails[recipeId]) {
+      setCostDetailsLoading(recipeId);
+      api.getDishCost(recipeId).then((d) => setCostDetails((p) => ({ ...p, [recipeId]: d }))).catch(() => {}).finally(() => setCostDetailsLoading(null));
+    }
+  };
+
+  const saveIngredientRate = async (rateCardId, recipeId) => {
+    if (!editValue || Number(editValue) <= 0) return;
+    setSavingRate(true);
+    try {
+      await api.updateRate(rateCardId, { price: Number(editValue) });
+      setEditingRate(null);
+      setCostDetailsLoading(recipeId);
+      const d = await api.getDishCost(recipeId);
+      setCostDetails((p) => ({ ...p, [recipeId]: d }));
+      api.getAllDishCosts().then(setDishCosts).catch(() => {}); // refresh the bulk map too, so the row's own Cost/Margin reflect the fix
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSavingRate(false); setCostDetailsLoading(null); }
+  };
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -7080,8 +7116,10 @@ const SalesUpload = () => {
     const unitCost = costInfo ? costInfo.total_cost : null;
     const cost = unitCost != null ? unitCost * item.qty : null;
     const margin = cost != null ? item.revenue - cost : null;
-    return { ...item, unitCost, cost, margin };
-  }), [sales, dishCosts]);
+    const marginPct = margin != null && item.revenue > 0 ? (margin / item.revenue) * 100 : null;
+    const recipe = recipeByNormName[normalizeDishName(item.item_name)];
+    return { ...item, unitCost, cost, margin, marginPct, recipeId: recipe?.id };
+  }), [sales, dishCosts, recipeByNormName]);
 
   const totalCogs = itemsWithCost.reduce((s, i) => s + (i.cost || 0), 0);
   const pricedRevenue = itemsWithCost.filter((i) => i.cost != null).reduce((s, i) => s + (i.revenue || 0), 0);
@@ -7199,19 +7237,78 @@ const SalesUpload = () => {
                     <th style={thS}>#</th><th style={thS}>Item</th><th style={thS}>Category</th>
                     <th style={{ ...thS, textAlign: "right" }}>Qty</th><th style={{ ...thS, textAlign: "right" }}>Revenue</th>
                     <th style={{ ...thS, textAlign: "right" }}>Cost</th><th style={{ ...thS, textAlign: "right" }}>Margin</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Margin %</th>
                   </tr></thead>
                   <tbody>
-                    {itemsWithCost.map((item, i) => (
-                      <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                        <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
-                        <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name}</td>
-                        <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
-                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
-                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
-                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
-                        <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
-                      </tr>
-                    ))}
+                    {itemsWithCost.map((item, i) => {
+                      const isOpen = expandedItem === item.item_name;
+                      const details = item.recipeId ? costDetails[item.recipeId] : null;
+                      const isLoadingDetails = costDetailsLoading === item.recipeId;
+                      return (<Fragment key={i}>
+                        <tr onClick={() => item.recipeId && toggleExpand(item.item_name, item.recipeId)} style={{ borderBottom: "1px solid #F0F0EC", cursor: item.recipeId ? "pointer" : "default" }}>
+                          <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
+                          <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name} {item.recipeId && <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>}</td>
+                          <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.marginPct != null ? (item.marginPct >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.marginPct != null ? `${item.marginPct.toFixed(1)}%` : "—"}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                            <td colSpan={8} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                              {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
+                              {!isLoadingDetails && details && (
+                                <>
+                                  {details.unpriced_count > 0 && (
+                                    <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", margin: "8px 0" }}>
+                                      ⚠️ {details.unpriced_count} ingredient(s) below have no usable price — cost/margin above are understated. Fix them here.
+                                    </div>
+                                  )}
+                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+                                    <thead><tr>
+                                      <th style={{ ...thS, background: "transparent" }}>Ingredient</th>
+                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Qty</th>
+                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Rate</th>
+                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Cost</th>
+                                    </tr></thead>
+                                    <tbody>
+                                      {(details.ingredients || []).map((ing, j) => {
+                                        const isEditingThis = editingRate === ing.rate_card_id;
+                                        return (
+                                          <tr key={j} style={{ borderBottom: "1px solid #F0F0EC", background: ing.priced ? "#fff" : "#FFFBEB" }}>
+                                            <td style={{ ...tdS, fontWeight: 600 }}>{ing.raw_material}{ing.via_bk_recipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (via BK recipe)</span>}</td>
+                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{ing.qty} {ing.unit}</td>
+                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                                              {isEditingThis ? (
+                                                <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                                  <input autoFocus type="number" inputMode="decimal" value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                                                    onKeyDown={(e) => { if (e.key === "Enter") saveIngredientRate(ing.rate_card_id, item.recipeId); if (e.key === "Escape") setEditingRate(null); }}
+                                                    style={{ width: 60, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                                                  <button onClick={() => saveIngredientRate(ing.rate_card_id, item.recipeId)} disabled={savingRate} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                                                </span>
+                                              ) : ing.rate_card_id ? (
+                                                <span onClick={() => { setEditingRate(ing.rate_card_id); setEditValue(String(ing.rate)); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit rate card price">
+                                                  ₹{ing.rate}/{ing.rate_unit}
+                                                </span>
+                                              ) : ing.rate != null ? `₹${ing.rate}/${ing.rate_unit}` : "—"}
+                                            </td>
+                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ing.priced ? "#B45309" : "#DC2626" }}>
+                                              {ing.priced ? `₹${ing.cost}` : (ing.reason || "no price")}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>);
+                    })}
                   </tbody>
                 </table>
               </div>
