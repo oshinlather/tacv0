@@ -1096,6 +1096,11 @@ const BOOKS_CATEGORIES = [
 ];
 const booksCatLabel = (id) => BOOKS_CATEGORIES.find((c) => c.id === id)?.label || id;
 
+const BOOKS_ENTRY_DEFAULTS = {
+  entry_date: "", entry_time: "", submitted_by: "", description: "", category: "uncategorized",
+  amount: "", payment_mode: "cash", vendor_or_recipient: "", is_advance: false, advance_to: "", needs_review: false,
+};
+
 const BooksLedger = () => {
   const [month, setMonth] = useState(() => today().slice(0, 7));
   const [catFilter, setCatFilter] = useState("all");
@@ -1106,6 +1111,13 @@ const BooksLedger = () => {
   const [settleNote, setSettleNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  // All-time outstanding advances (not scoped to the selected month) — an advance
+  // given in an earlier month must stay visible/settleable even after flipping months.
+  const [advancesByPerson, setAdvancesByPerson] = useState([]);
+  // Add/Edit entry modal: null = closed, "new" = creating, or an entry id = editing that row.
+  const [formOpen, setFormOpen] = useState(null);
+  const [form, setForm] = useState(BOOKS_ENTRY_DEFAULTS);
+  const [formSaving, setFormSaving] = useState(false);
 
   const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const from = `${month}-01`;
@@ -1120,23 +1132,66 @@ const BooksLedger = () => {
   }, [from, to, catFilter]);
   useEffect(load, [load]);
 
+  const loadAdvances = useCallback(() => {
+    api.getBooksAdvances().then(setAdvancesByPerson).catch(() => setAdvancesByPerson([]));
+  }, []);
+  useEffect(loadAdvances, [loadAdvances]);
+
   const doSettle = async (id) => {
     setSaving(true);
     try {
       await api.settleBooksAdvance(id, settleNote || null);
       setSettleId(null); setSettleNote("");
-      load();
+      load(); loadAdvances();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
   };
 
-  const outstandingAdvances = entries.filter((e) => e.is_advance && !e.settled);
-  const needsReview = entries.filter((e) => e.needs_review);
+  const openAdd = () => {
+    setForm({ ...BOOKS_ENTRY_DEFAULTS, entry_date: today(), submitted_by: getCurrentUser()?.name || "" });
+    setFormOpen("new");
+  };
+  const openEdit = (e) => {
+    setForm({
+      entry_date: e.entry_date || today(), entry_time: e.entry_time || "", submitted_by: e.submitted_by || "",
+      description: e.description || "", category: e.category || "uncategorized", amount: e.amount != null ? String(e.amount) : "",
+      payment_mode: e.payment_mode || "cash", vendor_or_recipient: e.vendor_or_recipient || "",
+      is_advance: !!e.is_advance, advance_to: e.advance_to || "", needs_review: !!e.needs_review,
+    });
+    setFormOpen(e.id);
+  };
+  const saveForm = async () => {
+    if (!form.description || form.amount === "") { alert("Description and amount are required"); return; }
+    setFormSaving(true);
+    try {
+      const payload = {
+        ...form, amount: Number(form.amount), entry_time: form.entry_time || null,
+        vendor_or_recipient: form.vendor_or_recipient || null,
+        advance_to: form.is_advance ? (form.advance_to || null) : null,
+      };
+      if (formOpen === "new") await api.createBooksEntry(payload);
+      else await api.updateBooksEntry(formOpen, payload);
+      setFormOpen(null);
+      load(); loadAdvances();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setFormSaving(false); }
+  };
+  const deleteEntry = async (id) => {
+    if (!window.confirm("Delete this entry? This can't be undone.")) return;
+    try { await api.deleteBooksEntry(id); load(); loadAdvances(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+
+  // Flatten every not-yet-settled advance across all people, regardless of month.
+  const outstandingAdvances = advancesByPerson.flatMap((p) => p.entries.filter((e) => e.is_advance && !e.settled));
 
   return (<div>
-    <div style={{ marginBottom: 16 }}>
-      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📚 Books</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Expense ledger from the TAC - Books WhatsApp group — categorized, with advances tracked until settled</p>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+      <div>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📚 Books</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Expense ledger from the TAC - Books WhatsApp group — categorized, with advances tracked until settled</p>
+      </div>
+      <button onClick={openAdd} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>➕ Add Entry</button>
     </div>
 
     {/* Month picker */}
@@ -1220,6 +1275,7 @@ const BooksLedger = () => {
               <th style={thS}>Category</th>
               <th style={{ ...thS, textAlign: "right" }}>Amount</th>
               <th style={thS}>Status</th>
+              <th style={thS}></th>
             </tr></thead>
             <tbody>
               {entries.map((e) => (
@@ -1240,10 +1296,14 @@ const BooksLedger = () => {
                         : <span style={{ color: "#B45309", fontWeight: 700, fontSize: 10 }}>⏳ Outstanding</span>
                     ) : <span style={{ color: "#999" }}>—</span>}
                   </td>
+                  <td style={{ ...tdS, whiteSpace: "nowrap" }}>
+                    <button onClick={() => openEdit(e)} title="Edit" style={{ padding: "3px 7px", borderRadius: 5, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, cursor: "pointer", marginRight: 4 }}>✏️</button>
+                    <button onClick={() => deleteEntry(e.id)} title="Delete" style={{ padding: "3px 7px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+                  </td>
                 </tr>
               ))}
               {entries.length === 0 && (
-                <tr><td colSpan={6} style={{ ...tdS, textAlign: "center", color: "#999", padding: 30 }}>No entries this month</td></tr>
+                <tr><td colSpan={7} style={{ ...tdS, textAlign: "center", color: "#999", padding: 30 }}>No entries this month</td></tr>
               )}
             </tbody>
           </table>
@@ -1262,6 +1322,71 @@ const BooksLedger = () => {
         <div style={{ display: "flex", gap: 6 }}>
           <button onClick={() => doSettle(settleId)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Settle"}</button>
           <button onClick={() => setSettleId(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
+
+    {/* Add / Edit entry modal */}
+    {formOpen && (<>
+      <div onClick={() => setFormOpen(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 340, maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 14 }}>{formOpen === "new" ? "➕ Add Entry" : "✏️ Edit Entry"}</div>
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Date</div>
+        <input type="date" value={form.entry_date} onChange={(e) => setForm({ ...form, entry_date: e.target.value })}
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Submitted by</div>
+        <input value={form.submitted_by} onChange={(e) => setForm({ ...form, submitted_by: e.target.value })} placeholder="e.g. Ramesh"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Description</div>
+        <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="e.g. water tanker"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Category</div>
+        <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }}>
+          {BOOKS_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount (₹)</div>
+        <input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Payment mode</div>
+        <select value={form.payment_mode} onChange={(e) => setForm({ ...form, payment_mode: e.target.value })}
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }}>
+          <option value="cash">Cash</option>
+          <option value="upi">UPI</option>
+          <option value="paytm">Paytm</option>
+          <option value="gpay">GPay</option>
+          <option value="bank_transfer">Bank Transfer</option>
+        </select>
+
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Vendor / recipient (optional)</div>
+        <input value={form.vendor_or_recipient} onChange={(e) => setForm({ ...form, vendor_or_recipient: e.target.value })} placeholder="e.g. tanker guy"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={form.is_advance} onChange={(e) => setForm({ ...form, is_advance: e.target.checked })} />
+          This is an advance (track until settled)
+        </label>
+
+        {form.is_advance && (<>
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Advance to</div>
+          <input value={form.advance_to} onChange={(e) => setForm({ ...form, advance_to: e.target.value })} placeholder="person's name"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+        </>)}
+
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, marginBottom: 16, cursor: "pointer" }}>
+          <input type="checkbox" checked={form.needs_review} onChange={(e) => setForm({ ...form, needs_review: e.target.checked })} />
+          Flag as needs review
+        </label>
+
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={saveForm} disabled={formSaving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: formSaving ? "#D0D0CC" : "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: formSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{formSaving ? "⏳..." : "💾 Save"}</button>
+          <button onClick={() => setFormOpen(null)} disabled={formSaving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
         </div>
       </div>
     </>)}
