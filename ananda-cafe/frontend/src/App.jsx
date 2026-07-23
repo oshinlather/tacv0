@@ -1074,6 +1074,200 @@ const CustodianLedger = () => {
   </div>);
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  BOOKS LEDGER — Payments › Books. Expense/advance entries sourced from the
+//  "TAC - Books" WhatsApp group (one-line messages + UPI/Paytm screenshots)
+//  plus manual entries. Advances to staff/vendors stay outstanding until
+//  explicitly marked settled, same idea as the Custodian Ledger above but for
+//  personal/vendor advances rather than cash-collection custody.
+// ═════════════════════════════════════════════════════════════════════════════
+const BOOKS_CATEGORIES = [
+  { id: "cogs_dairy", label: "🥛 Dairy" },
+  { id: "cogs_vegetables", label: "🥬 Vegetables" },
+  { id: "cogs_other", label: "🥥 Other COGS" },
+  { id: "utilities_electric", label: "⚡ Electric" },
+  { id: "utilities_gas", label: "🔥 Gas" },
+  { id: "utilities_water", label: "💧 Water" },
+  { id: "repairs_maintenance", label: "🔧 Repairs & Maintenance" },
+  { id: "labor_porter", label: "📦 Porter / Labor" },
+  { id: "staff_advance", label: "🤝 Staff Advance" },
+  { id: "vendor_payment", label: "🏢 Vendor Payment" },
+  { id: "uncategorized", label: "❓ Uncategorized" },
+];
+const booksCatLabel = (id) => BOOKS_CATEGORIES.find((c) => c.id === id)?.label || id;
+
+const BooksLedger = () => {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [catFilter, setCatFilter] = useState("all");
+  const [entries, setEntries] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [settleId, setSettleId] = useState(null);
+  const [settleNote, setSettleNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  const from = `${month}-01`;
+  const to = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getBooksLedger({ from, to, ...(catFilter !== "all" ? { category: catFilter } : {}) })
+      .then((res) => { setEntries(res.entries || []); setSummary(res.summary || null); setErr(null); })
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [from, to, catFilter]);
+  useEffect(load, [load]);
+
+  const doSettle = async (id) => {
+    setSaving(true);
+    try {
+      await api.settleBooksAdvance(id, settleNote || null);
+      setSettleId(null); setSettleNote("");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const outstandingAdvances = entries.filter((e) => e.is_advance && !e.settled);
+  const needsReview = entries.filter((e) => e.needs_review);
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📚 Books</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Expense ledger from the TAC - Books WhatsApp group — categorized, with advances tracked until settled</p>
+    </div>
+
+    {/* Month picker */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {/* Summary cards */}
+    {summary && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(summary.total)}</div>
+          <div style={{ fontSize: 9, color: "#999" }}>total this month</div>
+        </div>
+        <div style={{ background: "#FFFBEB", borderRadius: 10, border: "1px solid #FDE68A", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(summary.outstanding_advances)}</div>
+          <div style={{ fontSize: 9, color: "#B45309" }}>outstanding advances</div>
+        </div>
+        {summary.needs_review_count > 0 && (
+          <div style={{ background: "#FEF2F2", borderRadius: 10, border: "1px solid #FECACA", padding: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#DC2626" }}>{summary.needs_review_count}</div>
+            <div style={{ fontSize: 9, color: "#DC2626" }}>need review</div>
+          </div>
+        )}
+      </div>
+    )}
+
+    {/* Category breakdown */}
+    {summary && Object.keys(summary.by_category || {}).length > 0 && (
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>By Category</div>
+        {Object.entries(summary.by_category).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
+          <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #F5F5F3", fontSize: 12 }}>
+            <span>{booksCatLabel(cat)}</span>
+            <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(amt)}</span>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {/* Category filter */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+      <button onClick={() => setCatFilter("all")} style={{ padding: "6px 12px", borderRadius: 8, border: catFilter === "all" ? "none" : "1px solid #E0E0DC", background: catFilter === "all" ? "#1A1A1A" : "#fff", color: catFilter === "all" ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>All</button>
+      {BOOKS_CATEGORIES.map((c) => (
+        <button key={c.id} onClick={() => setCatFilter(c.id)} style={{ padding: "6px 12px", borderRadius: 8, border: catFilter === c.id ? "none" : "1px solid #E0E0DC", background: catFilter === c.id ? "#1A1A1A" : "#fff", color: catFilter === c.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{c.label}</button>
+      ))}
+    </div>
+
+    {/* Outstanding advances strip */}
+    {outstandingAdvances.length > 0 && (
+      <div style={{ background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 12, padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6D28D9", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>🤝 Outstanding Advances</div>
+        {outstandingAdvances.map((e) => (
+          <div key={e.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #EDE9FE" }}>
+            <div style={{ fontSize: 12 }}>
+              <span style={{ fontWeight: 700 }}>{e.advance_to || e.description}</span>
+              <span style={{ color: "#999", marginLeft: 6 }}>{e.entry_date?.slice(5)}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#6D28D9" }}>{fmt(e.amount)}</span>
+              <button onClick={() => { setSettleId(e.id); setSettleNote(""); }} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #DDD6FE", background: "#fff", fontSize: 10, fontWeight: 700, color: "#6D28D9", cursor: "pointer", fontFamily: "inherit" }}>Settle</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+    {err && <div style={{ textAlign: "center", padding: 20, color: "#DC2626", fontSize: 12 }}>{err}</div>}
+
+    {!loading && !err && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Date</th>
+              <th style={thS}>By</th>
+              <th style={thS}>Description</th>
+              <th style={thS}>Category</th>
+              <th style={{ ...thS, textAlign: "right" }}>Amount</th>
+              <th style={thS}>Status</th>
+            </tr></thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id} style={{ borderBottom: "1px solid #F0F0EC", background: e.needs_review ? "#FEF9F5" : "transparent" }}>
+                  <td style={tdS}>{e.entry_date?.slice(5)}</td>
+                  <td style={{ ...tdS, fontSize: 10, color: "#888" }}>{e.submitted_by}</td>
+                  <td style={tdS}>
+                    {e.description}
+                    {e.vendor_or_recipient && <div style={{ fontSize: 9, color: "#999" }}>{e.vendor_or_recipient}</div>}
+                    {e.needs_review && <div style={{ fontSize: 9, color: "#DC2626", fontWeight: 700 }}>⚠️ needs review</div>}
+                  </td>
+                  <td style={tdS}>{booksCatLabel(e.category)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(e.amount)}</td>
+                  <td style={tdS}>
+                    {e.is_advance ? (
+                      e.settled
+                        ? <span style={{ color: "#16A34A", fontWeight: 700, fontSize: 10 }}>✅ Settled</span>
+                        : <span style={{ color: "#B45309", fontWeight: 700, fontSize: 10 }}>⏳ Outstanding</span>
+                    ) : <span style={{ color: "#999" }}>—</span>}
+                  </td>
+                </tr>
+              ))}
+              {entries.length === 0 && (
+                <tr><td colSpan={6} style={{ ...tdS, textAlign: "center", color: "#999", padding: 30 }}>No entries this month</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+
+    {/* Settle advance modal */}
+    {settleId && (<>
+      <div onClick={() => setSettleId(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>✅ Mark Advance Settled</div>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Note (optional)</div>
+        <input value={settleNote} onChange={(e) => setSettleNote(e.target.value)} placeholder="e.g. adjusted against Aug salary"
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => doSettle(settleId)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Settle"}</button>
+          <button onClick={() => setSettleId(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
+  </div>);
+};
+
 const PaytmRecon = () => {
   const [month, setMonth] = useState(() => today().slice(0, 7)); // YYYY-MM
   const [actuals, setActuals] = useState([]);
@@ -2519,6 +2713,11 @@ const BaseKitchen = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  DISPATCH — with per-item qty editing + printable challan
 // ═════════════════════════════════════════════════════════════════════════════
+// Base Kitchen's own demand (outlet_id "bk") shares this same dispatch queue with the
+// 4 real outlets — it isn't in OUTLETS (that array drives per-outlet sales/P&L/closing
+// stock breakdowns BK doesn't participate in), so give it a display fallback here instead.
+const findOutletForDisplay = (id) => id === "bk" ? { id: "bk", name: "Base Kitchen", short: "🏭 BK" } : OUTLETS.find((o) => o.id === id);
+
 const Dispatch = () => {
   const [orders, setOrders] = useState([]); const [loading, setLoading] = useState(true);
   const [dispatchQty, setDispatchQty] = useState({}); // { orderId: { itemId: qty } }
@@ -2611,7 +2810,7 @@ const Dispatch = () => {
 
   // Whole order written off — the store has decided none of it is going out.
   const cancelOrder = async (order) => {
-    if (!confirm(`Cancel this entire demand from ${OUTLETS.find((o) => o.id === order.outlet_id)?.name || order.outlet_id}? Nothing will be marked as dispatched.`)) return;
+    if (!confirm(`Cancel this entire demand from ${findOutletForDisplay(order.outlet_id)?.name || order.outlet_id}? Nothing will be marked as dispatched.`)) return;
     setCancelling(order.id);
     try {
       await api.cancelDemand(order.id);
@@ -2674,7 +2873,7 @@ const Dispatch = () => {
   // ── CHALLAN VIEW ──
   if (challanOrder) {
     const order = challanOrder;
-    const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+    const outlet = findOutletForDisplay(order.outlet_id);
     const demanded = order.items || {};
     const dispatched = order.dispatch_items || demanded; // fallback for old orders without dispatch_items
     const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
@@ -2753,7 +2952,7 @@ const Dispatch = () => {
     <div>
       {/* Outlet pills + refresh */}
       <div style={{ display: "flex", gap: 5, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-        {OUTLETS.map((o) => {
+        {[{ id: "bk", short: "🏭 BK" }, ...OUTLETS].map((o) => {
           const pCount = allPending.filter((d) => d.outlet_id === o.id).length;
           const dCount = allDone.filter((d) => d.outlet_id === o.id).length;
           const isAllDone = pCount === 0 && dCount > 0;
@@ -2771,7 +2970,7 @@ const Dispatch = () => {
 
       {/* ── PENDING ORDERS ── */}
       {pending.map((order) => {
-        const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+        const outlet = findOutletForDisplay(order.outlet_id);
         const mergedItems = orderItems(order);
         const itemEntries = Object.entries(mergedItems).filter(([, q]) => q > 0);
         const hasItems = itemEntries.length > 0;
@@ -2904,7 +3103,7 @@ const Dispatch = () => {
       {done.length > 0 && (<div style={{ marginTop: 24 }}>
         <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>✅ Dispatched Today</div>
         {done.map((order) => {
-          const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+          const outlet = findOutletForDisplay(order.outlet_id);
           const hasShortage = order.dispatch_items && order.items && Object.keys(order.items).some((id) => (order.dispatch_items[id] || 0) < (order.items[id] || 0));
           return (
             <div key={order.id} onClick={() => setChallanOrder(order)} style={{ background: hasShortage ? "#FFFBEB" : "#F0FDF4", borderRadius: 12, border: `1px solid ${hasShortage ? "#FDE68A" : "#BBF7D0"}`, padding: "12px 16px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
@@ -2956,7 +3155,7 @@ const DriverChallans = () => {
 
   if (openOrder) {
     const order = openOrder;
-    const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+    const outlet = findOutletForDisplay(order.outlet_id);
     const demanded = order.items || {};
     const dispatched = order.dispatch_items || demanded;
     const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
@@ -2997,7 +3196,7 @@ const DriverChallans = () => {
     </div>
     {visibleOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>{orders.length === 0 ? "No challans dispatched today yet" : "Nothing for this filter"}</div>}
     {visibleOrders.map((order) => {
-      const outlet = OUTLETS.find((o) => o.id === order.outlet_id);
+      const outlet = findOutletForDisplay(order.outlet_id);
       const itemCount = Object.keys(order.items || {}).filter((id) => (order.items[id] || 0) > 0).length;
       return (
         <div key={order.id} onClick={() => setOpenOrder(order)} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
@@ -4124,7 +4323,7 @@ const DemandHistory = () => {
     try {
       const fromDate = days[days.length - 1]?.date;
       const data = await api.getOrders({ from: fromDate, outlet_id: selOutlet });
-      setDemands((data || []).filter(d => d.type === "manual" && d.status !== "draft"));
+      setDemands((data || []).filter(d => (d.type === "manual" || d.type === "bk_demand") && d.status !== "draft"));
     } catch (e) { console.error(e); setDemands([]); }
     setLoading(false);
   };
@@ -4303,7 +4502,7 @@ const DemandHistory = () => {
       {viewMode === "recent" && <>
       {/* Outlet selector */}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-        {OUTLETS.map(o => (
+        {[{ id: "bk", short: "🏭 Base Kitchen" }, ...OUTLETS].map(o => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)}
             style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500,
               border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit",
@@ -6665,55 +6864,15 @@ const OutletMgr = ({ onBack }) => {
 //  STORE MANAGER
 // ═════════════════════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════════════════════
-//  BK DEMAND — Base Kitchen daily requirements (staff food, cleaning, etc.)
+//  BK DEMAND — Base Kitchen's own daily requirements. Same idea, same catalog, and
+//  same demands table as an outlet's Demand — Manual Entry (outlet_id "bk", type
+//  "bk_demand" instead of "manual"), just missing "Food" (BK prepares that itself,
+//  it doesn't order it from itself). Using the real DEMAND_SECTIONS catalog — not a
+//  separate hardcoded list — means every item here already has a rate card price and
+//  a recipe/audit mapping, so BK's own demand shows up correctly in Dispatch and RM
+//  Audit exactly like any outlet's does, gas included.
 // ═════════════════════════════════════════════════════════════════════════════
-const BK_DEMAND_SECTIONS = [
-  { id: "bk_veg", title: "🥬 Vegetables", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0", items: [
-    { id: "bk_tomato", name: "Tomato", unit: "Kg" },
-    { id: "bk_ginger", name: "Ginger", unit: "Kg" },
-    { id: "bk_garlic", name: "Garlic", unit: "Kg" },
-    { id: "bk_coriander", name: "Coriander Leaves", unit: "Gm" },
-    { id: "bk_onion", name: "Onion", unit: "Kg" },
-  ]},
-  { id: "bk_grocery", title: "🛒 Grocery", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A", items: [
-    { id: "bk_chhole", name: "Chhole", unit: "Kg" },
-    { id: "bk_milk", name: "Milk", unit: "Ltr" },
-    { id: "bk_mustard_oil", name: "Mustard Oil", unit: "Ltr" },
-    { id: "bk_rajma", name: "Rajma", unit: "Kg" },
-    { id: "bk_besan", name: "Besan", unit: "Kg" },
-    { id: "bk_curd", name: "Curd", unit: "Kg" },
-    { id: "bk_salt", name: "Salt", unit: "Kg" },
-    { id: "bk_garam_masala", name: "Garam Masala", unit: "Gm" },
-    { id: "bk_jeera", name: "Jeera", unit: "Gm" },
-    { id: "bk_black_pepper", name: "Black Pepper", unit: "Gm" },
-    { id: "bk_haldi", name: "Haldi Powder", unit: "Gm" },
-    { id: "bk_refined_oil", name: "Refined Oil", unit: "Ltr" },
-    { id: "bk_desi_ghee", name: "Desi Ghee", unit: "Kg" },
-    { id: "bk_soya_badi", name: "Soya Badi", unit: "Kg" },
-    { id: "bk_chana_dal", name: "Chana Dal", unit: "Kg" },
-    { id: "bk_arhar_dal", name: "Arhar Dal", unit: "Kg" },
-  ]},
-  { id: "bk_cleaning", title: "🧹 Cleaning", color: "#0891B2", bg: "#ECFEFF", border: "#A5F3FC", items: [
-    { id: "bk_sarf", name: "Sarf", unit: "Kg" },
-    { id: "bk_juna", name: "Juna", unit: "Pcs" },
-    { id: "bk_bartan_sabun", name: "Bartan Dhone Ka Sabun", unit: "Pcs" },
-    { id: "bk_phenyl", name: "Phenyl", unit: "Ltr" },
-    { id: "bk_duster", name: "Duster", unit: "Pcs" },
-    { id: "bk_pochha", name: "Pochha", unit: "Pcs" },
-    { id: "bk_wiper", name: "Wiper", unit: "Pcs" },
-    { id: "bk_sheek_jhadu", name: "Sheek Jhadu", unit: "Pcs" },
-    { id: "bk_fool_jhadu", name: "Fool Jhadu", unit: "Pcs" },
-    { id: "bk_supli", name: "Supli", unit: "Pcs" },
-    { id: "bk_kitchen_wipes", name: "Kitchen Wipes", unit: "Pkt" },
-  ]},
-  { id: "bk_packaging", title: "📦 Packaging", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE", items: [
-    { id: "bk_poly_16x20", name: "16×20 Polythene", unit: "Pkt" },
-    { id: "bk_poly_13x16", name: "13×16 Polythene", unit: "Pkt" },
-    { id: "bk_bio_garbage", name: "Bio Garbage", unit: "Pkt" },
-    { id: "bk_clean_wrap", name: "Clean Wrap", unit: "Pcs" },
-  ]},
-  { id: "bk_maintenance", title: "🔧 Maintenance", color: "#DC2626", bg: "#FEF2F2", border: "#FECACA", items: [] },
-];
+const BK_DEMAND_SECTIONS = DEMAND_SECTIONS.filter((s) => s.id !== "food");
 
 const BKDemandForm = () => {
   const [draft, setDraft] = useState({});
@@ -6722,9 +6881,12 @@ const BKDemandForm = () => {
   const [note, setNote] = useState("");
   const [savedSections, setSavedSections] = useState({});
   const [draftId, setDraftId] = useState(null);
+  const [itemSearch, setItemSearch] = useState("");
 
   const activeSec = BK_DEMAND_SECTIONS.find(s => s.id === expSec) || BK_DEMAND_SECTIONS[0];
   const ft = Object.values(draft).filter(v => v > 0).length;
+  const searchQuery = itemSearch.trim().toLowerCase();
+  const searchResults = searchQuery ? BK_DEMAND_SECTIONS.flatMap(s => s.items.map(i => ({ ...i, sec: s }))).filter(i => i.name.toLowerCase().includes(searchQuery)) : [];
 
   // Load existing BK draft
   useEffect(() => {
@@ -6762,20 +6924,34 @@ const BKDemandForm = () => {
 
   return (<div>
     <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 14px" }}>🏭 BK Daily Demand</h3>
+    <input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} placeholder="🔍 Search any item..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 10, boxSizing: "border-box" }} />
+    {searchQuery ? (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+        {searchResults.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No items match "{itemSearch}"</div>}
+        {searchResults.map(item => (
+          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid #F0F0EC", background: draft[item.id] > 0 ? item.sec.bg : "#fff" }}>
+            <span style={{ flex: 1, fontSize: 13 }}>{item.name} <span style={{ fontSize: 9, color: "#BBB" }}>{item.sec.emoji} {item.sec.titleHi}</span></span>
+            <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={e => setDraft(p => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+              style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${item.sec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <span style={{ fontSize: 10, color: "#999", width: 28 }}>{item.unit}</span>
+          </div>
+        ))}
+      </div>
+    ) : (<>
     {/* Category pills */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
       {BK_DEMAND_SECTIONS.filter(s => s.items.length > 0).map(sec => {
         const fl = sec.items.filter(i => draft[i.id] > 0).length;
         const isSaved = savedSections[sec.id];
         return (<button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 12px", borderRadius: 10, fontSize: 11, fontWeight: expSec === sec.id ? 700 : 500, border: expSec === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: expSec === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: expSec === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4 }}>
-          {isSaved && <span style={{ fontSize: 9 }}>✅</span>}{sec.title}{fl > 0 && <span style={{ padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 800 }}>{fl}</span>}
+          {isSaved && <span style={{ fontSize: 9 }}>✅</span>}{sec.emoji} {sec.titleHi}{fl > 0 && <span style={{ padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
     </div>
     {/* Items */}
     <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
       <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: activeSec.color }}>{activeSec.title}</span>
+        <span style={{ fontSize: 14, fontWeight: 700, color: activeSec.color }}>{activeSec.emoji} {activeSec.titleHi}</span>
         <span style={{ fontSize: 11, color: "#999" }}>({activeSec.items.length} items)</span>
         {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅</span>}
       </div>
@@ -6790,20 +6966,21 @@ const BKDemandForm = () => {
         ))}
       </div>
     </div>
+    </>)}
     {/* Footer */}
     <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
-      <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+      {!searchQuery && <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
         {BK_DEMAND_SECTIONS.filter(s => s.items.length > 0).map(sec => {
           const isSaved = savedSections[sec.id];
           const hasFilled = sec.items.some(i => draft[i.id] > 0);
           return <div key={sec.id} style={{ flex: 1, height: 4, borderRadius: 2, background: isSaved ? "#16A34A" : hasFilled ? "#FDE68A" : "#E0E0DC" }} />;
         })}
-      </div>
+      </div>}
       <input value={note} onChange={e => setNote(e.target.value)} placeholder="Any extra note..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => saveCategory(activeSec.id)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
+        {!searchQuery && <button onClick={() => saveCategory(activeSec.id)} style={{ flex: 1, padding: "14px", borderRadius: 14, border: `1px solid ${activeSec.border}`, background: savedSections[activeSec.id] ? "#F0FDF4" : activeSec.bg, color: savedSections[activeSec.id] ? "#16A34A" : activeSec.color, fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>
           {savedSections[activeSec.id] ? "✅ Update" : "💾 Save"}
-        </button>
+        </button>}
         <button onClick={submitAll} disabled={ft === 0 || saving} style={{ flex: 2, padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: ft > 0 ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : `✅ Submit All (${ft})`}</button>
       </div>
     </div>
@@ -7147,6 +7324,86 @@ const StoreMgr = ({ onBack }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  SALES UPLOAD — PetPooja CSV
 // ═════════════════════════════════════════════════════════════════════════════
+// Daily Review & Rating Summary — Zomato/Swiggy orders, review count & avg rating
+// per outlet, sourced from PetPooja (CRM > Feedback > Ratings & Reviews, filtered to
+// the selected date, per outlet) + Reports > Order Report: Sub-Order Wise for order
+// counts. Populated by the "petpooja-daily-review-summary" scheduled task each
+// morning; this component just reads whatever's in daily_review_summary for the date.
+const DailyReviewSummary = () => {
+  const [selDay, setSelDay] = useState(1); // default Yesterday, same rationale as SalesUpload
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  const dateLabel = selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr;
+
+  useEffect(() => {
+    setLoading(true); setErr(null);
+    api.getDailyReviewSummary(dateStr)
+      .then((r) => setRows(r.rows || []))
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const byOutletPlatform = useMemo(() => {
+    const m = {};
+    rows.forEach((r) => { m[`${r.outlet_id}_${r.platform}`] = r; });
+    return m;
+  }, [rows]);
+
+  const PLATFORMS = [{ id: "zomato", label: "Zomato" }, { id: "swiggy", label: "Swiggy" }];
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>⭐ Daily Review & Rating Summary</h3>
+      <div style={{ display: "flex", gap: 6 }}>
+        {[{ d: 0, l: "Today" }, { d: 1, l: "Yesterday" }, { d: 7, l: "7d ago" }].map((p) => (
+          <button key={p.d} onClick={() => setSelDay(p.d)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: selDay === p.d ? 700 : 500, border: selDay === p.d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === p.d ? "#1A1A1A" : "#fff", color: selDay === p.d ? "#fff" : "#888" }}>{p.l}</button>
+        ))}
+      </div>
+    </div>
+    <div style={{ fontSize: 11, color: "#999", marginBottom: 14 }}>{dateLabel} · {dateStr}</div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Loading…</div>}
+    {!loading && err && <div style={{ padding: 16, borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", fontSize: 12 }}>Failed to load: {err}</div>}
+    {!loading && !err && rows.length === 0 && (
+      <div style={{ padding: 40, textAlign: "center", color: "#999", fontSize: 13, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
+        No review summary saved for {dateLabel.toLowerCase()} yet. This is populated by the daily PetPooja scrape.
+      </div>
+    )}
+    {!loading && !err && rows.length > 0 && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 1fr 1.4fr", background: "#7C2D2D", color: "#fff", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3 }}>
+          <div style={{ padding: "10px 12px" }}>Outlet</div>
+          <div style={{ padding: "10px 12px" }}>Platform</div>
+          <div style={{ padding: "10px 12px" }}>Total Orders</div>
+          <div style={{ padding: "10px 12px" }}>No. of Reviews</div>
+          <div style={{ padding: "10px 12px" }}>Avg Rating</div>
+          <div style={{ padding: "10px 12px" }}>Remarks</div>
+        </div>
+        {OUTLETS.map((o, oi) => PLATFORMS.map((p, pi) => {
+          const r = byOutletPlatform[`${o.id}_${p.id}`];
+          const isFirstPlatformRow = pi === 0;
+          return (
+            <div key={`${o.id}_${p.id}`} style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 1fr 1.4fr", fontSize: 13, background: pi === 1 ? "#F5F5F3" : "#fff", borderTop: isFirstPlatformRow && oi > 0 ? "1px solid #E8E8E4" : "none" }}>
+              <div style={{ padding: "10px 12px", fontWeight: isFirstPlatformRow ? 700 : 400, color: isFirstPlatformRow ? "#1A1A1A" : "transparent" }}>{o.name}{o.franchise ? " (Franchise)" : ""}</div>
+              <div style={{ padding: "10px 12px" }}>{p.label}</div>
+              <div style={{ padding: "10px 12px", fontFamily: "'JetBrains Mono'" }}>{r?.total_orders ?? (r ? 0 : "—")}</div>
+              <div style={{ padding: "10px 12px", fontFamily: "'JetBrains Mono'" }}>{r ? (r.num_reviews ?? 0) : "—"}</div>
+              <div style={{ padding: "10px 12px", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{r?.avg_rating != null ? Number(r.avg_rating).toFixed(2) : "-"}</div>
+              <div style={{ padding: "10px 12px", fontSize: 11, color: "#999" }}>{r?.remarks || (r && (r.num_reviews ?? 0) === 0 ? "No reviews" : "")}</div>
+            </div>
+          );
+        }))}
+      </div>
+    )}
+    <div style={{ fontSize: 10, color: "#999", marginTop: 12, lineHeight: 1.5 }}>
+      Avg Rating formula: (5★×n5 + 4★×n4 + 3★×n3 + 2★×n2 + 1★×n1) / total reviews. Source: PetPooja → CRM → Feedback → Ratings & Reviews (Zomato / Swiggy tabs) + Reports → Order Report: Sub-Order Wise, per outlet, for the selected date.
+    </div>
+  </div>);
+};
+
 const SalesUpload = () => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's uploads are usually still incomplete
   const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
@@ -9501,9 +9758,9 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
@@ -9531,6 +9788,7 @@ export default function AnandaCafe() {
         {[{ id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
           { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
           { id: "custodian_ledger", label: "👤 Custodian Ledger", sub: "Ravinder / Sahil / Ganga" },
+          { id: "books_ledger", label: "📚 Books", sub: "Expense ledger from TAC - Books" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setPaymentsDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -9582,10 +9840,12 @@ export default function AnandaCafe() {
     </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {ownerTab === "sales" && <SalesUpload />}
+      {ownerTab === "reviews" && <DailyReviewSummary />}
       {ownerTab === "audit" && <RMAuditPanel />}
       {ownerTab === "paytm" && <PaytmRecon />}
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
+      {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "cogs_compare" && <CogsCompare />}
       {ownerTab === "demands" && <DemandHistory />}

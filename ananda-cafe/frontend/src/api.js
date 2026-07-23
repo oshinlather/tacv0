@@ -110,6 +110,8 @@ const api = {
   // ── PetPooja ──
   syncPetpooja: (date) => post("/api/petpooja/sync", { date }),
   getPetpoojaStatus: () => get("/api/petpooja/status"),
+  getDailyReviewSummary: (date) => get("/api/petpooja/reviews/daily", { date }),
+  saveDailyReviewSummary: (date, rows) => post("/api/petpooja/reviews/daily", { date, rows }),
 
   // ── Inventory ──
   getInventory: (params) => get("/api/inventory", params),
@@ -198,6 +200,13 @@ const api = {
   getCashHandovers: (params) => get("/api/cash-handovers", params),
   saveCashHandover: (data) => post("/api/cash-handovers", data),
   getCustodianLedger: (name) => get(`/api/cash-handovers/custodian/${encodeURIComponent(name)}`),
+  // Books Ledger (Payments › Books)
+  getBooksLedger: (params) => get("/api/books", params),
+  getBooksAdvances: () => get("/api/books/advances"),
+  createBooksEntry: (data) => post("/api/books", data),
+  updateBooksEntry: (id, data) => patch(`/api/books/${id}`, data),
+  settleBooksAdvance: (id, settled_note) => patch(`/api/books/${id}`, { settled: true, settled_note: settled_note || null }),
+  deleteBooksEntry: (id) => del(`/api/books/${id}`),
   // Qty Corrections (owner edit of dispatched/wastage/closing-stock item qty)
   editItemQty: (outlet_id, date, item_id, new_qty, reason, record_type) =>
     patch("/api/qty-edit", { outlet_id, date, item_id, new_qty, reason, record_type }),
