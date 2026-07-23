@@ -7387,7 +7387,7 @@ const DailyReviewSummary = () => {
           const isFirstPlatformRow = pi === 0;
           return (
             <div key={`${o.id}_${p.id}`} style={{ display: "grid", gridTemplateColumns: "1.6fr 1fr 1fr 1fr 1fr 1.4fr", fontSize: 13, background: pi === 1 ? "#F5F5F3" : "#fff", borderTop: isFirstPlatformRow && oi > 0 ? "1px solid #E8E8E4" : "none" }}>
-              <div style={{ padding: "10px 12px", fontWeight: isFirstPlatformRow ? 700 : 400, color: isFirstPlatformRow ? "#1A1A1A" : "transparent" }}>{o.name}{o.franchise ? " (Franchise)" : ""}</div>
+              <div style={{ padding: "10px 12px", fontWeight: isFirstPlatformRow ? 700 : 400, color: isFirstPlatformRow ? "#1A1A1A" : "transparent" }}>{o.name}</div>
               <div style={{ padding: "10px 12px" }}>{p.label}</div>
               <div style={{ padding: "10px 12px", fontFamily: "'JetBrains Mono'" }}>{r?.total_orders ?? (r ? 0 : "—")}</div>
               <div style={{ padding: "10px 12px", fontFamily: "'JetBrains Mono'" }}>{r ? (r.num_reviews ?? 0) : "—"}</div>
