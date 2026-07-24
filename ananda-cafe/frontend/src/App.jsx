@@ -1705,6 +1705,13 @@ const DailyPnL = () => {
         });
       });
 
+      // Dishes sold with no recipe + recipe ingredients not linked to inventory — same
+      // "fill the gap to improve should-consume coverage" data RM Audit surfaces, keyed
+      // by outlet since (like RM Audit itself) this only makes sense for a single real
+      // outlet, not the "all" aggregate.
+      const gapsByOutlet = {};
+      (audit?.outlets || []).forEach(o => { gapsByOutlet[o.outlet_id] = { unmatched_dishes: o.unmatched_dishes || [], unmapped_ingredients: o.unmapped_ingredients || [] }; });
+
       // Merge stock-based variable cost into P&L data
       if (pnl?.pnl && stock?.outlets) {
         pnl.pnl.forEach(p => {
@@ -1719,6 +1726,9 @@ const DailyPnL = () => {
             p.stock_cost_by_category = su.variable_cost_by_category;
             p.variable_cost = su.total_used_cost;
             p.variable_by_category = su.variable_cost_by_category;
+            const gaps = gapsByOutlet[p.outlet_id];
+            p.unmatched_dishes = gaps?.unmatched_dishes || [];
+            p.unmapped_ingredients = gaps?.unmapped_ingredients || [];
             // Attach RM Audit's should-consume + leakage % onto each item, so the
             // Variable Cost breakdown doubles as the audit view — no separate tab needed
             // to spot which item is over/under actual vs. theoretical consumption.
@@ -1956,6 +1966,15 @@ const DailyPnL = () => {
               </div>
             )}
           </>} />
+          {/* Same "dish sold but no recipe yet" facilitator as RM Audit — filling these in
+              directly improves should-consume coverage above, so the comparison gets more
+              exact instead of only covering whatever recipes already happen to exist. Only
+              makes sense for a single real outlet (same constraint RM Audit itself has). */}
+          {expandSection === "variable" && selOutlet && (
+            <div style={{ padding: "10px 16px" }}>
+              <QuickRecipeAdder unmatchedDishes={d.unmatched_dishes} unmappedIngredients={d.unmapped_ingredients} dateStr={dateStr} onSaved={fetchPnl} />
+            </div>
+          )}
           {expandSection === "variable" && ((d.stock_items && d.stock_items.length > 0) || (d.item_breakdown && d.item_breakdown.length > 0)) && (() => {
             const items = d.stock_items && d.stock_items.length > 0 ? d.stock_items : d.item_breakdown || [];
             const isStockBased = d.stock_items && d.stock_items.length > 0;
@@ -1989,13 +2008,13 @@ const DailyPnL = () => {
                       style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", background: isExpanded ? "#FFFDF5" : "#FAFAF8", borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
                       <span style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
                         {isExpanded ? "▼" : "▶"} {cat} <span style={{ color: "#BBB", fontWeight: 400, fontSize: 11 }}>({group.items.length})</span>
-                      </span>
-                      <span style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</div>
                         {group.scCount > 0 && (
-                          <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}>should be {fmt(group.scTotal)}</div>
+                          <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 11, color: group.total - group.scTotal > 0 ? "#DC2626" : group.total - group.scTotal < 0 ? "#16A34A" : "#999" }}>
+                            {" "}({Math.round(group.total)}−{Math.round(group.scTotal)}={Math.round(group.total - group.scTotal)})
+                          </span>
                         )}
                       </span>
+                      <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</span>
                     </div>
                     {/* Expanded items */}
                     {isExpanded && sortedItems.map((item, i) => {
@@ -7970,31 +7989,17 @@ const SalesUpload = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  RM AUDIT — Theoretical vs Actual consumption
+//  QUICK RECIPE ADDER — "dish sold but no recipe yet" facilitator, shared between
+//  RM Audit and P&L's Material Cost box (both compute "should consume" from the same
+//  recipe data, so both benefit from the same one-tap way to fill a gap in it).
 // ═════════════════════════════════════════════════════════════════════════════
-const RMAuditPanel = () => {
-  const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
-  const [audit, setAudit] = useState(null);
-  const [loading, setLoading] = useState(false);
+const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSaved }) => {
   const [showUnmatched, setShowUnmatched] = useState(false);
-  const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
-  // Quick "add recipe" modal, opened by clicking an unmatched-dish pill — lets the
-  // owner create the recipe (and its ingredients) without leaving the audit screen.
   const [quickRecipe, setQuickRecipe] = useState(null); // { dishName, soldQty, category, rows: [{raw_material, qty, unit}] }
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [recipeCategories, setRecipeCategories] = useState([]);
   const [rawMaterialNames, setRawMaterialNames] = useState([]); // known ingredient names, for dropdown-while-typing
   const [allRecipes, setAllRecipes] = useState([]); // full recipes (with ingredients), for "copy from" source
-
-  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
-
-  const loadAudit = () => {
-    setLoading(true);
-    api.getRMAudit(dateStr, selOutlet).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
-  };
-
-  useEffect(() => { setShowUnmatched(false); loadAudit(); }, [dateStr, selOutlet]);
 
   useEffect(() => {
     api.getRecipes(true).then((rs) => {
@@ -8003,9 +8008,6 @@ const RMAuditPanel = () => {
       setRawMaterialNames([...new Set((rs || []).flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material)))].filter(Boolean).sort());
     }).catch(() => {});
   }, []);
-
-  const outletData = audit?.outlets?.[0] || null;
-  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
 
   const openQuickRecipe = (dishName, soldQty) => setQuickRecipe({ dishName, soldQty, category: "", rows: [{ raw_material: "", qty: "", unit: "GM" }] });
   const updateQuickRow = (idx, field, value) => setQuickRecipe((p) => ({ ...p, rows: p.rows.map((r, i) => (i === idx ? { ...r, [field]: value } : r)) }));
@@ -8036,10 +8038,111 @@ const RMAuditPanel = () => {
         await api.addRecipeIngredient(created.id, { raw_material: r.raw_material.trim(), qty: Number(r.qty), unit: r.unit });
       }
       setQuickRecipe(null);
-      loadAudit();
+      onSaved && onSaved();
     } catch (e) { alert("Failed: " + e.message); }
     finally { setSavingRecipe(false); }
   };
+
+  if ((unmatchedDishes || []).length === 0 && (unmappedIngredients || []).length === 0) return null;
+
+  return (<>
+    <div style={{ background: "#FFFBEB", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden" }}>
+      <div onClick={() => setShowUnmatched(!showUnmatched)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>⚠️ {unmatchedDishes.length} dish(es) with no recipe, {unmappedIngredients.length} ingredient(s) not linked to inventory — excluded from the numbers above</div>
+        <span style={{ fontSize: 11, color: "#92400E" }}>{showUnmatched ? "▲ hide" : "▼ show"}</span>
+      </div>
+      {showUnmatched && (
+        <div style={{ padding: "0 16px 14px" }}>
+          {unmatchedDishes.length > 0 && (<>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Sold but no recipe — tap one to add it</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {unmatchedDishes.map((d, i) => (
+                <button key={i} onClick={() => openQuickRecipe(d.item_name, d.qty)} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>{d.item_name} <strong>× {d.qty}</strong> <span style={{ color: "#D97706" }}>＋</span></button>
+              ))}
+            </div>
+          </>)}
+          {unmappedIngredients.length > 0 && (<>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Recipe ingredients not linked to a tracked inventory item</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {unmappedIngredients.map((name, i) => (
+                <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{name}</span>
+              ))}
+            </div>
+          </>)}
+        </div>
+      )}
+    </div>
+
+    {quickRecipe && (<>
+      <div onClick={() => !savingRecipe && setQuickRecipe(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(480px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>📖 Add Recipe</div>
+        <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{quickRecipe.dishName} <span style={{ color: "#BBB" }}>· sold {quickRecipe.soldQty}× on {dateStr}</span></div>
+
+        <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Category</label>
+        <input value={quickRecipe.category} onChange={(e) => setQuickRecipe((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Dosas" list="quick-recipe-categories"
+          style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", margin: "4px 0 14px" }} />
+        <datalist id="quick-recipe-categories">{recipeCategories.map((c) => <option key={c} value={c} />)}</datalist>
+
+        <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</label>
+        {allRecipes.length > 0 && (
+          <select value="" onChange={(e) => e.target.value && copyFromRecipe(e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px dashed #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontSize: 12, fontWeight: 600, fontFamily: "inherit", margin: "4px 0 8px" }}>
+            <option value="">📋 Copy ingredients from another dish...</option>
+            {allRecipes.filter((r) => (r.recipe_ingredients || []).length > 0).sort((a, b) => a.item_name.localeCompare(b.item_name)).map((r) => (
+              <option key={r.id} value={r.id}>{r.item_name} ({r.recipe_ingredients.length} ingredients)</option>
+            ))}
+          </select>
+        )}
+        <div style={{ margin: "4px 0 10px" }}>
+          {quickRecipe.rows.map((r, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <input value={r.raw_material} onChange={(e) => updateQuickRow(idx, "raw_material", e.target.value)} placeholder="Ingredient (raw material)" list="quick-recipe-raw-materials"
+                style={{ flex: 2, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+              <input type="number" inputMode="decimal" value={r.qty} onChange={(e) => updateQuickRow(idx, "qty", e.target.value)} placeholder="Qty"
+                style={{ width: 64, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+              <select value={r.unit} onChange={(e) => updateQuickRow(idx, "unit", e.target.value)}
+                style={{ padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
+                {RECIPE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+              <button onClick={() => removeQuickRow(idx)} disabled={quickRecipe.rows.length === 1} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, cursor: quickRecipe.rows.length === 1 ? "default" : "pointer", flexShrink: 0, opacity: quickRecipe.rows.length === 1 ? 0.4 : 1 }}>✕</button>
+            </div>
+          ))}
+          <datalist id="quick-recipe-raw-materials">{rawMaterialNames.map((n) => <option key={n} value={n} />)}</datalist>
+          <button onClick={addQuickRow} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>+ Add ingredient</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button onClick={saveQuickRecipe} disabled={savingRecipe || !quickRecipe.category.trim() || !quickRecipe.rows.some((r) => r.raw_material.trim() && Number(r.qty) > 0)}
+            style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: savingRecipe ? 0.7 : 1 }}>{savingRecipe ? "Saving..." : "Save Recipe"}</button>
+          <button onClick={() => setQuickRecipe(null)} disabled={savingRecipe} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
+  </>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  RM AUDIT — Theoretical vs Actual consumption
+// ═════════════════════════════════════════════════════════════════════════════
+const RMAuditPanel = () => {
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
+
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  const loadAudit = () => {
+    setLoading(true);
+    api.getRMAudit(dateStr, selOutlet).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadAudit(); }, [dateStr, selOutlet]);
+
+  const outletData = audit?.outlets?.[0] || null;
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
 
   return (
     <div>
@@ -8159,83 +8262,9 @@ const RMAuditPanel = () => {
             </div>
           )}
 
-          {(outletData.unmatched_dishes.length > 0 || outletData.unmapped_ingredients.length > 0) && (
-            <div style={{ background: "#FFFBEB", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden" }}>
-              <div onClick={() => setShowUnmatched(!showUnmatched)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>⚠️ {outletData.unmatched_dishes.length} dish(es) with no recipe, {outletData.unmapped_ingredients.length} ingredient(s) not linked to inventory — excluded from the numbers above</div>
-                <span style={{ fontSize: 11, color: "#92400E" }}>{showUnmatched ? "▲ hide" : "▼ show"}</span>
-              </div>
-              {showUnmatched && (
-                <div style={{ padding: "0 16px 14px" }}>
-                  {outletData.unmatched_dishes.length > 0 && (<>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Sold but no recipe — tap one to add it</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                      {outletData.unmatched_dishes.map((d, i) => (
-                        <button key={i} onClick={() => openQuickRecipe(d.item_name, d.qty)} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>{d.item_name} <strong>× {d.qty}</strong> <span style={{ color: "#D97706" }}>＋</span></button>
-                      ))}
-                    </div>
-                  </>)}
-                  {outletData.unmapped_ingredients.length > 0 && (<>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Recipe ingredients not linked to a tracked inventory item</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {outletData.unmapped_ingredients.map((name, i) => (
-                        <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{name}</span>
-                      ))}
-                    </div>
-                  </>)}
-                </div>
-              )}
-            </div>
-          )}
+          <QuickRecipeAdder unmatchedDishes={outletData.unmatched_dishes} unmappedIngredients={outletData.unmapped_ingredients} dateStr={dateStr} onSaved={loadAudit} />
         </>
       )}
-
-      {quickRecipe && (<>
-        <div onClick={() => !savingRecipe && setQuickRecipe(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
-        <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(480px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>📖 Add Recipe</div>
-          <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{quickRecipe.dishName} <span style={{ color: "#BBB" }}>· sold {quickRecipe.soldQty}× on {dateStr}</span></div>
-
-          <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Category</label>
-          <input value={quickRecipe.category} onChange={(e) => setQuickRecipe((p) => ({ ...p, category: e.target.value }))} placeholder="e.g. Dosas" list="rm-audit-recipe-categories"
-            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", margin: "4px 0 14px" }} />
-          <datalist id="rm-audit-recipe-categories">{recipeCategories.map((c) => <option key={c} value={c} />)}</datalist>
-
-          <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</label>
-          {allRecipes.length > 0 && (
-            <select value="" onChange={(e) => e.target.value && copyFromRecipe(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px dashed #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontSize: 12, fontWeight: 600, fontFamily: "inherit", margin: "4px 0 8px" }}>
-              <option value="">📋 Copy ingredients from another dish...</option>
-              {allRecipes.filter((r) => (r.recipe_ingredients || []).length > 0).sort((a, b) => a.item_name.localeCompare(b.item_name)).map((r) => (
-                <option key={r.id} value={r.id}>{r.item_name} ({r.recipe_ingredients.length} ingredients)</option>
-              ))}
-            </select>
-          )}
-          <div style={{ margin: "4px 0 10px" }}>
-            {quickRecipe.rows.map((r, idx) => (
-              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                <input value={r.raw_material} onChange={(e) => updateQuickRow(idx, "raw_material", e.target.value)} placeholder="Ingredient (raw material)" list="rm-audit-raw-materials"
-                  style={{ flex: 2, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-                <input type="number" inputMode="decimal" value={r.qty} onChange={(e) => updateQuickRow(idx, "qty", e.target.value)} placeholder="Qty"
-                  style={{ width: 64, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-                <select value={r.unit} onChange={(e) => updateQuickRow(idx, "unit", e.target.value)}
-                  style={{ padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff" }}>
-                  {RECIPE_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                </select>
-                <button onClick={() => removeQuickRow(idx)} disabled={quickRecipe.rows.length === 1} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, cursor: quickRecipe.rows.length === 1 ? "default" : "pointer", flexShrink: 0, opacity: quickRecipe.rows.length === 1 ? 0.4 : 1 }}>✕</button>
-              </div>
-            ))}
-            <datalist id="rm-audit-raw-materials">{rawMaterialNames.map((n) => <option key={n} value={n} />)}</datalist>
-            <button onClick={addQuickRow} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>+ Add ingredient</button>
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <button onClick={saveQuickRecipe} disabled={savingRecipe || !quickRecipe.category.trim() || !quickRecipe.rows.some((r) => r.raw_material.trim() && Number(r.qty) > 0)}
-              style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: savingRecipe ? 0.7 : 1 }}>{savingRecipe ? "Saving..." : "Save Recipe"}</button>
-            <button onClick={() => setQuickRecipe(null)} disabled={savingRecipe} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-          </div>
-        </div>
-      </>)}
 
       <ColdDrinkAuditSection dateStr={dateStr} />
     </div>
