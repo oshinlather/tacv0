@@ -2134,15 +2134,19 @@ const DailyPnL = () => {
                           {isStockBased && item.should_consume != null && (() => {
                             const hasScBreakdown = (item.sc_breakdown || []).length > 0;
                             const scOpen = expandedScItem === item.item_id;
+                            const scCost = item.should_consume * (displayRate || 0);
                             return (<>
                               <div onClick={() => hasScBreakdown && setExpandedScItem(scOpen ? null : item.item_id)}
-                                style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", gap: 8, alignItems: "baseline", cursor: hasScBreakdown ? "pointer" : "default" }}>
-                                <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit} {hasScBreakdown && <span style={{ color: "#BBB" }}>{scOpen ? "▲" : "▼"}</span>}</span>
-                                {item.sc_variance_pct != null && (
-                                  <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
-                                    {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
-                                  </span>
-                                )}
+                                style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", justifyContent: "space-between", alignItems: "baseline", cursor: hasScBreakdown ? "pointer" : "default" }}>
+                                <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                                  <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit} {hasScBreakdown && <span style={{ color: "#BBB" }}>{scOpen ? "▲" : "▼"}</span>}</span>
+                                  {item.sc_variance_pct != null && (
+                                    <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
+                                      {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
+                                    </span>
+                                  )}
+                                </span>
+                                <span style={{ color: "#2563EB", fontWeight: 600, marginRight: 6 }}>{fmt(scCost)}</span>
                               </div>
                               {scOpen && (
                                 <div style={{ padding: "4px 16px 10px 32px", background: "#FAFAF8" }}>
