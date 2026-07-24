@@ -1562,6 +1562,7 @@ const DailyPnL = () => {
   const [editItem, setEditItem] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
   const [expandedCats, setExpandedCats] = useState({});
+  const [expandedScItem, setExpandedScItem] = useState(null); // item_id of the row showing its "should consume" dish breakdown
 
   // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
   const [editMaster, setEditMaster] = useState(null); // { _idx, item_id, name, kind: 'price'|'conv', value, unit, demandUnit, currentValue }
@@ -1685,17 +1686,22 @@ const DailyPnL = () => {
       // sum ourselves for the "all outlets" P&L row (see shouldConsumeByOutlet below).
       api.getRMAudit(dateStr).catch(() => null),
     ]).then(([pnl, stock, audit]) => {
-      // RM Audit's "should consume" (theoretical, recipe × sales) per outlet+item_id —
-      // built once here so every P&L row (including the "all" aggregate) can look up
-      // its own leakage figure without re-fetching per outlet.
-      const shouldConsumeByOutlet = {}; // { outlet_id: { item_id: should_consume } }, plus a synthetic 'all' bucket
+      // RM Audit's "should consume" (theoretical, recipe × sales) + its dish-level
+      // breakdown, per outlet+item_id — built once here so every P&L row (including
+      // the "all" aggregate) can look up its own leakage figure and "which dishes drove
+      // this" without re-fetching. For "all", breakdown entries are just concatenated
+      // across outlets rather than merged by dish name — a dish sold at two outlets
+      // shows as two lines, which is fine since the per-outlet view is the primary case.
+      const scByOutlet = {}; // { outlet_id: { item_id: { total, breakdown } } }, plus synthetic 'all'
       (audit?.outlets || []).forEach(o => {
-        const bucket = shouldConsumeByOutlet[o.outlet_id] = {};
-        const allBucket = shouldConsumeByOutlet.all = shouldConsumeByOutlet.all || {};
+        const bucket = scByOutlet[o.outlet_id] = scByOutlet[o.outlet_id] || {};
+        const allBucket = scByOutlet.all = scByOutlet.all || {};
         (o.items || []).forEach(it => {
           if (it.item_id == null || it.should_consume == null) return;
-          bucket[it.item_id] = (bucket[it.item_id] || 0) + it.should_consume;
-          allBucket[it.item_id] = (allBucket[it.item_id] || 0) + it.should_consume;
+          bucket[it.item_id] = { total: it.should_consume, breakdown: it.should_consume_breakdown || [] };
+          if (!allBucket[it.item_id]) allBucket[it.item_id] = { total: 0, breakdown: [] };
+          allBucket[it.item_id].total += it.should_consume;
+          allBucket[it.item_id].breakdown = allBucket[it.item_id].breakdown.concat(it.should_consume_breakdown || []);
         });
       });
 
@@ -1716,13 +1722,13 @@ const DailyPnL = () => {
             // Attach RM Audit's should-consume + leakage % onto each item, so the
             // Variable Cost breakdown doubles as the audit view — no separate tab needed
             // to spot which item is over/under actual vs. theoretical consumption.
-            const scMap = shouldConsumeByOutlet[p.outlet_id] || {};
+            const scMap = scByOutlet[p.outlet_id] || {};
             p.stock_items = (su.items || []).map(it => {
-              const shouldConsume = scMap[it.item_id];
-              if (shouldConsume == null) return it;
-              const variance = Math.round((it.used - shouldConsume) * 1000) / 1000;
-              const variancePct = shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
-              return { ...it, should_consume: Math.round(shouldConsume * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct };
+              const sc = scMap[it.item_id];
+              if (sc == null) return it;
+              const variance = Math.round((it.used - sc.total) * 1000) / 1000;
+              const variancePct = sc.total > 0 ? Math.round((variance / sc.total) * 1000) / 10 : null;
+              return { ...it, should_consume: Math.round(sc.total * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct, sc_breakdown: sc.breakdown };
             });
             // Headline should-be-vs-actual cost, so "what did the manager's punching say we
             // used" vs "what the recipe says we should have used" is visible without expanding
@@ -2123,17 +2129,36 @@ const DailyPnL = () => {
                             </div>
                           )}
                           {/* RM Audit's theoretical (recipe × sales) consumption, folded in here so
-                              leakage is visible right where the actual cost is — no separate tab. */}
-                          {isStockBased && item.should_consume != null && (
-                            <div style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", gap: 8, alignItems: "baseline" }}>
-                              <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
-                              {item.sc_variance_pct != null && (
-                                <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
-                                  {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
-                                </span>
+                              leakage is visible right where the actual cost is — no separate tab.
+                              Expandable to the same dish-level breakdown RM Audit shows, when present. */}
+                          {isStockBased && item.should_consume != null && (() => {
+                            const hasScBreakdown = (item.sc_breakdown || []).length > 0;
+                            const scOpen = expandedScItem === item.item_id;
+                            return (<>
+                              <div onClick={() => hasScBreakdown && setExpandedScItem(scOpen ? null : item.item_id)}
+                                style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", gap: 8, alignItems: "baseline", cursor: hasScBreakdown ? "pointer" : "default" }}>
+                                <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit} {hasScBreakdown && <span style={{ color: "#BBB" }}>{scOpen ? "▲" : "▼"}</span>}</span>
+                                {item.sc_variance_pct != null && (
+                                  <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
+                                    {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
+                                  </span>
+                                )}
+                              </div>
+                              {scOpen && (
+                                <div style={{ padding: "4px 16px 10px 32px", background: "#FAFAF8" }}>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0 4px" }}>Should Consume — from dishes sold</div>
+                                  {item.sc_breakdown.map((b, j) => (
+                                    <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
+                                      {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+                                    </div>
+                                  ))}
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+                                    = {item.should_consume} {displayUnit}
+                                  </div>
+                                </div>
                               )}
-                            </div>
-                          )}
+                            </>);
+                          })()}
                         </div>
                       );
                     })}
