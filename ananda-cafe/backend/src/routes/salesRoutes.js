@@ -1660,7 +1660,7 @@ router.patch('/demands/:id/finalize', async (req, res) => {
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
     // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
     // module, not general outlet demand editing) — everyone else uses the base role list.
-    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (user.role === 'avp' && existing.outlet_id === 'bk');
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (['avp', 'bk_manager'].includes(user.role) && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
@@ -1688,7 +1688,7 @@ router.patch('/demands/:id', async (req, res) => {
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
     // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
     // module, not general outlet demand editing) — everyone else uses the base role list.
-    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (user.role === 'avp' && existing.outlet_id === 'bk');
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (['avp', 'bk_manager'].includes(user.role) && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
