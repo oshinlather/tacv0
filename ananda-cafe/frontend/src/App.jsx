@@ -357,6 +357,11 @@ const MultiPhotoUpload = ({ images, onAdd, onRemove }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  USERS MANAGEMENT
 // ═════════════════════════════════════════════════════════════════════════════
+const ROLE_OPTIONS = [
+  { v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" },
+  { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" },
+  { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" },
+];
 const UsersPanel = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -396,6 +401,17 @@ const UsersPanel = () => {
     try { await api.updateUser(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
+  const changeRole = async (u, newRole) => {
+    if (newRole === u.role) return;
+    try {
+      // Outlet assignment only makes sense for outlet-scoped roles — clear it when
+      // switching to a cross-outlet role so a stale outlet_id doesn't linger.
+      const outletScoped = ["outlet_mgr", "chef", "bainmarry"].includes(newRole);
+      await api.updateUser(u.id, { role: newRole, ...(outletScoped ? {} : { outlet_id: null }) });
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
   const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : "🏪 Outlet";
@@ -411,7 +427,7 @@ const UsersPanel = () => {
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <input type="tel" placeholder="Phone (10 digits)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-        {[{ v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" }, { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" }, { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" }].map(r => (
+        {ROLE_OPTIONS.map(r => (
           <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: "1 1 30%", padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
         ))}
       </div>
@@ -439,6 +455,12 @@ const UsersPanel = () => {
           ) : (
             <span onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ fontFamily: "'JetBrains Mono'", fontSize: 18, fontWeight: 800, color: "#2563EB", letterSpacing: 4, cursor: "pointer" }} title="Tap to edit PIN">{u.pin}</span>
           )}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <select value={u.role} onChange={(e) => changeRole(u, e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: "#1A1A1A", fontWeight: 600 }}>
+            {ROLE_OPTIONS.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}
+          </select>
         </div>
         {/* Outlet assignment for outlet managers, chefs, and bainmarry staff */}
         {["outlet_mgr", "chef", "bainmarry"].includes(u.role) && (
