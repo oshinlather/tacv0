@@ -6137,7 +6137,7 @@ const OutletMgr = ({ onBack }) => {
         } else {
           let result;
           if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else if (viewingSubmitted && existingRecord) result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
@@ -6160,7 +6160,7 @@ const OutletMgr = ({ onBack }) => {
         } else {
           let result;
           if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else if (viewingSubmitted && existingRecord) result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
@@ -7006,6 +7006,7 @@ const BKDemandForm = () => {
   const [note, setNote] = useState("");
   const [savedSections, setSavedSections] = useState({});
   const [draftId, setDraftId] = useState(null);
+  const [draftStatus, setDraftStatus] = useState(null);
   const [itemSearch, setItemSearch] = useState("");
 
   const activeSec = BK_DEMAND_SECTIONS.find(s => s.id === expSec) || BK_DEMAND_SECTIONS[0];
@@ -7020,6 +7021,7 @@ const BKDemandForm = () => {
       if (existing?.items) {
         setDraft(existing.items);
         setDraftId(existing.id);
+        setDraftStatus(existing.status);
         const saved = {};
         BK_DEMAND_SECTIONS.forEach(sec => {
           if (sec.items.some(i => existing.items[i.id] > 0)) saved[sec.id] = true;
@@ -7040,9 +7042,14 @@ const BKDemandForm = () => {
     if (ft === 0) return;
     setSaving(true);
     try {
-      await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", submitted_by: getCurrentUser()?.name || "bk" });
+      // Update today's existing draft/submitted row instead of inserting a new one —
+      // otherwise every re-submit (e.g. after noticing a missed item) creates a duplicate
+      // challan, which breaks Dispatch and receiving downstream.
+      if (draftStatus === "draft") await api.finalizeDemand(draftId, { items: draft, submitted_by: getCurrentUser()?.name || "bk" });
+      else if (draftStatus === "submitted") await api.updateDemand(draftId, { items: draft, submitted_by: getCurrentUser()?.name || "bk" });
+      else await api.createDemand({ outlet_id: "bk", type: "bk_demand", items: draft, note, date: today(), demand_slot: "morning", submitted_by: getCurrentUser()?.name || "bk" });
       alert(`✅ BK Demand submitted!\n\n🏭 Base Kitchen\n📅 ${today()}\n📦 ${ft} items`);
-      setDraft({}); setSavedSections({}); setDraftId(null); setNote("");
+      setDraft({}); setSavedSections({}); setDraftId(null); setDraftStatus(null); setNote("");
     } catch (e) { alert(`❌ Failed: ${e.message}`); }
     finally { setSaving(false); }
   };

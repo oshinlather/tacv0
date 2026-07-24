@@ -1656,11 +1656,12 @@ router.patch('/demands/:id/finalize', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (!['owner', 'store_mgr', 'outlet_mgr'].includes(user.role)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
     const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
+    // module, not general outlet demand editing) — everyone else uses the base role list.
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (user.role === 'avp' && existing.outlet_id === 'bk');
+    if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
     const { items, items_units, submitted_by } = req.body;
@@ -1683,11 +1684,12 @@ router.patch('/demands/:id', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (!['owner', 'store_mgr', 'outlet_mgr'].includes(user.role)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
     const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
+    // module, not general outlet demand editing) — everyone else uses the base role list.
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (user.role === 'avp' && existing.outlet_id === 'bk');
+    if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
     const { items, items_units, submitted_by } = req.body;
