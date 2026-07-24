@@ -1964,9 +1964,16 @@ const DailyPnL = () => {
             const grouped = {};
             items.forEach((item, origIdx) => {
               const cat = item.category || 'Other';
-              if (!grouped[cat]) grouped[cat] = { items: [], total: 0 };
+              if (!grouped[cat]) grouped[cat] = { items: [], total: 0, scTotal: 0, scCount: 0 };
               grouped[cat].items.push({ ...item, _origIdx: origIdx });
               grouped[cat].total += (isStockBased ? item.used_cost : item.cost) || 0;
+              // Should-be cost, summed alongside actual so a category header shows both
+              // without expanding — only over items RM Audit can price (recipe-matched,
+              // sold-that-day), same subset as the item-level should-consume lines.
+              if (item.should_consume != null) {
+                grouped[cat].scTotal += item.should_consume * (item.rate || 0);
+                grouped[cat].scCount += 1;
+              }
             });
             const sortedCats = Object.entries(grouped).sort((a, b) => b[1].total - a[1].total);
 
@@ -1983,7 +1990,12 @@ const DailyPnL = () => {
                       <span style={{ fontSize: 12, fontWeight: 600, color: "#555" }}>
                         {isExpanded ? "▼" : "▶"} {cat} <span style={{ color: "#BBB", fontWeight: 400, fontSize: 11 }}>({group.items.length})</span>
                       </span>
-                      <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</span>
+                      <span style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</div>
+                        {group.scCount > 0 && (
+                          <div style={{ fontSize: 9, fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}>should be {fmt(group.scTotal)}</div>
+                        )}
+                      </span>
                     </div>
                     {/* Expanded items */}
                     {isExpanded && sortedItems.map((item, i) => {
