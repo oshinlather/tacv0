@@ -1996,6 +1996,7 @@ const DailyPnL = () => {
                       const displayUnit = item.unit || '';
                       const demandUnitForItem = isStockBased ? item.demand_unit : item.raw_unit;
                       const hasConvEdit = isStockBased && item.conv_qty != null && item.conv_base_unit;
+                      const scCost = isStockBased && item.should_consume != null ? item.should_consume * (displayRate || 0) : null;
                       if (isEditingMaster) {
                         return (
                           <div key={globalIdx} style={{ padding: "8px 16px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>
@@ -2090,6 +2091,11 @@ const DailyPnL = () => {
                           <div style={{ display: "flex", justifyContent: "space-between", padding: "5px 16px 2px 32px", fontSize: 11, alignItems: "center" }}>
                             <span style={{ color: "#555", flex: 1 }}>
                               {item.name} <span style={{ color: "#BBB" }}>({displayQty} {displayUnit} × ₹{displayRate})</span>
+                              {scCost != null && (
+                                <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: displayCost - scCost > 0 ? "#DC2626" : displayCost - scCost < 0 ? "#16A34A" : "#999" }}>
+                                  {" "}({Math.round(displayCost)}−{Math.round(scCost)}={Math.round(displayCost - scCost)})
+                                </span>
+                              )}
                             </span>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6, fontSize: 11 }}>{fmt(displayCost)}</span>
                             <button
@@ -2134,7 +2140,6 @@ const DailyPnL = () => {
                           {isStockBased && item.should_consume != null && (() => {
                             const hasScBreakdown = (item.sc_breakdown || []).length > 0;
                             const scOpen = expandedScItem === item.item_id;
-                            const scCost = item.should_consume * (displayRate || 0);
                             return (<>
                               <div onClick={() => hasScBreakdown && setExpandedScItem(scOpen ? null : item.item_id)}
                                 style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", justifyContent: "space-between", alignItems: "baseline", cursor: hasScBreakdown ? "pointer" : "default" }}>
