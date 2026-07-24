@@ -778,6 +778,18 @@ async function computeRMAudit(date, outletFilter) {
   const recipeByNormName = {};
   (recipes || []).forEach(r => { recipeByNormName[normalizeDishName(r.item_name)] = r; });
 
+  // For the "ordered but never in any recipe" gap report — RECIPE_RAW_MATERIAL_MAP is
+  // the actual gate on whether an item can ever get a should-consume figure, regardless
+  // of what any recipe's ingredient text says, so "mapped" means "has a map entry" here,
+  // not "some recipe happens to mention it by name". recipeIngredientNames is a second,
+  // looser signal: if a recipe DOES reference it by name, the fix is a one-line map
+  // addition; if not, someone needs to add it to a recipe first.
+  const mappedItemIds = new Set(Object.values(RECIPE_RAW_MATERIAL_MAP));
+  const recipeIngredientNames = new Set();
+  (recipes || []).forEach(r => (r.recipe_ingredients || []).forEach(ing => {
+    if (ing.raw_material) recipeIngredientNames.add(normalizeIngredientName(ing.raw_material));
+  }));
+
   const stockUsage = await computeStockUsageForDate(date, outletFilter);
   const actualByOutlet = {};
   stockUsage.outlets.forEach(o => { actualByOutlet[o.outlet_id] = o; });
@@ -851,11 +863,26 @@ async function computeRMAudit(date, outletFilter) {
     const qtySoldUnmatched = unmatchedDishes.reduce((s, d) => s + d.qty, 0);
     const qtySoldMatched = qtySoldTotal - qtySoldUnmatched;
 
+    // Coverage gap report: every item actually consumed today (used_cost > 0 — it was
+    // ordered and it left the shelf) that can never get a should-consume figure because
+    // it has no RECIPE_RAW_MATERIAL_MAP entry, regardless of today's sales. Distinct from
+    // unmapped_ingredients above, which only covers ingredients of DISHES SOLD TODAY —
+    // this catches items with zero recipe path at all, any day.
+    const neverMappedItems = Object.values(actualById)
+      .filter(it => (it.used_cost || 0) > 0 && !mappedItemIds.has(it.item_id))
+      .map(it => ({
+        item_id: it.item_id, name: it.name, category: it.category, unit: it.unit,
+        used: it.used, used_cost: it.used_cost,
+        referenced_in_recipe: recipeIngredientNames.has(normalizeIngredientName(it.name)),
+      }))
+      .sort((a, b) => b.used_cost - a.used_cost);
+
     results.push({
       outlet_id: oid, date,
       items,
       unmatched_dishes: unmatchedDishes.sort((a, b) => b.qty - a.qty),
       unmapped_ingredients: [...unmappedIngredients],
+      never_mapped_items: neverMappedItems,
       dishes_sold: Object.keys(salesByDish).length,
       dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
       sales_qty_total: qtySoldTotal,

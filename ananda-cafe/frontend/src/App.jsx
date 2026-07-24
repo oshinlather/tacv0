@@ -1556,7 +1556,10 @@ const DailyPnL = () => {
   const [selDay, setSelDay] = useState(1);
   const [pnlData, setPnlData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [expandSection, setExpandSection] = useState(null); // 'variable', 'fixed', 'purchase'
+  // Variable Cost is the useful-by-default view — that's where the leakage numbers live —
+  // so it starts expanded; Revenue's breakdown (delivery/commission/cancelled/etc.) starts
+  // folded since Total Sale + Effective Sale already say what matters at a glance.
+  const [expandSection, setExpandSection] = useState("variable"); // 'revenue', 'variable', 'fixed', 'purchase'
 
   // Owner qty-correction edit state: { demand_id, item_id, value, reason }
   const [editItem, setEditItem] = useState(null);
@@ -1710,7 +1713,7 @@ const DailyPnL = () => {
       // by outlet since (like RM Audit itself) this only makes sense for a single real
       // outlet, not the "all" aggregate.
       const gapsByOutlet = {};
-      (audit?.outlets || []).forEach(o => { gapsByOutlet[o.outlet_id] = { unmatched_dishes: o.unmatched_dishes || [], unmapped_ingredients: o.unmapped_ingredients || [] }; });
+      (audit?.outlets || []).forEach(o => { gapsByOutlet[o.outlet_id] = { unmatched_dishes: o.unmatched_dishes || [], unmapped_ingredients: o.unmapped_ingredients || [], never_mapped_items: o.never_mapped_items || [] }; });
 
       // Merge stock-based variable cost into P&L data
       if (pnl?.pnl && stock?.outlets) {
@@ -1729,6 +1732,7 @@ const DailyPnL = () => {
             const gaps = gapsByOutlet[p.outlet_id];
             p.unmatched_dishes = gaps?.unmatched_dishes || [];
             p.unmapped_ingredients = gaps?.unmapped_ingredients || [];
+            p.never_mapped_items = gaps?.never_mapped_items || [];
             // Attach RM Audit's should-consume + leakage % onto each item, so the
             // Variable Cost breakdown doubles as the audit view — no separate tab needed
             // to spot which item is over/under actual vs. theoretical consumption.
@@ -1938,17 +1942,19 @@ const DailyPnL = () => {
 
         {/* Detailed P&L Table */}
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
-          {/* REVENUE */}
-          <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" />
+          {/* REVENUE — Total Sale / Effective Sale always visible; the delivery/commission/
+              cancelled/complimentary breakdown folds away by default since those two
+              headline numbers already say what matters at a glance. */}
+          <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" expandKey="revenue" count="details" />
           <Row label="Total Sale (Billing)" value={d.total_sale} bold color="#166534" bg="#F0FDF4" />
-          <Row label="Delivery (Swiggy + Zomato + Other)" value={d.delivery_sale} indent />
-          {d.delivery_commission > 0 && <Row label="− Platform Commission (40%)" value={d.delivery_commission} negative indent />}
-          {d.net_delivery_sale > 0 && <Row label="Net Delivery Revenue (60%)" value={d.net_delivery_sale} indent color="#2563EB" />}
-          <Row label="Store Sale" value={d.store_sale} indent />
-          {(d.cancelled_orders > 0 || d.complimentary > 0) && <>
+          {expandSection === "revenue" && (<>
+            <Row label="Delivery (Swiggy + Zomato + Other)" value={d.delivery_sale} indent />
+            {d.delivery_commission > 0 && <Row label="− Platform Commission (40%)" value={d.delivery_commission} negative indent />}
+            {d.net_delivery_sale > 0 && <Row label="Net Delivery Revenue (60%)" value={d.net_delivery_sale} indent color="#2563EB" />}
+            <Row label="Store Sale" value={d.store_sale} indent />
             {d.cancelled_orders > 0 && <Row label="− Cancelled Orders" value={d.cancelled_orders} negative indent />}
             {d.complimentary > 0 && <Row label="− Complimentary" value={d.complimentary} negative indent />}
-          </>}
+          </>)}
           <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
 
           {/* VARIABLE COST */}
@@ -1971,8 +1977,9 @@ const DailyPnL = () => {
               exact instead of only covering whatever recipes already happen to exist. Only
               makes sense for a single real outlet (same constraint RM Audit itself has). */}
           {expandSection === "variable" && selOutlet && (
-            <div style={{ padding: "10px 16px" }}>
+            <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
               <QuickRecipeAdder unmatchedDishes={d.unmatched_dishes} unmappedIngredients={d.unmapped_ingredients} dateStr={dateStr} onSaved={fetchPnl} />
+              <NeverMappedReport items={d.never_mapped_items} />
             </div>
           )}
           {expandSection === "variable" && ((d.stock_items && d.stock_items.length > 0) || (d.item_breakdown && d.item_breakdown.length > 0)) && (() => {
@@ -8128,6 +8135,41 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  NEVER-MAPPED REPORT — items actually consumed today (ordered, left the shelf) that
+//  can never get a should-consume figure at all, any day, because there's no
+//  RECIPE_RAW_MATERIAL_MAP entry for them — distinct from "dish sold today with no
+//  recipe" above, which only catches gaps for what happened to sell today. Shared
+//  between RM Audit and P&L's Material Cost box, same as QuickRecipeAdder.
+// ═════════════════════════════════════════════════════════════════════════════
+const NeverMappedReport = ({ items }) => {
+  const [open, setOpen] = useState(false);
+  if (!items || items.length === 0) return null;
+  const total = items.reduce((s, it) => s + (it.used_cost || 0), 0);
+  return (
+    <div style={{ background: "#FEF2F2", borderRadius: 14, border: "1px solid #FECACA", overflow: "hidden" }}>
+      <div onClick={() => setOpen(!open)} style={{ padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#991B1B" }}>🚫 {items.length} item(s) consumed today with no recipe path — {fmt(total)} untracked</div>
+        <span style={{ fontSize: 11, color: "#991B1B" }}>{open ? "▲ hide" : "▼ show"}</span>
+      </div>
+      {open && (
+        <div style={{ padding: "0 16px 12px" }}>
+          <div style={{ fontSize: 10, color: "#991B1B", marginBottom: 8 }}>Ordered and actually consumed, but not an ingredient in any recipe — should-consume can never be computed for these until they're added to one.</div>
+          {items.map((it, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid #FEE2E2", fontSize: 11 }}>
+              <span style={{ color: "#7F1D1D" }}>
+                {it.name} <span style={{ color: "#B91C1C", fontSize: 9 }}>({it.category})</span>
+                {it.referenced_in_recipe && <span style={{ fontSize: 9, color: "#B45309", marginLeft: 4 }}>· mentioned in a recipe, just needs mapping</span>}
+              </span>
+              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>{fmt(it.used_cost)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
 const RMAuditPanel = () => {
@@ -8268,6 +8310,7 @@ const RMAuditPanel = () => {
           )}
 
           <QuickRecipeAdder unmatchedDishes={outletData.unmatched_dishes} unmappedIngredients={outletData.unmapped_ingredients} dateStr={dateStr} onSaved={loadAudit} />
+          <div style={{ marginTop: 12 }}><NeverMappedReport items={outletData.never_mapped_items} /></div>
         </>
       )}
 
