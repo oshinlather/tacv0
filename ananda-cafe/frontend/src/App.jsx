@@ -1681,7 +1681,24 @@ const DailyPnL = () => {
     Promise.all([
       api.getLivePnl(dateStr).catch(() => null),
       api.getStockUsage(dateStr).catch(() => null),
-    ]).then(([pnl, stock]) => {
+      // No outlet filter — computeRMAudit returns one entry per real outlet, which we
+      // sum ourselves for the "all outlets" P&L row (see shouldConsumeByOutlet below).
+      api.getRMAudit(dateStr).catch(() => null),
+    ]).then(([pnl, stock, audit]) => {
+      // RM Audit's "should consume" (theoretical, recipe × sales) per outlet+item_id —
+      // built once here so every P&L row (including the "all" aggregate) can look up
+      // its own leakage figure without re-fetching per outlet.
+      const shouldConsumeByOutlet = {}; // { outlet_id: { item_id: should_consume } }, plus a synthetic 'all' bucket
+      (audit?.outlets || []).forEach(o => {
+        const bucket = shouldConsumeByOutlet[o.outlet_id] = {};
+        const allBucket = shouldConsumeByOutlet.all = shouldConsumeByOutlet.all || {};
+        (o.items || []).forEach(it => {
+          if (it.item_id == null || it.should_consume == null) return;
+          bucket[it.item_id] = (bucket[it.item_id] || 0) + it.should_consume;
+          allBucket[it.item_id] = (allBucket[it.item_id] || 0) + it.should_consume;
+        });
+      });
+
       // Merge stock-based variable cost into P&L data
       if (pnl?.pnl && stock?.outlets) {
         pnl.pnl.forEach(p => {
@@ -1696,7 +1713,28 @@ const DailyPnL = () => {
             p.stock_cost_by_category = su.variable_cost_by_category;
             p.variable_cost = su.total_used_cost;
             p.variable_by_category = su.variable_cost_by_category;
-            p.stock_items = su.items;
+            // Attach RM Audit's should-consume + leakage % onto each item, so the
+            // Variable Cost breakdown doubles as the audit view — no separate tab needed
+            // to spot which item is over/under actual vs. theoretical consumption.
+            const scMap = shouldConsumeByOutlet[p.outlet_id] || {};
+            p.stock_items = (su.items || []).map(it => {
+              const shouldConsume = scMap[it.item_id];
+              if (shouldConsume == null) return it;
+              const variance = Math.round((it.used - shouldConsume) * 1000) / 1000;
+              const variancePct = shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
+              return { ...it, should_consume: Math.round(shouldConsume * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct };
+            });
+            // Headline should-be-vs-actual cost, so "what did the manager's punching say we
+            // used" vs "what the recipe says we should have used" is visible without expanding
+            // the section — only over the subset RM Audit can actually price (recipe-matched,
+            // sold-that-day items), not the full Material Cost total which also includes
+            // grocery/packaging/etc. bought in bulk with no per-dish recipe concept.
+            const scItems = p.stock_items.filter((it) => it.should_consume != null);
+            p.should_consume_item_count = scItems.length;
+            p.should_consume_cost = scItems.length ? Math.round(scItems.reduce((s, it) => s + it.should_consume * (it.rate || 0), 0)) : null;
+            p.should_consume_actual_cost = scItems.length ? Math.round(scItems.reduce((s, it) => s + (it.used_cost || 0), 0)) : null;
+            p.should_consume_variance = p.should_consume_cost != null ? p.should_consume_actual_cost - p.should_consume_cost : null;
+            p.should_consume_variance_pct = p.should_consume_cost > 0 ? Math.round((p.should_consume_variance / p.should_consume_cost) * 1000) / 10 : null;
             p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
             p.net_profit = (p.effective_sale || 0) - p.total_expense;
             p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
@@ -1772,13 +1810,14 @@ const DailyPnL = () => {
     </div>
   );
 
-  const SectionHeader = ({ label, bg, borderColor, color, icon, expandKey, count }) => (
+  const SectionHeader = ({ label, bg, borderColor, color, icon, expandKey, count, pct }) => (
     <div onClick={() => expandKey && setExpandSection(expandSection === expandKey ? null : expandKey)}
       style={{ padding: "10px 16px", background: bg, borderBottom: `1px solid ${borderColor}`, fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: expandKey ? "pointer" : "default" }}>
-      <span>{icon} {label}</span>
+      <span>{icon} {label} {pct != null && <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>· {pct.toFixed(1)}%</span>}</span>
       {expandKey && <span style={{ fontSize: 10, color: "#999" }}>{expandSection === expandKey ? "▲ collapse" : `▼ ${count || "details"}`}</span>}
     </div>
   );
+  const pctOfSale = (v) => d.effective_sale > 0 ? (v || 0) / d.effective_sale * 100 : null;
 
   return (
     <div>
@@ -1882,8 +1921,20 @@ const DailyPnL = () => {
           <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
 
           {/* VARIABLE COST */}
-          <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} />
-          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"} />
+          <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} pct={pctOfSale(d.variable_cost)} />
+          <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={<>
+            <div>{(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"}</div>
+            {d.should_consume_cost != null && (
+              <div style={{ marginTop: 2 }}>
+                Recipe-covered ({d.should_consume_item_count}): should be <span style={{ color: "#2563EB", fontWeight: 700 }}>{fmt(d.should_consume_cost)}</span> vs actual <span style={{ fontWeight: 700, color: "#1A1A1A" }}>{fmt(d.should_consume_actual_cost)}</span>
+                {d.should_consume_variance_pct != null && (
+                  <span style={{ fontWeight: 800, marginLeft: 4, color: d.should_consume_variance > 0 ? "#DC2626" : d.should_consume_variance < 0 ? "#16A34A" : "#999" }}>
+                    ({d.should_consume_variance > 0 ? "+" : ""}{fmt(d.should_consume_variance)}, {d.should_consume_variance_pct > 0 ? "+" : ""}{d.should_consume_variance_pct}%)
+                  </span>
+                )}
+              </div>
+            )}
+          </>} />
           {expandSection === "variable" && ((d.stock_items && d.stock_items.length > 0) || (d.item_breakdown && d.item_breakdown.length > 0)) && (() => {
             const items = d.stock_items && d.stock_items.length > 0 ? d.stock_items : d.item_breakdown || [];
             const isStockBased = d.stock_items && d.stock_items.length > 0;
@@ -2056,6 +2107,18 @@ const DailyPnL = () => {
                               ({item.prev_closing || 0} + {item.dispatched || 0}) − {item.wastage || 0} − {item.closing || 0} = {displayQty} {displayUnit}
                             </div>
                           )}
+                          {/* RM Audit's theoretical (recipe × sales) consumption, folded in here so
+                              leakage is visible right where the actual cost is — no separate tab. */}
+                          {isStockBased && item.should_consume != null && (
+                            <div style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", gap: 8, alignItems: "baseline" }}>
+                              <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
+                              {item.sc_variance_pct != null && (
+                                <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
+                                  {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -2067,13 +2130,13 @@ const DailyPnL = () => {
           })()}
 
           {/* DAILY PURCHASES */}
-          <SectionHeader label="Daily Purchases" bg="#EFF6FF" borderColor="#BFDBFE" color="#1D4ED8" icon="🧾" />
+          <SectionHeader label="Daily Purchases" bg="#EFF6FF" borderColor="#BFDBFE" color="#1D4ED8" icon="🧾" pct={pctOfSale(d.daily_purchases)} />
           <Row label="Cash Purchases" value={d.daily_purchases} bold color="#2563EB" />
           <Row label="New Purchase" value={d.new_purchases} indent />
           <Row label="Vendor Payments" value={d.vendor_payments} indent />
 
           {/* FIXED COSTS */}
-          <SectionHeader label={"Fixed Costs (Monthly ÷ " + (d.days_in_month || 30) + " days)"} bg="#F5F3FF" borderColor="#DDD6FE" color="#6D28D9" icon="🏢" expandKey="fixed" count={d.fixed_breakdown?.length + " heads"} />
+          <SectionHeader label={"Fixed Costs (Monthly ÷ " + (d.days_in_month || 30) + " days)"} bg="#F5F3FF" borderColor="#DDD6FE" color="#6D28D9" icon="🏢" expandKey="fixed" count={d.fixed_breakdown?.length + " heads"} pct={pctOfSale((d.daily_fixed_cost || 0) + (d.bk_share || 0))} />
           <Row label="Daily Fixed Cost" value={d.daily_fixed_cost} bold color="#7C3AED" />
           <Row label="BK Share (¼ of Base Kitchen)" value={d.bk_share} indent />
           {expandSection === "fixed" && d.fixed_breakdown && d.fixed_breakdown.map((f) => (
