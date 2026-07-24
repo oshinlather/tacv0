@@ -1887,6 +1887,15 @@ const DailyPnL = () => {
               const hasSale = r.effective_sale > 0;
               const cogs = hasSale ? (r.variable_cost / r.effective_sale * 100) : 0;
               const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
+              // Ideal = what P&L would look like if the recipe-covered portion of material
+              // cost had come in exactly at RM Audit's theoretical figure instead of actual
+              // — everything else (fixed costs, purchases, non-recipe material) unchanged.
+              // The gap between Net P&L and Ideal Profit is the leakage, in real rupees.
+              const hasIdeal = r.should_consume_cost != null;
+              const idealMaterialCost = hasIdeal ? r.variable_cost - r.should_consume_actual_cost + r.should_consume_cost : null;
+              const idealProfit = hasIdeal ? r.effective_sale - (idealMaterialCost + (r.total_expense - r.variable_cost)) : null;
+              const idealCogs = hasIdeal && hasSale ? (idealMaterialCost / r.effective_sale * 100) : null;
+              const idealCogsColor = idealCogs != null ? (idealCogs <= 30 ? "#16A34A" : idealCogs <= 38 ? "#B45309" : "#DC2626") : "#999";
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
@@ -1899,6 +1908,12 @@ const DailyPnL = () => {
                   <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: !hasSale ? "#999" : r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{hasSale ? `${r.margin}%` : "N/A"}</strong></div>
                   <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: !hasSale ? "#999" : cogsColor }}>{hasSale ? `${cogs.toFixed(1)}%` : "N/A"}</strong></div>
                   {!hasSale && r.total_expense > 0 && <div style={{ fontSize: 8, color: "#DC2626", marginTop: 2 }}>⚠️ no sales recorded</div>}
+                  {hasIdeal && (<>
+                    <div style={{ fontSize: 9, color: "#2563EB", marginTop: 4 }}>Ideal Profit: <strong style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>
+                      {idealProfit >= 0 ? "" : "−"}{fmt(Math.abs(idealProfit))}
+                    </strong></div>
+                    <div style={{ fontSize: 9, color: "#2563EB" }}>Ideal COGS: <strong style={{ color: idealCogsColor }}>{idealCogs != null ? `${idealCogs.toFixed(1)}%` : "N/A"}</strong></div>
+                  </>)}
                 </div>
               );
             })}
