@@ -793,7 +793,7 @@ async function computeRMAudit(date, outletFilter) {
   const stockUsage = await computeStockUsageForDate(date, outletFilter);
   const actualByOutlet = {};
   stockUsage.outlets.forEach(o => { actualByOutlet[o.outlet_id] = o; });
-  const { rateMap, convFactorFor } = await buildCostingContext();
+  const { rateMap, bkRecipeMap, convFactorFor } = await buildCostingContext();
 
   const results = [];
   for (const oid of targetOutlets) {
@@ -838,12 +838,22 @@ async function computeRMAudit(date, outletFilter) {
       const actualQty = actualItem ? actualItem.used : null;
       const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
       const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
+      // Priced independent of whether this item is separately tracked as an outlet demand
+      // item (actualItem) — a recipe ingredient's theoretical cost doesn't depend on that,
+      // only on having a price. Many BK-prepared Food items (Sambhar, Dosa Batter, chutneys)
+      // have no rate_card entry at all — they're priced via BK's own recipe instead, same
+      // rate_card-first-then-BK-recipe-fallback rule the rest of the app uses (P&L, dish
+      // costing). Falls back to bkRecipeMap's per-Kg cost, matching should_consume's own
+      // unit for these items (qty_kg-based). This is what ideal_material_cost below sums.
+      const rate = rateMap[mappedId]?.price ?? (t.qty_kg > 0 ? (bkRecipeMap[mappedId]?.costPerKg ?? null) : null);
       return {
         raw_material: t.raw_material,
         item_id: mappedId,
         unit: t.qty_kg > 0 ? 'Kg' : (targetUnit || 'Pcs'),
         should_consume: Math.round(shouldConsume * 1000) / 1000,
         should_consume_breakdown: t.breakdown.sort((a, b) => b.subtotal - a.subtotal),
+        rate,
+        should_consume_cost: rate != null ? Math.round(shouldConsume * rate * 100) / 100 : null,
         actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
         actual_breakdown: actualItem ? {
           prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
@@ -877,12 +887,23 @@ async function computeRMAudit(date, outletFilter) {
       }))
       .sort((a, b) => b.used_cost - a.used_cost);
 
+    // Ideal Material Cost — the actual "what should today's material cost have been"
+    // figure: every dish sold today, priced through its full recipe at rate card, summed.
+    // Deliberately NOT filtered to items that also happen to be tracked as this outlet's
+    // own demand items (unlike should_consume_actual_cost elsewhere) — a recipe
+    // ingredient's theoretical cost doesn't depend on whether it's separately punched as
+    // a demand line, only on whether it has a rate card price. Items with no
+    // RECIPE_RAW_MATERIAL_MAP entry (should_consume_cost null) are simply excluded, same
+    // gap the never_mapped_items/unmapped_ingredients reports above surface for fixing.
+    const idealMaterialCost = items.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
+
     results.push({
       outlet_id: oid, date,
       items,
       unmatched_dishes: unmatchedDishes.sort((a, b) => b.qty - a.qty),
       unmapped_ingredients: [...unmappedIngredients],
       never_mapped_items: neverMappedItems,
+      ideal_material_cost: Math.round(idealMaterialCost * 100) / 100,
       dishes_sold: Object.keys(salesByDish).length,
       dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
       sales_qty_total: qtySoldTotal,

@@ -1708,6 +1708,18 @@ const DailyPnL = () => {
         });
       });
 
+      // Ideal Material Cost — every dish sold today, priced through its full recipe at
+      // rate card (backend sums should_consume_cost across every priced ingredient,
+      // independent of whether that ingredient is separately tracked as this outlet's
+      // own demand item). Summed across outlets for the "all" aggregate, same as should
+      // consume itself.
+      const idealCostByOutlet = {}; // { outlet_id: total }, plus synthetic 'all'
+      (audit?.outlets || []).forEach(o => {
+        if (o.ideal_material_cost == null) return;
+        idealCostByOutlet[o.outlet_id] = o.ideal_material_cost;
+        idealCostByOutlet.all = (idealCostByOutlet.all || 0) + o.ideal_material_cost;
+      });
+
       // Dishes sold with no recipe + recipe ingredients not linked to inventory — same
       // "fill the gap to improve should-consume coverage" data RM Audit surfaces, keyed
       // by outlet since (like RM Audit itself) this only makes sense for a single real
@@ -1744,15 +1756,15 @@ const DailyPnL = () => {
               const variancePct = sc.total > 0 ? Math.round((variance / sc.total) * 1000) / 10 : null;
               return { ...it, should_consume: Math.round(sc.total * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct, sc_breakdown: sc.breakdown };
             });
-            // Headline should-be-vs-actual cost, so "what did the manager's punching say we
-            // used" vs "what the recipe says we should have used" is visible without expanding
-            // the section — only over the subset RM Audit can actually price (recipe-matched,
-            // sold-that-day items), not the full Material Cost total which also includes
-            // grocery/packaging/etc. bought in bulk with no per-dish recipe concept.
-            const scItems = p.stock_items.filter((it) => it.should_consume != null);
-            p.should_consume_item_count = scItems.length;
-            p.should_consume_cost = scItems.length ? Math.round(scItems.reduce((s, it) => s + it.should_consume * (it.rate || 0), 0)) : null;
-            p.should_consume_actual_cost = scItems.length ? Math.round(scItems.reduce((s, it) => s + (it.used_cost || 0), 0)) : null;
+            // Headline should-be-vs-actual: Ideal Material Cost (every dish sold today ×
+            // its recipe, priced at rate card) against the FULL actual Material Cost (every
+            // real punched-in gram, same variable_cost the rest of P&L already shows) — an
+            // honest total-vs-total comparison, not a subset-vs-subset one. Items with no
+            // recipe price (never_mapped_items above) simply aren't in ideal_material_cost;
+            // that gap is the never-mapped report's job to surface, not this headline's.
+            p.should_consume_item_count = p.stock_items.filter((it) => it.should_consume != null).length;
+            p.should_consume_cost = idealCostByOutlet[p.outlet_id] != null ? Math.round(idealCostByOutlet[p.outlet_id]) : null;
+            p.should_consume_actual_cost = p.variable_cost;
             p.should_consume_variance = p.should_consume_cost != null ? p.should_consume_actual_cost - p.should_consume_cost : null;
             p.should_consume_variance_pct = p.should_consume_cost > 0 ? Math.round((p.should_consume_variance / p.should_consume_cost) * 1000) / 10 : null;
             p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
@@ -1830,10 +1842,10 @@ const DailyPnL = () => {
     </div>
   );
 
-  const SectionHeader = ({ label, bg, borderColor, color, icon, expandKey, count, pct }) => (
+  const SectionHeader = ({ label, bg, borderColor, color, icon, expandKey, count, pct, calc }) => (
     <div onClick={() => expandKey && setExpandSection(expandSection === expandKey ? null : expandKey)}
       style={{ padding: "10px 16px", background: bg, borderBottom: `1px solid ${borderColor}`, fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", letterSpacing: 0.6, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: expandKey ? "pointer" : "default" }}>
-      <span>{icon} {label} {pct != null && <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>· {pct.toFixed(1)}%</span>}</span>
+      <span>{icon} {label} {pct != null && <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>· {pct.toFixed(1)}%</span>} {calc && <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>· {calc}</span>}</span>
       {expandKey && <span style={{ fontSize: 10, color: "#999" }}>{expandSection === expandKey ? "▲ collapse" : `▼ ${count || "details"}`}</span>}
     </div>
   );
@@ -1907,12 +1919,13 @@ const DailyPnL = () => {
               const hasSale = r.effective_sale > 0;
               const cogs = hasSale ? (r.variable_cost / r.effective_sale * 100) : 0;
               const cogsColor = cogs <= 30 ? "#16A34A" : cogs <= 38 ? "#B45309" : "#DC2626";
-              // Ideal = what P&L would look like if the recipe-covered portion of material
-              // cost had come in exactly at RM Audit's theoretical figure instead of actual
-              // — everything else (fixed costs, purchases, non-recipe material) unchanged.
-              // The gap between Net P&L and Ideal Profit is the leakage, in real rupees.
+              // Ideal = what P&L would look like if Material Cost had come in exactly at
+              // recipe (today's dishes sold × their recipe, priced at rate card) instead of
+              // actual — everything else (fixed costs, purchases) unchanged. should_consume_cost
+              // is that full ideal figure already (backend-computed, see computeRMAudit); the
+              // gap between Net P&L and Ideal Profit is the leakage, in real rupees.
               const hasIdeal = r.should_consume_cost != null;
-              const idealMaterialCost = hasIdeal ? r.variable_cost - r.should_consume_actual_cost + r.should_consume_cost : null;
+              const idealMaterialCost = hasIdeal ? r.should_consume_cost : null;
               const idealProfit = hasIdeal ? r.effective_sale - (idealMaterialCost + (r.total_expense - r.variable_cost)) : null;
               const idealCogs = hasIdeal && hasSale ? (idealMaterialCost / r.effective_sale * 100) : null;
               const idealCogsColor = idealCogs != null ? (idealCogs <= 30 ? "#16A34A" : idealCogs <= 38 ? "#B45309" : "#DC2626") : "#999";
@@ -1942,20 +1955,19 @@ const DailyPnL = () => {
 
         {/* Detailed P&L Table */}
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
-          {/* REVENUE — Total Sale / Effective Sale always visible; the delivery/commission/
-              cancelled/complimentary breakdown folds away by default since those two
-              headline numbers already say what matters at a glance. */}
-          <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" expandKey="revenue" count="details" />
-          <Row label="Total Sale (Billing)" value={d.total_sale} bold color="#166534" bg="#F0FDF4" />
+          {/* REVENUE — collapsed to just this one header line by default, with the
+              Total Sale(Effective Sale) calc right in it; expand for the full breakdown. */}
+          <SectionHeader label="Revenue" bg="#F0FDF4" borderColor="#BBF7D0" color="#166534" icon="📈" expandKey="revenue" count="details" calc={`${Math.round(d.total_sale || 0)}(${Math.round(d.effective_sale || 0)})`} />
           {expandSection === "revenue" && (<>
+            <Row label="Total Sale (Billing)" value={d.total_sale} bold color="#166534" bg="#F0FDF4" />
             <Row label="Delivery (Swiggy + Zomato + Other)" value={d.delivery_sale} indent />
             {d.delivery_commission > 0 && <Row label="− Platform Commission (40%)" value={d.delivery_commission} negative indent />}
             {d.net_delivery_sale > 0 && <Row label="Net Delivery Revenue (60%)" value={d.net_delivery_sale} indent color="#2563EB" />}
             <Row label="Store Sale" value={d.store_sale} indent />
             {d.cancelled_orders > 0 && <Row label="− Cancelled Orders" value={d.cancelled_orders} negative indent />}
             {d.complimentary > 0 && <Row label="− Complimentary" value={d.complimentary} negative indent />}
+            <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
           </>)}
-          <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
 
           {/* VARIABLE COST */}
           <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} pct={pctOfSale(d.variable_cost)} />
@@ -1963,7 +1975,7 @@ const DailyPnL = () => {
             <div>{(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"}</div>
             {d.should_consume_cost != null && (
               <div style={{ marginTop: 2 }}>
-                Recipe-covered ({d.should_consume_item_count}): should be <span style={{ color: "#2563EB", fontWeight: 700 }}>{fmt(d.should_consume_cost)}</span> vs actual <span style={{ fontWeight: 700, color: "#1A1A1A" }}>{fmt(d.should_consume_actual_cost)}</span>
+                Ideal (today's dishes × recipe, {d.should_consume_item_count} priced ingredients): should be <span style={{ color: "#2563EB", fontWeight: 700 }}>{fmt(d.should_consume_cost)}</span> vs actual <span style={{ fontWeight: 700, color: "#1A1A1A" }}>{fmt(d.should_consume_actual_cost)}</span>
                 {d.should_consume_variance_pct != null && (
                   <span style={{ fontWeight: 800, marginLeft: 4, color: d.should_consume_variance > 0 ? "#DC2626" : d.should_consume_variance < 0 ? "#16A34A" : "#999" }}>
                     ({d.should_consume_variance > 0 ? "+" : ""}{fmt(d.should_consume_variance)}, {d.should_consume_variance_pct > 0 ? "+" : ""}{d.should_consume_variance_pct}%)
