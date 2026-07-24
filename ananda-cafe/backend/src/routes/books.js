@@ -11,7 +11,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
-const { requireOwner } = require('./authGuards');
+const { requireAuth, requireOwner } = require('./authGuards');
 
 const CATEGORIES = [
   'cogs_dairy', 'cogs_vegetables', 'cogs_other',
@@ -78,8 +78,9 @@ router.get('/advances', async (req, res) => {
 // ── POST /api/books — create a manual entry
 router.post('/', async (req, res) => {
   try {
-    const user = await requireOwner(req, res);
+    const user = await requireAuth(req, res);
     if (!user) return;
+    if (user.role !== 'owner') return res.status(403).json({ error: 'Owners only' });
     const {
       entry_date, entry_time, submitted_by, description, category, amount,
       payment_mode, vendor_or_recipient, is_advance, advance_to, outlet_id, raw_message,

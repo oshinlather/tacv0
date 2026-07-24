@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS daily_review_summary (
 );
 
 CREATE INDEX IF NOT EXISTS idx_daily_review_summary_date ON daily_review_summary (date);
+
+ALTER TABLE daily_review_summary ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role access" ON daily_review_summary FOR ALL USING (true);
