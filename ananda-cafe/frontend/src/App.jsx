@@ -2028,6 +2028,8 @@ const DailyPnL = () => {
                       const demandUnitForItem = isStockBased ? item.demand_unit : item.raw_unit;
                       const hasConvEdit = isStockBased && item.conv_qty != null && item.conv_base_unit;
                       const scCost = isStockBased && item.should_consume != null ? item.should_consume * (displayRate || 0) : null;
+                      const hasScBreakdown = (item.sc_breakdown || []).length > 0;
+                      const scOpen = expandedScItem === item.item_id;
                       if (isEditingMaster) {
                         return (
                           <div key={globalIdx} style={{ padding: "8px 16px", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>
@@ -2125,6 +2127,13 @@ const DailyPnL = () => {
                               {scCost != null && (
                                 <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: displayCost - scCost > 0 ? "#DC2626" : displayCost - scCost < 0 ? "#16A34A" : "#999" }}>
                                   {" "}({Math.round(displayCost)}−{Math.round(scCost)}={Math.round(displayCost - scCost)})
+                                  {hasScBreakdown && (
+                                    <span onClick={() => setExpandedScItem(scOpen ? null : item.item_id)}
+                                      title="Show should-consume breakdown by dish"
+                                      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: "50%", background: "#2563EB", color: "#fff", fontSize: 9, fontWeight: 900, marginLeft: 5, cursor: "pointer", verticalAlign: "middle" }}>
+                                      {scOpen ? "▲" : "▼"}
+                                    </span>
+                                  )}
                                 </span>
                               )}
                             </span>
@@ -2167,15 +2176,12 @@ const DailyPnL = () => {
                           )}
                           {/* RM Audit's theoretical (recipe × sales) consumption, folded in here so
                               leakage is visible right where the actual cost is — no separate tab.
-                              Expandable to the same dish-level breakdown RM Audit shows, when present. */}
-                          {isStockBased && item.should_consume != null && (() => {
-                            const hasScBreakdown = (item.sc_breakdown || []).length > 0;
-                            const scOpen = expandedScItem === item.item_id;
-                            return (<>
-                              <div onClick={() => hasScBreakdown && setExpandedScItem(scOpen ? null : item.item_id)}
-                                style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", justifyContent: "space-between", alignItems: "baseline", cursor: hasScBreakdown ? "pointer" : "default" }}>
+                              Expand/collapse toggle lives on the header line next to the ₹ leakage
+                              calc (more prominent there); this just reacts to that same state. */}
+                          {isStockBased && item.should_consume != null && (<>
+                              <div style={{ padding: "0 16px 4px 32px", fontSize: 10, fontFamily: "'JetBrains Mono'", display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                                 <span style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                                  <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit} {hasScBreakdown && <span style={{ color: "#BBB" }}>{scOpen ? "▲" : "▼"}</span>}</span>
+                                  <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
                                   {item.sc_variance_pct != null && (
                                     <span style={{ fontWeight: 700, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
                                       {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
@@ -2197,8 +2203,7 @@ const DailyPnL = () => {
                                   </div>
                                 </div>
                               )}
-                            </>);
-                          })()}
+                            </>)}
                         </div>
                       );
                     })}
