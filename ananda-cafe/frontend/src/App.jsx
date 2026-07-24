@@ -1928,7 +1928,12 @@ const DailyPnL = () => {
               const idealMaterialCost = hasIdeal ? r.should_consume_cost : null;
               const idealProfit = hasIdeal ? r.effective_sale - (idealMaterialCost + (r.total_expense - r.variable_cost)) : null;
               const idealCogs = hasIdeal && hasSale ? (idealMaterialCost / r.effective_sale * 100) : null;
-              const idealCogsColor = idealCogs != null ? (idealCogs <= 30 ? "#16A34A" : idealCogs <= 38 ? "#B45309" : "#DC2626") : "#999";
+              const idealMargin = hasIdeal && hasSale ? (idealProfit / r.effective_sale * 100) : null;
+              // (actual−ideal=leakage) appended right in the same line as each figure —
+              // actual first, ideal second, matching how the number was actually derived.
+              const netPnlCalc = hasIdeal ? `(${Math.round(r.net_profit)}−${Math.round(idealProfit)}=${Math.round(r.net_profit - idealProfit)})` : null;
+              const cogsCalc = idealCogs != null ? `(${cogs.toFixed(1)}%−${idealCogs.toFixed(1)}%=${(cogs - idealCogs).toFixed(1)}%)` : null;
+              const marginCalc = idealMargin != null ? `(${r.margin}%−${idealMargin.toFixed(1)}%=${(r.margin - idealMargin).toFixed(1)}%)` : null;
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
@@ -1937,16 +1942,10 @@ const DailyPnL = () => {
                   <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                     {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
-                  </strong></div>
-                  <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: !hasSale ? "#999" : r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{hasSale ? `${r.margin}%` : "N/A"}</strong></div>
-                  <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: !hasSale ? "#999" : cogsColor }}>{hasSale ? `${cogs.toFixed(1)}%` : "N/A"}</strong></div>
+                  </strong>{netPnlCalc && <span style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}> {netPnlCalc}</span>}</div>
+                  <div style={{ fontSize: 9, color: "#888" }}>COGS: <strong style={{ color: !hasSale ? "#999" : cogsColor }}>{hasSale ? `${cogs.toFixed(1)}%` : "N/A"}</strong>{cogsCalc && <span style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}> {cogsCalc}</span>}</div>
+                  <div style={{ fontSize: 9, color: "#888" }}>Margin: <strong style={{ color: !hasSale ? "#999" : r.margin >= 0 ? "#16A34A" : "#DC2626" }}>{hasSale ? `${r.margin}%` : "N/A"}</strong>{marginCalc && <span style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}> {marginCalc}</span>}</div>
                   {!hasSale && r.total_expense > 0 && <div style={{ fontSize: 8, color: "#DC2626", marginTop: 2 }}>⚠️ no sales recorded</div>}
-                  {hasIdeal && (<>
-                    <div style={{ fontSize: 9, color: "#2563EB", marginTop: 4 }}>Ideal Profit: <strong style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>
-                      {idealProfit >= 0 ? "" : "−"}{fmt(Math.abs(idealProfit))}
-                    </strong></div>
-                    <div style={{ fontSize: 9, color: "#2563EB" }}>Ideal COGS: <strong style={{ color: idealCogsColor }}>{idealCogs != null ? `${idealCogs.toFixed(1)}%` : "N/A"}</strong></div>
-                  </>)}
                 </div>
               );
             })}
@@ -6170,6 +6169,7 @@ const OutletMgr = ({ onBack }) => {
   // asked (partial). Surfaced on Home so a manager sees it without having to remember to
   // dig back through Dispatched Challans by date.
   const [stillOwed, setStillOwed] = useState([]); // [{ id, name, unit, qty, date, kind: "not_sent"|"short" }]
+  const [showStillOwed, setShowStillOwed] = useState(false); // long list — folded by default so it doesn't bury the action tiles below it
   useEffect(() => {
     if (!outlet) return;
     api.getOrders({ outlet_id: outlet, from: istDateAgo(7) }).then((rows) => {
@@ -6469,14 +6469,21 @@ const OutletMgr = ({ onBack }) => {
   if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
     {stillOwed.length > 0 && (
-      <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: "#B45309", marginBottom: 6 }}>⚠️ Not yet received — order again today if still needed</div>
-        {stillOwed.map((it) => (
-          <div key={it.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#92400E", padding: "2px 0" }}>
-            <span>{it.name} {it.kind === "short" ? "(short-dispatched)" : "(never sent)"}</span>
-            <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{it.qty} {it.unit} <span style={{ color: "#C2884B", fontWeight: 400 }}>· {it.date}</span></span>
+      <div style={{ borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 14, overflow: "hidden" }}>
+        <div onClick={() => setShowStillOwed((v) => !v)} style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "#B45309" }}>⚠️ Not yet received — {stillOwed.length} item{stillOwed.length === 1 ? "" : "s"}, order again today if still needed</span>
+          <span style={{ fontSize: 11, color: "#B45309", flexShrink: 0, marginLeft: 8 }}>{showStillOwed ? "▲ hide" : "▼ show"}</span>
+        </div>
+        {showStillOwed && (
+          <div style={{ padding: "0 14px 12px" }}>
+            {stillOwed.map((it) => (
+              <div key={it.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#92400E", padding: "2px 0" }}>
+                <span>{it.name} {it.kind === "short" ? "(short-dispatched)" : "(never sent)"}</span>
+                <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{it.qty} {it.unit} <span style={{ color: "#C2884B", fontWeight: 400 }}>· {it.date}</span></span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     )}
     {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
