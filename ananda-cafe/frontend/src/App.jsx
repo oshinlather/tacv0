@@ -9711,10 +9711,12 @@ const SCOPED_ROLE_TABS = {
     { id: "store", label: "🏭 Base Kitchen Manager" },
     { id: "cogs_compare", label: "📊 COGS Compare" },
     { id: "audit", label: "🔍 RM Audit" },
+    { id: "reviews", label: "⭐ Reviews" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
     { id: "audit", label: "🔍 RM Audit" },
+    { id: "reviews", label: "⭐ Reviews" },
   ],
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
@@ -9758,6 +9760,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
       {tab === "cogs_compare" && <CogsCompare />}
       {tab === "audit" && <RMAuditPanel />}
+      {tab === "reviews" && <DailyReviewSummary />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
     </div>
