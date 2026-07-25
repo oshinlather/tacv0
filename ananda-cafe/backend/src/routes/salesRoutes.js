@@ -749,6 +749,27 @@ const RECIPE_RAW_MATERIAL_MAP = {
   'spoon': 'bio_spoon',
   'banana leaf': 'banana_leaves',
   'packing bowl 250 ml': 'container_250ml',
+  // Remaining BK-prepared Food items (DEMAND_SECTIONS' "food" section) — added so a
+  // recipe ingredient named after any of these (e.g. "Vada Batter" in Vada's own recipe)
+  // actually resolves instead of silently landing in unmapped_ingredients. All confirmed
+  // to have a price source (rate_card or bk_recipes) except aloo_masala, which has
+  // neither yet — mapped anyway so it at least matches by name; still won't get a should-
+  // consume cost until a price exists for it.
+  'pineapple halwa': 'pineapple_halwa',
+  'vada batter': 'vada_batter',
+  'rawa mix': 'rawa_mix',
+  'roasted peanuts': 'roasted_peanuts',
+  'sevya payasam': 'sevya_payasam',
+  'rasam': 'rasam',
+  'onion masala': 'onion_masala',
+  'aloo masala': 'aloo_masala',
+  'roasted chana': 'roasted_chana',
+  'garlic paste': 'garlic_paste',
+  'sona masoori rice': 'sona_masoori_rice',
+  'tadka': 'tadka',
+  'roasted karipatta': 'roasted_karipatta',
+  'boiled rice': 'boiled_rice',
+  'upma sooji': 'upma_sooji',
 };
 
 // Dish names: PetPooja exports and recipe entries can differ in case/spacing/trailing
@@ -1253,6 +1274,20 @@ if (ingredients && ingredients.length > 0) {
 const rows = ingredients.map(i => ({ recipe_id: id, raw_material_id: i.rawId, qty: i.qty }));
 const { error: ingErr } = await supabase.from('bk_recipe_ingredients').insert(rows);
 if (ingErr) throw ingErr;
+}
+// The recipe module is the single control point for its own bulk-unit conversion too —
+// a yield label like "2 Kg (1 Batch)" already encodes "1 Batch = 2 Kg" by the existing
+// naming convention (see Dosa/Idli/Vada Batter). Parse it out and keep unit_conversions
+// in sync automatically on every save, so editing the yield here is enough instead of
+// also needing a separate, easy-to-forget edit in Master Data > Conversions.
+const bulkMatch = (yield_label || '').match(/\(\s*\d+(?:\.\d+)?\s+([A-Za-z]+)\s*\)/);
+if (bulkMatch && yield_qty && yield_unit) {
+  const bulkUnit = bulkMatch[1];
+  const { error: convErr } = await supabase.from('unit_conversions').upsert(
+    { unit_type: bulkUnit, item_id: id, item_name: name, qty: yield_qty, base_unit: yield_unit, notes: `1 ${bulkUnit} = ${yield_qty} ${yield_unit}` },
+    { onConflict: 'unit_type,item_id' }
+  );
+  if (convErr) console.error('Recipe-linked unit conversion sync failed:', convErr.message);
 }
 res.json({ ok: true });
 } catch (e) { res.status(500).json({ error: e.message }); }

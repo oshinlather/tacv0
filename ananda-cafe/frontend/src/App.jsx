@@ -8052,7 +8052,14 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
     api.getRecipes(true).then((rs) => {
       setAllRecipes(rs || []);
       setRecipeCategories([...new Set((rs || []).map((r) => r.category))].filter(Boolean).sort());
-      setRawMaterialNames([...new Set((rs || []).flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material)))].filter(Boolean).sort());
+      // Suggestions come from two sources: names already used as an ingredient somewhere
+      // (rs), plus the full item catalog (DEMAND_SECTIONS) — without the latter, a valid
+      // BK-prepared item like "Vada Batter" never shows up until someone has already
+      // typed it into some other recipe first, which is exactly backwards for a brand
+      // new ingredient nobody's referenced yet.
+      const fromRecipes = (rs || []).flatMap((r) => (r.recipe_ingredients || []).map((i) => i.raw_material));
+      const fromCatalog = DEMAND_SECTIONS.flatMap((s) => s.items).map((i) => i.name);
+      setRawMaterialNames([...new Set([...fromCatalog, ...fromRecipes])].filter(Boolean).sort());
     }).catch(() => {});
   }, []);
 
