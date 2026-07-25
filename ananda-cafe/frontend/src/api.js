@@ -51,6 +51,7 @@ const api = {
   // ── Purchases ──
   getPurchases: (params) => get("/api/purchases", params),
   createPurchase: (data) => post("/api/purchases", data),
+  updatePurchaseRecord: (id, data) => patch(`/api/purchases/${id}`, data),
   uploadPurchasePhoto: (purchaseId, base64, label) =>
     post(`/api/purchases/${purchaseId}/photos`, { base64, label }),
   getPurchaseSummary: (date) => get("/api/purchases/summary", { date }),

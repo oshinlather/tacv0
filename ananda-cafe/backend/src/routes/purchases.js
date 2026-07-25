@@ -2,15 +2,47 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
-const { requireAuth, requireOwner } = require("./authGuards");
+const { requireAuth, requireOwner, ensureOutletAccess } = require("./authGuards");
 
-// GET / — listing of all purchases across outlets. Owner-only.
+// GET / — listing of purchases. Outlet-scoped roles (outlet_mgr/chef/bainmarry) only see
+// their own outlet's rows (used by the Daily Sales screen's auto-computed Cash Expense);
+// owner/store_mgr/avp etc. see across outlets same as before.
 router.get("/", async (req, res) => {
-  if (!await requireOwner(req, res)) return;
-  const { date, limit = 30 } = req.query;
-  let query = supabase.from("purchases").select("*, purchase_items(*), purchase_photos(*)").order("submitted_at", { ascending: false }).limit(limit);
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { date, outlet_id, payment_mode, limit = 30 } = req.query;
+  // ensureOutletAccess only blocks a mismatched outlet_id — an outlet-scoped role that
+  // omits it entirely would otherwise fall through to seeing every outlet's purchases.
+  const OUTLET_SCOPED_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
+  if (OUTLET_SCOPED_ROLES.includes(user.role) && !outlet_id) {
+    return res.status(403).json({ error: "outlet_id is required for this role" });
+  }
+  if (!ensureOutletAccess(user, outlet_id, res)) return;
+  let query = supabase.from("purchases").select("*").order("submitted_at", { ascending: false }).limit(limit);
   if (date) query = query.eq("date", date);
+  if (outlet_id) query = query.eq("outlet_id", outlet_id);
+  if (payment_mode) query = query.eq("payment_mode", payment_mode);
   const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// PATCH /:id — edit a purchase's items (and recompute total_amount) — lets an outlet
+// manager fix a wrong item/qty/amount from the Daily Sales screen's Cash Expense list
+// without needing to delete and resubmit. Outlet-scoped same as the GET above.
+router.patch("/:id", async (req, res) => {
+  const user = await requireAuth(req, res);
+  if (!user) return;
+  const { data: existing, error: findErr } = await supabase.from("purchases").select("outlet_id").eq("id", req.params.id).single();
+  if (findErr || !existing) return res.status(404).json({ error: "Not found" });
+  if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+  const updates = {};
+  if (req.body.items) {
+    updates.items = req.body.items;
+    updates.total_amount = req.body.items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  }
+  if (req.body.note !== undefined) updates.note = req.body.note;
+  const { data, error } = await supabase.from("purchases").update(updates).eq("id", req.params.id).select("*").single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });

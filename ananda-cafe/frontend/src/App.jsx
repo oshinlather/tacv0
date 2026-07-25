@@ -1931,9 +1931,9 @@ const DailyPnL = () => {
               const idealMargin = hasIdeal && hasSale ? (idealProfit / r.effective_sale * 100) : null;
               // (actual−ideal=leakage) appended right in the same line as each figure —
               // actual first, ideal second, matching how the number was actually derived.
-              const netPnlCalc = hasIdeal ? `(${Math.round(r.net_profit)}−${Math.round(idealProfit)}=${Math.round(r.net_profit - idealProfit)})` : null;
-              const cogsCalc = idealCogs != null ? `(${cogs.toFixed(1)}%−${idealCogs.toFixed(1)}%=${(cogs - idealCogs).toFixed(1)}%)` : null;
-              const marginCalc = idealMargin != null ? `(${r.margin}%−${idealMargin.toFixed(1)}%=${(r.margin - idealMargin).toFixed(1)}%)` : null;
+              const netPnlCalc = hasIdeal ? `(${Math.round(idealProfit)})` : null;
+              const cogsCalc = idealCogs != null ? `(${idealCogs.toFixed(1)}%)` : null;
+              const marginCalc = idealMargin != null ? `(${idealMargin.toFixed(1)}%)` : null;
               return (
                 <div key={r.outlet_id} onClick={() => setSelOutlet(r.outlet_id)} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 12px", cursor: "pointer", textAlign: "center" }}>
                   <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6 }}>{oName}</div>
@@ -6113,6 +6113,13 @@ const OutletMgr = ({ onBack }) => {
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
+  // Cash Expense — auto-computed from this outlet's own Cash Purchase entries (payment
+  // mode "cash") for the selected date, instead of the manager retyping a number that
+  // can drift from what was actually punched. Expandable to review/edit those entries.
+  const [cashPurchases, setCashPurchases] = useState([]);
+  const [showCashExpense, setShowCashExpense] = useState(false);
+  const [editingCashPurchase, setEditingCashPurchase] = useState(null); // { id, item, qty, amount }
+  const [cashPurchaseSaving, setCashPurchaseSaving] = useState(false);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesSaving, setSalesSaving] = useState(false);
   const [existingData, setExistingData] = useState(null);
@@ -6580,7 +6587,8 @@ const OutletMgr = ({ onBack }) => {
       Promise.all([
         api.getOutletSales({ outlet_id: outlet, date: selectedDate }).catch(() => []),
         api.getLatestCash(outlet, selectedDate).catch(() => null),
-      ]).then(([sales, prev]) => {
+        api.getPurchases({ outlet_id: outlet, date: selectedDate, payment_mode: "cash" }).catch(() => []),
+      ]).then(([sales, prev, purchases]) => {
         if (sales && sales.length > 0) {
           const s = sales[0];
           setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", cash_deposited_to: s.cash_deposited_by || "", notes: s.notes || "" });
@@ -6590,9 +6598,25 @@ const OutletMgr = ({ onBack }) => {
           const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0);
           setPrevCash(closingCash);
         }
+        setCashPurchases(purchases || []);
       }).finally(() => setSalesLoading(false));
     };
     if (!salesLoaded) { setSalesLoaded(true); loadSalesData(); }
+
+    const cashExpenseTotal = cashPurchases.reduce((s, p) => s + (Number(p.total_amount) || 0), 0);
+
+    const startEditCashPurchase = (p) => { const it = (p.items || [])[0] || {}; setEditingCashPurchase({ id: p.id, item: it.item_name || "", qty: it.quantity ?? "", amount: p.total_amount }); };
+    const saveCashPurchaseEdit = async () => {
+      if (!editingCashPurchase) return;
+      setCashPurchaseSaving(true);
+      try {
+        const items = [{ item_name: editingCashPurchase.item.trim(), quantity: Number(editingCashPurchase.qty) || null, unit: "Kg", amount: Number(editingCashPurchase.amount) || 0 }];
+        await api.updatePurchaseRecord(editingCashPurchase.id, { items });
+        setEditingCashPurchase(null);
+        loadSalesData();
+      } catch (e) { alert("Error: " + e.message); }
+      finally { setCashPurchaseSaving(false); }
+    };
 
     const n = (v) => Number(v) || 0;
     const totalSale = n(salesData.total_sale);
@@ -6606,13 +6630,13 @@ const OutletMgr = ({ onBack }) => {
     const paymentTotal = upi + cash;
     const effectivePayment = paymentTotal - zomatoDistrict;
     const paymentDiff = storeSale - effectivePayment;
-    const closingCash = prevCash + cash - n(salesData.cash_expense) - n(salesData.cash_deposited);
+    const closingCash = prevCash + cash - cashExpenseTotal - n(salesData.cash_deposited);
 
     const submitSales = async () => {
       if (n(salesData.cash_deposited) > 0 && !salesData.cash_deposited_to) { alert("Please select who the cash was submitted to"); return; }
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: n(salesData.cash_expense), cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
+        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: cashExpenseTotal, cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
         alert(`✅ Daily sales saved!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}`);
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
@@ -6689,8 +6713,44 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ fontSize: 10, fontWeight: 700, color: "#9333EA", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Cash Management</div>
         <V label="Previous Day Cash" value={prevCash} color="#555" />
         <V label="+ Today Cash" value={cash} color="#16A34A" />
-        {salesRow("− Cash Expense", "cash_expense", "₹")}
-        <input value={salesData.cash_expense_note} onChange={(e) => setSalesData((p) => ({ ...p, cash_expense_note: e.target.value }))} placeholder="Expense note..." style={{ width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 11, fontFamily: "inherit", background: "#FAFAF8", marginBottom: 2, boxSizing: "border-box" }} />
+        {/* Cash Expense — auto-summed from this outlet's own Cash Purchase entries for
+            the date, not typed in here. Expand to review each entry and fix one if it's
+            wrong, instead of overriding the total by hand. */}
+        <div onClick={() => setShowCashExpense((v) => !v)} style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3", cursor: cashPurchases.length > 0 ? "pointer" : "default" }}>
+          <span style={{ flex: 1, fontSize: 12, color: "#555" }}>− Cash Expense {cashPurchases.length > 0 && <span style={{ color: "#BBB", fontSize: 10 }}>({cashPurchases.length}) {showCashExpense ? "▲" : "▼"}</span>}</span>
+          <span style={{ fontSize: 12, color: "#999" }}>₹</span>
+          <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, minWidth: 100, textAlign: "right" }}>{cashExpenseTotal}</span>
+        </div>
+        {showCashExpense && cashPurchases.length > 0 && (
+          <div style={{ padding: "6px 0 8px", borderBottom: "1px solid #F5F5F3" }}>
+            {cashPurchases.map((p) => {
+              const it = (p.items || [])[0] || {};
+              const isEditing = editingCashPurchase?.id === p.id;
+              return isEditing ? (
+                <div key={p.id} style={{ padding: "8px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 6 }}>
+                  <input value={editingCashPurchase.item} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, item: e.target.value }))} placeholder="Item"
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 6, boxSizing: "border-box" }} />
+                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                    <input value={editingCashPurchase.qty} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, qty: e.target.value }))} type="number" inputMode="decimal" placeholder="Qty"
+                      style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+                    <input value={editingCashPurchase.amount} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, amount: e.target.value }))} type="number" inputMode="numeric" placeholder="Amount"
+                      style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center", fontWeight: 700, color: "#B45309" }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={saveCashPurchaseEdit} disabled={cashPurchaseSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{cashPurchaseSaving ? "Saving..." : "Save"}</button>
+                    <button onClick={() => setEditingCashPurchase(null)} disabled={cashPurchaseSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+                  <span style={{ flex: 1, color: "#555" }}>{it.item_name || "—"}{it.quantity ? ` · ${it.quantity} ${it.unit || ""}` : ""}</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(p.total_amount)}</span>
+                  <button onClick={() => startEditCashPurchase(p)} style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#fff", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#2563EB", fontWeight: 700 }}>✏️</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {salesRow("− Cash Deposited", "cash_deposited", "₹")}
         {n(salesData.cash_deposited) > 0 && (<>
           {existingData?.cash_deposited_by && Number(existingData.cash_deposited) === n(salesData.cash_deposited) && (
@@ -7315,29 +7375,40 @@ const BKDemandForm = () => {
   </div>);
 };
 
+// Cash Purchase category picker — Dairy/Vegetable/Grocery ask for an item (suggested
+// from the real catalog as you type), Porter/New Equipment are just a flat amount
+// (the category itself is the item label for those two — a porter payment or new
+// equipment purchase isn't a per-item line the way a vegetable order is).
+const PURCHASE_CATEGORIES = [
+  { id: "porter", label: "🧑‍🔧 Porter", section: null },
+  { id: "dairy", label: "🥛 Dairy", section: "dairy" },
+  { id: "vegetable", label: "🥬 Vegetable", section: "vegetable" },
+  { id: "grocery", label: "🛒 Grocery", section: "grocery" },
+  { id: "new_equipment", label: "🔧 New Equipment", section: null },
+];
+const PURCHASE_ITEM_CATEGORIES = ["dairy", "vegetable", "grocery"];
+
 const StoreMgr = ({ onBack }) => {
   const [screen, setScreen] = useState("home");
   // Issuance state
   const [issueTo, setIssueTo] = useState("bk");
   const [issueImages, setIssueImages] = useState({});
   const [issueNote, setIssueNote] = useState("");
-  // Purchase state
-  const [purchases, setPurchases] = useState([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]);
+  // Purchase state — category picked first, then just what that category needs:
+  // Dairy/Vegetable/Grocery ask Item + Qty + Amount, Porter/New Equipment ask only
+  // Amount (the category itself is the item label for those two).
+  const [purchaseCategory, setPurchaseCategory] = useState(null);
+  const [purchaseItem, setPurchaseItem] = useState("");
+  const [purchaseQty, setPurchaseQty] = useState("");
+  const [purchaseAmount, setPurchaseAmount] = useState("");
   const [billImages, setBillImages] = useState({});
   const [purchaseNote, setPurchaseNote] = useState("");
   const [paymentMode, setPaymentMode] = useState("cash");
-  // Optional inventory link per purchase line — when set, this purchase also credits
-  // the BK inventory ledger (like a Stock In), instead of only logging the expense.
-  const [invItems, setInvItems] = useState([]);
-  const [linkPickerIdx, setLinkPickerIdx] = useState(null);
-  const [linkSearch, setLinkSearch] = useState("");
   // Shared
   const [subs, setSubs] = useState([]);
   const [last, setLast] = useState(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
-
-  useEffect(() => { api.getInventory().then((d) => setInvItems(d || [])).catch(() => {}); }, []);
 
   const targets = [{ id: "bk", name: "BK Production", emoji: "🏭" }, ...OUTLETS.map((o) => ({ ...o, emoji: "🏪" }))];
   const todaySubs = subs.filter((s) => s.date === today());
@@ -7346,7 +7417,7 @@ const StoreMgr = ({ onBack }) => {
   const todayPurchaseTotal = todayPurchases.reduce((s, p) => s + (p.totalAmount || 0), 0);
 
   const resetIssuance = () => { setIssueImages({}); setIssueNote(""); setIssueTo("bk"); setErr(null); };
-  const resetPurchase = () => { setPurchases([{ item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
+  const resetPurchase = () => { setPurchaseCategory(null); setPurchaseItem(""); setPurchaseQty(""); setPurchaseAmount(""); setBillImages({}); setPurchaseNote(""); setPaymentMode("cash"); setErr(null); };
 
   const submitIssuance = async () => {
     setSaving(true); setErr(null);
@@ -7363,17 +7434,20 @@ const StoreMgr = ({ onBack }) => {
   };
 
   const submitPurchase = async () => {
+    if (!purchaseCategory || !purchaseAmount) return;
+    const needsItem = PURCHASE_ITEM_CATEGORIES.includes(purchaseCategory);
+    const itemName = needsItem ? purchaseItem.trim() : PURCHASE_CATEGORIES.find((c) => c.id === purchaseCategory)?.label;
+    if (needsItem && !itemName) return;
     setSaving(true); setErr(null);
     try {
-      const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-      const apiItems = validItems.map((i) => ({ item_name: i.item, quantity: Number(i.qty) || null, unit: i.unit, amount: Number(i.amount), vendor: i.vendor, type: i.type || "new_purchase", item_id: i.item_id || undefined }));
+      const apiItems = [{ item_name: itemName, quantity: needsItem ? (Number(purchaseQty) || null) : null, unit: "Kg", amount: Number(purchaseAmount), vendor: null, type: "new_purchase" }];
       const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: purchaseNote });
       // Upload bill photos
       for (const [label, base64] of Object.entries(billImages)) {
         if (base64) await api.uploadPurchasePhoto(result.id, base64, label);
       }
-      const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-      const e = { ...result, category: "purchase", items: validItems, billImages: { ...billImages }, note: purchaseNote, paymentMode, totalAmount: totalAmt, time: timeNow(), date: today() };
+      const localItems = [{ item: itemName, qty: purchaseQty, amount: purchaseAmount }];
+      const e = { ...result, category: "purchase", items: localItems, billImages: { ...billImages }, note: purchaseNote, paymentMode, totalAmount: Number(purchaseAmount), time: timeNow(), date: today() };
       setSubs((p) => [e, ...p]); setLast(e); resetPurchase(); setScreen("done");
     } catch (error) { setErr(error.message || "Failed to submit"); }
     finally { setSaving(false); }
@@ -7381,10 +7455,6 @@ const StoreMgr = ({ onBack }) => {
 
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div></div></div> : null;
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
-
-  const addPurchaseRow = () => setPurchases((p) => [...p, { item: "", qty: "", unit: "Kg", amount: "", vendor: "", type: "new_purchase", item_id: null }]);
-  const updatePurchase = (idx, field, val) => setPurchases((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
-  const removePurchaseRow = (idx) => setPurchases((p) => p.filter((_, i) => i !== idx));
 
   // ── SUCCESS ──
   if (screen === "done" && last) return (
@@ -7485,92 +7555,45 @@ const StoreMgr = ({ onBack }) => {
 
   // ── DAILY PURCHASE ──
   if (screen === "purchase") {
-    const validItems = purchases.filter((p) => p.item.trim() && p.amount);
-    const totalAmt = validItems.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+    const needsItem = PURCHASE_ITEM_CATEGORIES.includes(purchaseCategory);
+    const catSection = purchaseCategory ? DEMAND_SECTIONS.find((s) => s.id === PURCHASE_CATEGORIES.find((c) => c.id === purchaseCategory)?.section) : null;
+    const itemSuggestions = catSection ? catSection.items.map((i) => i.name) : [];
     const billCount = Object.values(billImages).filter(Boolean).length;
-    const canSubmit = validItems.length > 0 && billCount > 0;
+    const canSubmit = !!purchaseCategory && Number(purchaseAmount) > 0 && (!needsItem || purchaseItem.trim()) && billCount > 0;
 
     return (<div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <BackBtn onClick={() => setScreen("home")} />
-        <div style={{ flex: 1 }}><div style={{ fontSize: 15, fontWeight: 800 }}>🧾 Daily Purchase</div><div style={{ fontSize: 11, color: "#999" }}>Record with bill photo</div></div>
-        {totalAmt > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{fmt(totalAmt)}</span>}
+        <div style={{ flex: 1 }}><div style={{ fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div><div style={{ fontSize: 11, color: "#999" }}>Record with bill photo</div></div>
       </div>
 
-      {/* Item rows */}
-      <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Items Purchased</div>
-      {purchases.map((row, idx) => (
-        <div key={idx} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 8 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-            <input value={row.item} onChange={(e) => updatePurchase(idx, "item", e.target.value)}
-              placeholder="Item name (Paneer, Mala...)"
-              style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 600 }} />
-            {purchases.length > 1 && (
-              <button onClick={() => removePurchaseRow(idx)} style={{ width: 36, height: 36, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
-            )}
-          </div>
-          {/* Optional inventory link — most lines stay free text; linking makes this
-              purchase also credit BK inventory (needs Qty filled to know how much). */}
-          {row.item_id ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 10px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0" }}>
-              <span style={{ fontSize: 11, color: "#166534", fontWeight: 600, flex: 1 }}>🔗 Linked to inventory: {invItems.find((i) => i.id === row.item_id)?.name || row.item_id} — will credit stock{!row.qty && " (fill Qty to credit)"}</span>
-              <button onClick={() => updatePurchase(idx, "item_id", null)} style={{ border: "none", background: "transparent", color: "#166534", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>✕ Unlink</button>
-            </div>
-          ) : (
-            <div style={{ marginBottom: 8 }}>
-              <button onClick={() => { setLinkPickerIdx(linkPickerIdx === idx ? null : idx); setLinkSearch(""); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>🔗 Link to inventory item (optional)</button>
-              {linkPickerIdx === idx && (
-                <div style={{ marginTop: 6, border: "1px solid #E0E0DC", borderRadius: 10, background: "#fff", overflow: "hidden" }}>
-                  <input autoFocus value={linkSearch} onChange={(e) => setLinkSearch(e.target.value)} placeholder="Search inventory…"
-                    style={{ width: "100%", padding: "8px 10px", border: "none", borderBottom: "1px solid #F0F0EC", fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
-                  <div style={{ maxHeight: 160, overflowY: "auto" }}>
-                    {invItems.filter((i) => i.name.toLowerCase().includes(linkSearch.trim().toLowerCase())).slice(0, 30).map((i) => (
-                      <button key={i.id} onClick={() => {
-                        setPurchases((p) => p.map((r, ri) => ri === idx ? { ...r, item_id: i.id, item: i.name, unit: r.unit } : r));
-                        setLinkPickerIdx(null);
-                      }} style={{ width: "100%", padding: "7px 10px", border: "none", borderBottom: "1px solid #F5F5F3", background: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
-                        {i.name} <span style={{ color: "#999" }}>· {i.unit} · stock: {i.current_qty}</span>
-                      </button>
-                    ))}
-                    {invItems.filter((i) => i.name.toLowerCase().includes(linkSearch.trim().toLowerCase())).length === 0 && (
-                      <div style={{ padding: "10px", textAlign: "center", color: "#999", fontSize: 11 }}>No match</div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Qty</div>
-              <input value={row.qty} onChange={(e) => updatePurchase(idx, "qty", e.target.value)}
-                type="number" inputMode="decimal" placeholder="0"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", textAlign: "center", fontWeight: 600 }} />
-            </div>
-            <div style={{ width: 80 }}>
-              <div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Unit</div>
-              <select value={row.unit} onChange={(e) => updatePurchase(idx, "unit", e.target.value)}
-                style={{ width: "100%", padding: "8px 6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
-                {["Kg", "gm", "L", "ml", "Pcs", "Pkt", "Box", "Bundle", "Dozen"].map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Amount (₹)</div>
-              <input value={row.amount} onChange={(e) => updatePurchase(idx, "amount", e.target.value)}
-                type="number" inputMode="numeric" placeholder="₹0"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", textAlign: "center", fontWeight: 700, color: "#B45309" }} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: "#999", marginBottom: 3 }}>Vendor</div>
-              <input value={row.vendor} onChange={(e) => updatePurchase(idx, "vendor", e.target.value)}
-                placeholder="Shop name"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (<button key={t.id} onClick={() => updatePurchase(idx, "type", t.id)} style={{ flex: 1, padding: "7px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: (row.type || "new_purchase") === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: (row.type || "new_purchase") === t.id ? "#EFF6FF" : "#fff", color: (row.type || "new_purchase") === t.id ? "#2563EB" : "#888" }}>{t.label}</button>))}</div>
+      {/* Category */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Category of Buy</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {PURCHASE_CATEGORIES.map((c) => (
+          <button key={c.id} onClick={() => { setPurchaseCategory(c.id); setPurchaseItem(""); setPurchaseQty(""); }}
+            style={{ flex: "1 1 30%", padding: "10px 8px", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: purchaseCategory === c.id ? "2px solid #B45309" : "1px solid #E0E0DC", background: purchaseCategory === c.id ? "#FFFBEB" : "#fff", color: purchaseCategory === c.id ? "#B45309" : "#888" }}>
+            {c.label}
+          </button>
+        ))}
+      </div>
+
+      {purchaseCategory && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 14 }}>
+          {needsItem && (<>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Item</div>
+            <input value={purchaseItem} onChange={(e) => setPurchaseItem(e.target.value)} list="purchase-item-suggestions" placeholder="Start typing… (e.g. Paneer)"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 600, marginBottom: 10, boxSizing: "border-box" }} />
+            <datalist id="purchase-item-suggestions">{itemSuggestions.map((n) => <option key={n} value={n} />)}</datalist>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Qty (optional)</div>
+            <input value={purchaseQty} onChange={(e) => setPurchaseQty(e.target.value)} type="number" inputMode="decimal" placeholder="0"
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", textAlign: "center", fontWeight: 600, marginBottom: 10, boxSizing: "border-box" }} />
+          </>)}
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount (₹)</div>
+          <input value={purchaseAmount} onChange={(e) => setPurchaseAmount(e.target.value)} type="number" inputMode="numeric" placeholder="₹0" autoFocus={!needsItem}
+            style={{ width: "100%", padding: 14, borderRadius: 12, border: "2px solid #FDE68A", background: "#FFFBEB", fontSize: 22, fontWeight: 800, textAlign: "center", fontFamily: "'JetBrains Mono'", color: "#B45309", boxSizing: "border-box" }} />
         </div>
-      ))}
-      <button onClick={addPurchaseRow} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "2px dashed #E0E0DC", background: "transparent", fontSize: 14, fontWeight: 700, color: "#999", cursor: "pointer", fontFamily: "inherit", marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>+ Add Another Item</button>
+      )}
 
       {/* Payment Mode */}
       <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Payment Mode</div>
@@ -7602,14 +7625,7 @@ const StoreMgr = ({ onBack }) => {
 
       <input value={purchaseNote} onChange={(e) => setPurchaseNote(e.target.value)} placeholder="Purchase note (optional)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12 }} />
 
-      {/* Total + Submit */}
-      {totalAmt > 0 && (
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 12 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>Total Purchase</span>
-          <span style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#B45309" }}>{fmt(totalAmt)}</span>
-        </div>
-      )}
-      <button onClick={submitPurchase} disabled={!canSubmit} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: canSubmit ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>🧾 Record Purchase {totalAmt > 0 ? `— ${fmt(totalAmt)}` : ""}</button>
+      <button onClick={submitPurchase} disabled={!canSubmit} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: canSubmit ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canSubmit ? "pointer" : "not-allowed", fontFamily: "inherit" }}>🧾 Record Purchase {Number(purchaseAmount) > 0 ? `— ${fmt(Number(purchaseAmount))}` : ""}</button>
     </div>);
   }
 
