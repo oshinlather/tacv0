@@ -1894,21 +1894,33 @@ const DailyPnL = () => {
             ⏳ Today's closing stock not submitted — variable cost is estimated from dispatched items only
           </div>
         )}
-        {/* Summary Cards */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-          {[
-            { l: "Total Sale", v: d.total_sale, c: "#1D4ED8", bg: "#EFF6FF", bc: "#BFDBFE" },
-            { l: "Effective Sale", v: d.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
-            { l: "Total Expense", v: d.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA" },
-            { l: "Net P&L", v: d.net_profit, c: d.net_profit >= 0 ? "#16A34A" : "#DC2626", bg: d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", bc: d.net_profit >= 0 ? "#BBF7D0" : "#FECACA" },
-            { l: "Margin", v: null, display: d.effective_sale > 0 ? (d.margin || 0) + "%" : "N/A", c: d.effective_sale > 0 ? (d.margin >= 0 ? "#16A34A" : "#DC2626") : "#999", bg: "#fff", bc: "#E8E8E4" },
-          ].map((s, i) => (
-            <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.display || fmt(s.v || 0)}</div>
+        {/* Summary Cards — Total Expense/Net P&L/Margin each show their ideal figure
+            underneath (what they'd be if Material Cost had come in at recipe instead of
+            actual), same should_consume_cost already used everywhere else in this view. */}
+        {(() => {
+          const hasIdealTop = d.should_consume_cost != null;
+          const idealMaterialCostTop = hasIdealTop ? d.should_consume_cost : null;
+          const idealExpenseTop = hasIdealTop ? idealMaterialCostTop + (d.total_expense - d.variable_cost) : null;
+          const idealProfitTop = hasIdealTop ? d.effective_sale - idealExpenseTop : null;
+          const idealMarginTop = hasIdealTop && d.effective_sale > 0 ? (idealProfitTop / d.effective_sale * 100) : null;
+          return (
+            <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+              {[
+                { l: "Total Sale", v: d.total_sale, c: "#1D4ED8", bg: "#EFF6FF", bc: "#BFDBFE" },
+                { l: "Effective Sale", v: d.effective_sale, c: "#166534", bg: "#F0FDF4", bc: "#BBF7D0" },
+                { l: "Total Expense", v: d.total_expense, c: "#991B1B", bg: "#FEF2F2", bc: "#FECACA", sub: idealExpenseTop != null ? `(${Math.round(idealExpenseTop)})` : null },
+                { l: "Net P&L", v: d.net_profit, c: d.net_profit >= 0 ? "#16A34A" : "#DC2626", bg: d.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", bc: d.net_profit >= 0 ? "#BBF7D0" : "#FECACA", sub: idealProfitTop != null ? `(${Math.round(idealProfitTop)})` : null },
+                { l: "Margin", v: null, display: d.effective_sale > 0 ? (d.margin || 0) + "%" : "N/A", c: d.effective_sale > 0 ? (d.margin >= 0 ? "#16A34A" : "#DC2626") : "#999", bg: "#fff", bc: "#E8E8E4", sub: idealMarginTop != null ? `(${idealMarginTop.toFixed(1)}%)` : null },
+              ].map((s, i) => (
+                <div key={i} style={{ flex: "1 1 100px", background: s.bg, borderRadius: 12, padding: "14px 16px", border: `1px solid ${s.bc}`, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>{s.l}</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: s.c, fontFamily: "'JetBrains Mono', monospace" }}>{s.display || fmt(s.v || 0)}</div>
+                  {s.sub && <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", marginTop: 2 }}>{s.sub}</div>}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          );
+        })()}
 
         {/* Per-outlet mini cards (when All Outlets selected) — Elan excluded from the
             consolidated view entirely, not just its totals; click its own pill to see it. */}
