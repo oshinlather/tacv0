@@ -9960,6 +9960,42 @@ const SCOPED_ROLE_TABS = {
   ],
 };
 const SCOPED_ROLE_TITLES = { avp: "🧭 AVP Dashboard", head_chef: "🧑‍🍳 Head Chef Dashboard", bk_manager: "🏭 BK Manager Dashboard" };
+
+// Missing-recipes banner, aggregated across every outlet — persistent at the top of the
+// AVP/Head Chef dashboard (not tucked inside RM Audit's per-outlet view) so the gap that
+// blocks should-consume coverage is the first thing they see and can knock out directly,
+// instead of clicking through six outlet pills one at a time to find it.
+const MissingRecipesSummary = () => {
+  const dateStr = istDateAgo(1); // same "yesterday" default RM Audit itself uses
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const loadAudit = () => {
+    setLoading(true);
+    api.getRMAudit(dateStr).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+  };
+  useEffect(loadAudit, []);
+  if (loading) return null;
+
+  const dishMap = {};
+  const ingredientSet = new Set();
+  (audit?.outlets || []).forEach((o) => {
+    (o.unmatched_dishes || []).forEach((d) => {
+      if (!dishMap[d.item_name]) dishMap[d.item_name] = { item_name: d.item_name, qty: 0 };
+      dishMap[d.item_name].qty += d.qty;
+    });
+    (o.unmapped_ingredients || []).forEach((name) => ingredientSet.add(name));
+  });
+  const unmatchedDishes = Object.values(dishMap).sort((a, b) => b.qty - a.qty);
+  const unmappedIngredients = [...ingredientSet];
+  if (unmatchedDishes.length === 0 && unmappedIngredients.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 10, color: "#999", marginBottom: 6 }}>Across all outlets, {dateStr}:</div>
+      <QuickRecipeAdder unmatchedDishes={unmatchedDishes} unmappedIngredients={unmappedIngredients} dateStr={dateStr} onSaved={loadAudit} />
+    </div>
+  );
+};
 const ScopedDashboard = () => {
   const currentUser = getCurrentUser();
   const tabs = SCOPED_ROLE_TABS[currentUser?.role] || [];
@@ -9984,6 +10020,7 @@ const ScopedDashboard = () => {
       </div>
     ) : null}
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 18px" }}>
+      {["avp", "head_chef"].includes(currentUser?.role) && <MissingRecipesSummary />}
       {tab === "store" && storeView === "bk" && <BaseKitchen />}
       {tab === "store" && storeView === "dispatch" && <Dispatch />}
       {tab === "store" && storeView === "demands" && <DemandHistory />}
