@@ -1652,26 +1652,40 @@ router.post('/demands', async (req, res) => {
   try {
     const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status } = req.body;
     if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
+    const targetDate = date || todayIST();
 
-    const record = {
-      outlet_id,
-      type,
-      items: items || {},
-      // Per-item unit overrides, only for items where the manager picked something
-      // other than the item's default demand unit — e.g. { desi_ghee: 'Kg' }.
-      items_units: items_units && Object.keys(items_units).length > 0 ? items_units : null,
-      note: note || null,
-      date: date || todayIST(),
-      demand_slot: demand_slot || null,
-      submitted_by: submitted_by || null,
-      status: status || 'submitted',
-      submitted_at: new Date().toISOString(),
-    };
-    
-    const { data, error } = await supabase.from('demands').insert(record).select('*').single();
+    // Server-side safety net against duplicate challans — never let two draft/submitted
+    // demands exist for the same outlet+date+type+slot, no matter what led here (stale
+    // client-side existingRecord state, two staff submitting minutes apart, a future
+    // code path that forgets this check). Update the existing one instead of inserting a
+    // new row. Fulfilled/cancelled rows are deliberately excluded from this match — a
+    // second order placed after the first was already dispatched is a real, separate
+    // order, not a duplicate.
+    let existingQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', targetDate).eq('type', type).in('status', ['draft', 'submitted']);
+    existingQuery = demand_slot ? existingQuery.eq('demand_slot', demand_slot) : existingQuery.is('demand_slot', null);
+    const { data: existingRows } = await existingQuery.order('submitted_at', { ascending: false }).limit(1);
+    const existingId = existingRows && existingRows[0] && existingRows[0].id;
+
+    const itemsUnitsVal = items_units && Object.keys(items_units).length > 0 ? items_units : null;
+    let data, error;
+    if (existingId) {
+      ({ data, error } = await supabase.from('demands').update({
+        items: items || {}, items_units: itemsUnitsVal, note: note || null,
+        submitted_by: submitted_by || null, status: status || 'submitted',
+        submitted_at: new Date().toISOString(),
+      }).eq('id', existingId).select('*').single());
+    } else {
+      const record = {
+        outlet_id, type, items: items || {}, items_units: itemsUnitsVal,
+        note: note || null, date: targetDate, demand_slot: demand_slot || null,
+        submitted_by: submitted_by || null, status: status || 'submitted',
+        submitted_at: new Date().toISOString(),
+      };
+      ({ data, error } = await supabase.from('demands').insert(record).select('*').single());
+    }
     if (error) throw error;
     // Write to Google Sheet (non-blocking)
-    if (sheetsHelper && outlet_id !== 'bk') sheetsHelper.writeToSheet(supabase, outlet_id, type, submitted_by, record, items).catch(() => {});
+    if (sheetsHelper && outlet_id !== 'bk') sheetsHelper.writeToSheet(supabase, outlet_id, type, submitted_by, data, items).catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
