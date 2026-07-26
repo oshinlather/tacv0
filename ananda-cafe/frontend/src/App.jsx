@@ -3049,6 +3049,10 @@ const Dispatch = () => {
   const [dispatching, setDispatching] = useState(null);
   const [selOutlet, setSelOutlet] = useState(null);
   const [expandedCat, setExpandedCat] = useState({});
+  // Old carried-over challans default folded (just the header) so backlog doesn't bury
+  // today's actionable orders — { orderId: true|false }, overriding the default once
+  // manually toggled.
+  const [orderOpenOverride, setOrderOpenOverride] = useState({});
   const [challanOrder, setChallanOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
   // Items the store manager adds on the phone that weren't in the original written demand
@@ -3305,6 +3309,7 @@ const Dispatch = () => {
         const checkedCount = hasItems ? getCheckedCount(order.id, itemEntries) : 0;
         const allChecked = hasItems && checkedCount === itemEntries.length;
         const isCarriedOver = order.date !== today();
+        const orderOpen = orderOpenOverride[order.id] !== undefined ? orderOpenOverride[order.id] : !isCarriedOver;
         const isAddingItem = addingItemTo === order.id;
         const itemSearchResults = isAddingItem && itemSearch.trim()
           ? DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => ({ ...i, sectionId: sec.id }))).filter((i) => i.name.toLowerCase().includes(itemSearch.trim().toLowerCase()) && !(mergedItems[i.id] > 0)).slice(0, 8)
@@ -3313,21 +3318,22 @@ const Dispatch = () => {
         return (
           <div key={order.id} style={{ marginBottom: 10 }}>
           <div style={{ background: "#fff", borderRadius: 12, border: isCarriedOver ? "1px solid #FDE68A" : "1px solid #E8E8E4", overflow: "hidden" }}>
-            {/* Header */}
-            <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #F0F0EC" }}>
+            {/* Header — old carried-over challans fold to just this line by default */}
+            <div onClick={() => isCarriedOver && setOrderOpenOverride((p) => ({ ...p, [order.id]: !orderOpen }))} style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: orderOpen ? "1px solid #F0F0EC" : "none", cursor: isCarriedOver ? "pointer" : "default" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>{outlet?.short || order.outlet_id}</span>
                 <span style={{ fontSize: 10, color: "#999" }}>{order.type === "photo" ? "📷" : "✏️"}</span>
                 <span style={{ fontSize: 10, color: "#BBB" }}>{new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {isCarriedOver && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>⚠️ Since {order.date}</span>}
+                {isCarriedOver && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>⚠️ Since {order.date} {orderOpen ? "▲" : "▼"}</span>}
                 {hasShortage && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 3, background: "#FFFBEB", color: "#B45309", fontWeight: 700 }}>Partial</span>}
                 {hasItems && <span style={{ fontSize: 11, fontWeight: 700, color: allChecked ? "#16A34A" : "#B45309" }}>✓{checkedCount}/{itemEntries.length}</span>}
-                <button onClick={() => cancelOrder(order)} disabled={cancelling === order.id} title="Not sending any of this — cancel the whole demand" style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{cancelling === order.id ? "⏳" : "✕"}</button>
+                <button onClick={(e) => { e.stopPropagation(); cancelOrder(order); }} disabled={cancelling === order.id} title="Not sending any of this — cancel the whole demand" style={{ padding: "2px 6px", borderRadius: 4, border: "1px solid #FECACA", background: "#fff", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{cancelling === order.id ? "⏳" : "✕"}</button>
               </div>
             </div>
 
+            {orderOpen && <>
             {order.note && <div style={{ padding: "8px 18px", fontSize: 12, color: "#888", borderBottom: "1px solid #F0F0EC" }}>📝 {order.note}</div>}
 
             {/* Category-wise items with qty editing + verification checkboxes */}
@@ -3412,14 +3418,17 @@ const Dispatch = () => {
                 </div>
               )}
             </div>
+            </>}
           </div>
           {/* Dispatch button — sticky at page bottom, outside overflow card */}
+          {orderOpen && (
           <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
               <button onClick={() => doDispatch(order)} disabled={dispatching === order.id || checkedCount === 0}
                 style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: checkedCount === 0 ? "#D0D0CC" : dispatching === order.id ? "#D0D0CC" : checkedCount < itemEntries.length ? "#B45309" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: checkedCount === 0 || dispatching === order.id ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                 {dispatching === order.id ? "⏳ Dispatching..." : checkedCount === 0 ? "✅ Tick items to dispatch" : checkedCount < itemEntries.length ? `🚚 Dispatch ${checkedCount}/${itemEntries.length} items to ${outlet?.name}` : `🚚 Dispatch All to ${outlet?.name}`}
               </button>
           </div>
+          )}
           </div>
         );
       })}
