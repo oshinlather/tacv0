@@ -1755,9 +1755,10 @@ router.patch('/demands/:id/finalize', async (req, res) => {
     if (!user) return;
     const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
-    // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
-    // module, not general outlet demand editing) — everyone else uses the base role list.
-    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (['avp', 'bk_manager'].includes(user.role) && existing.outlet_id === 'bk');
+    // AVP gets the full Base Kitchen Manager module, which includes Dispatch — that
+    // needs unrestricted cross-outlet access, same as store_mgr, not just BK's own
+    // demand. bk_manager's scope really is just BK's own demand, so stays outlet-locked.
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
@@ -1783,9 +1784,10 @@ router.patch('/demands/:id', async (req, res) => {
     if (!user) return;
     const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
-    // AVP only needs this for BK's own demand (their scope is the Base Kitchen Manager
-    // module, not general outlet demand editing) — everyone else uses the base role list.
-    const allowed = ['owner', 'store_mgr', 'outlet_mgr'].includes(user.role) || (['avp', 'bk_manager'].includes(user.role) && existing.outlet_id === 'bk');
+    // AVP gets the full Base Kitchen Manager module, which includes Dispatch — that
+    // needs unrestricted cross-outlet access, same as store_mgr, not just BK's own
+    // demand. bk_manager's scope really is just BK's own demand, so stays outlet-locked.
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
 
@@ -1809,7 +1811,9 @@ router.patch('/demands/:id/cancel', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (!['owner', 'store_mgr'].includes(user.role)) {
+    // AVP runs Dispatch as part of the Base Kitchen Manager module — needs the same
+    // cancel access store_mgr has, across every outlet, not just BK's own demand.
+    if (!['owner', 'store_mgr', 'avp'].includes(user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
     const { data: existing, error: findErr } = await supabase.from('demands').select('note').eq('id', req.params.id).single();

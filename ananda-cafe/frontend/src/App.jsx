@@ -3053,6 +3053,7 @@ const Dispatch = () => {
   // today's actionable orders — { orderId: true|false }, overriding the default once
   // manually toggled.
   const [orderOpenOverride, setOrderOpenOverride] = useState({});
+  const [showOldBacklog, setShowOldBacklog] = useState(false);
   const [challanOrder, setChallanOrder] = useState(null);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
   // Items the store manager adds on the phone that weren't in the original written demand
@@ -3077,6 +3078,11 @@ const Dispatch = () => {
   // Oldest first — a demand that's been sitting unfulfilled since yesterday (or earlier)
   // surfaces above today's, so it isn't missed a second time.
   const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet)).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+  // Today's orders render normally; everything carried over from an earlier day is old
+  // backlog — grouped under one collapsed summary instead of each taking a full row, so
+  // dozens of stale entries don't bury what's actually actionable today.
+  const freshPending = pending.filter((o) => o.date === today());
+  const oldPending = pending.filter((o) => o.date !== today());
   const done = orders.filter((o) => o.status === "fulfilled" && o.date === today() && (!selOutlet || o.outlet_id === selOutlet));
   const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received" || o.status === "issued");
   const allDone = orders.filter((o) => o.status === "fulfilled" && o.date === today());
@@ -3298,7 +3304,7 @@ const Dispatch = () => {
       {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
 
       {/* ── PENDING ORDERS ── */}
-      {pending.map((order) => {
+      {(() => { const renderOrderCard = (order) => {
         const outlet = findOutletForDisplay(order.outlet_id);
         const mergedItems = orderItems(order);
         const itemEntries = Object.entries(mergedItems).filter(([, q]) => q > 0);
@@ -3431,7 +3437,19 @@ const Dispatch = () => {
           )}
           </div>
         );
-      })}
+      };
+      return (<>
+        {freshPending.map(renderOrderCard)}
+        {oldPending.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div onClick={() => setShowOldBacklog((v) => !v)} style={{ padding: "10px 14px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: "#B45309" }}>⚠️ {oldPending.length} Old Undispatched Challan{oldPending.length === 1 ? "" : "s"}</span>
+              <span style={{ fontSize: 11, color: "#B45309" }}>{showOldBacklog ? "▲ hide" : "▼ show"}</span>
+            </div>
+            {showOldBacklog && <div style={{ marginTop: 10 }}>{oldPending.map(renderOrderCard)}</div>}
+          </div>
+        )}
+      </>); })()}
 
       {/* ── DISPATCHED TODAY ── */}
       {done.length > 0 && (<div style={{ marginTop: 24 }}>
