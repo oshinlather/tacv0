@@ -374,6 +374,83 @@ router.delete('/recipes/ingredients/:id', async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// GET /api/audit/packaging — Packaging Unit Consistency Audit
+// MUST be registered before /audit/:date below, or Express matches "packaging" as
+// the :date param and this route is never reached (same trap as /pnl/computed/:date).
+// Packaging items (Pkt/Pcs/Bundle/Kg) are the ones most prone to a manager punching
+// "pieces" when the item is actually demanded/counted in "bundles" (or vice versa).
+// This scans recent demand/wastage/closing-stock rows for every packaging item and
+// reports which unit(s) were actually used each time, alongside that item's default
+// unit and its unit_conversions row (if any) — so the owner can see at a glance which
+// items are being punched inconsistently, and which conversions are missing/orphaned
+// (defined for a unit that doesn't match the item's actual default unit, so the
+// UnitPicker never even offers it).
+// ────────────────────────────────────────────────────────────
+router.get('/audit/packaging', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const days = Math.min(Number(req.query.days) || 60, 180);
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+
+    const [{ data: items }, { data: conversions }, { data: demands }, { data: closings }] = await Promise.all([
+      supabase.from('demand_items').select('id, name, unit, active').eq('section_id', 'packaging').eq('active', true).order('name'),
+      supabase.from('unit_conversions').select('*').eq('active', true),
+      supabase.from('demands').select('outlet_id, date, type, items, items_units').gte('date', since).in('type', ['manual', 'wastage']),
+      supabase.from('closing_stocks').select('outlet_id, date, items, items_units').gte('date', since),
+    ]);
+
+    const convByItem = {};
+    (conversions || []).forEach((c) => { convByItem[c.item_id] = c; });
+
+    const itemIds = new Set((items || []).map((i) => i.id));
+    const usage = {}; // item_id -> source -> unit -> count
+    const bump = (itemId, source, unit) => {
+      if (!itemIds.has(itemId)) return;
+      usage[itemId] = usage[itemId] || {};
+      usage[itemId][source] = usage[itemId][source] || {};
+      const key = unit || '(default)';
+      usage[itemId][source][key] = (usage[itemId][source][key] || 0) + 1;
+    };
+
+    (demands || []).forEach((d) => {
+      const its = d.items || {}; const units = d.items_units || {};
+      Object.keys(its).forEach((id) => { if (Number(its[id]) > 0) bump(id, d.type, units[id]); });
+    });
+    (closings || []).forEach((c) => {
+      const its = c.items || {}; const units = c.items_units || {};
+      Object.keys(its).forEach((rawId) => {
+        const id = rawId.replace(/^cs_/, '');
+        if (Number(its[rawId]) > 0) bump(id, 'closing', units[id]);
+      });
+    });
+
+    const report = (items || []).map((item) => {
+      const conv = convByItem[item.id] || null;
+      // A conversion is "orphaned" if its custom unit doesn't match the item's actual
+      // default demand unit — the UnitPicker only offers a conversion when
+      // conv.fromUnit === defaultUnit, so a mismatched one is silently unreachable.
+      const conversionOrphaned = conv ? conv.unit_type.toLowerCase() !== (item.unit || '').toLowerCase() : false;
+      const itemUsage = usage[item.id] || {};
+      const distinctUnits = new Set();
+      Object.values(itemUsage).forEach((bySource) => Object.keys(bySource).forEach((u) => distinctUnits.add(u === '(default)' ? item.unit : u)));
+      return {
+        id: item.id,
+        name: item.name,
+        default_unit: item.unit,
+        active: item.active,
+        conversion: conv ? { from_unit: conv.unit_type, qty: Number(conv.qty), base_unit: conv.base_unit, orphaned: conversionOrphaned } : null,
+        usage: itemUsage,
+        mixed_units: distinctUnits.size > 1,
+      };
+    });
+
+    res.json({ since, days, items: report });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // 3D. GET /api/audit/:date — Raw Material Audit
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
@@ -2181,6 +2258,11 @@ function unitFactor(rawUnit, conv, itemUnit) {
   if (conv && du === (conv.unit_type || '').toLowerCase()) {
     factor = Number(conv.qty) || 1;
     resolvedUnit = (conv.base_unit || '').toLowerCase();
+  } else if (conv && conv.base_unit && du === (conv.base_unit || '').toLowerCase()) {
+    // Recorded directly in the conversion's base unit (e.g. "Piece" for an item whose
+    // custom unit is Pkt) — invert instead of silently treating it as a 1:1 match.
+    factor = 1 / (Number(conv.qty) || 1);
+    resolvedUnit = (conv.unit_type || '').toLowerCase();
   }
   if (resolvedUnit !== iu) {
     if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && iu === 'kg') factor *= 0.001;
@@ -3042,6 +3124,11 @@ router.get('/pnl/live/:date', async (req, res) => {
         if (conv && du === conv.fromUnit.toLowerCase()) {
           factor = conv.qty;
           fromUnit = (conv.baseUnit || '').toLowerCase();
+        } else if (conv && conv.baseUnit && du === conv.baseUnit.toLowerCase()) {
+          // Recorded directly in the conversion's base unit (e.g. "Piece" for an item
+          // whose custom unit is Pkt) — invert instead of silently 1:1-matching it.
+          factor = 1 / (Number(conv.qty) || 1);
+          fromUnit = conv.fromUnit.toLowerCase();
         }
         if (fromUnit === ru) return factor;
         // Standard SI conversions
@@ -3389,6 +3476,12 @@ async function buildCostingContext() {
       if (conv && du === conv.fromUnit.toLowerCase()) {
         factor = conv.qty;
         resolvedUnit = (conv.baseUnit || '').toLowerCase();
+      } else if (conv && conv.baseUnit && du === conv.baseUnit.toLowerCase()) {
+        // Recorded directly in the conversion's base unit (e.g. "Piece" for an item
+        // whose custom unit is Pkt) — invert instead of silently 1:1-matching it,
+        // which used to overstate/understate consumption by the full conversion ratio.
+        factor = 1 / (Number(conv.qty) || 1);
+        resolvedUnit = conv.fromUnit.toLowerCase();
       }
       if (resolvedUnit !== ru) {
         if ((resolvedUnit === 'gm' || resolvedUnit === 'g') && ru === 'kg') factor *= 0.001;

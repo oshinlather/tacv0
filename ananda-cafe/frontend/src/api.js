@@ -82,6 +82,7 @@ const api = {
   // ── RM Audit ──
   getRMAudit: (date, outlet) => get(`/api/audit/${date}`, outlet ? { outlet } : {}),
   getColdDrinkAudit: (date) => get(`/api/audit/cold-drink/${date}`),
+  getPackagingAudit: (days) => get("/api/audit/packaging", days ? { days } : {}),
 
   // ── PetPooja Recipes ──
   getRecipesPetpooja: () => get("/api/recipes/petpooja"),

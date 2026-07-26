@@ -4641,6 +4641,12 @@ const DemandHistory = () => {
     if (conv && du === conv.fromUnit.toLowerCase()) {
       factor = conv.qty;
       fromUnit = (conv.baseUnit || '').toLowerCase();
+    } else if (conv && conv.baseUnit && du === conv.baseUnit.toLowerCase()) {
+      // Entered directly in the conversion's base unit (e.g. "Piece" for an item whose
+      // custom unit is Pkt) rather than the custom unit — invert the factor instead of
+      // falling through and silently treating it as a 1:1 match with the custom unit.
+      factor = 1 / (Number(conv.qty) || 1);
+      fromUnit = conv.fromUnit.toLowerCase();
     }
     if (fromUnit === ru) return factor;
     if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
@@ -5065,6 +5071,7 @@ const FranchiseBilling = () => {
     let factor = 1;
     let fromUnit = du;
     if (conv && du === conv.fromUnit.toLowerCase()) { factor = conv.qty; fromUnit = (conv.baseUnit || '').toLowerCase(); }
+    else if (conv && conv.baseUnit && du === conv.baseUnit.toLowerCase()) { factor = 1 / (Number(conv.qty) || 1); fromUnit = conv.fromUnit.toLowerCase(); }
     if (fromUnit === ru) return factor;
     if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
     if (fromUnit === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return factor * 1000;
@@ -6254,6 +6261,12 @@ const OutletMgr = ({ onBack }) => {
   };
   const [draftUnits, setDraftUnits] = useState({}); // { item_id: unit } — only set when manager picks something other than default
   const [closingUnits, setClosingUnits] = useState({});
+  // Wastage is weighed in a fixed utensil that's never tared, so every reading is ~0.5 Kg
+  // heavier than the actual food wasted. Only items freshly typed THIS session get the
+  // correction applied at submit time — an already-saved value loaded from the server is
+  // already net of the utensil and must never have it subtracted again.
+  const [wastageTouched, setWastageTouched] = useState({});
+  const UTENSIL_WEIGHT_KG = 0.5;
   // Closing stock is reported by leftover weight/volume, not whole containers — e.g. Desi
   // Ghee gets portioned into a kitchen vessel, so a manager reports "8 Kg" left, not
   // "0.5 Tin". Defaulting the closing-stock picker to Tin (the demand/order unit) meant a
@@ -6361,7 +6374,17 @@ const OutletMgr = ({ onBack }) => {
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
       } else if (type === "wastage") {
-        const scopedDraft = filterToScope(draft);
+        // Subtract the utensil's tare weight (see wastageTouched/UTENSIL_WEIGHT_KG above)
+        // from every Kg-unit item the user actually typed this session — never from a
+        // value that was merely loaded from an existing saved record, since that's already
+        // net of the utensil and subtracting again would double-correct it.
+        const netWastageDraft = Object.fromEntries(Object.entries(draft).map(([id, qty]) => {
+          const item = DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
+          const isWeighed = item && (draftUnits[id] || item.unit) === "Kg";
+          if (isWeighed && wastageTouched[id] && qty > 0) return [id, Math.max(0, Number(qty) - UTENSIL_WEIGHT_KG)];
+          return [id, qty];
+        }));
+        const scopedDraft = filterToScope(netWastageDraft);
         const draftItemsUnits = filterToScope(Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0)));
         if (isDraftRole) {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "wastage", date: selectedDate, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
@@ -6371,9 +6394,9 @@ const OutletMgr = ({ onBack }) => {
           setScreen("home");
         } else {
           let result;
-          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: draft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
+          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: netWastageDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: netWastageDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: netWastageDraft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
           const wastageCount = Object.values(draft).filter(v => v > 0).length;
@@ -6456,6 +6479,7 @@ const OutletMgr = ({ onBack }) => {
     if (screen === "wastage") {
       const key = wipKey("wastage", outlet, selectedDate);
       const wip = loadWip(key);
+      setWastageTouched({});
       api.getOrders({ outlet_id: outlet, date: selectedDate }).then((rows) => {
         // Only draft/submitted — never pick up an already-received/fulfilled row here,
         // that's a separate completed record, not today's shared draft.
@@ -6829,7 +6853,15 @@ const OutletMgr = ({ onBack }) => {
     const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id);
     const wastageQuery = itemSearch.trim().toLowerCase();
     const wastageSearchResults = wastageQuery ? wastageFilterItems(wastageSections.flatMap((s) => s.items)).filter((i) => i.name.toLowerCase().includes(wastageQuery)) : [];
-    const wastageItemRow = (item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>);
+    // Weighed loose in the standard kitchen utensil (never tared), so a Kg reading always
+    // includes ~0.5 Kg of utensil weight — only applies to weight-based items, and only to
+    // a value the user actually typed this session (see wastageTouched above).
+    const wastageIsWeighed = (item) => (draftUnits[item.id] || item.unit) === "Kg";
+    const wastageCorrected = (item) => Math.max(0, (Number(draft[item.id]) || 0) - UTENSIL_WEIGHT_KG);
+    const wastageItemRow = (item) => { const weighed = wastageIsWeighed(item) && wastageTouched[item.id] && draft[item.id] > 0; return (<div key={item.id} style={{ marginBottom: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); setWastageTouched((p) => ({ ...p, [item.id]: true })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>
+      {weighed && <div style={{ fontSize: 10.5, color: "#B45309", padding: "0 10px 2px", textAlign: "right" }}>⚖️ {draft[item.id]} Kg on scale − {UTENSIL_WEIGHT_KG} Kg utensil = <strong>{wastageCorrected(item)} Kg</strong> recorded</div>}
+    </div>); };
     return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
@@ -8396,6 +8428,174 @@ const RMAuditPanel = () => {
       )}
 
       <ColdDrinkAuditSection dateStr={dateStr} />
+    </div>
+  );
+};
+
+// ── Packaging Audit — packaging items (Pkt/Pcs/Bundle/Kg) are the ones most prone to a
+// manager punching "pieces" when the item is actually demanded/counted in "bundles" or
+// vice versa. Lists every packaging item with its default unit, its Bundle/Pkt/Tin-style
+// conversion (flagged when orphaned — defined for a unit that doesn't match the item's
+// actual default unit, so the UnitPicker never offers it and the conversion is dead), and
+// a breakdown of which unit(s) were actually punched across recent demand/wastage/closing
+// entries — so a mixed-unit item surfaces here instead of silently skewing consumption math.
+const PackagingAuditPanel = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(60);
+  const [editId, setEditId] = useState(null);
+  const [editUnit, setEditUnit] = useState("");
+  const [editConvQty, setEditConvQty] = useState("");
+  const [editConvBase, setEditConvBase] = useState("");
+  const [addingConvFor, setAddingConvFor] = useState(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getPackagingAudit(days).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [days]);
+
+  const saveDefaultUnit = async (itemId) => {
+    try { await api.updateDemandItem(itemId, { unit: editUnit }); setEditId(null); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const saveConversion = async (item, isNew) => {
+    if (!editConvQty || !editConvBase) return;
+    try {
+      if (isNew) await api.addConversion({ unit_type: item.default_unit, item_id: item.id, item_name: item.name, qty: Number(editConvQty), base_unit: editConvBase });
+      else await api.updateConversion({ unit_type: item.conversion.from_unit, item_id: item.id, qty: Number(editConvQty), base_unit: editConvBase, notes: `1 ${item.conversion.from_unit} = ${editConvQty} ${editConvBase}` });
+      setAddingConvFor(null); setEditId(null); load();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const removeConversion = async (item) => {
+    if (!confirm(`Remove conversion for ${item.name}?`)) return;
+    try { await api.deleteConversion(item.conversion.from_unit, item.id); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const thS = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", whiteSpace: "nowrap" };
+  const tdS = { padding: "8px 10px", fontSize: 12, borderBottom: "1px solid #F0F0EC", verticalAlign: "top" };
+
+  const items = data?.items || [];
+  const mixedCount = items.filter((i) => i.mixed_units).length;
+  const orphanedCount = items.filter((i) => i.conversion?.orphaned).length;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Packaging Audit</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Every packaging item's default unit, its Bundle/Pkt/Pcs conversion, and which unit(s) were actually punched across the last {days} days of demand, wastage, and closing stock — so a "Pcs entered as Bundle" mixup shows up here instead of quietly skewing consumption numbers.</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        {[30, 60, 90].map((d) => (
+          <button key={d} onClick={() => setDays(d)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: days === d ? 700 : 500, border: days === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: days === d ? "#1A1A1A" : "#fff", color: days === d ? "#fff" : "#888" }}>{d}d</button>
+        ))}
+      </div>
+
+      {!loading && data && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 140px", background: mixedCount > 0 ? "#FEF2F2" : "#F0FDF4", borderRadius: 12, padding: "12px 16px", border: `1px solid ${mixedCount > 0 ? "#FECACA" : "#BBF7D0"}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Mixed-Unit Items</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: mixedCount > 0 ? "#DC2626" : "#16A34A" }}>{mixedCount}</div>
+          </div>
+          <div style={{ flex: "1 1 140px", background: orphanedCount > 0 ? "#FFFBEB" : "#F0FDF4", borderRadius: 12, padding: "12px 16px", border: `1px solid ${orphanedCount > 0 ? "#FDE68A" : "#BBF7D0"}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Orphaned Conversions</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: orphanedCount > 0 ? "#B45309" : "#16A34A" }}>{orphanedCount}</div>
+          </div>
+          <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Items</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{items.length}</div>
+          </div>
+        </div>
+      )}
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+
+      {!loading && items.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Item</th>
+              <th style={thS}>Default Unit</th>
+              <th style={thS}>Conversion</th>
+              <th style={thS}>Actually Punched As</th>
+            </tr></thead>
+            <tbody>
+              {items.map((item) => {
+                const isEditingUnit = editId === `unit_${item.id}`;
+                const isEditingConv = editId === `conv_${item.id}`;
+                const isAddingConv = addingConvFor === item.id;
+                return (
+                  <tr key={item.id} style={{ background: item.mixed_units ? "#FFFBFA" : "transparent" }}>
+                    <td style={{ ...tdS, fontWeight: 600 }}>
+                      {item.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{item.id}</span>
+                      {item.mixed_units && <div style={{ fontSize: 10, color: "#DC2626", fontWeight: 700, marginTop: 2 }}>⚠️ mixed units</div>}
+                      {item.conversion?.orphaned && <div style={{ fontSize: 10, color: "#B45309", fontWeight: 700, marginTop: 2 }}>⚠️ conversion unreachable</div>}
+                    </td>
+                    <td style={tdS}>
+                      {isEditingUnit ? (
+                        <div style={{ display: "flex", gap: 3 }}>
+                          <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={{ width: 70, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, background: "#fff" }}>
+                            {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                          <button onClick={() => saveDefaultUnit(item.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <span onClick={() => { setEditId(`unit_${item.id}`); setEditUnit(item.default_unit); }} style={{ cursor: "pointer", padding: "2px 6px", borderRadius: 4, background: "#F5F5F3", fontSize: 11, fontWeight: 600 }}>{item.default_unit} ✏️</span>
+                      )}
+                    </td>
+                    <td style={tdS}>
+                      {item.conversion ? (
+                        isEditingConv ? (
+                          <div style={{ display: "flex", gap: 3, alignItems: "center", flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 11 }}>1 {item.conversion.from_unit} =</span>
+                            <input value={editConvQty} onChange={(e) => setEditConvQty(e.target.value)} type="number" style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11, textAlign: "center" }} />
+                            <input value={editConvBase} onChange={(e) => setEditConvBase(e.target.value)} placeholder="unit" style={{ width: 55, padding: "2px 4px", borderRadius: 4, border: "1px solid #B45309", fontSize: 11 }} />
+                            <button onClick={() => saveConversion(item, false)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                          </div>
+                        ) : (
+                          <div>
+                            <span onClick={() => { setEditId(`conv_${item.id}`); setEditConvQty(String(item.conversion.qty)); setEditConvBase(item.conversion.base_unit); }} style={{ cursor: "pointer", padding: "3px 8px", borderRadius: 6, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309", display: "inline-block" }}>
+                              1 {item.conversion.from_unit} = {item.conversion.qty} {item.conversion.base_unit} ✏️
+                            </span>
+                            <button onClick={() => removeConversion(item)} style={{ marginLeft: 4, padding: "2px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 11, cursor: "pointer" }}>🗑️</button>
+                          </div>
+                        )
+                      ) : isAddingConv ? (
+                        <div style={{ display: "flex", gap: 3, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 11 }}>1 {item.default_unit} =</span>
+                          <input value={editConvQty} onChange={(e) => setEditConvQty(e.target.value)} type="number" placeholder="qty" style={{ width: 50, padding: "2px 4px", borderRadius: 4, border: "1px solid #16A34A", fontSize: 11, textAlign: "center" }} />
+                          <input value={editConvBase} onChange={(e) => setEditConvBase(e.target.value)} placeholder="e.g. Piece" style={{ width: 60, padding: "2px 4px", borderRadius: 4, border: "1px solid #16A34A", fontSize: 11 }} />
+                          <button onClick={() => saveConversion(item, true)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setAddingConvFor(item.id); setEditConvQty(""); setEditConvBase(""); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>+ Add</button>
+                      )}
+                    </td>
+                    <td style={tdS}>
+                      {Object.keys(item.usage).length === 0 ? (
+                        <span style={{ color: "#CCC" }}>no entries in this window</span>
+                      ) : (
+                        Object.entries(item.usage).map(([source, byUnit]) => (
+                          <div key={source} style={{ marginBottom: 2 }}>
+                            <span style={{ fontSize: 9, color: "#999", textTransform: "uppercase", fontWeight: 700 }}>{source}:</span>{" "}
+                            {Object.entries(byUnit).map(([unit, count], i) => (
+                              <span key={unit} style={{ fontSize: 11, fontWeight: 600, color: unit !== "(default)" && unit !== item.default_unit ? "#DC2626" : "#555" }}>
+                                {i > 0 ? ", " : ""}{unit === "(default)" ? item.default_unit : unit} ×{count}
+                              </span>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };
@@ -10136,7 +10336,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -10287,6 +10487,7 @@ export default function AnandaCafe() {
         {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
           { id: "move_date", label: "🔀 Move Submission Date", sub: "Fix a manager's wrong-date entry" },
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
+          { id: "packaging", label: "📦 Packaging Audit", sub: "Conversions & unit consistency check" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
@@ -10352,6 +10553,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "system_logs" && <SystemLogs />}
       {auditUnlocked && ownerTab === "move_date" && <MoveSubmissionDate />}
       {auditUnlocked && ownerTab === "master" && <MasterData />}
+      {auditUnlocked && ownerTab === "packaging" && <PackagingAuditPanel />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
       {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
