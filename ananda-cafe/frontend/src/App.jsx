@@ -3858,6 +3858,73 @@ const PurchaseOrderHistory = ({ setView }) => {
   </div>);
 };
 
+// ── Daily Stock Movements — every stock in/out/adjustment across ALL items for a
+// selected date, same 7-day-pills + calendar pattern as Dispatch/Order History. The
+// existing per-item History view only ever showed one item's movements across every
+// date; this is the reverse — one date across every item — which is what "day-wise
+// stock out" actually needs. Uses GET /api/inventory/movements?date=, already built
+// and role-gated (owner/store_mgr/avp) but never wired up to any UI until now.
+const StockMovementsHistory = ({ setView }) => {
+  const [selDate, setSelDate] = useState(today());
+  const [movements, setMovements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState(null); // null=all, 'stock_out'|'stock_in'|'adjust'
+
+  useEffect(() => {
+    setLoading(true);
+    api.getTodayMovements(selDate).then((d) => setMovements(d || [])).catch(() => setMovements([])).finally(() => setLoading(false));
+  }, [selDate]);
+
+  const counts = useMemo(() => {
+    const c = { stock_in: 0, stock_out: 0, adjust: 0 };
+    movements.forEach((m) => { if (c[m.type] !== undefined) c[m.type] += 1; });
+    return c;
+  }, [movements]);
+
+  const visible = typeFilter ? movements.filter((m) => m.type === typeFilter) : movements;
+  const pill = (active, color) => ({ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? (color || "#1A1A1A") : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 });
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <BackBtn onClick={() => setView("stock")} />
+      <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📅 Daily Stock Movements</div>
+    </div>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Every stock in, stock out, and adjustment across all items for the selected date.</p>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+      {Array.from({ length: 7 }, (_, i) => {
+        const d = istDateAgo(i);
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
+        return (<button key={i} onClick={() => setSelDate(d)} style={pill(selDate === d)}>{label}</button>);
+      })}
+      <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555", cursor: "pointer", flexShrink: 0 }} />
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      <button onClick={() => setTypeFilter(null)} style={pill(!typeFilter)}>All ({movements.length})</button>
+      <button onClick={() => setTypeFilter("stock_out")} style={pill(typeFilter === "stock_out", "#DC2626")}>📤 Stock Out ({counts.stock_out})</button>
+      <button onClick={() => setTypeFilter("stock_in")} style={pill(typeFilter === "stock_in", "#16A34A")}>📥 Stock In ({counts.stock_in})</button>
+      <button onClick={() => setTypeFilter("adjust")} style={pill(typeFilter === "adjust", "#B45309")}>🔄 Adjust ({counts.adjust})</button>
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+    {!loading && visible.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No movements on {selDate}</div>}
+    {!loading && visible.map((m) => (
+      <div key={m.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: m.type === "stock_in" ? "#16A34A" : m.type === "stock_out" ? "#DC2626" : "#B45309" }}>{m.type === "stock_in" ? "📥 IN" : m.type === "stock_out" ? "📤 OUT" : "🔄 ADJ"}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 8 }}>{m.inventory_items?.name || m.item_id}</span>
+          <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>{m.reason || ""}</span>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: m.quantity > 0 ? "#16A34A" : "#DC2626" }}>{m.quantity > 0 ? "+" : ""}{m.quantity} {m.inventory_items?.unit || ""}</div>
+          <div style={{ fontSize: 10, color: "#999" }}>{new Date(m.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</div>
+        </div>
+      </div>
+    ))}
+  </div>);
+};
+
 const Inventory = () => {
   const [items, setItems] = useState([]); const [loading, setLoading] = useState(true);
   const [view, setView] = useState("stock"); // stock, stock_in, stock_out, smart_stock_out, thresholds, history
@@ -4072,6 +4139,11 @@ const Inventory = () => {
     return <PurchaseOrderHistory setView={setView} />;
   }
 
+  // ── DAILY STOCK MOVEMENTS — every stock in/out/adjust, browsable by date ──
+  if (view === "movements_history") {
+    return <StockMovementsHistory setView={setView} />;
+  }
+
   // ── MAIN STOCK VIEW ──
   const stockFiltered = (() => {
     let list = stockFilter === "low" ? alerts : stockFilter === "out" ? outOfStock : filtered;
@@ -4090,6 +4162,7 @@ const Inventory = () => {
       <button onClick={() => { setDraft({}); setView("stock_in"); }} title="Stock In" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", fontSize: 14, cursor: "pointer" }}>📥</button>
       <button onClick={() => { setView("order_challan"); }} title="Order Challan" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 14, cursor: "pointer" }}>📝</button>
       <button onClick={() => { setThresholds({}); setView("thresholds"); }} title="Thresholds" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>⚙️</button>
+      <button onClick={() => setView("movements_history")} title="Daily Stock Movements" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>📅</button>
       <button onClick={load} title="Refresh" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 14, cursor: "pointer" }}>🔄</button>
     </div>
 
