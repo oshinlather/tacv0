@@ -64,13 +64,22 @@ router.post("/stock-in", async (req, res) => {
 
     // po_id is stamped onto the movement rows for traceability — pass it through
     // rather than reusing creditStockIn's plain (items, reason, submitted_by) signature.
-    const movements = validItems.map(item => ({
+    const buildMovements = (withPrices) => validItems.map(item => ({
       item_id: item.item_id, type: "stock_in", quantity: item.quantity,
       reason: reason || "purchase", submitted_by, po_id: po_id || null,
-      total_price: item.total_price || null,
-      unit_price: item.unit_price || null,
+      ...(withPrices ? { total_price: item.total_price || null, unit_price: item.unit_price || null } : {}),
     }));
-    await supabase.from("inventory_movements").insert(movements);
+    // inventory_movements doesn't actually have unit_price/total_price columns yet (schema
+    // gap — this insert was silently failing on every stock-in for months, since the
+    // Supabase error was never checked, so PO receiving flipped a purchase order to
+    // 'received' while its stock-in movement quietly never got recorded at all). Try with
+    // prices first (works once the migration below is run); on that specific schema error,
+    // fall back to recording the movement without them rather than losing it entirely.
+    let { error: movErr } = await supabase.from("inventory_movements").insert(buildMovements(true));
+    if (movErr && movErr.code === "PGRST204") {
+      ({ error: movErr } = await supabase.from("inventory_movements").insert(buildMovements(false)));
+    }
+    if (movErr) throw movErr;
 
     const itemIds = validItems.map(i => i.item_id);
     const { data: currentStocks } = await supabase.from("inventory_stock")
@@ -83,7 +92,8 @@ router.post("/stock-in", async (req, res) => {
       current_qty: (stockMap[item.item_id] || 0) + Number(item.quantity),
       last_updated: new Date().toISOString(),
     }));
-    await supabase.from("inventory_stock").upsert(upserts, { onConflict: "item_id" });
+    const { error: stockErr } = await supabase.from("inventory_stock").upsert(upserts, { onConflict: "item_id" });
+    if (stockErr) throw stockErr;
 
     // Close the loop on the source PO, if this stock-in is a receiving action —
     // record what actually arrived (may differ from what was ordered) rather than
