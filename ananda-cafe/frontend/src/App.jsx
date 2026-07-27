@@ -3068,9 +3068,14 @@ const Dispatch = () => {
   const [extraItems, setExtraItems] = useState({}); // { orderId: { itemId: qty } }
   const [addingItemTo, setAddingItemTo] = useState(null); // order id currently showing the add-item picker
   const [itemSearch, setItemSearch] = useState("");
+  // Which date the "Dispatched" section (below) shows — independent of pending, which is
+  // always current backlog regardless of this. Defaults to today; the last-7-days pills
+  // plus a calendar input (for anything older) let the store manager look up old challans.
+  const [selDate, setSelDate] = useState(today());
+  const [olderDispatched, setOlderDispatched] = useState(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   // Anything still pending (not yet fulfilled) is fetched regardless of date — a demand
   // that slipped through yesterday shouldn't quietly disappear once the date rolls over.
-  // "Dispatched Today" stays scoped to today so it doesn't fill up with weeks of history.
   const load = () => {
     setLoading(true);
     const tomorrow = istDateAgo(-1);
@@ -3081,6 +3086,16 @@ const Dispatch = () => {
   };
   useEffect(load, []);
 
+  // `orders` already covers the last 14 days (see windowStart above), so the 7-day pills
+  // are served straight from it with no extra request; only the calendar reaching further
+  // back needs a dedicated fetch.
+  const withinLoadedWindow = selDate >= istDateAgo(13);
+  useEffect(() => {
+    if (withinLoadedWindow) { setOlderDispatched(null); return; }
+    setLoadingOlder(true);
+    api.getOrders({ date: selDate, status: "fulfilled" }).then((d) => setOlderDispatched(d || [])).catch(() => setOlderDispatched([])).finally(() => setLoadingOlder(false));
+  }, [selDate, withinLoadedWindow]);
+
   // Oldest first — a demand that's been sitting unfulfilled since yesterday (or earlier)
   // surfaces above today's, so it isn't missed a second time.
   const pending = orders.filter((o) => (o.status === "submitted" || o.status === "received" || o.status === "issued") && (!selOutlet || o.outlet_id === selOutlet)).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -3089,7 +3104,7 @@ const Dispatch = () => {
   // dozens of stale entries don't bury what's actually actionable today.
   const freshPending = pending.filter((o) => o.date === today());
   const oldPending = pending.filter((o) => o.date !== today());
-  const done = orders.filter((o) => o.status === "fulfilled" && o.date === today() && (!selOutlet || o.outlet_id === selOutlet));
+  const done = (withinLoadedWindow ? orders.filter((o) => o.status === "fulfilled" && o.date === selDate) : (olderDispatched || [])).filter((o) => !selOutlet || o.outlet_id === selOutlet);
   const allPending = orders.filter((o) => o.status === "submitted" || o.status === "received" || o.status === "issued");
   const allDone = orders.filter((o) => o.status === "fulfilled" && o.date === today());
 
@@ -3457,10 +3472,24 @@ const Dispatch = () => {
         )}
       </>); })()}
 
-      {/* ── DISPATCHED TODAY ── */}
-      {done.length > 0 && (<div style={{ marginTop: 24 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>✅ Dispatched Today</div>
-        {done.map((order) => {
+      {/* ── DISPATCHED ── date-selectable so old challans stay reachable, not just today's */}
+      <div style={{ marginTop: 24 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 10, color: "#16A34A" }}>
+          ✅ Dispatched · {selDate === today() ? "Today" : selDate === istDateAgo(1) ? "Yesterday" : selDate}
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+          {Array.from({ length: 7 }, (_, i) => {
+            const d = istDateAgo(i);
+            const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
+            return (<button key={i} onClick={() => setSelDate(d)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === d ? 700 : 500, border: selDate === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === d ? "#1A1A1A" : "#fff", color: selDate === d ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{label}</button>);
+          })}
+          <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555", cursor: "pointer", flexShrink: 0 }} />
+        </div>
+        {loadingOlder && <div style={{ textAlign: "center", padding: 20, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {!loadingOlder && done.length === 0 && (
+          <div style={{ textAlign: "center", padding: 20, color: "#999", fontSize: 12 }}>No dispatches{selOutlet ? ` for ${OUTLETS.find((o) => o.id === selOutlet)?.short}` : ""} on {selDate}</div>
+        )}
+        {!loadingOlder && done.map((order) => {
           const outlet = findOutletForDisplay(order.outlet_id);
           const hasShortage = order.dispatch_items && order.items && Object.keys(order.items).some((id) => (order.dispatch_items[id] || 0) < (order.items[id] || 0));
           return (
@@ -3476,7 +3505,7 @@ const Dispatch = () => {
             </div>
           );
         })}
-      </div>)}
+      </div>
     </div>
   );
 };
