@@ -1968,7 +1968,7 @@ const DailyPnL = () => {
             meaningful (the "ideal vs actual" comparison and per-item edits below only
             make sense for one real outlet); for All Outlets, COGS Compare's per-outlet
             category breakdown is the more useful view, so it's shown instead. */}
-        {!selOutlet && <CogsCompare />}
+        {!selOutlet && <CogsCompare syncDate={{ selDay, selMonth: null }} />}
         {selOutlet && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
           {/* REVENUE — collapsed to just this one header line by default, with the
@@ -5664,12 +5664,26 @@ const LOG_CATEGORIES = [
 // unrecorded wastage, theft, or a closing-stock reporting error) rather than expected
 // variation. % is against each outlet's OWN effective sale, so outlets of different
 // sizes/volumes are still directly comparable.
-const CogsCompare = () => {
-  const [selDay, setSelDay] = useState(1); // 0=Today, 1=Yesterday (default), 2.. further back
-  const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
+// syncDate: optional { selDay, selMonth } — when passed (e.g. embedded inside Daily
+// P&L's All Outlets view), this reuses that date instead of showing its own redundant
+// second date picker; the day/month pills below only render when it's omitted.
+const CogsCompare = ({ syncDate } = {}) => {
+  const [intSelDay, setIntSelDay] = useState(1); // 0=Today, 1=Yesterday (default), 2.. further back
+  const [intSelMonth, setIntSelMonth] = useState(null); // non-null = month view instead of day pills
+  const selDay = syncDate ? syncDate.selDay : intSelDay;
+  const selMonth = syncDate ? syncDate.selMonth : intSelMonth;
   const [loading, setLoading] = useState(true);
   const [monthData, setMonthData] = useState(null);
   const [drillCat, setDrillCat] = useState(null);
+  // Which outlet column rows are sorted by — index into outletsWithData, so it applies
+  // identically to categoryRows and itemRows (their .pcts arrays share that same order).
+  // null = default spread (max−min) sort, biggest cross-outlet anomaly first.
+  const [sortIdx, setSortIdx] = useState(null);
+  const [sortDir, setSortDir] = useState("desc");
+  const toggleSort = (idx) => {
+    if (sortIdx === idx) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortIdx(idx); setSortDir("desc"); }
+  };
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -5778,6 +5792,22 @@ const CogsCompare = () => {
     }).filter((r) => r.pcts.some((v) => v > 0)).sort((a, b) => b.spread - a.spread);
   }, [monthData, drillCat, outletsWithData]);
 
+  // Re-sort by a clicked outlet column instead of the default spread — nulls (no data
+  // for that outlet) always sink to the bottom regardless of direction.
+  const applyColumnSort = (rows) => {
+    if (sortIdx == null) return rows;
+    const sorted = [...rows].sort((a, b) => {
+      const av = a.pcts[sortIdx], bv = b.pcts[sortIdx];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return sortDir === "desc" ? bv - av : av - bv;
+    });
+    return sorted;
+  };
+  const sortedCategoryRows = useMemo(() => applyColumnSort(categoryRows), [categoryRows, sortIdx, sortDir]);
+  const sortedItemRows = useMemo(() => applyColumnSort(itemRows), [itemRows, sortIdx, sortDir]);
+
   // Colors each cell relative to the ROW's own average (not a fixed threshold — a
   // category's "normal" % varies hugely, e.g. Packaging vs Vegetable), so the outlier
   // for that specific row always stands out regardless of the category's typical size.
@@ -5806,18 +5836,20 @@ const CogsCompare = () => {
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
       </div>
 
-      {/* Date pills */}
+      {/* Date pills — omitted when syncDate is passed, since the parent already shows one */}
+      {!syncDate && (
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {Array.from({ length: 7 }, (_, i) => {
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
-          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); setDrillCat(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+          return (<button key={i} onClick={() => { setIntSelDay(i); setIntSelMonth(null); setDrillCat(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
-        <select value={selMonth || ""} onChange={(e) => { setSelMonth(e.target.value || null); setDrillCat(null); }}
+        <select value={selMonth || ""} onChange={(e) => { setIntSelMonth(e.target.value || null); setDrillCat(null); }}
           style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
           <option value="">📅 Month view...</option>
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
+      )}
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
 
@@ -5838,11 +5870,20 @@ const CogsCompare = () => {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 170 }}>{drillCat ? "Item" : "Category"}</th>
-                {outletsWithData.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{o.short}</th>)}
+                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 170 }}>
+                  {drillCat ? "Item" : "Category"}
+                  {sortIdx != null && (
+                    <span onClick={() => { setSortIdx(null); }} title="Reset to default (biggest cross-outlet spread) sort" style={{ marginLeft: 6, fontSize: 10, color: "#2563EB", cursor: "pointer", fontWeight: 700 }}>↺ reset</span>
+                  )}
+                </th>
+                {outletsWithData.map((o, i) => (
+                  <th key={o.id} onClick={() => toggleSort(i)} title={`Sort by ${o.short}`} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", color: sortIdx === i ? "#1A1A1A" : thS.color }}>
+                    {o.short} <span style={{ fontSize: 9, color: sortIdx === i ? "#2563EB" : "#BBB" }}>{sortIdx === i ? (sortDir === "desc" ? "▼" : "▲") : "↕"}</span>
+                  </th>
+                ))}
               </tr></thead>
               <tbody>
-                {!drillCat && categoryRows.map((r) => (
+                {!drillCat && sortedCategoryRows.map((r) => (
                   <tr key={r.id} onClick={() => setDrillCat(r.id)} style={{ borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
                     <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.emoji} {r.titleHi} <span style={{ color: "#BBB", fontSize: 10 }}>→</span></td>
                     {r.pcts.map((v, i) => (
@@ -5850,7 +5891,7 @@ const CogsCompare = () => {
                     ))}
                   </tr>
                 ))}
-                {drillCat && itemRows.map((r) => (
+                {drillCat && sortedItemRows.map((r) => (
                   <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
                     {r.pcts.map((v, i) => (
