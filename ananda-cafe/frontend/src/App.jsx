@@ -5096,6 +5096,10 @@ const FranchiseBilling = () => {
   useEffect(() => { setDayEdits({}); }, [selOutlet, selMonth]);
   const setDayEdit = (id, date, value) => setDayEdits((prev) => ({ ...prev, [id]: { ...prev[id], [date]: value } }));
   const resetDayEdit = (id, date) => setDayEdits((prev) => { const next = { ...prev, [id]: { ...prev[id] } }; delete next[id][date]; if (Object.keys(next[id]).length === 0) delete next[id]; return next; });
+  // Category pill filter — shared by both Summary and Day by Day (both read off the same
+  // `items` array below); CSV export always uses the full unfiltered set regardless.
+  const [billCat, setBillCat] = useState(null);
+  useEffect(() => { setBillCat(null); }, [selOutlet, selMonth]);
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -5182,14 +5186,27 @@ const FranchiseBilling = () => {
       const billedRate = rateEdited ? Number(edit.rate) || 0 : computedRate;
       const amount = billedQty * convFactor * billedRate;
 
+      const sec = DEMAND_SECTIONS.find((s) => s.items.some((si) => si.id === id));
       return {
         id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
         demandQty: Math.round(data.qty * 100) / 100,
         dispatchQty: computedDispatchQty, dispatchQtyEdited: qtyEdited, billedQty,
         rate: computedRate, rateEdited, billedRate, rateUnit, amount,
+        catId: sec?.id || '_other', catEmoji: sec?.emoji || '📦', catLabel: sec?.titleHi || 'Other',
       };
     }).filter((i) => i.demandQty > 0 || i.billedQty > 0).sort((a, b) => b.amount - a.amount);
   }, [demands, rateMap, convMap, edits]);
+
+  // Category pills — built off the full item set so counts don't shrink as you filter.
+  const billCatGroups = useMemo(() => {
+    const groups = {};
+    items.forEach((i) => {
+      if (!groups[i.catId]) groups[i.catId] = { id: i.catId, emoji: i.catEmoji, titleHi: i.catLabel, count: 0 };
+      groups[i.catId].count += 1;
+    });
+    return Object.values(groups).sort((a, b) => b.count - a.count);
+  }, [items]);
+  const visibleItems = billCat ? items.filter((i) => i.catId === billCat) : items;
 
   const totalAmount = items.reduce((s, i) => s + i.amount, 0);
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
@@ -5286,8 +5303,19 @@ const FranchiseBilling = () => {
               </div>
             </div>
 
+            {items.length > 0 && (
+              <div style={{ display: "flex", gap: 6, padding: "10px 16px", overflowX: "auto", flexWrap: "wrap", borderBottom: "1px solid #E8E8E4" }}>
+                <button onClick={() => setBillCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !billCat ? 700 : 500, border: !billCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !billCat ? "#1A1A1A" : "#fff", color: !billCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({items.length})</button>
+                {billCatGroups.map((g) => (
+                  <button key={g.id} onClick={() => setBillCat(billCat === g.id ? null : g.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: billCat === g.id ? 700 : 500, border: billCat === g.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: billCat === g.id ? "#1A1A1A" : "#fff", color: billCat === g.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{g.emoji} {g.titleHi} ({g.count})</button>
+                ))}
+              </div>
+            )}
+
             {items.length === 0 ? (
               <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No demands for {outletName} in {monthLabel}</div>
+            ) : visibleItems.length === 0 ? (
+              <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No items in this category</div>
             ) : viewMode === "daywise" ? (<>
               <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>✏️ Click any day's qty to correct it — local to this bill only, resets on outlet/month change.</div>
               <div style={{ overflowX: "auto" }}>
@@ -5298,7 +5326,7 @@ const FranchiseBilling = () => {
                     {days.map((ds) => <th key={ds} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{ds.slice(8)}</th>)}
                   </tr></thead>
                   <tbody>
-                    {items.map((i) => {
+                    {visibleItems.map((i) => {
                       const perDay = days.map((ds) => getDayQty(i.id, ds));
                       const total = perDay.reduce((s, v) => s + v, 0);
                       const hasAnyEdit = !!dayEdits[i.id];
@@ -5339,7 +5367,7 @@ const FranchiseBilling = () => {
                     <th style={{ ...thS, textAlign: "right" }}>Amount</th>
                   </tr></thead>
                   <tbody>
-                    {items.map((i) => {
+                    {visibleItems.map((i) => {
                       const mismatch = i.dispatchQty != null && Math.abs(i.dispatchQty - i.demandQty) > 0.01;
                       return (
                         <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC", background: mismatch && !i.dispatchQtyEdited ? "#FEF2F2" : "transparent" }}>
