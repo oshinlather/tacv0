@@ -3836,6 +3836,7 @@ const PurchaseOrderHistory = ({ setView }) => {
       const isOpen = openId === po.id;
       const itemEntries = Object.entries(po.items || {});
       const isReceived = po.status === "received";
+      const orderTotal = itemEntries.reduce((s, [, item]) => s + (Number(item.total_price) || 0), 0);
       return (
         <div key={po.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${v?.border || "#E8E8E4"}`, marginBottom: 8, overflow: "hidden" }}>
           <div onClick={() => setOpenId(isOpen ? null : po.id)} style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: v?.bg || "#FAFAF8" }}>
@@ -3843,7 +3844,8 @@ const PurchaseOrderHistory = ({ setView }) => {
               <div style={{ fontSize: 13, fontWeight: 700, color: v?.color || "#1A1A1A" }}>{v?.label || po.notes || "Order"} <span style={{ color: "#BBB", fontWeight: 500, fontSize: 11 }}>{po.order_number}</span></div>
               <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>📅 {po.date} · {po.total_items} items · created by {po.created_by || "—"}</div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {orderTotal > 0 && <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#1A1A1A" }}>{fmt(orderTotal)}</span>}
               <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isReceived ? "#F0FDF4" : "#FFFBEB", color: isReceived ? "#16A34A" : "#B45309" }}>{isReceived ? "✅ Received" : "⏳ Pending"}</span>
               <span style={{ color: "#BBB", fontSize: 11 }}>{isOpen ? "▲" : "▼"}</span>
             </div>
