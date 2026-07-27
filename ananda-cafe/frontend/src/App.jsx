@@ -10363,12 +10363,16 @@ const SCOPED_ROLE_TABS = {
     { id: "reviews", label: "⭐ Reviews" },
     { id: "franchise_billing", label: "🧾 Franchise Billing" },
     { id: "master", label: "🗂️ Master Data" },
+    { id: "recipes", label: "📖 BK Recipes" },
+    { id: "pp_recipes", label: "📖 Dish Recipes" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
     { id: "audit", label: "🔍 RM Audit" },
     { id: "reviews", label: "⭐ Reviews" },
     { id: "master", label: "🗂️ Master Data" },
+    { id: "recipes", label: "📖 BK Recipes" },
+    { id: "pp_recipes", label: "📖 Dish Recipes" },
   ],
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
@@ -10452,6 +10456,8 @@ const ScopedDashboard = () => {
       {tab === "reviews" && <DailyReviewSummary />}
       {tab === "franchise_billing" && <FranchiseBilling />}
       {tab === "master" && <MasterData hideRecipes />}
+      {tab === "recipes" && <RecipesPanel />}
+      {tab === "pp_recipes" && <DishRecipesPanel />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
     </div>

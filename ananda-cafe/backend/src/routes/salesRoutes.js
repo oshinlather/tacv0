@@ -293,7 +293,7 @@ function ingredientQtyKg(qty, unit) {
 // ── POST /api/recipes — Create a new dish recipe (owner-only, master data)
 router.post('/recipes', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { item_name, item_type, category } = req.body;
     if (!item_name || !category) return res.status(400).json({ error: 'item_name and category are required' });
     const { data, error } = await supabase.from('recipes').insert({
@@ -307,7 +307,7 @@ router.post('/recipes', async (req, res) => {
 // ── PATCH /api/recipes/:id — Update a dish recipe's name/category/status (owner-only)
 router.patch('/recipes/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const updates = {};
     if (req.body.item_name !== undefined) updates.item_name = req.body.item_name;
     if (req.body.category !== undefined) updates.category = req.body.category;
@@ -322,7 +322,7 @@ router.patch('/recipes/:id', async (req, res) => {
 // ── DELETE /api/recipes/:id — Soft-delete (status='Inactive') a dish recipe (owner-only)
 router.delete('/recipes/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { error } = await supabase.from('recipes').update({ status: 'Inactive', updated_at: new Date().toISOString() }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -332,7 +332,7 @@ router.delete('/recipes/:id', async (req, res) => {
 // ── POST /api/recipes/:id/ingredients — Add an ingredient to a dish recipe (owner-only)
 router.post('/recipes/:id/ingredients', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { raw_material, qty, unit } = req.body;
     if (!raw_material || qty === undefined) return res.status(400).json({ error: 'raw_material and qty are required' });
     const { data, error } = await supabase.from('recipe_ingredients').insert({
@@ -347,7 +347,7 @@ router.post('/recipes/:id/ingredients', async (req, res) => {
 // ── PATCH /api/recipes/ingredients/:id — Update one ingredient's qty/unit/name (owner-only)
 router.patch('/recipes/ingredients/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { raw_material, qty, unit } = req.body;
     const updates = {};
     if (raw_material !== undefined) updates.raw_material = raw_material;
@@ -366,7 +366,7 @@ router.patch('/recipes/ingredients/:id', async (req, res) => {
 // ── DELETE /api/recipes/ingredients/:id — Remove an ingredient from a dish recipe (owner-only)
 router.delete('/recipes/ingredients/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { error } = await supabase.from('recipe_ingredients').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
@@ -1267,7 +1267,7 @@ res.json(result);
 // ── POST /api/master/demand-items — Add new demand item
 router.post('/master/demand-items', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { id, section_id, name, unit, sort_order } = req.body;
 const { data, error } = await supabase.from('demand_items').upsert({ id, section_id, name, unit, sort_order: sort_order || 99 });
 if (error) throw error;
@@ -1278,7 +1278,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/demand-items/:id — Update demand item
 router.patch('/master/demand-items/:id', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { name, unit, sort_order, active } = req.body;
 const updates = {};
 if (name !== undefined) updates.name = name;
@@ -1294,7 +1294,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/demand-items/:id — Soft delete
 router.delete('/master/demand-items/:id', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { error } = await supabase.from('demand_items').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
 res.json({ ok: true });
@@ -1304,7 +1304,7 @@ res.json({ ok: true });
 // ── POST /api/master/raw-materials — Add new raw material
 router.post('/master/raw-materials', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { id, name, unit } = req.body;
 const { error } = await supabase.from('raw_materials').upsert({ id, name, unit });
 if (error) throw error;
@@ -1315,7 +1315,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/raw-materials/:id — Update raw material
 router.patch('/master/raw-materials/:id', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { name, unit, active } = req.body;
 const updates = {};
 if (name !== undefined) updates.name = name;
@@ -1330,7 +1330,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/raw-materials/:id — Soft delete
 router.delete('/master/raw-materials/:id', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { error } = await supabase.from('raw_materials').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
 res.json({ ok: true });
@@ -1340,7 +1340,7 @@ res.json({ ok: true });
 // ── POST /api/master/recipes — Add/update recipe
 router.post('/master/recipes', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { id, name, yield_qty, yield_unit, yield_label, ingredients } = req.body;
 // Upsert recipe header
 const { error: recErr } = await supabase.from('bk_recipes').upsert({ id, name, yield_qty, yield_unit: yield_unit || 'Kg', yield_label });
@@ -1373,7 +1373,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/recipes/:id
 router.delete('/master/recipes/:id', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 await supabase.from('bk_recipe_ingredients').delete().eq('recipe_id', req.params.id);
 const { error } = await supabase.from('bk_recipes').update({ active: false }).eq('id', req.params.id);
 if (error) throw error;
@@ -1411,7 +1411,7 @@ res.json(grouped);
 // ── POST /api/master/conversions — Add/update a conversion
 router.post('/master/conversions', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { unit_type, item_id, item_name, qty, base_unit, notes } = req.body;
 const { error } = await supabase.from('unit_conversions').upsert(
 { unit_type, item_id, item_name, qty, base_unit, notes: notes || `1 ${unit_type} = ${qty} ${base_unit}` },
@@ -1425,7 +1425,7 @@ res.json({ ok: true });
 // ── PATCH /api/master/conversions/:id — Update conversion qty
 router.patch('/master/conversions', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { unit_type, item_id, qty, base_unit, notes } = req.body;
 const updates = {};
 if (qty !== undefined) updates.qty = qty;
@@ -1441,7 +1441,7 @@ res.json({ ok: true });
 // ── DELETE /api/master/conversions — Soft delete
 router.delete('/master/conversions', async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
 const { unit_type, item_id } = req.query;
 const { error } = await supabase.from('unit_conversions').update({ active: false })
 .eq('unit_type', unit_type).eq('item_id', item_id);
