@@ -4218,4 +4218,40 @@ router.get('/system-logs', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ────────────────────────────────────────────────────────────
+// Franchise Billing corrections — Qty/Rate edits made in the Edit/Done UI used to be
+// component state only, so they vanished on every refresh. Persisted here as one row per
+// outlet+month bill in the generic app_config key/value table (key format:
+// "franchise_billing:{outlet_id}:{month}", value is a JSON string) rather than a
+// dedicated table, so this works immediately with no schema migration required. Saved in
+// a single batch when "Done" is tapped, not per-keystroke.
+// ────────────────────────────────────────────────────────────
+router.get('/franchise-billing/corrections', async (req, res) => {
+  try {
+    const { outlet_id, month } = req.query;
+    if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month are required' });
+    const { data, error } = await supabase.from('app_config').select('value')
+      .eq('key', `franchise_billing:${outlet_id}:${month}`).maybeSingle();
+    if (error) throw error;
+    const parsed = data?.value ? JSON.parse(data.value) : {};
+    res.json({ edits: parsed.edits || {}, day_edits: parsed.day_edits || {} });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/franchise-billing/corrections', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!['owner', 'store_mgr', 'avp'].includes(user.role)) return res.status(403).json({ error: 'Insufficient permissions' });
+    const { outlet_id, month, edits, day_edits } = req.body;
+    if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month are required' });
+    const value = JSON.stringify({ edits: edits || {}, day_edits: day_edits || {}, updated_by: user.name, updated_at: new Date().toISOString() });
+    const { error } = await supabase.from('app_config').upsert({
+      key: `franchise_billing:${outlet_id}:${month}`, value,
+    }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json({ ok: true, edits: edits || {}, day_edits: day_edits || {} });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

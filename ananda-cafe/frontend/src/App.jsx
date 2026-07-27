@@ -5086,14 +5086,23 @@ const FranchiseBilling = () => {
   const [rateCard, setRateCard] = useState([]);
   const [conversions, setConversions] = useState({});
   const [viewMode, setViewMode] = useState("summary"); // 'summary' or 'daywise'
-  // Local-only corrections applied before export — never written back to demands or the rate card.
+  // Corrections applied before export — persisted server-side per outlet+month (one row,
+  // see /api/franchise-billing/corrections), so they survive a refresh instead of
+  // vanishing as component state. Never written back to demands or the rate card itself.
   const [edits, setEdits] = useState({}); // { [item_id]: { qty?: number, rate?: number } }
-  useEffect(() => { setEdits({}); }, [selOutlet, selMonth]);
+  const [dayEdits, setDayEdits] = useState({}); // { [item_id]: { [date]: value } }
+  const [correctionsLoaded, setCorrectionsLoaded] = useState(false);
+  const [savingCorrections, setSavingCorrections] = useState(false);
+  useEffect(() => {
+    if (!selOutlet || !selMonth) return;
+    setCorrectionsLoaded(false);
+    api.getFranchiseBillingCorrections(selOutlet, selMonth)
+      .then((c) => { setEdits(c?.edits || {}); setDayEdits(c?.day_edits || {}); })
+      .catch(() => { setEdits({}); setDayEdits({}); })
+      .finally(() => setCorrectionsLoaded(true));
+  }, [selOutlet, selMonth]);
   const setEditField = (id, field, value) => setEdits((prev) => ({ ...prev, [id]: { ...prev[id], [field]: value } }));
   const resetEditField = (id, field) => setEdits((prev) => { const next = { ...prev, [id]: { ...prev[id] } }; delete next[id][field]; if (Object.keys(next[id]).length === 0) delete next[id]; return next; });
-  // Same local-only correction pattern, but per item per day — for the Day by Day grid.
-  const [dayEdits, setDayEdits] = useState({}); // { [item_id]: { [date]: value } }
-  useEffect(() => { setDayEdits({}); }, [selOutlet, selMonth]);
   const setDayEdit = (id, date, value) => setDayEdits((prev) => ({ ...prev, [id]: { ...prev[id], [date]: value } }));
   const resetDayEdit = (id, date) => setDayEdits((prev) => { const next = { ...prev, [id]: { ...prev[id] } }; delete next[id][date]; if (Object.keys(next[id]).length === 0) delete next[id]; return next; });
   // Category pill filter — shared by both Summary and Day by Day (both read off the same
@@ -5102,11 +5111,18 @@ const FranchiseBilling = () => {
   useEffect(() => { setBillCat(null); }, [selOutlet, selMonth]);
   // Edit mode — cells render as plain text by default (safer, harder to fat-finger a
   // correction by accident) and only become editable inputs once toggled on, so several
-  // cells can be corrected in one pass before switching back. Edits themselves are still
-  // applied live as you type (they're local-only, never persisted) — "Done" just exits the
-  // editable view, it isn't a separate save step.
+  // cells can be corrected in one pass before switching back. Edits apply live locally as
+  // you type; tapping Done batch-saves the whole edits+dayEdits set to the server in one
+  // call rather than firing a request per keystroke.
   const [editMode, setEditMode] = useState(false);
   useEffect(() => { setEditMode(false); }, [selOutlet, selMonth]);
+  const finishEditing = () => {
+    setEditMode(false);
+    setSavingCorrections(true);
+    api.saveFranchiseBillingCorrections({ outlet_id: selOutlet, month: selMonth, edits, day_edits: dayEdits })
+      .catch((e) => alert("Failed to save corrections: " + e.message))
+      .finally(() => setSavingCorrections(false));
+  };
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -5275,7 +5291,7 @@ const FranchiseBilling = () => {
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🧾 Franchise Billing</h3>
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Month-wise demand vs dispatch, priced off the rate card — billed on what was actually dispatched</p>
-        <p style={{ fontSize: 11, color: "#2563EB", margin: "4px 0 0" }}>✏️ Qty and Rate are editable for corrections before export — edits here are local to this bill only and never change the actual demand records or rate card.</p>
+        <p style={{ fontSize: 11, color: "#2563EB", margin: "4px 0 0" }}>✏️ Qty and Rate are editable for corrections before export — saved per outlet+month bill, but never change the actual demand records or rate card.</p>
       </div>
 
       {franchiseOutlets.length === 0 ? (
@@ -5291,9 +5307,9 @@ const FranchiseBilling = () => {
           </select>
         </div>
 
-        {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+        {(loading || !correctionsLoaded) && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
 
-        {!loading && (
+        {!loading && correctionsLoaded && (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", flexWrap: "wrap", gap: 8 }}>
               <div>
@@ -5306,7 +5322,7 @@ const FranchiseBilling = () => {
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
-                <button onClick={() => setEditMode((v) => !v)} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{editMode ? "✅ Done" : "✏️ Edit"}</button>
+                <button onClick={() => (editMode ? finishEditing() : setEditMode(true))} disabled={items.length === 0 || savingCorrections} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 || savingCorrections ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{savingCorrections ? "⏳ Saving..." : editMode ? "✅ Done" : "✏️ Edit"}</button>
                 <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
               </div>
             </div>
@@ -5325,7 +5341,7 @@ const FranchiseBilling = () => {
             ) : visibleItems.length === 0 ? (
               <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No items in this category</div>
             ) : viewMode === "daywise" ? (<>
-              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>{editMode ? "✏️ Editing — correct as many cells as you need, then tap Done. Local to this bill only, resets on outlet/month change." : "Tap ✏️ Edit above to correct any day's qty."}</div>
+              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>{editMode ? "✏️ Editing — correct as many cells as you need, then tap Done to save them for this bill." : "Tap ✏️ Edit above to correct any day's qty."}</div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>

@@ -84,6 +84,10 @@ const api = {
   getColdDrinkAudit: (date) => get(`/api/audit/cold-drink/${date}`),
   getPackagingAudit: (days) => get("/api/audit/packaging", days ? { days } : {}),
 
+  // ── Franchise Billing corrections (persisted Qty/Rate edits) ──
+  getFranchiseBillingCorrections: (outlet_id, month) => get("/api/franchise-billing/corrections", { outlet_id, month }),
+  saveFranchiseBillingCorrections: (data) => post("/api/franchise-billing/corrections", data),
+
   // ── PetPooja Recipes ──
   getRecipesPetpooja: () => get("/api/recipes/petpooja"),
 
