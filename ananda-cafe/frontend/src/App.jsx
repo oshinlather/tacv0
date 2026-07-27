@@ -3061,6 +3061,8 @@ const Dispatch = () => {
   const [orderOpenOverride, setOrderOpenOverride] = useState({});
   const [showOldBacklog, setShowOldBacklog] = useState(false);
   const [challanOrder, setChallanOrder] = useState(null);
+  const [challanCat, setChallanCat] = useState(null); // category pill filter on the Dispatch Challan view — null = All
+  useEffect(() => { setChallanCat(null); }, [challanOrder]);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
   // Items the store manager adds on the phone that weren't in the original written demand
   // (a forgotten item, called in after submission) — merged into the order's item list for
@@ -3233,7 +3235,21 @@ const Dispatch = () => {
     const demanded = order.items || {};
     const dispatched = order.dispatch_items || demanded; // fallback for old orders without dispatch_items
     const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
-    const categories = getItemsByCategory(demanded);
+    // Category pills at the top of the challan — lets the store/outlet manager check off
+    // just one section (e.g. only Vegetables) instead of scrolling the full flat list.
+    // Grouped straight off allIds (not just demanded) so an extra dispatched-only item
+    // still lands under its real category instead of silently falling out of every pill.
+    const challanCatGroups = (() => {
+      const groups = {};
+      allIds.forEach((id) => {
+        const sec = DEMAND_SECTIONS.find((s) => s.items.some((i) => i.id === id));
+        const catId = sec?.id || "_other";
+        if (!groups[catId]) groups[catId] = { id: catId, titleHi: sec?.titleHi || "Other", emoji: sec?.emoji || "📦", ids: [] };
+        groups[catId].ids.push(id);
+      });
+      return Object.values(groups);
+    })();
+    const visibleIds = challanCat ? (challanCatGroups.find((g) => g.id === challanCat)?.ids || []) : allIds;
     const dateStr = order.date || today();
     const timeStr = order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
@@ -3261,6 +3277,15 @@ const Dispatch = () => {
           <button onClick={printChallan} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#777", cursor: "pointer", fontFamily: "inherit" }}>🖨️ Print</button>
         </div>
 
+        {/* Category pills — filter the table to one section at a time (Print always
+            includes everything, regardless of this filter). */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, flexWrap: "wrap" }}>
+          <button onClick={() => setChallanCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !challanCat ? 700 : 500, border: !challanCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !challanCat ? "#1A1A1A" : "#fff", color: !challanCat ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({allIds.length})</button>
+          {challanCatGroups.map((g) => (
+            <button key={g.id} onClick={() => setChallanCat(challanCat === g.id ? null : g.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: challanCat === g.id ? 700 : 500, border: challanCat === g.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: challanCat === g.id ? "#1A1A1A" : "#fff", color: challanCat === g.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{g.emoji} {g.titleHi} ({g.ids.length})</button>
+          ))}
+        </div>
+
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -3272,7 +3297,7 @@ const Dispatch = () => {
                 <th style={{ ...thS, textAlign: "center" }}>Status</th>
               </tr></thead>
               <tbody>
-                {allIds.map((id) => {
+                {visibleIds.map((id) => {
                   const dem = demanded[id] || 0;
                   const disp = dispatched[id] || 0;
                   const isShort = disp < dem;
