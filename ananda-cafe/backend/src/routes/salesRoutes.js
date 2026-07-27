@@ -1830,7 +1830,7 @@ router.patch('/demands/:id/finalize', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id, status').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
     // AVP gets the full Base Kitchen Manager module, which includes Dispatch — that
     // needs unrestricted cross-outlet access, same as store_mgr, not just BK's own
@@ -1838,6 +1838,14 @@ router.patch('/demands/:id/finalize', async (req, res) => {
     const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+    // Once BK has dispatched it, the outlet's own self-service roles can no longer
+    // rewrite it from their portal — the record has to stay exactly what was actually
+    // sent (franchise billing and every audit trail read off it as fact). Owner/store_mgr/
+    // avp keep the ability, since they may legitimately need to fix a genuine mistake.
+    const OUTLET_SELF_SERVICE_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
+    if (existing.status === 'fulfilled' && OUTLET_SELF_SERVICE_ROLES.includes(user.role)) {
+      return res.status(403).json({ error: 'Already dispatched — this demand can no longer be edited from the outlet portal.' });
+    }
 
     const { items, items_units, submitted_by } = req.body;
     const updates = { status: 'submitted', submitted_at: new Date().toISOString() };
@@ -1859,7 +1867,7 @@ router.patch('/demands/:id', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id').eq('id', req.params.id).single();
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id, status').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
     // AVP gets the full Base Kitchen Manager module, which includes Dispatch — that
     // needs unrestricted cross-outlet access, same as store_mgr, not just BK's own
@@ -1867,6 +1875,14 @@ router.patch('/demands/:id', async (req, res) => {
     const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+    // Once BK has dispatched it, the outlet's own self-service roles can no longer
+    // rewrite it from their portal — the record has to stay exactly what was actually
+    // sent (franchise billing and every audit trail read off it as fact). Owner/store_mgr/
+    // avp keep the ability, since they may legitimately need to fix a genuine mistake.
+    const OUTLET_SELF_SERVICE_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
+    if (existing.status === 'fulfilled' && OUTLET_SELF_SERVICE_ROLES.includes(user.role)) {
+      return res.status(403).json({ error: 'Already dispatched — this demand can no longer be edited from the outlet portal.' });
+    }
 
     const { items, items_units, submitted_by } = req.body;
     const updates = {};
@@ -1979,9 +1995,23 @@ router.post('/purchases/:id/photos', async (req, res) => {
   }
 });
 
-// ── PATCH /api/demands/:id/draft — Update draft demand items
+// ── PATCH /api/demands/:id/draft — Update draft demand items. Not currently called from
+// the frontend (api.js exposes it but nothing invokes it), but it's a live endpoint, so it
+// gets the same auth/outlet/status guards as the other demand-edit routes rather than
+// staying an unauthenticated write hole.
 router.patch('/demands/:id/draft', async (req, res) => {
   try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id, status').eq('id', req.params.id).single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
+    const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
+    if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
+    if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+    const OUTLET_SELF_SERVICE_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
+    if (existing.status === 'fulfilled' && OUTLET_SELF_SERVICE_ROLES.includes(user.role)) {
+      return res.status(403).json({ error: 'Already dispatched — this demand can no longer be edited from the outlet portal.' });
+    }
     const { items } = req.body;
     const { error } = await supabase.from('demands').update({
       items: items || {},
