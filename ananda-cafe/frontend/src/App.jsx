@@ -3865,63 +3865,152 @@ const PurchaseOrderHistory = ({ setView }) => {
 // stock out" actually needs. Uses GET /api/inventory/movements?date=, already built
 // and role-gated (owner/store_mgr/avp) but never wired up to any UI until now.
 const StockMovementsHistory = ({ setView }) => {
-  const [selDate, setSelDate] = useState(today());
-  const [movements, setMovements] = useState([]);
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [viewMode, setViewMode] = useState("summary"); // 'summary' or 'daywise'
+  const [dayMetric, setDayMetric] = useState("stock_out"); // which type populates the Day by Day grid
+  const [monthData, setMonthData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [typeFilter, setTypeFilter] = useState(null); // null=all, 'stock_out'|'stock_in'|'adjust'
 
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  // Every date in the month up to today (dates with no movements still show as a column)
+  const days = useMemo(() => {
+    const [y, mo] = selMonth.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const result = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      result.push(ds);
+    }
+    return result;
+  }, [selMonth]);
+
+  // No date-range endpoint exists — fetch every day of the month in parallel, same
+  // pattern CogsCompare/FranchiseBilling already use for their own month views.
   useEffect(() => {
     setLoading(true);
-    api.getTodayMovements(selDate).then((d) => setMovements(d || [])).catch(() => setMovements([])).finally(() => setLoading(false));
-  }, [selDate]);
+    Promise.all(days.map((ds) => api.getTodayMovements(ds).catch(() => []))).then((results) => {
+      const totals = {}; // item_id -> { name, unit, stock_in, stock_out, adjust }
+      const dayWise = {}; // item_id -> { date -> { stock_in, stock_out, adjust } }
+      results.forEach((movements, idx) => {
+        const ds = days[idx];
+        (movements || []).forEach((m) => {
+          const id = m.item_id;
+          if (!totals[id]) totals[id] = { name: m.inventory_items?.name || id, unit: m.inventory_items?.unit || "", stock_in: 0, stock_out: 0, adjust: 0 };
+          if (!dayWise[id]) dayWise[id] = {};
+          if (!dayWise[id][ds]) dayWise[id][ds] = { stock_in: 0, stock_out: 0, adjust: 0 };
+          const absQty = Math.abs(Number(m.quantity) || 0);
+          if (m.type === "stock_in") { totals[id].stock_in += absQty; dayWise[id][ds].stock_in += absQty; }
+          else if (m.type === "stock_out") { totals[id].stock_out += absQty; dayWise[id][ds].stock_out += absQty; }
+          else { totals[id].adjust += Number(m.quantity) || 0; dayWise[id][ds].adjust += Number(m.quantity) || 0; }
+        });
+      });
+      setMonthData({ totals, dayWise });
+    }).finally(() => setLoading(false));
+  }, [days]);
 
-  const counts = useMemo(() => {
-    const c = { stock_in: 0, stock_out: 0, adjust: 0 };
-    movements.forEach((m) => { if (c[m.type] !== undefined) c[m.type] += 1; });
-    return c;
-  }, [movements]);
+  const itemRows = useMemo(() => {
+    if (!monthData) return [];
+    return Object.entries(monthData.totals)
+      .map(([id, t]) => ({ id, ...t }))
+      .filter((r) => r.stock_in > 0 || r.stock_out > 0 || r.adjust !== 0)
+      .sort((a, b) => b.stock_out - a.stock_out);
+  }, [monthData]);
 
-  const visible = typeFilter ? movements.filter((m) => m.type === typeFilter) : movements;
+  const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+  const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
   const pill = (active, color) => ({ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? (color || "#1A1A1A") : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 });
+  const thS = { padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", whiteSpace: "nowrap" };
+  const tdS = { padding: "7px 10px", fontSize: 12, borderBottom: "1px solid #F0F0EC" };
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
       <BackBtn onClick={() => setView("stock")} />
       <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📅 Daily Stock Movements</div>
     </div>
-    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Every stock in, stock out, and adjustment across all items for the selected date.</p>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Stock in/out/adjustment across all items — Summary totals for the month, or Day by Day to see exactly which day.</p>
 
-    <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-      {Array.from({ length: 7 }, (_, i) => {
-        const d = istDateAgo(i);
-        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
-        return (<button key={i} onClick={() => setSelDate(d)} style={pill(selDate === d)}>{label}</button>);
-      })}
-      <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555", cursor: "pointer", flexShrink: 0 }} />
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+      <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+        {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+      </select>
+      <div style={{ display: "flex", gap: 4 }}>
+        {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }].map((m) => (
+          <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
+        ))}
+      </div>
     </div>
 
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-      <button onClick={() => setTypeFilter(null)} style={pill(!typeFilter)}>All ({movements.length})</button>
-      <button onClick={() => setTypeFilter("stock_out")} style={pill(typeFilter === "stock_out", "#DC2626")}>📤 Stock Out ({counts.stock_out})</button>
-      <button onClick={() => setTypeFilter("stock_in")} style={pill(typeFilter === "stock_in", "#16A34A")}>📥 Stock In ({counts.stock_in})</button>
-      <button onClick={() => setTypeFilter("adjust")} style={pill(typeFilter === "adjust", "#B45309")}>🔄 Adjust ({counts.adjust})</button>
-    </div>
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading {monthLabel}...</div>}
+    {!loading && itemRows.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No movements in {monthLabel}</div>}
 
-    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-    {!loading && visible.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No movements on {selDate}</div>}
-    {!loading && visible.map((m) => (
-      <div key={m.id} style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "10px 14px", marginBottom: 4, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div>
-          <span style={{ fontSize: 11, fontWeight: 700, color: m.type === "stock_in" ? "#16A34A" : m.type === "stock_out" ? "#DC2626" : "#B45309" }}>{m.type === "stock_in" ? "📥 IN" : m.type === "stock_out" ? "📤 OUT" : "🔄 ADJ"}</span>
-          <span style={{ fontSize: 13, fontWeight: 600, marginLeft: 8 }}>{m.inventory_items?.name || m.item_id}</span>
-          <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>{m.reason || ""}</span>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: m.quantity > 0 ? "#16A34A" : "#DC2626" }}>{m.quantity > 0 ? "+" : ""}{m.quantity} {m.inventory_items?.unit || ""}</div>
-          <div style={{ fontSize: 10, color: "#999" }}>{new Date(m.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}</div>
+    {!loading && itemRows.length > 0 && viewMode === "summary" && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Item</th>
+              <th style={{ ...thS, textAlign: "right" }}>📥 Stock In</th>
+              <th style={{ ...thS, textAlign: "right" }}>📤 Stock Out</th>
+              <th style={{ ...thS, textAlign: "right" }}>🔄 Adjust</th>
+            </tr></thead>
+            <tbody>
+              {itemRows.map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={tdS}>{r.name} <span style={{ color: "#BBB", fontSize: 10 }}>({r.unit})</span></td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.stock_in > 0 ? "#16A34A" : "#CCC", fontWeight: r.stock_in > 0 ? 700 : 400 }}>{r.stock_in > 0 ? round2(r.stock_in) : "—"}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.stock_out > 0 ? "#DC2626" : "#CCC", fontWeight: r.stock_out > 0 ? 700 : 400 }}>{r.stock_out > 0 ? round2(r.stock_out) : "—"}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.adjust !== 0 ? "#B45309" : "#CCC", fontWeight: r.adjust !== 0 ? 700 : 400 }}>{r.adjust !== 0 ? (r.adjust > 0 ? "+" : "") + round2(r.adjust) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
-    ))}
+    )}
+
+    {!loading && itemRows.length > 0 && viewMode === "daywise" && (<>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+        <button onClick={() => setDayMetric("stock_out")} style={pill(dayMetric === "stock_out", "#DC2626")}>📤 Stock Out</button>
+        <button onClick={() => setDayMetric("stock_in")} style={pill(dayMetric === "stock_in", "#16A34A")}>📥 Stock In</button>
+        <button onClick={() => setDayMetric("adjust")} style={pill(dayMetric === "adjust", "#B45309")}>🔄 Adjust</button>
+      </div>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, width: 150, minWidth: 150 }}>Item</th>
+              <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", zIndex: 2, textAlign: "right", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>Total</th>
+              {days.map((ds) => <th key={ds} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>{ds.slice(8)}</th>)}
+            </tr></thead>
+            <tbody>
+              {itemRows.filter((r) => r[dayMetric] !== 0).map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", zIndex: 1, fontWeight: 600, whiteSpace: "nowrap", width: 150, minWidth: 150 }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
+                  <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", zIndex: 1, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309", width: 80, minWidth: 80, boxShadow: "2px 0 4px rgba(0,0,0,0.04)" }}>{round2(r[dayMetric])}</td>
+                  {days.map((ds) => {
+                    const v = monthData.dayWise[r.id]?.[ds]?.[dayMetric] || 0;
+                    return <td key={ds} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: v !== 0 ? "#1A1A1A" : "#CCC" }}>{v !== 0 ? round2(v) : "—"}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>)}
   </div>);
 };
 
