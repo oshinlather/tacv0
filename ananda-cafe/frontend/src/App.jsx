@@ -1964,7 +1964,12 @@ const DailyPnL = () => {
           </div>
         )}
 
-        {/* Detailed P&L Table */}
+        {/* Detailed P&L Table — a single blended P&L across all outlets isn't that
+            meaningful (the "ideal vs actual" comparison and per-item edits below only
+            make sense for one real outlet); for All Outlets, COGS Compare's per-outlet
+            category breakdown is the more useful view, so it's shown instead. */}
+        {!selOutlet && <CogsCompare />}
+        {selOutlet && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
           {/* REVENUE — collapsed to just this one header line by default, with the
               Total Sale(Effective Sale) calc right in it; expand for the full breakdown. */}
@@ -2268,6 +2273,7 @@ const DailyPnL = () => {
               sub={`${d.margin || 0}% margin`} />
           </div>
         </div>
+        )}
 
         {/* Cost Breakdown Bars */}
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
