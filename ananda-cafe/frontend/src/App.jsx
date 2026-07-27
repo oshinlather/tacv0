@@ -10325,6 +10325,7 @@ const SCOPED_ROLE_TABS = {
     { id: "cogs_compare", label: "📊 COGS Compare" },
     { id: "audit", label: "🔍 RM Audit" },
     { id: "reviews", label: "⭐ Reviews" },
+    { id: "franchise_billing", label: "🧾 Franchise Billing" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
@@ -10411,6 +10412,7 @@ const ScopedDashboard = () => {
       {tab === "cogs_compare" && <CogsCompare />}
       {tab === "audit" && <RMAuditPanel />}
       {tab === "reviews" && <DailyReviewSummary />}
+      {tab === "franchise_billing" && <FranchiseBilling />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
     </div>
