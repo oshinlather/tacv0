@@ -5677,8 +5677,10 @@ const CogsCompare = ({ syncDate } = {}) => {
   const [drillCat, setDrillCat] = useState(null);
   // Which outlet column rows are sorted by — index into outletsWithData, so it applies
   // identically to categoryRows and itemRows (their .pcts arrays share that same order).
-  // null = default spread (max−min) sort, biggest cross-outlet anomaly first.
-  const [sortIdx, setSortIdx] = useState(null);
+  // Defaults to the first outlet's % descending (biggest cost category first) — a more
+  // readable/predictable default than the old max−min spread sort, which reordered
+  // unpredictably day to day based on whichever category happened to be volatile.
+  const [sortIdx, setSortIdx] = useState(0);
   const [sortDir, setSortDir] = useState("desc");
   const toggleSort = (idx) => {
     if (sortIdx === idx) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
@@ -5872,8 +5874,8 @@ const CogsCompare = ({ syncDate } = {}) => {
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 170 }}>
                   {drillCat ? "Item" : "Category"}
-                  {sortIdx != null && (
-                    <span onClick={() => { setSortIdx(null); }} title="Reset to default (biggest cross-outlet spread) sort" style={{ marginLeft: 6, fontSize: 10, color: "#2563EB", cursor: "pointer", fontWeight: 700 }}>↺ reset</span>
+                  {!(sortIdx === 0 && sortDir === "desc") && (
+                    <span onClick={() => { setSortIdx(0); setSortDir("desc"); }} title="Reset to default sort" style={{ marginLeft: 6, fontSize: 10, color: "#2563EB", cursor: "pointer", fontWeight: 700 }}>↺ reset</span>
                   )}
                 </th>
                 {outletsWithData.map((o, i) => (
