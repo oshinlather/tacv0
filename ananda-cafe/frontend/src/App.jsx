@@ -3791,37 +3791,47 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
 // screen's date-selectable "Dispatched" section: 7-day pills + a calendar for anything
 // older, so owner/AVP can see old stock-ins instead of only ever the last 10 pending POs.
 const PurchaseOrderHistory = ({ setView }) => {
-  const [selDate, setSelDate] = useState(today());
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
+  const [catFilter, setCatFilter] = useState(null); // null=All, else an ORDER_VENDORS id
 
+  // No date picker — every challan, most recent first, with its own date shown per row.
+  // Bounded to the most recent 300 so this doesn't grow unbounded over the life of the app.
   useEffect(() => {
     setLoading(true);
-    api.getPurchaseOrders({ date: selDate }).then((d) => setOrders(d || [])).catch(() => setOrders([])).finally(() => setLoading(false));
-  }, [selDate]);
+    api.getPurchaseOrders({ limit: 300 }).then((d) => setOrders(d || [])).catch(() => setOrders([])).finally(() => setLoading(false));
+  }, []);
 
   const vendorFor = (notes) => ORDER_VENDORS.find((v) => v.label === notes);
+
+  // Only the 3 categories the owner actually wants quick filters for — Dairy/Gas orders
+  // still show up under "All", just without their own dedicated pill.
+  const HISTORY_PILLS = ORDER_VENDORS.filter((v) => ["vegetable", "packaging_cleaning", "grocery_masala"].includes(v.id));
+  const counts = useMemo(() => {
+    const c = {};
+    HISTORY_PILLS.forEach((v) => { c[v.id] = orders.filter((po) => po.notes === v.label).length; });
+    return c;
+  }, [orders]);
+  const visible = catFilter ? orders.filter((po) => po.notes === HISTORY_PILLS.find((v) => v.id === catFilter)?.label) : orders;
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
       <BackBtn onClick={() => setView("order_challan")} />
       <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📜 Order History</div>
     </div>
-    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Every vendor order — Vegetables, Dairy, Gas, Grocery & Masala, Packaging & Cleaning — pending or received, for the selected date.</p>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Every vendor order — pending or received — most recent first.</p>
 
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-      {Array.from({ length: 7 }, (_, i) => {
-        const d = istDateAgo(i);
-        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
-        return (<button key={i} onClick={() => setSelDate(d)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === d ? 700 : 500, border: selDate === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === d ? "#1A1A1A" : "#fff", color: selDate === d ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{label}</button>);
-      })}
-      <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555", cursor: "pointer", flexShrink: 0 }} />
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      <button onClick={() => setCatFilter(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !catFilter ? 700 : 500, border: !catFilter ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !catFilter ? "#1A1A1A" : "#fff", color: !catFilter ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({orders.length})</button>
+      {HISTORY_PILLS.map((v) => (
+        <button key={v.id} onClick={() => setCatFilter(catFilter === v.id ? null : v.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: catFilter === v.id ? 700 : 500, border: catFilter === v.id ? "none" : `1px solid ${v.border}`, cursor: "pointer", fontFamily: "inherit", background: catFilter === v.id ? v.color : v.bg, color: catFilter === v.id ? "#fff" : v.color, whiteSpace: "nowrap" }}>{v.label} ({counts[v.id]})</button>
+      ))}
     </div>
 
     {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-    {!loading && orders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No orders on {selDate}</div>}
-    {!loading && orders.map((po) => {
+    {!loading && visible.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No orders</div>}
+    {!loading && visible.map((po) => {
       const v = vendorFor(po.notes);
       const isOpen = openId === po.id;
       const itemEntries = Object.entries(po.items || {});
@@ -3831,7 +3841,7 @@ const PurchaseOrderHistory = ({ setView }) => {
           <div onClick={() => setOpenId(isOpen ? null : po.id)} style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: v?.bg || "#FAFAF8" }}>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: v?.color || "#1A1A1A" }}>{v?.label || po.notes || "Order"} <span style={{ color: "#BBB", fontWeight: 500, fontSize: 11 }}>{po.order_number}</span></div>
-              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{po.total_items} items · created by {po.created_by || "—"}</div>
+              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>📅 {po.date} · {po.total_items} items · created by {po.created_by || "—"}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isReceived ? "#F0FDF4" : "#FFFBEB", color: isReceived ? "#16A34A" : "#B45309" }}>{isReceived ? "✅ Received" : "⏳ Pending"}</span>
