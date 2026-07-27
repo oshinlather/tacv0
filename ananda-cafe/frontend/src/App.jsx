@@ -5100,6 +5100,13 @@ const FranchiseBilling = () => {
   // `items` array below); CSV export always uses the full unfiltered set regardless.
   const [billCat, setBillCat] = useState(null);
   useEffect(() => { setBillCat(null); }, [selOutlet, selMonth]);
+  // Edit mode — cells render as plain text by default (safer, harder to fat-finger a
+  // correction by accident) and only become editable inputs once toggled on, so several
+  // cells can be corrected in one pass before switching back. Edits themselves are still
+  // applied live as you type (they're local-only, never persisted) — "Done" just exits the
+  // editable view, it isn't a separate save step.
+  const [editMode, setEditMode] = useState(false);
+  useEffect(() => { setEditMode(false); }, [selOutlet, selMonth]);
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -5299,6 +5306,7 @@ const FranchiseBilling = () => {
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
+                <button onClick={() => setEditMode((v) => !v)} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{editMode ? "✅ Done" : "✏️ Edit"}</button>
                 <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
               </div>
             </div>
@@ -5317,7 +5325,7 @@ const FranchiseBilling = () => {
             ) : visibleItems.length === 0 ? (
               <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No items in this category</div>
             ) : viewMode === "daywise" ? (<>
-              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>✏️ Click any day's qty to correct it — local to this bill only, resets on outlet/month change.</div>
+              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>{editMode ? "✏️ Editing — correct as many cells as you need, then tap Done. Local to this bill only, resets on outlet/month change." : "Tap ✏️ Edit above to correct any day's qty."}</div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>
@@ -5340,13 +5348,17 @@ const FranchiseBilling = () => {
                             const isEdited = (dayEdits[i.id] || {})[ds] !== undefined;
                             return (
                               <td key={ds} style={{ ...tdS, textAlign: "right", padding: "4px 6px" }}>
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
-                                  <input type="number" inputMode="decimal" step="any" value={v === 0 && !isEdited ? "" : v}
-                                    placeholder="—"
-                                    onChange={(e) => setDayEdit(i.id, ds, e.target.value)}
-                                    style={{ width: 46, padding: "3px 4px", borderRadius: 5, border: isEdited ? "1px solid #2563EB" : "1px solid #E8E8E4", background: isEdited ? "#EFF6FF" : "transparent", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: isEdited ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: isEdited ? 700 : 400 }} />
-                                  {isEdited && <button onClick={() => resetDayEdit(i.id, ds)} title="Reset" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 10, padding: 0 }}>↺</button>}
-                                </div>
+                                {editMode ? (
+                                  <div style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+                                    <input type="number" inputMode="decimal" step="any" value={v === 0 && !isEdited ? "" : v}
+                                      placeholder="—"
+                                      onChange={(e) => setDayEdit(i.id, ds, e.target.value)}
+                                      style={{ width: 46, padding: "3px 4px", borderRadius: 5, border: isEdited ? "1px solid #2563EB" : "1px solid #E8E8E4", background: isEdited ? "#EFF6FF" : "transparent", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right", color: isEdited ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: isEdited ? 700 : 400 }} />
+                                    {isEdited && <button onClick={() => resetDayEdit(i.id, ds)} title="Reset" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 10, padding: 0 }}>↺</button>}
+                                  </div>
+                                ) : (
+                                  <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", color: isEdited ? "#2563EB" : (v > 0 ? "#1A1A1A" : "#CCC"), fontWeight: isEdited ? 700 : 400 }}>{v > 0 || isEdited ? v : "—"}</span>
+                                )}
                               </td>
                             );
                           })}
@@ -5374,23 +5386,31 @@ const FranchiseBilling = () => {
                           <td style={tdS}>{i.name}</td>
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{i.demandQty} {i.unit}</td>
                           <td style={{ ...tdS, textAlign: "right" }}>
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              <input type="number" inputMode="decimal" step="any" value={i.billedQty}
-                                onChange={(e) => setEditField(i.id, "qty", e.target.value)}
-                                style={{ width: 64, padding: "4px 6px", borderRadius: 6, border: i.dispatchQtyEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.dispatchQtyEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.dispatchQtyEdited ? "#2563EB" : (mismatch ? "#DC2626" : "#1A1A1A"), fontWeight: i.dispatchQtyEdited || mismatch ? 700 : 400 }} />
-                              <span style={{ color: "#999" }}>{i.unit}</span>
-                              {i.dispatchQtyEdited && <button onClick={() => resetEditField(i.id, "qty")} title="Reset to dispatched qty" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
-                            </div>
+                            {editMode ? (
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <input type="number" inputMode="decimal" step="any" value={i.billedQty}
+                                  onChange={(e) => setEditField(i.id, "qty", e.target.value)}
+                                  style={{ width: 64, padding: "4px 6px", borderRadius: 6, border: i.dispatchQtyEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.dispatchQtyEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.dispatchQtyEdited ? "#2563EB" : (mismatch ? "#DC2626" : "#1A1A1A"), fontWeight: i.dispatchQtyEdited || mismatch ? 700 : 400 }} />
+                                <span style={{ color: "#999" }}>{i.unit}</span>
+                                {i.dispatchQtyEdited && <button onClick={() => resetEditField(i.id, "qty")} title="Reset to dispatched qty" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
+                              </div>
+                            ) : (
+                              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.dispatchQtyEdited || mismatch ? 700 : 400, color: i.dispatchQtyEdited ? "#2563EB" : (mismatch ? "#DC2626" : "#1A1A1A") }}>{i.billedQty} {i.unit}</span>
+                            )}
                           </td>
                           <td style={{ ...tdS, textAlign: "right" }}>
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                              <span style={{ color: "#999" }}>₹</span>
-                              <input type="number" inputMode="decimal" step="any" value={i.billedRate}
-                                onChange={(e) => setEditField(i.id, "rate", e.target.value)}
-                                style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: i.rateEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.rateEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.rateEdited ? "#2563EB" : "#888", fontWeight: i.rateEdited ? 700 : 400 }} />
-                              <span style={{ color: "#999" }}>/{i.rateUnit}</span>
-                              {i.rateEdited && <button onClick={() => resetEditField(i.id, "rate")} title="Reset to rate card price" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
-                            </div>
+                            {editMode ? (
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <span style={{ color: "#999" }}>₹</span>
+                                <input type="number" inputMode="decimal" step="any" value={i.billedRate}
+                                  onChange={(e) => setEditField(i.id, "rate", e.target.value)}
+                                  style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: i.rateEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.rateEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.rateEdited ? "#2563EB" : "#888", fontWeight: i.rateEdited ? 700 : 400 }} />
+                                <span style={{ color: "#999" }}>/{i.rateUnit}</span>
+                                {i.rateEdited && <button onClick={() => resetEditField(i.id, "rate")} title="Reset to rate card price" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
+                              </div>
+                            ) : (
+                              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.rateEdited ? 700 : 400, color: i.rateEdited ? "#2563EB" : "#888" }}>₹{i.billedRate}/{i.rateUnit}</span>
+                            )}
                           </td>
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(i.amount)}</td>
                         </tr>
