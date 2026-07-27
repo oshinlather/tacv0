@@ -4064,9 +4064,11 @@ router.get('/purchase-orders', async (req, res) => {
   try {
     // Drivers read this to find their vegetable order for the day (see PATCH below).
     if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'driver')) return;
-    const { status, limit } = req.query;
+    const { status, limit, date, from } = req.query;
     let query = supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     if (status) query = query.eq('status', status);
+    if (date) query = query.eq('date', date);
+    if (from) query = query.gte('date', from);
     if (limit) query = query.limit(Number(limit));
     const { data, error } = await query;
     if (error) throw error;

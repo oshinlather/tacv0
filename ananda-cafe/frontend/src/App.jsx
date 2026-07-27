@@ -3776,7 +3776,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   if (rmEditing && selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=items.filter(i=>v?.categories.includes(displayCategory(i.category))); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>setRmEditing(false)} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>⚙️ Set {v?.label} Requirement</div><div style={{fontSize:11,color:"#888"}}>{v?.period==="daily"?"Daily requirement":"10-day requirement"}</div></div></div><div style={{padding:"10px 14px",borderRadius:10,background:"#EFF6FF",border:"1px solid #BFDBFE",fontSize:12,color:"#1D4ED8",marginBottom:14}}>Set qty needed for {v?.period==="daily"?"1 day":"10 days"}. Last 10d usage shown as suggestion.</div>{vi.map(item=>{const usage=Math.round((usageSuggestion[item.id]||0)*100)/100;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,background:rmDraft[item.id]>0?"#EFF6FF":"#FAFAF8",marginBottom:3}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>10d usage: <strong style={{color:usage>0?"#2563EB":"#CCC"}}>{usage||"—"}</strong>{v?.period==="daily"&&usage>0&&<span> · ~{Math.round(usage/10*100)/100}/day</span>}</div></div><input type="number" inputMode="numeric" min="0" placeholder="0" value={rmDraft[item.id]||""} onChange={e=>setRmDraft(p=>({...p,[item.id]:Math.max(0,+e.target.value||0)}))} style={{width:70,padding:"6px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:15,textAlign:"center",fontFamily:"inherit",fontWeight:700}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><button onClick={saveRmConfig} style={{width:"100%",padding:"14px",borderRadius:14,border:"none",background:v?.color||"#2563EB",color:"#fff",fontWeight:800,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>💾 Save {v?.label} Config</button></div></div>); }
   if (selVendor) { const v=ORDER_VENDORS.find(x=>x.id===selVendor); const vi=getVendorItems(v); const tot=vi.filter(i=>{const e=Number(orderQty[i.id]);return(!isNaN(e)?e:i.orderQtyCalc)>0}).length; const hasConfig=vi.some(i=>i.rmQty>0); const viVisible=vi.filter(i=>!vendorSearch.trim()||i.name.toLowerCase().includes(vendorSearch.trim().toLowerCase())); return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><BackBtn onClick={()=>{setSelVendor(null);setOrderQty({});setVendorSearch("")}} /><div style={{flex:1}}><div style={{fontSize:15,fontWeight:800}}>{v?.label} Order</div><div style={{fontSize:11,color:"#888",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{v?.period==="daily"?"Daily order":"10-day RM order"} · 📅<button onClick={()=>setSelDate(today())} style={{padding:"3px 9px",borderRadius:6,border:selDate===today()?"none":"1px solid #E0E0DC",background:selDate===today()?"#1A1A1A":"#fff",color:selDate===today()?"#fff":"#888",fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Today</button><button onClick={()=>setSelDate(istDateAgo(-1))} style={{padding:"3px 9px",borderRadius:6,border:selDate===istDateAgo(-1)?"none":"1px solid #E0E0DC",background:selDate===istDateAgo(-1)?"#1A1A1A":"#fff",color:selDate===istDateAgo(-1)?"#fff":"#888",fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Tomorrow</button></div></div><button onClick={()=>setRmEditing(true)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${v?.border}`,background:v?.bg,fontSize:10,fontWeight:700,color:v?.color,cursor:"pointer",fontFamily:"inherit"}}>⚙️ Set Req</button></div>{!hasConfig&&<div style={{padding:"10px 14px",borderRadius:10,background:v?.bg,border:`1px solid ${v?.border}`,fontSize:11,color:v?.color,marginBottom:14}}>💡 No {v?.period==="daily"?"daily":"10-day"} requirement set for these items yet, so nothing's pre-filled — enter quantities manually below, or <span onClick={()=>setRmEditing(true)} style={{fontWeight:700,textDecoration:"underline",cursor:"pointer"}}>set requirement</span> to get auto-suggested amounts next time.</div>}<input value={vendorSearch} onChange={e=>setVendorSearch(e.target.value)} placeholder="🔍 Search items…" style={{width:"100%",padding:"9px 12px",borderRadius:8,border:"1px solid #E0E0DC",fontSize:13,fontFamily:"inherit",marginBottom:10,boxSizing:"border-box"}} /><div style={{padding:"8px 12px",borderRadius:10,background:"#F0FDF4",border:"1px solid #BBF7D0",fontSize:11,color:"#166534",marginBottom:14,display:"flex",justifyContent:"space-between"}}><span>Order = {v?.period==="daily"?"Daily Req":"10-Day Req"} − Stock</span><span style={{fontWeight:700}}>{tot} items</span></div>{viVisible.map(item=>{const e=Number(orderQty[item.id]);const fq=!isNaN(e)&&e>=0?e:item.orderQtyCalc;const need=fq>0;return(<div key={item.id} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",borderRadius:10,background:need?v?.bg:"#FAFAF8",marginBottom:3,border:need?`1px solid ${v?.border}`:"1px solid transparent"}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600}}>{item.name}</div><div style={{fontSize:10,color:"#999"}}>Req: <strong>{item.rmQty}</strong> − Stock: <strong style={{color:Number(item.current_qty)===0?"#DC2626":"#888"}}>{item.current_qty}</strong> = <strong style={{color:v?.color}}>{item.orderQtyCalc}</strong> {item.unit}</div></div><input type="number" inputMode="numeric" min="0" placeholder={String(item.orderQtyCalc)} value={orderQty[item.id]??""} onChange={e=>setOrderQty(p=>({...p,[item.id]:e.target.value}))} style={{width:64,padding:"6px",borderRadius:8,border:need?`2px solid ${v?.color}`:"1px solid #E0E0DC",fontSize:16,textAlign:"center",fontFamily:"'JetBrains Mono'",fontWeight:800,background:"#fff"}} /><span style={{fontSize:10,color:"#999",width:28}}>{item.unit}</span></div>)})}<div style={{position:"sticky",bottom:0,padding:"12px 0",background:"linear-gradient(transparent, #FAF9F6 20%)",zIndex:10}}><div style={{display:"flex",gap:8}}><button onClick={()=>shareChallanWA(v)} style={{flex:1,padding:"12px",borderRadius:12,border:"1px solid #BBF7D0",background:"#F0FDF4",color:"#16A34A",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"inherit"}}>💬 WhatsApp</button><button onClick={()=>generateChallan(v)} disabled={challanSaving||tot===0} style={{flex:2,padding:"12px",borderRadius:12,border:"none",background:tot>0&&!challanSaving?v?.color:"#D0D0CC",color:"#fff",fontWeight:800,fontSize:14,cursor:tot>0?"pointer":"not-allowed",fontFamily:"inherit"}}>{challanSaving?"⏳...":`📝 Challan (${tot})`}</button></div></div></div>); }
   const dailyV=ORDER_VENDORS.filter(v=>v.period==="daily");const rmV=ORDER_VENDORS.filter(v=>v.period==="10day");
-  return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div></div><div style={{padding:"12px 14px",borderRadius:12,background:"#fff",border:"1px solid #E0E0DC",marginBottom:20,display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:12,fontWeight:700,color:"#555"}}>📅 Ordering for</span><div style={{flex:1,display:"flex",gap:8}}><button onClick={()=>setSelDate(today())} style={{flex:1,padding:"9px",borderRadius:8,border:selDate===today()?"none":"1px solid #E0E0DC",background:selDate===today()?"#1A1A1A":"#fff",color:selDate===today()?"#fff":"#888",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Today</button><button onClick={()=>setSelDate(istDateAgo(-1))} style={{flex:1,padding:"9px",borderRadius:8,border:selDate===istDateAgo(-1)?"none":"1px solid #E0E0DC",background:selDate===istDateAgo(-1)?"#1A1A1A":"#fff",color:selDate===istDateAgo(-1)?"#fff":"#888",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Tomorrow</button></div></div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{
+  return (<div><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><BackBtn onClick={()=>setView("stock")} /><div style={{flex:1,fontSize:15,fontWeight:800}}>📝 Order Challan</div><button onClick={()=>setView("order_history")} style={{padding:"6px 12px",borderRadius:8,border:"1px solid #E0E0DC",background:"#fff",fontSize:11,fontWeight:700,color:"#555",cursor:"pointer",fontFamily:"inherit"}}>📜 Order History</button></div><div style={{padding:"12px 14px",borderRadius:12,background:"#fff",border:"1px solid #E0E0DC",marginBottom:20,display:"flex",alignItems:"center",gap:10}}><span style={{fontSize:12,fontWeight:700,color:"#555"}}>📅 Ordering for</span><div style={{flex:1,display:"flex",gap:8}}><button onClick={()=>setSelDate(today())} style={{flex:1,padding:"9px",borderRadius:8,border:selDate===today()?"none":"1px solid #E0E0DC",background:selDate===today()?"#1A1A1A":"#fff",color:selDate===today()?"#fff":"#888",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Today</button><button onClick={()=>setSelDate(istDateAgo(-1))} style={{flex:1,padding:"9px",borderRadius:8,border:selDate===istDateAgo(-1)?"none":"1px solid #E0E0DC",background:selDate===istDateAgo(-1)?"#1A1A1A":"#fff",color:selDate===istDateAgo(-1)?"#fff":"#888",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Tomorrow</button></div></div>{pendingPOs.length>0&&<div style={{marginBottom:20}}><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📋 Pending Orders — tap to receive</div>{pendingPOs.map(po=><div key={po.id} onClick={()=>{
   // Pre-fill from whatever's already been recorded against this PO — the driver may
   // have already logged actual qty bought + price paid (Vegetables tab), which is
   // more accurate than the original order_qty demand.
@@ -3784,6 +3784,78 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
   Object.entries(po.items||{}).forEach(([id,item])=>{ newDraft[id]=item.bought_qty ?? item.order_qty; if(item.total_price>0) newPrices[id]=item.total_price; });
   setDraft(newDraft); setStockInPrices(newPrices);
   setPoMeta({id:po.id,order_number:po.order_number,total_items:po.total_items,itemIds:Object.keys(po.items||{}),items:po.items||{}});setView("stock_in")}} style={{padding:"10px 14px",borderRadius:10,background:"#FFFBEB",border:"1px solid #FDE68A",marginBottom:6,display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}><div><div style={{fontSize:13,fontWeight:700}}>{po.order_number}</div><div style={{fontSize:10,color:"#999"}}>{po.total_items} items · {po.notes||""} · {po.date}</div></div><span style={{fontSize:11,color:"#2563EB",fontWeight:600}}>📥 Receive →</span></div>)}</div>}<div style={{fontSize:12,fontWeight:700,color:"#16A34A",marginBottom:8}}>🔄 Daily Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(3, 1fr)",gap:8,marginBottom:20}}>{dailyV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setPendingVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div><div style={{fontSize:12,fontWeight:700,color:"#B45309",marginBottom:8}}>📦 10-Day RM Orders</div><div style={{display:"grid",gridTemplateColumns:"repeat(2, 1fr)",gap:8}}>{rmV.map(v=>{const vi=getVendorItems(v);const need=vi.filter(i=>i.orderQtyCalc>0).length;return(<button key={v.id} onClick={()=>setSelVendor(v.id)} style={{padding:"14px 8px",borderRadius:14,border:`1px solid ${v.border}`,background:v.bg,cursor:"pointer",fontFamily:"inherit",textAlign:"center"}}><div style={{fontSize:24,marginBottom:2}}>{v.label.split(" ")[0]}</div><div style={{fontSize:12,fontWeight:700,color:v.color}}>{v.label.split(" ").slice(1).join(" ")}</div><div style={{fontSize:10,color:"#999",marginTop:2}}>{vi.length} items</div>{need>0&&<div style={{fontSize:11,fontWeight:700,color:v.color,marginTop:2}}>{need} to order</div>}</button>)})}</div></div>);
+};
+
+// ── Order History — every vendor's purchase order (Vegetables, Dairy, Gas, Grocery &
+// Masala, Packaging & Cleaning), any status, browsable by date. Mirrors the Dispatch
+// screen's date-selectable "Dispatched" section: 7-day pills + a calendar for anything
+// older, so owner/AVP can see old stock-ins instead of only ever the last 10 pending POs.
+const PurchaseOrderHistory = ({ setView }) => {
+  const [selDate, setSelDate] = useState(today());
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getPurchaseOrders({ date: selDate }).then((d) => setOrders(d || [])).catch(() => setOrders([])).finally(() => setLoading(false));
+  }, [selDate]);
+
+  const vendorFor = (notes) => ORDER_VENDORS.find((v) => v.label === notes);
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <BackBtn onClick={() => setView("order_challan")} />
+      <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📜 Order History</div>
+    </div>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 14px" }}>Every vendor order — Vegetables, Dairy, Gas, Grocery & Masala, Packaging & Cleaning — pending or received, for the selected date.</p>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+      {Array.from({ length: 7 }, (_, i) => {
+        const d = istDateAgo(i);
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : d.slice(5);
+        return (<button key={i} onClick={() => setSelDate(d)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDate === d ? 700 : 500, border: selDate === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDate === d ? "#1A1A1A" : "#fff", color: selDate === d ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{label}</button>);
+      })}
+      <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555", cursor: "pointer", flexShrink: 0 }} />
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+    {!loading && orders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No orders on {selDate}</div>}
+    {!loading && orders.map((po) => {
+      const v = vendorFor(po.notes);
+      const isOpen = openId === po.id;
+      const itemEntries = Object.entries(po.items || {});
+      const isReceived = po.status === "received";
+      return (
+        <div key={po.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${v?.border || "#E8E8E4"}`, marginBottom: 8, overflow: "hidden" }}>
+          <div onClick={() => setOpenId(isOpen ? null : po.id)} style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: v?.bg || "#FAFAF8" }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: v?.color || "#1A1A1A" }}>{v?.label || po.notes || "Order"} <span style={{ color: "#BBB", fontWeight: 500, fontSize: 11 }}>{po.order_number}</span></div>
+              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{po.total_items} items · created by {po.created_by || "—"}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isReceived ? "#F0FDF4" : "#FFFBEB", color: isReceived ? "#16A34A" : "#B45309" }}>{isReceived ? "✅ Received" : "⏳ Pending"}</span>
+              <span style={{ color: "#BBB", fontSize: 11 }}>{isOpen ? "▲" : "▼"}</span>
+            </div>
+          </div>
+          {isOpen && (
+            <div style={{ borderTop: "1px solid #F0F0EC" }}>
+              {itemEntries.map(([id, item]) => (
+                <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #F5F5F3", fontSize: 12 }}>
+                  <span style={{ fontWeight: 600 }}>{item.name}</span>
+                  <span style={{ color: "#888", textAlign: "right" }}>
+                    Ordered: <strong style={{ color: "#1A1A1A" }}>{item.order_qty}</strong> {item.unit}
+                    {item.bought_qty > 0 && <span> · Bought: <strong style={{ color: "#16A34A" }}>{item.bought_qty}</strong> {item.unit}{item.total_price > 0 ? ` for ₹${item.total_price}` : ""}</span>}
+                  </span>
+                </div>
+              ))}
+              {itemEntries.length === 0 && <div style={{ padding: "10px 16px", fontSize: 12, color: "#999" }}>No items on this order</div>}
+            </div>
+          )}
+        </div>
+      );
+    })}
+  </div>);
 };
 
 const Inventory = () => {
@@ -3993,6 +4065,11 @@ const Inventory = () => {
   // ── ORDER CHALLAN VIEW — RM Order based ──
   if (view === "order_challan") {
     return <OrderChallanView items={invItems} categories={categories} displayCategory={displayCategory} selCat={selCat} setSelCat={setSelCat} orderQty={orderQty} setOrderQty={setOrderQty} setView={setView} setDraft={setDraft} setPoMeta={setPoMeta} setStockInPrices={setStockInPrices} fmt={fmt} />;
+  }
+
+  // ── ORDER HISTORY VIEW — every vendor PO, any status, browsable by date ──
+  if (view === "order_history") {
+    return <PurchaseOrderHistory setView={setView} />;
   }
 
   // ── MAIN STOCK VIEW ──
