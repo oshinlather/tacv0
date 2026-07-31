@@ -1128,6 +1128,11 @@ const TODO_CATEGORIES = [
   { id: "vendor_payment", label: "🏢 Vendor Payment" },
   { id: "complaint", label: "😠 Complaint / Review" },
   { id: "process", label: "🔄 Process" },
+  { id: "electrician", label: "💡 Electrician" },
+  { id: "plumbing", label: "🚰 Plumbing" },
+  { id: "carpenter", label: "🪚 Carpenter" },
+  { id: "painter", label: "🎨 Painter" },
+  { id: "ac_repair", label: "❄️ AC / Repair" },
   { id: "general", label: "📌 General" },
 ];
 const todoCatLabel = (id) => TODO_CATEGORIES.find((c) => c.id === id)?.label || id;

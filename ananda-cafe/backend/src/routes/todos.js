@@ -10,7 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 const { requireAuth, requireOwner } = require('./authGuards');
 
-const CATEGORIES = ['operational_issue', 'vendor_payment', 'complaint', 'process', 'general'];
+const CATEGORIES = ['operational_issue', 'vendor_payment', 'complaint', 'process', 'electrician', 'plumbing', 'carpenter', 'painter', 'ac_repair', 'general'];
 
 // ── GET /api/todos — list tasks, filterable by status/category
 router.get('/', async (req, res) => {
