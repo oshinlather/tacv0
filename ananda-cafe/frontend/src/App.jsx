@@ -3790,30 +3790,60 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
 // Masala, Packaging & Cleaning), any status, browsable by date. Mirrors the Dispatch
 // screen's date-selectable "Dispatched" section: 7-day pills + a calendar for anything
 // older, so owner/AVP can see old stock-ins instead of only ever the last 10 pending POs.
+// Vendor challans (purchase_orders) and outlet-submitted Dairy/Cold Drink purchases
+// (purchases, from the OutletMgr form) use different shapes — this normalizes a
+// `purchases` row into the same {id, order_number, date, status, notes, items,
+// total_items, created_by} card shape PurchaseOrderHistory already renders.
+const DC_HISTORY_LABEL = "🥛 Dairy / Cold Drink";
+const dcPurchaseToOrder = (p) => {
+  const dcItems = (p.items || []).filter((i) => ["dairy_purchase", "cold_drink_purchase"].includes(i.type));
+  if (dcItems.length === 0) return null;
+  return {
+    id: `dc_${p.id}`,
+    order_number: OUTLETS.find((o) => o.id === p.outlet_id)?.short || p.outlet_id,
+    date: p.date,
+    status: "direct",
+    notes: DC_HISTORY_LABEL,
+    items: Object.fromEntries(dcItems.map((i, idx) => [`${p.id}_${idx}`, { name: i.item_name, unit: i.unit, order_qty: i.quantity, bought_qty: i.quantity, total_price: i.amount }])),
+    total_items: dcItems.length,
+    created_by: p.submitted_by,
+  };
+};
+
 const PurchaseOrderHistory = ({ setView }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState(null);
-  const [catFilter, setCatFilter] = useState(null); // null=All, else an ORDER_VENDORS id
+  const [catFilter, setCatFilter] = useState(null); // null=All, else an ORDER_VENDORS id or "dairy_cold_drink"
 
   // No date picker — every challan, most recent first, with its own date shown per row.
   // Bounded to the most recent 300 so this doesn't grow unbounded over the life of the app.
   useEffect(() => {
     setLoading(true);
-    api.getPurchaseOrders({ limit: 300 }).then((d) => setOrders(d || [])).catch(() => setOrders([])).finally(() => setLoading(false));
+    Promise.all([
+      api.getPurchaseOrders({ limit: 300 }).catch(() => []),
+      api.getPurchases({ limit: 300 }).catch(() => []),
+    ]).then(([pos, purchases]) => {
+      const dcOrders = (purchases || []).map(dcPurchaseToOrder).filter(Boolean);
+      setOrders([...(pos || []), ...dcOrders].sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+    }).finally(() => setLoading(false));
   }, []);
 
   const vendorFor = (notes) => ORDER_VENDORS.find((v) => v.label === notes);
 
-  // Only the 3 categories the owner actually wants quick filters for — Dairy/Gas orders
-  // still show up under "All", just without their own dedicated pill.
+  // Only the 3 categories the owner actually wants quick filters for — Dairy/Gas vendor
+  // orders still show up under "All", just without their own dedicated pill. The outlet
+  // Dairy/Cold Drink purchase form gets its own pill since it's a distinct source.
   const HISTORY_PILLS = ORDER_VENDORS.filter((v) => ["vegetable", "packaging_cleaning", "grocery_masala"].includes(v.id));
   const counts = useMemo(() => {
     const c = {};
     HISTORY_PILLS.forEach((v) => { c[v.id] = orders.filter((po) => po.notes === v.label).length; });
+    c.dairy_cold_drink = orders.filter((po) => po.notes === DC_HISTORY_LABEL).length;
     return c;
   }, [orders]);
-  const visible = catFilter ? orders.filter((po) => po.notes === HISTORY_PILLS.find((v) => v.id === catFilter)?.label) : orders;
+  const visible = catFilter
+    ? (catFilter === "dairy_cold_drink" ? orders.filter((po) => po.notes === DC_HISTORY_LABEL) : orders.filter((po) => po.notes === HISTORY_PILLS.find((v) => v.id === catFilter)?.label))
+    : orders;
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
@@ -3827,14 +3857,16 @@ const PurchaseOrderHistory = ({ setView }) => {
       {HISTORY_PILLS.map((v) => (
         <button key={v.id} onClick={() => setCatFilter(catFilter === v.id ? null : v.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: catFilter === v.id ? 700 : 500, border: catFilter === v.id ? "none" : `1px solid ${v.border}`, cursor: "pointer", fontFamily: "inherit", background: catFilter === v.id ? v.color : v.bg, color: catFilter === v.id ? "#fff" : v.color, whiteSpace: "nowrap" }}>{v.label} ({counts[v.id]})</button>
       ))}
+      <button onClick={() => setCatFilter(catFilter === "dairy_cold_drink" ? null : "dairy_cold_drink")} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: catFilter === "dairy_cold_drink" ? 700 : 500, border: catFilter === "dairy_cold_drink" ? "none" : "1px solid #BFDBFE", cursor: "pointer", fontFamily: "inherit", background: catFilter === "dairy_cold_drink" ? "#2563EB" : "#EFF6FF", color: catFilter === "dairy_cold_drink" ? "#fff" : "#2563EB", whiteSpace: "nowrap" }}>{DC_HISTORY_LABEL} ({counts.dairy_cold_drink})</button>
     </div>
 
     {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
     {!loading && visible.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 12 }}>No orders</div>}
     {!loading && visible.map((po) => {
-      const v = vendorFor(po.notes);
+      const v = po.notes === DC_HISTORY_LABEL ? { label: DC_HISTORY_LABEL, color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" } : vendorFor(po.notes);
       const isOpen = openId === po.id;
       const itemEntries = Object.entries(po.items || {});
+      const isDirect = po.status === "direct";
       const isReceived = po.status === "received";
       const orderTotal = itemEntries.reduce((s, [, item]) => s + (Number(item.total_price) || 0), 0);
       return (
@@ -3842,11 +3874,11 @@ const PurchaseOrderHistory = ({ setView }) => {
           <div onClick={() => setOpenId(isOpen ? null : po.id)} style={{ padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", background: v?.bg || "#FAFAF8" }}>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: v?.color || "#1A1A1A" }}>{v?.label || po.notes || "Order"} <span style={{ color: "#BBB", fontWeight: 500, fontSize: 11 }}>{po.order_number}</span></div>
-              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>📅 {po.date} · {po.total_items} items · created by {po.created_by || "—"}</div>
+              <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>📅 {po.date} · {po.total_items} items · {isDirect ? "bought by" : "created by"} {po.created_by || "—"}</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {orderTotal > 0 && <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#1A1A1A" }}>{fmt(orderTotal)}</span>}
-              <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isReceived ? "#F0FDF4" : "#FFFBEB", color: isReceived ? "#16A34A" : "#B45309" }}>{isReceived ? "✅ Received" : "⏳ Pending"}</span>
+              {isDirect ? <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: "#EFF6FF", color: "#2563EB" }}>💵 Cash</span> : <span style={{ padding: "2px 8px", borderRadius: 5, fontSize: 10, fontWeight: 700, background: isReceived ? "#F0FDF4" : "#FFFBEB", color: isReceived ? "#16A34A" : "#B45309" }}>{isReceived ? "✅ Received" : "⏳ Pending"}</span>}
               <span style={{ color: "#BBB", fontSize: 11 }}>{isOpen ? "▲" : "▼"}</span>
             </div>
           </div>
@@ -3856,8 +3888,10 @@ const PurchaseOrderHistory = ({ setView }) => {
                 <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #F5F5F3", fontSize: 12 }}>
                   <span style={{ fontWeight: 600 }}>{item.name}</span>
                   <span style={{ color: "#888", textAlign: "right" }}>
-                    Ordered: <strong style={{ color: "#1A1A1A" }}>{item.order_qty}</strong> {item.unit}
-                    {item.bought_qty > 0 && <span> · Bought: <strong style={{ color: "#16A34A" }}>{item.bought_qty}</strong> {item.unit}{item.total_price > 0 ? ` for ₹${item.total_price}` : ""}</span>}
+                    {isDirect ? (<><strong style={{ color: "#1A1A1A" }}>{item.bought_qty}</strong> {item.unit}{item.total_price > 0 ? ` for ₹${item.total_price}` : ""}</>) : (<>
+                      Ordered: <strong style={{ color: "#1A1A1A" }}>{item.order_qty}</strong> {item.unit}
+                      {item.bought_qty > 0 && <span> · Bought: <strong style={{ color: "#16A34A" }}>{item.bought_qty}</strong> {item.unit}{item.total_price > 0 ? ` for ₹${item.total_price}` : ""}</span>}
+                    </>)}
                   </span>
                 </div>
               ))}
