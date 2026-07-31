@@ -6531,6 +6531,20 @@ const CATEGORY_SCOPE = {
   bainmarry: ["packaging"],
 };
 
+// Dairy / Cold Drink Purchase — a separate, structured purchase form from the freeform
+// Cash Purchase screen: a fixed item catalog per category, qty + price per line, no
+// vendor/photo/payment-mode fields. Dairy reuses the existing DEMAND_SECTIONS catalog;
+// Cold Drink & Water has no catalog elsewhere in the system, so it's defined here.
+const DC_PURCHASE_CATEGORIES = [
+  { id: "dairy", label: "🥛 Dairy", items: DEMAND_SECTIONS.find((s) => s.id === "dairy")?.items || [] },
+  { id: "cold_drink", label: "🥤 Cold Drink & Water", items: [
+    { id: "cold_drink", name: "Cold Drink", unit: "Pcs" },
+    { id: "diet_coke", name: "Diet Coke", unit: "Pcs" },
+    { id: "small_water_bottle", name: "Small Water Bottle", unit: "Pcs" },
+    { id: "water_bottle_1l", name: "Water Bottle (1L)", unit: "Pcs" },
+  ] },
+];
+
 const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
   const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
@@ -6590,6 +6604,9 @@ const OutletMgr = ({ onBack }) => {
   const [quickVendor, setQuickVendor] = useState(""); const [quickType, setQuickType] = useState("new_purchase"); const [quickPhotos, setQuickPhotos] = useState([]);
   const [quickNote, setQuickNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash"); const [quickSaving, setQuickSaving] = useState(false);
   const [todaysPurchases, setTodaysPurchases] = useState([]); const [purchaseToast, setPurchaseToast] = useState(null);
+  // Dairy / Cold Drink Purchase — a fixed catalog per category, qty + price per line.
+  const [dcCategory, setDcCategory] = useState("dairy");
+  const [dcQty, setDcQty] = useState({}); const [dcPrice, setDcPrice] = useState({}); const [dcSaving, setDcSaving] = useState(false);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
@@ -6602,6 +6619,20 @@ const OutletMgr = ({ onBack }) => {
   ) : null;
   // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
   const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
+  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcPrice({}); };
+  const submitDcPurchase = async () => {
+    const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
+    const filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcPrice[i.id]) > 0);
+    if (filled.length === 0) { alert("Fill qty and price for at least 1 item"); return; }
+    setDcSaving(true); setErr(null);
+    try {
+      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcQty[i.id]) * Number(dcPrice[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
+      await api.createPurchase({ items: apiItems, payment_mode: "cash", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
+      alert(`✅ Purchase saved — ${filled.length} items`);
+      resetDcPurchase(); setScreen("home");
+    } catch (e) { setErr(e.message); alert(`❌ Failed to save: ${e.message}`); }
+    finally { setDcSaving(false); }
+  };
 
   // Dispatched Challan (outlet-side) — what BK sent to this outlet on a given date,
   // read-only, plus a "confirm receipt" step that closes the demand → dispatch →
@@ -6953,7 +6984,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -7636,6 +7667,47 @@ const OutletMgr = ({ onBack }) => {
           </div>
         ))}
       </>}
+    </div>);
+  }
+
+  if (screen === "dairy_cold_drink") {
+    const dcActiveCat = DC_PURCHASE_CATEGORIES.find((c) => c.id === dcCategory) || DC_PURCHASE_CATEGORIES[0];
+    const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
+    const dcFilledCount = dcAllItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcPrice[i.id]) > 0).length;
+    const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcQty[i.id]) || 0) * (Number(dcPrice[i.id]) || 0), 0);
+    return (<div><SavingOverlay />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🥛 Dairy / Cold Drink Purchase</div>{dcTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#2563EB", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(dcTotal)}</span>}</div>
+      <DatePicker value={selectedDate} onChange={setSelectedDate} />
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {DC_PURCHASE_CATEGORIES.map((c) => (
+          <button key={c.id} onClick={() => setDcCategory(c.id)} style={{ flex: 1, padding: 10, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: dcCategory === c.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: dcCategory === c.id ? "#EFF6FF" : "#fff", color: dcCategory === c.id ? "#2563EB" : "#888" }}>{c.label}</button>
+        ))}
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+        {dcActiveCat.items.map((item) => {
+          const lineTotal = (Number(dcQty[item.id]) || 0) * (Number(dcPrice[item.id]) || 0);
+          return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+              {lineTotal > 0 && <div style={{ fontSize: 10, color: "#2563EB", fontWeight: 700 }}>{fmt(lineTotal)}</div>}
+            </div>
+            <input type="number" inputMode="decimal" min="0" placeholder="Qty" value={dcQty[item.id] || ""} onChange={(e) => setDcQty((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+              style={{ width: 60, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <span style={{ fontSize: 9, color: "#999", width: 22 }}>{item.unit}</span>
+            <input type="number" inputMode="decimal" min="0" placeholder="₹/unit" value={dcPrice[item.id] || ""} onChange={(e) => setDcPrice((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+              style={{ width: 70, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+          </div>);
+        })}
+      </div>
+
+      <ErrBar />
+      <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+        <button onClick={submitDcPurchase} disabled={dcFilledCount === 0 || dcSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: dcFilledCount > 0 && !dcSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: dcFilledCount > 0 && !dcSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {dcSaving ? "⏳ Saving..." : `💾 Save Purchase (${dcFilledCount} items)`}
+        </button>
+      </div>
     </div>);
   }
 
