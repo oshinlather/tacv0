@@ -221,6 +221,11 @@ const api = {
   editItemQtyBatch: (outlet_id, date, edits, record_type, reason) =>
     patch("/api/qty-edit-batch", { outlet_id, date, edits, record_type, reason }),
   getCorrections: (params) => get("/api/corrections", params),
+  // Owner To Do (sourced from TAC Managers WhatsApp group + manual entries)
+  getTodos: (params) => get("/api/todos", params),
+  createTodo: (data) => post("/api/todos", data),
+  updateTodo: (id, data) => patch(`/api/todos/${id}`, data),
+  deleteTodo: (id) => del(`/api/todos/${id}`),
   // Auth
   login: (phone, pin) => post("/api/auth/login", { phone, pin }),
   getUsers: () => get("/api/auth/users"),

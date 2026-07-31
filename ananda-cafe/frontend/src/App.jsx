@@ -1123,6 +1123,190 @@ const BOOKS_ENTRY_DEFAULTS = {
   amount: "", payment_mode: "cash", vendor_or_recipient: "", is_advance: false, advance_to: "", needs_review: false,
 };
 
+const TODO_CATEGORIES = [
+  { id: "operational_issue", label: "🛠️ Operational Issue" },
+  { id: "vendor_payment", label: "🏢 Vendor Payment" },
+  { id: "complaint", label: "😠 Complaint / Review" },
+  { id: "process", label: "🔄 Process" },
+  { id: "general", label: "📌 General" },
+];
+const todoCatLabel = (id) => TODO_CATEGORIES.find((c) => c.id === id)?.label || id;
+const TODO_PRIORITY_COLOR = { high: "#DC2626", normal: "#888", low: "#AAA" };
+const TODO_DEFAULTS = { title: "", category: "general", amount: "", priority: "normal", due_date: "", notes: "" };
+
+// Owner Dashboard › ✅ To Do — task list sourced from the "TAC Managers" WhatsApp
+// group (day-end report summary photo + discussion) plus anything added manually.
+const OwnerTodos = () => {
+  const [todos, setTodos] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [statusFilter, setStatusFilter] = useState("open");
+  const [catFilter, setCatFilter] = useState("all");
+  // Priority/timeline are filtered client-side over whatever status+category already
+  // fetched — a todo list is small enough that a second round trip isn't worth it.
+  const [priorityFilter, setPriorityFilter] = useState("all");
+  const [timelineFilter, setTimelineFilter] = useState("all"); // all | overdue | today | week | none
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState(TODO_DEFAULTS);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const params = {};
+    if (statusFilter !== "all") params.status = statusFilter;
+    if (catFilter !== "all") params.category = catFilter;
+    api.getTodos(params)
+      .then((res) => { setTodos(res.todos || []); setSummary(res.summary || null); setErr(null); })
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [statusFilter, catFilter]);
+  useEffect(load, [load]);
+
+  const toggleDone = async (t) => {
+    try { await api.updateTodo(t.id, { status: t.status === "done" ? "open" : "done" }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+  const deleteTodo = async (id) => {
+    if (!window.confirm("Delete this task? This can't be undone.")) return;
+    try { await api.deleteTodo(id); load(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+  const todayStr = today();
+  const weekEndStr = istDateAgo(-7);
+  const visibleTodos = todos.filter((t) => {
+    if (priorityFilter !== "all" && t.priority !== priorityFilter) return false;
+    if (timelineFilter === "overdue") return !!t.due_date && t.due_date < todayStr;
+    if (timelineFilter === "today") return t.due_date === todayStr;
+    if (timelineFilter === "week") return !!t.due_date && t.due_date >= todayStr && t.due_date <= weekEndStr;
+    if (timelineFilter === "none") return !t.due_date;
+    return true;
+  });
+
+  const openAdd = () => { setForm(TODO_DEFAULTS); setFormOpen(true); };
+  const saveForm = async () => {
+    if (!form.title) { alert("Title is required"); return; }
+    setSaving(true);
+    try {
+      await api.createTodo({ ...form, amount: form.amount === "" ? null : Number(form.amount), due_date: form.due_date || null });
+      setFormOpen(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  return (<div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
+      <div>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>✅ To Do</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sourced from the TAC Managers WhatsApp group (day-end report) — plus anything added manually</p>
+      </div>
+      <button onClick={openAdd} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>➕ Add Task</button>
+    </div>
+
+    {summary && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800 }}>{summary.open}</div>
+          <div style={{ fontSize: 9, color: "#999" }}>open</div>
+        </div>
+        <div style={{ background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#15803D" }}>{summary.done}</div>
+          <div style={{ fontSize: 9, color: "#15803D" }}>done</div>
+        </div>
+        {summary.open_vendor_amount > 0 && (
+          <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(summary.open_vendor_amount)}</div>
+            <div style={{ fontSize: 9, color: "#999" }}>open vendor dues</div>
+          </div>
+        )}
+        {summary.needs_review > 0 && (
+          <div style={{ background: "#FFFBEB", borderRadius: 10, border: "1px solid #FDE68A", padding: 12, textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#B45309" }}>{summary.needs_review}</div>
+            <div style={{ fontSize: 9, color: "#B45309" }}>need review</div>
+          </div>
+        )}
+      </div>
+    )}
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+      {["open", "done", "all"].map((s) => (
+        <button key={s} onClick={() => setStatusFilter(s)} style={{ padding: "6px 12px", borderRadius: 8, border: statusFilter === s ? "none" : "1px solid #E0E0DC", background: statusFilter === s ? "#1A1A1A" : "#fff", color: statusFilter === s ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{s}</button>
+      ))}
+    </div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+      <button onClick={() => setCatFilter("all")} style={{ padding: "6px 12px", borderRadius: 8, border: catFilter === "all" ? "none" : "1px solid #E0E0DC", background: catFilter === "all" ? "#1A1A1A" : "#fff", color: catFilter === "all" ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>All</button>
+      {TODO_CATEGORIES.map((c) => (
+        <button key={c.id} onClick={() => setCatFilter(c.id)} style={{ padding: "6px 12px", borderRadius: 8, border: catFilter === c.id ? "none" : "1px solid #E0E0DC", background: catFilter === c.id ? "#1A1A1A" : "#fff", color: catFilter === c.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{c.label}</button>
+      ))}
+    </div>
+    {/* Priority filter */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+      {[{ id: "all", label: "All Priority" }, { id: "high", label: "🔴 High" }, { id: "normal", label: "⚪ Normal" }, { id: "low", label: "⚫ Low" }].map((p) => (
+        <button key={p.id} onClick={() => setPriorityFilter(p.id)} style={{ padding: "6px 12px", borderRadius: 8, border: priorityFilter === p.id ? "none" : "1px solid #E0E0DC", background: priorityFilter === p.id ? "#1A1A1A" : "#fff", color: priorityFilter === p.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{p.label}</button>
+      ))}
+    </div>
+    {/* Timeline filter */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+      {[{ id: "all", label: "Any Time" }, { id: "overdue", label: "⚠️ Overdue" }, { id: "today", label: "📅 Today" }, { id: "week", label: "🗓️ This Week" }, { id: "none", label: "No Due Date" }].map((tl) => (
+        <button key={tl.id} onClick={() => setTimelineFilter(tl.id)} style={{ padding: "6px 12px", borderRadius: 8, border: timelineFilter === tl.id ? "none" : "1px solid #E0E0DC", background: timelineFilter === tl.id ? "#1A1A1A" : "#fff", color: timelineFilter === tl.id ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{tl.label}</button>
+      ))}
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 30, color: "#999", fontSize: 13 }}>Loading…</div>}
+    {err && <div style={{ padding: "10px 14px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>{err}</div>}
+    {!loading && !err && visibleTodos.length === 0 && <div style={{ textAlign: "center", padding: 30, color: "#999", fontSize: 13 }}>No tasks here 🎉</div>}
+
+    {!loading && visibleTodos.map((t) => {
+      const isOverdue = !!t.due_date && t.due_date < todayStr && t.status !== "done";
+      return (
+      <div key={t.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, display: "flex", alignItems: "flex-start", gap: 10, opacity: t.status === "done" ? 0.6 : 1 }}>
+        <input type="checkbox" checked={t.status === "done"} onChange={() => toggleDone(t)} style={{ marginTop: 3, width: 16, height: 16, cursor: "pointer" }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, textDecoration: t.status === "done" ? "line-through" : "none" }}>{t.title}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4, alignItems: "center" }}>
+            <span style={{ fontSize: 10, color: "#888" }}>{todoCatLabel(t.category)}</span>
+            {t.amount != null && <span style={{ fontSize: 10, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(t.amount)}</span>}
+            {t.priority === "high" && <span style={{ fontSize: 9, fontWeight: 700, color: TODO_PRIORITY_COLOR.high }}>HIGH</span>}
+            {t.needs_review && <span style={{ fontSize: 9, fontWeight: 700, color: "#B45309" }}>⚠️ NEEDS REVIEW</span>}
+            {t.due_date && <span style={{ fontSize: 10, fontWeight: isOverdue ? 700 : 400, color: isOverdue ? "#DC2626" : "#999" }}>{isOverdue ? "⚠️ Overdue " : "Due "}{t.due_date}</span>}
+          </div>
+          {t.raw_message && <div style={{ fontSize: 10, color: "#AAA", marginTop: 3, fontStyle: "italic" }}>"{t.raw_message}"</div>}
+        </div>
+        <button onClick={() => deleteTodo(t.id)} style={{ border: "none", background: "none", color: "#DC2626", cursor: "pointer", fontSize: 11, fontFamily: "inherit" }}>🗑️</button>
+      </div>
+      );
+    })}
+
+    {formOpen && (<>
+      <div onClick={() => setFormOpen(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 320, maxWidth: "90vw", padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>➕ Add Task</div>
+        <input placeholder="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+        <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+          {TODO_CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+        <input type="number" placeholder="Amount (optional, ₹)" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+        <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+          <option value="low">Low priority</option>
+          <option value="normal">Normal priority</option>
+          <option value="high">High priority</option>
+        </select>
+        <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 12, boxSizing: "border-box" }} />
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={saveForm} disabled={saving} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "Saving…" : "Save"}</button>
+          <button onClick={() => setFormOpen(false)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
+  </div>);
+};
+
 const BooksLedger = () => {
   const [month, setMonth] = useState(() => today().slice(0, 7));
   const [catFilter, setCatFilter] = useState("all");
@@ -10949,7 +11133,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
@@ -11042,6 +11226,7 @@ export default function AnandaCafe() {
       {ownerTab === "cogs_compare" && <CogsCompare />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
+      {ownerTab === "todo" && <OwnerTodos />}
       {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
       {ownerTab === "wastage_history" && <WastageHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
