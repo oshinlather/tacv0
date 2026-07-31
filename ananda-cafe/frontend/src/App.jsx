@@ -4061,17 +4061,13 @@ const Inventory = () => {
     const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
     return new Set((foodSection?.items || []).map((i) => i.id));
   }, []);
-  // Also build a Set of BK item NAMES (normalized) as a fallback when inventory items
-  // don't have demand_item_id populated in the DB. This catches items by name match.
-  const bkPreparedNames = useMemo(() => {
-    const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
-    const norm = (s) => (s || "").toLowerCase().trim().replace(/\s+/g, " ");
-    return new Set((foodSection?.items || []).map((i) => norm(i.name)));
-  }, []);
   const isBkPrepared = (item) => {
-    // Only filter items that are explicitly linked to a BK food demand item via demand_item_id
-    // Do NOT use id or name matching — it incorrectly filters raw materials like roasted_chana
-    if (item.demand_item_id && bkPreparedIds.has(item.demand_item_id)) return true;
+    // Being filed under the "food" DEMAND_SECTIONS category isn't enough on its own —
+    // that section also holds raw commodities BK just stores and dispatches as-is
+    // (e.g. Roasted Chana, Sona Masoori Rice). Only hide items BK actually transforms
+    // via a recipe (RECIPES[demand_item_id] exists) — those are true kitchen output,
+    // not physical stock the store manager should be able to stock out.
+    if (item.demand_item_id && bkPreparedIds.has(item.demand_item_id) && RECIPES[item.demand_item_id]) return true;
     return false;
   };
 
@@ -6679,12 +6675,6 @@ const OutletMgr = ({ onBack }) => {
   };
   const [draftUnits, setDraftUnits] = useState({}); // { item_id: unit } — only set when manager picks something other than default
   const [closingUnits, setClosingUnits] = useState({});
-  // Wastage is weighed in a fixed utensil that's never tared, so every reading is ~0.5 Kg
-  // heavier than the actual food wasted. Only items freshly typed THIS session get the
-  // correction applied at submit time — an already-saved value loaded from the server is
-  // already net of the utensil and must never have it subtracted again.
-  const [wastageTouched, setWastageTouched] = useState({});
-  const UTENSIL_WEIGHT_KG = 0.5;
   // Closing stock is reported by leftover weight/volume, not whole containers — e.g. Desi
   // Ghee gets portioned into a kitchen vessel, so a manager reports "8 Kg" left, not
   // "0.5 Tin". Defaulting the closing-stock picker to Tin (the demand/order unit) meant a
@@ -6792,17 +6782,7 @@ const OutletMgr = ({ onBack }) => {
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
       } else if (type === "wastage") {
-        // Subtract the utensil's tare weight (see wastageTouched/UTENSIL_WEIGHT_KG above)
-        // from every Kg-unit item the user actually typed this session — never from a
-        // value that was merely loaded from an existing saved record, since that's already
-        // net of the utensil and subtracting again would double-correct it.
-        const netWastageDraft = Object.fromEntries(Object.entries(draft).map(([id, qty]) => {
-          const item = DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
-          const isWeighed = item && (draftUnits[id] || item.unit) === "Kg";
-          if (isWeighed && wastageTouched[id] && qty > 0) return [id, Math.max(0, Number(qty) - UTENSIL_WEIGHT_KG)];
-          return [id, qty];
-        }));
-        const scopedDraft = filterToScope(netWastageDraft);
+        const scopedDraft = filterToScope(draft);
         const draftItemsUnits = filterToScope(Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0)));
         if (isDraftRole) {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "wastage", date: selectedDate, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
@@ -6897,7 +6877,6 @@ const OutletMgr = ({ onBack }) => {
     if (screen === "wastage") {
       const key = wipKey("wastage", outlet, selectedDate);
       const wip = loadWip(key);
-      setWastageTouched({});
       api.getOrders({ outlet_id: outlet, date: selectedDate }).then((rows) => {
         // Only draft/submitted — never pick up an already-received/fulfilled row here,
         // that's a separate completed record, not today's shared draft.
@@ -7271,15 +7250,9 @@ const OutletMgr = ({ onBack }) => {
     const activeSec = wastageSections.find((s) => s.id === expSec) || wastageSections[0]; if (!expSec || !wastageSections.find((s) => s.id === expSec)) setExpSec(wastageSections[0].id);
     const wastageQuery = itemSearch.trim().toLowerCase();
     const wastageSearchResults = wastageQuery ? wastageFilterItems(wastageSections.flatMap((s) => s.items)).filter((i) => i.name.toLowerCase().includes(wastageQuery)) : [];
-    // Weighed loose in the standard kitchen utensil (never tared), so a Kg reading always
-    // includes ~0.5 Kg of utensil weight — only applies to weight-based items, and only to
-    // a value the user actually typed this session (see wastageTouched above).
-    const wastageIsWeighed = (item) => (draftUnits[item.id] || item.unit) === "Kg";
-    const wastageCorrected = (item) => Math.max(0, (Number(draft[item.id]) || 0) - UTENSIL_WEIGHT_KG);
-    const wastageItemRow = (item) => { const weighed = wastageIsWeighed(item) && wastageTouched[item.id] && draft[item.id] > 0; return (<div key={item.id} style={{ marginBottom: 3 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); setWastageTouched((p) => ({ ...p, [item.id]: true })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>
-      {weighed && <div style={{ fontSize: 10.5, color: "#B45309", padding: "0 10px 2px", textAlign: "right" }}>⚖️ {draft[item.id]} Kg on scale − {UTENSIL_WEIGHT_KG} Kg utensil = <strong>{wastageCorrected(item)} Kg</strong> recorded</div>}
-    </div>); };
+    const wastageItemRow = (item) => (<div key={item.id} style={{ marginBottom: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>
+    </div>);
     return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
