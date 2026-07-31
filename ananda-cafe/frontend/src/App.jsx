@@ -6792,9 +6792,9 @@ const OutletMgr = ({ onBack }) => {
           setScreen("home");
         } else {
           let result;
-          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: netWastageDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: netWastageDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
-          else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: netWastageDraft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
+          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          else result = await api.createDemand({ outlet_id: outlet, type: "wastage", items: scopedDraft, items_units: draftItemsUnits, note: note || "", date: selectedDate, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "wastage", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
           const wastageCount = Object.values(draft).filter(v => v > 0).length;
