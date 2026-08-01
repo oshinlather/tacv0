@@ -267,6 +267,13 @@ const DEMAND_SECTIONS = [
     items: [
       { id: "gas_cylinder", name: "Gas Cylinder", unit: "Pcs" },
     ]},
+  { id: "cold_drink", titleHi: "Cold Drink & Water", emoji: "🥤", color: "#0EA5E9", bg: "#F0F9FF", border: "#BAE6FD",
+    items: [
+      { id: "cold_drink", name: "Cold Drink", unit: "Pcs" },
+      { id: "diet_coke", name: "Diet Coke", unit: "Pcs" },
+      { id: "small_water_bottle", name: "Small Water Bottle", unit: "Pcs" },
+      { id: "water_bottle_1l", name: "Water Bottle (1L)", unit: "Pcs" },
+    ]},
 ];
 
 // Closing stock = all demand items (dynamic from master data)
@@ -1928,6 +1935,8 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             p.has_today_closing = su.has_today_closing;
             p.prev_closing_submitted = su.prev_closing_submitted;
             p.today_closing_submitted = su.today_closing_submitted;
+            p.prev_closing_draft = su.prev_closing_draft;
+            p.today_closing_draft = su.today_closing_draft;
             // Always use consumed-material cost (missing closing = zero)
             p.stock_variable_cost = su.total_used_cost;
             p.stock_cost_by_category = su.variable_cost_by_category;
@@ -2180,7 +2189,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           {/* VARIABLE COST */}
           <SectionHeader label="Variable Cost (Consumed Material)" bg="#FFFBEB" borderColor="#FDE68A" color="#92400E" icon="📦" expandKey="variable" count={d.item_breakdown?.length ? d.item_breakdown.length + " items" : "details"} pct={pctOfSale(d.variable_cost)} />
           <Row label="Material Cost" value={d.variable_cost} bold color="#B45309" bg="#FFFDF5" sub={<>
-            <div>{(!d.prev_closing_submitted || !d.today_closing_submitted) ? "⚠️ closing stock missing — treated as 0" : "Opening − Closing = Used"}</div>
+            <div>{(!d.prev_closing_submitted || !d.today_closing_submitted) ? (() => {
+              const draftBits = [];
+              if (!d.prev_closing_submitted) draftBits.push(d.prev_closing_draft ? "yesterday's closing was punched but never finalized" : "yesterday's closing wasn't punched at all");
+              if (!d.today_closing_submitted) draftBits.push(d.today_closing_draft ? "today's closing was punched but never finalized" : "today's closing wasn't punched at all");
+              return `⚠️ ${draftBits.join(" · ")} — treated as 0`;
+            })() : "Opening − Closing = Used"}</div>
             {d.should_consume_cost != null && (
               <div style={{ marginTop: 2 }}>
                 Ideal (today's dishes × recipe, {d.should_consume_item_count} priced ingredients): should be <span style={{ color: "#2563EB", fontWeight: 700 }}>{fmt(d.should_consume_cost)}</span> vs actual <span style={{ fontWeight: 700, color: "#1A1A1A" }}>{fmt(d.should_consume_actual_cost)}</span>
@@ -6759,16 +6773,12 @@ const CATEGORY_SCOPE = {
 
 // Dairy / Cold Drink Purchase — a separate, structured purchase form from the freeform
 // Cash Purchase screen: a fixed item catalog per category, qty + price per line, no
-// vendor/photo/payment-mode fields. Dairy reuses the existing DEMAND_SECTIONS catalog;
-// Cold Drink & Water has no catalog elsewhere in the system, so it's defined here.
+// vendor/photo/payment-mode fields. Both categories reuse the same DEMAND_SECTIONS
+// catalog Closing Stock/Wastage use (Cold Drink & Water is its own section there, kept
+// separate from Grocery), so all screens stay in sync automatically.
 const DC_PURCHASE_CATEGORIES = [
   { id: "dairy", label: "🥛 Dairy", items: DEMAND_SECTIONS.find((s) => s.id === "dairy")?.items || [] },
-  { id: "cold_drink", label: "🥤 Cold Drink & Water", items: [
-    { id: "cold_drink", name: "Cold Drink", unit: "Pcs" },
-    { id: "diet_coke", name: "Diet Coke", unit: "Pcs" },
-    { id: "small_water_bottle", name: "Small Water Bottle", unit: "Pcs" },
-    { id: "water_bottle_1l", name: "Water Bottle (1L)", unit: "Pcs" },
-  ] },
+  { id: "cold_drink", label: "🥤 Cold Drink & Water", items: DEMAND_SECTIONS.find((s) => s.id === "cold_drink")?.items || [] },
 ];
 
 const OutletMgr = ({ onBack }) => {
@@ -6830,9 +6840,12 @@ const OutletMgr = ({ onBack }) => {
   const [quickVendor, setQuickVendor] = useState(""); const [quickType, setQuickType] = useState("new_purchase"); const [quickPhotos, setQuickPhotos] = useState([]);
   const [quickNote, setQuickNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash"); const [quickSaving, setQuickSaving] = useState(false);
   const [todaysPurchases, setTodaysPurchases] = useState([]); const [purchaseToast, setPurchaseToast] = useState(null);
-  // Dairy / Cold Drink Purchase — a fixed catalog per category, qty + price per line.
+  // Dairy / Cold Drink Purchase — a fixed catalog per category, qty + total amount paid
+  // per line. Manager enters what they actually paid, not a per-unit price they'd have
+  // to calculate themselves — price/unit is derived (amount ÷ qty) same as Cash Purchase
+  // already does for inventory-linked lines (see creditStockIn in POST /purchases).
   const [dcCategory, setDcCategory] = useState("dairy");
-  const [dcQty, setDcQty] = useState({}); const [dcPrice, setDcPrice] = useState({}); const [dcSaving, setDcSaving] = useState(false);
+  const [dcQty, setDcQty] = useState({}); const [dcAmount, setDcAmount] = useState({}); const [dcSaving, setDcSaving] = useState(false);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
@@ -6845,14 +6858,14 @@ const OutletMgr = ({ onBack }) => {
   ) : null;
   // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
   const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
-  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcPrice({}); };
+  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); };
   const submitDcPurchase = async () => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
-    const filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcPrice[i.id]) > 0);
-    if (filled.length === 0) { alert("Fill qty and price for at least 1 item"); return; }
+    const filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0);
+    if (filled.length === 0) { alert("Fill qty and amount for at least 1 item"); return; }
     setDcSaving(true); setErr(null);
     try {
-      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcQty[i.id]) * Number(dcPrice[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
+      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
       await api.createPurchase({ items: apiItems, payment_mode: "cash", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
       alert(`✅ Purchase saved — ${filled.length} items`);
       resetDcPurchase(); setScreen("home");
@@ -7624,8 +7637,11 @@ const OutletMgr = ({ onBack }) => {
     const isStaffDress = expSec === "__staff_dress";
     const isRegular = !isStaffFood && !isStaffDress;
     // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas and
-    // Staff Food/Dress stay Outlet Manager-only); everyone else sees everything.
-    const visibleSections = roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS;
+    // Staff Food/Dress stay Outlet Manager-only); everyone else sees everything. Cold
+    // Drink & Water is excluded here specifically — BK doesn't stock or dispatch it, the
+    // outlet buys it directly via Dairy/Cold Drink Purchase — but it still shows in
+    // Closing Stock and Wastage, which build their own section list separately.
+    const visibleSections = (roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS).filter((s) => s.id !== "cold_drink");
     const activeSec = isRegular ? (visibleSections.find((s) => s.id === expSec) || visibleSections[0]) : null;
     if (!expSec) setExpSec(visibleSections[0].id);
 
@@ -7899,8 +7915,8 @@ const OutletMgr = ({ onBack }) => {
   if (screen === "dairy_cold_drink") {
     const dcActiveCat = DC_PURCHASE_CATEGORIES.find((c) => c.id === dcCategory) || DC_PURCHASE_CATEGORIES[0];
     const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
-    const dcFilledCount = dcAllItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcPrice[i.id]) > 0).length;
-    const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcQty[i.id]) || 0) * (Number(dcPrice[i.id]) || 0), 0);
+    const dcFilledCount = dcAllItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0).length;
+    const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0);
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🥛 Dairy / Cold Drink Purchase</div>{dcTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#2563EB", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(dcTotal)}</span>}</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
@@ -7913,17 +7929,19 @@ const OutletMgr = ({ onBack }) => {
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
         {dcActiveCat.items.map((item) => {
-          const lineTotal = (Number(dcQty[item.id]) || 0) * (Number(dcPrice[item.id]) || 0);
+          const qty = Number(dcQty[item.id]) || 0;
+          const amount = Number(dcAmount[item.id]) || 0;
+          const perUnit = qty > 0 && amount > 0 ? amount / qty : null;
           return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
-              {lineTotal > 0 && <div style={{ fontSize: 10, color: "#2563EB", fontWeight: 700 }}>{fmt(lineTotal)}</div>}
+              {perUnit != null && <div style={{ fontSize: 10, color: "#2563EB", fontWeight: 700 }}>₹{perUnit.toFixed(2)}/{item.unit}</div>}
             </div>
             <input type="number" inputMode="decimal" min="0" placeholder="Qty" value={dcQty[item.id] || ""} onChange={(e) => setDcQty((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
               style={{ width: 60, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
             <span style={{ fontSize: 9, color: "#999", width: 22 }}>{item.unit}</span>
-            <input type="number" inputMode="decimal" min="0" placeholder="₹/unit" value={dcPrice[item.id] || ""} onChange={(e) => setDcPrice((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
-              style={{ width: 70, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+            <input type="number" inputMode="decimal" min="0" placeholder="₹ Amount" value={dcAmount[item.id] || ""} onChange={(e) => setDcAmount((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+              style={{ width: 78, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
           </div>);
         })}
       </div>
@@ -11033,6 +11051,26 @@ const FranchiseDashboard = () => {
   </div>);
 };
 
+// Proactive, dashboard-wide warning: any outlet sitting on a closing-stock draft that
+// was punched but never finalized — the exact silent-zero trap that otherwise only
+// shows up once you happen to open that outlet's P&L. Checked once on mount so it's
+// visible no matter which Owner Dashboard tab is open.
+const ClosingStockDraftBanner = () => {
+  const [alerts, setAlerts] = useState([]);
+  useEffect(() => { api.getClosingStockDraftAlerts().then((d) => setAlerts(d?.alerts || [])).catch(() => setAlerts([])); }, []);
+  if (alerts.length === 0) return null;
+  const byOutlet = {};
+  alerts.forEach((a) => { (byOutlet[a.outlet_id] = byOutlet[a.outlet_id] || []).push(a.date); });
+  return (
+    <div style={{ padding: "12px 16px", borderRadius: 12, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#92400E", marginBottom: 4 }}>⚠️ {alerts.length} closing stock draft{alerts.length > 1 ? "s" : ""} stuck unfinalized — treated as ₹0 in P&L</div>
+      <div style={{ fontSize: 12, color: "#92400E" }}>
+        {Object.entries(byOutlet).map(([oid, dates]) => `${OUTLETS.find((o) => o.id === oid)?.short || oid} (${dates.join(", ")})`).join(" · ")}
+      </div>
+    </div>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
@@ -11271,6 +11309,7 @@ export default function AnandaCafe() {
       </div>
     </>)}
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+      <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
       {ownerTab === "audit" && <RMAuditPanel />}

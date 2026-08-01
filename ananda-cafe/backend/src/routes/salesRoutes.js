@@ -3538,6 +3538,33 @@ async function buildCostingContext() {
     return { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
 }
 
+// Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was
+// never finalized, for today or yesterday — the exact silent-zero trap the P&L warning
+// (prev/today_closing_draft) surfaces once you're already looking at one outlet. This is
+// lighter (no recipe/rate-card join) so it's cheap enough to run on every Owner Dashboard
+// page load, not just when P&L is open.
+router.get('/closing-stock-draft-alerts', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const today = todayIST();
+    const y = new Date(); y.setMinutes(y.getMinutes() + 330); y.setDate(y.getDate() - 1);
+    const yesterday = y.toISOString().split('T')[0];
+    const { data, error } = await supabase.from('closing_stocks').select('outlet_id, date, status').in('date', [yesterday, today]);
+    if (error) throw error;
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+    const alerts = [];
+    for (const oid of outletIds) {
+      for (const d of [yesterday, today]) {
+        const rows = (data || []).filter(r => r.outlet_id === oid && r.date === d);
+        const hasSubmitted = rows.some(r => r.status === 'submitted');
+        const hasDraft = rows.some(r => r.status === 'draft');
+        if (!hasSubmitted && hasDraft) alerts.push({ outlet_id: oid, date: d });
+      }
+    }
+    res.json({ alerts });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Extracted so /api/audit/:date (recipe-based leakage audit) can reuse the exact same
 // per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
 // possibly-drifting computation. Internal function — no req/res, no auth check (callers
@@ -3559,6 +3586,16 @@ async function computeStockUsageForDate(date, outlet) {
     // 3. Today closing stock
     const { data: todayClosing } = await supabase.from('closing_stocks')
       .select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted');
+
+    // Draft-status closing stock (same dates) — queried separately so the P&L can tell
+    // the owner "someone punched this but it was never finalized" apart from "nobody
+    // touched it at all". Both read as has_..._submitted: false above, but they call for
+    // very different action (nudge the outlet manager to finalize vs. chase the outlet
+    // for numbers), so collapsing them into one generic "missing" warning was misleading.
+    const { data: prevClosingDraft } = await supabase.from('closing_stocks')
+      .select('outlet_id').eq('date', prevDateStr).eq('status', 'draft');
+    const { data: todayClosingDraft } = await supabase.from('closing_stocks')
+      .select('outlet_id').eq('date', date).eq('status', 'draft');
 
     // 4. Today wastage — status filter excludes a still-in-progress Chef/Bainmarry draft
     // from being treated as real wastage until the manager finalizes it.
@@ -3714,6 +3751,8 @@ async function computeStockUsageForDate(date, outlet) {
         has_today_closing: true, // treat missing as zero
         prev_closing_submitted: !!prevCS,
         today_closing_submitted: !!todayCS,
+        prev_closing_draft: !prevCS && (prevClosingDraft || []).some(d => d.outlet_id === oid),
+        today_closing_draft: !todayCS && (todayClosingDraft || []).some(d => d.outlet_id === oid),
         total_used_cost: Math.round(totalUsedCost),
         variable_cost_by_category: byCategory,
         items: itemDetails.sort((a, b) => b.used_cost - a.used_cost),
@@ -3730,6 +3769,8 @@ async function computeStockUsageForDate(date, outlet) {
         has_today_closing: true,
         prev_closing_submitted: consolidated.every(r => r.prev_closing_submitted),
         today_closing_submitted: consolidated.every(r => r.today_closing_submitted),
+        prev_closing_draft: consolidated.some(r => r.prev_closing_draft),
+        today_closing_draft: consolidated.some(r => r.today_closing_draft),
         total_used_cost: consolidated.reduce((s, r) => s + r.total_used_cost, 0),
         variable_cost_by_category: {},
         items: [],
