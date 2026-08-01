@@ -2716,8 +2716,10 @@ router.get('/orders/:id/challan', async (req, res) => {
 // Backend had /sales/:date but frontend expects /sales?date=...&outlet=...
 router.get('/sales', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
-    const { date, from, to, outlet } = req.query;
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    if (!user) return;
+    const { date, from, to } = req.query;
+    const outlet = scopedOutletFilter(user, req.query.outlet);
     if (!date && !(from && to)) return res.status(400).json({ error: 'date, or from+to, query param required' });
 
     const data = await fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined });

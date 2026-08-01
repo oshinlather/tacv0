@@ -1743,8 +1743,8 @@ const PaytmRecon = () => {
   </div>);
 };
 
-const DailyPnL = () => {
-  const [selOutlet, setSelOutlet] = useState(null);
+const DailyPnL = ({ lockedOutlet } = {}) => {
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || null);
   const [selDay, setSelDay] = useState(1);
   const [pnlData, setPnlData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2065,10 +2065,10 @@ const DailyPnL = () => {
       </div>
 
       {/* Outlet pills */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
-      </div>
+      </div>}
 
       {!selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
 
@@ -2246,8 +2246,8 @@ const DailyPnL = () => {
                     {/* Expanded items */}
                     {isExpanded && sortedItems.map((item, i) => {
                       const globalIdx = item._origIdx;
-                      const isEditing = editItem && editItem._idx === globalIdx;
-                      const isEditingMaster = editMaster && editMaster._idx === globalIdx;
+                      const isEditing = !lockedOutlet && editItem && editItem._idx === globalIdx;
+                      const isEditingMaster = !lockedOutlet && editMaster && editMaster._idx === globalIdx;
                       const displayQty = isStockBased ? item.used : (item.raw_qty != null ? item.raw_qty : item.qty);
                       const displayCost = isStockBased ? item.used_cost : item.cost;
                       const displayRate = item.rate;
@@ -2365,7 +2365,7 @@ const DailyPnL = () => {
                               )}
                             </span>
                             <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309", marginRight: 6, fontSize: 11 }}>{fmt(displayCost)}</span>
-                            <button
+                            {!lockedOutlet && <button
                               onClick={() => setEditItem({
                                 _idx: globalIdx, demand_id: item.demand_id || null, item_id: item.item_id,
                                 // Stock-based rows show a computed "used" figure (Prev closing + Dispatched
@@ -2380,15 +2380,15 @@ const DailyPnL = () => {
                               })}
                               title={isStockBased ? "Correct closing stock, dispatched, or wastage (this date only)" : "Edit today's quantity (this date only)"}
                               style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700, marginRight: 4 }}
-                            >✏️ {isStockBased ? "Edit" : "Qty"}</button>
-                            {isStockBased && item.has_rate_card && (
+                            >✏️ {isStockBased ? "Edit" : "Qty"}</button>}
+                            {!lockedOutlet && isStockBased && item.has_rate_card && (
                               <button
                                 onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}
                                 title="Edit master Rate Card price (all outlets)"
                                 style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700, marginRight: hasConvEdit ? 4 : 0 }}
                               >💲 Price</button>
                             )}
-                            {hasConvEdit && (
+                            {!lockedOutlet && hasConvEdit && (
                               <button
                                 onClick={() => setEditMaster({ _idx: globalIdx, item_id: item.item_id, name: item.name, kind: 'conv', value: String(item.conv_qty), unit: item.conv_base_unit, demandUnit: demandUnitForItem, currentValue: item.conv_qty })}
                                 title="Edit master unit conversion (all outlets)"
@@ -8508,10 +8508,10 @@ const DailyReviewSummary = () => {
   </div>);
 };
 
-const SalesUpload = () => {
+const SalesUpload = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's uploads are usually still incomplete
   const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
-  const [selOutlet, setSelOutlet] = useState(null); // null = All Outlets
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || null); // null = All Outlets
   const [sales, setSales] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -8618,7 +8618,7 @@ const SalesUpload = () => {
 
   return (
     <div>
-      <div 
+      {!lockedOutlet && <div
         onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
         onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
         onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleFile({ target: { files: [file] } }); }}
@@ -8626,7 +8626,7 @@ const SalesUpload = () => {
         <div style={{ fontSize: 32, marginBottom: 8 }}>📤</div>
         <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 800 }}>Upload PetPooja Daily Sales</h3>
         <p style={{ color: "#999", fontSize: 13, margin: "0 0 12px" }}>Drag & drop CSV here, or choose file below</p>
-        
+
         {/* Date override toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14 }}>
           <button onClick={() => setUseCustomDate(false)} style={{ padding: "6px 14px", borderRadius: 8, border: !useCustomDate ? "none" : "1px solid #E0E0DC", background: !useCustomDate ? "#1A1A1A" : "#fff", color: !useCustomDate ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Auto-detect date</button>
@@ -8638,7 +8638,7 @@ const SalesUpload = () => {
             <div style={{ fontSize: 11, color: "#B45309", marginTop: 4, fontWeight: 600 }}>All rows will be saved under this date</div>
           </div>
         )}
-        
+
         <div style={{ marginTop: 8 }}>
           <input type="file" onChange={handleFile} ref={fileRef}
             style={{ fontSize: 14, fontFamily: "inherit", cursor: "pointer" }} />
@@ -8651,7 +8651,7 @@ const SalesUpload = () => {
             {uploadResult.msg}
           </div>
         )}
-      </div>
+      </div>}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {Array.from({ length: 7 }, (_, i) => {
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
@@ -8663,12 +8663,12 @@ const SalesUpload = () => {
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
-      </div>
+      </div>}
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading sales...</div>}
       {sales && !loading && (
         <>
@@ -8750,7 +8750,7 @@ const SalesUpload = () => {
                                     </tr></thead>
                                     <tbody>
                                       {(details.ingredients || []).map((ing, j) => {
-                                        const isEditingThis = editingRate === ing.rate_card_id;
+                                        const isEditingThis = !lockedOutlet && editingRate === ing.rate_card_id;
                                         return (
                                           <tr key={j} style={{ borderBottom: "1px solid #F0F0EC", background: ing.priced ? "#fff" : "#FFFBEB" }}>
                                             <td style={{ ...tdS, fontWeight: 600 }}>{ing.raw_material}{ing.via_bk_recipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (via BK recipe)</span>}</td>
@@ -8763,7 +8763,7 @@ const SalesUpload = () => {
                                                     style={{ width: 60, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
                                                   <button onClick={() => saveIngredientRate(ing.rate_card_id, item.recipeId)} disabled={savingRate} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
                                                 </span>
-                                              ) : ing.rate_card_id ? (
+                                              ) : ing.rate_card_id && !lockedOutlet ? (
                                                 <span onClick={() => { setEditingRate(ing.rate_card_id); setEditValue(String(ing.rate)); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit rate card price">
                                                   ₹{ing.rate}/{ing.rate_unit}
                                                 </span>
@@ -10990,145 +10990,15 @@ const ScopedDashboard = () => {
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  FRANCHISE DASHBOARD — read-only view for a franchise partner's own outlet
-//  (Elan, Gaur Siddhartham, ...). Every fetch below is outlet-scoped to
-//  currentUser.outlet_id server-side (see scopedOutletFilter in authGuards.js) —
-//  the `outlet` query params below are what the UI intends to show, not a trust
-//  boundary; the backend forces the actual filter regardless of what's sent.
+//  (Elan, Gaur Siddhartham, ...). Reuses the same P&L / Sales / RM Audit /
+//  Billing components the owner dashboard uses (via each one's `lockedOutlet`
+//  prop, which hides the outlet picker and any edit affordances) so the
+//  franchise view always matches what the owner sees for that outlet — no
+//  separate, simplified copy to keep in sync. Every fetch is outlet-scoped to
+//  currentUser.outlet_id server-side (see scopedOutletFilter in authGuards.js)
+//  regardless of what these components' own `outlet` query params ask for —
+//  the props here are what the UI intends to show, not a trust boundary.
 // ═════════════════════════════════════════════════════════════════════════════
-const CATEGORY_LABELS = { food: "🍛 Food", dairy: "🥛 Dairy", vegetable: "🥦 Vegetable", grocery: "🌾 Grocery", masala: "🌶️ Masala", packaging: "📦 Packaging", cleaning: "🧹 Cleaning", gas: "🔥 Gas" };
-
-const FranchisePnL = ({ outletId }) => {
-  const [selDay, setSelDay] = useState(1);
-  const [pnl, setPnl] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getLivePnl(dateStr, outletId).then((r) => setPnl((r?.pnl || []).find((p) => p.outlet_id === outletId) || null)).catch(() => setPnl(null)).finally(() => setLoading(false));
-  }, [dateStr, outletId]);
-
-  const catCost = Object.entries(pnl?.variable_by_category || {});
-
-  return (
-    <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Daily P&L</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Revenue, cost, and net profit for your outlet</p>
-      </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-        {Array.from({ length: 7 }, (_, i) => {
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
-          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-        })}
-      </div>
-
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-      {!loading && !pnl && <div style={{ textAlign: "center", padding: 40, color: "#999", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No P&L data for {dateStr}</div>}
-
-      {!loading && pnl && (<>
-        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-          <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Effective Sale</div>
-            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(pnl.effective_sale)}</div>
-          </div>
-          <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Expense</div>
-            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(pnl.total_expense)}</div>
-          </div>
-          <div style={{ flex: "1 1 140px", background: pnl.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 12, padding: "12px 16px", border: `1px solid ${pnl.net_profit >= 0 ? "#BBF7D0" : "#FECACA"}`, textAlign: "center" }}>
-            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Net Profit</div>
-            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: pnl.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(pnl.net_profit)}</div>
-            <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{pnl.margin}% margin</div>
-          </div>
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Revenue</div>
-          {[["Total Sale", pnl.total_sale], ["Delivery Sale", pnl.delivery_sale], ["Delivery Commission", -pnl.delivery_commission], ["Cancelled Orders", -pnl.cancelled_orders], ["Complimentary", -pnl.complimentary], ["Effective Sale", pnl.effective_sale]].map(([label, val], i, arr) => (
-            <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5, fontWeight: i === arr.length - 1 ? 800 : 500, borderTop: i === arr.length - 1 ? "1px solid #E8E8E4" : "none", marginTop: i === arr.length - 1 ? 4 : 0, paddingTop: i === arr.length - 1 ? 8 : 5 }}>
-              <span style={{ color: "#666" }}>{label}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(val)}</span>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Variable Cost by Category — {fmt(pnl.variable_cost)}</div>
-          {catCost.length === 0 && <div style={{ fontSize: 12, color: "#999" }}>No consumption data</div>}
-          {catCost.sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
-            <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5 }}>
-              <span style={{ color: "#666" }}>{CATEGORY_LABELS[cat] || cat}</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{fmt(cost)}</span>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px" }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Fixed Cost & Purchases</div>
-          {[["Fixed Cost (daily share)", pnl.daily_fixed_cost], ["Base Kitchen Share", pnl.bk_share], ["Local Purchases", pnl.daily_purchases]].map(([label, val]) => (
-            <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5 }}>
-              <span style={{ color: "#666" }}>{label}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(val)}</span>
-            </div>
-          ))}
-        </div>
-      </>)}
-    </div>
-  );
-};
-
-const FranchiseSales = ({ outletId }) => {
-  const [days, setDays] = useState(14);
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getOutletSales({ outlet_id: outletId, from: istDateAgo(days) }).then((r) => setRows(r || [])).catch(() => setRows([])).finally(() => setLoading(false));
-  }, [outletId, days]);
-
-  const totalSale = rows.reduce((s, r) => s + Number(r.total_sale || 0), 0);
-
-  return (
-    <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📤 Sales History</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Daily sales submitted for your outlet</p>
-      </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {[7, 14, 30].map((d) => (<button key={d} onClick={() => setDays(d)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: days === d ? 700 : 500, border: days === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: days === d ? "#1A1A1A" : "#fff", color: days === d ? "#fff" : "#888" }}>Last {d}d</button>))}
-      </div>
-
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-      {!loading && rows.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales submitted in this range</div>}
-
-      {!loading && rows.length > 0 && (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-          <div style={{ padding: "10px 16px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", fontSize: 12, fontWeight: 700, color: "#166534" }}>Total over range: {fmt(totalSale)}</div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-              <thead><tr style={{ background: "#FAFAF8" }}>
-                {["Date", "Total Sale", "Swiggy", "Zomato", "Other Delivery", "Cash Collected", "UPI Collected"].map((h) => <th key={h} style={{ padding: "8px 10px", textAlign: h === "Date" ? "left" : "right", fontSize: 10, fontWeight: 700, color: "#666", textTransform: "uppercase", borderBottom: "2px solid #E8E8E4", whiteSpace: "nowrap" }}>{h}</th>)}
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.date} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    <td style={{ padding: "8px 10px", fontWeight: 600 }}>{r.date}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(r.total_sale)}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.swiggy_sale)}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.zomato_sale)}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.other_delivery_sale)}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.cash_collected)}</td>
-                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.upi_collected)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
 const FRANCHISE_TABS = [
   { id: "pnl", label: "💰 P&L" },
   { id: "sales", label: "📤 Sales" },
@@ -11153,10 +11023,10 @@ const FranchiseDashboard = () => {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>
       {FRANCHISE_TABS.map((t) => (<button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: tab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
     </div>
-    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 18px" }}>
+    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 18px" }}>
       {!outletId && <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>No outlet assigned to this account — contact the owner.</div>}
-      {outletId && tab === "pnl" && <FranchisePnL outletId={outletId} />}
-      {outletId && tab === "sales" && <FranchiseSales outletId={outletId} />}
+      {outletId && tab === "pnl" && <DailyPnL lockedOutlet={outletId} />}
+      {outletId && tab === "sales" && <SalesUpload lockedOutlet={outletId} />}
       {outletId && tab === "audit" && <RMAuditPanel lockedOutlet={outletId} />}
       {outletId && tab === "billing" && <FranchiseBilling lockedOutlet={outletId} />}
     </div>
