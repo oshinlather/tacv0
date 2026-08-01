@@ -10,7 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
-const { requireAuth, requireOwner, requireRole, ensureOutletAccess, invalidateUser, filterItemsToRoleScope } = require('./authGuards');
+const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope } = require('./authGuards');
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const multer = require('multer');
@@ -455,9 +455,10 @@ router.get('/audit/packaging', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    if (!user) return;
     const { date } = req.params;
-    const outlets = await computeRMAudit(date, req.query.outlet);
+    const outlets = await computeRMAudit(date, scopedOutletFilter(user, req.query.outlet));
     res.json({ date, outlets });
 } catch (err) {
 res.status(500).json({ error: err.message });
@@ -1539,6 +1540,12 @@ router.get('/outlet-sales/latest-cash', async (req, res) => {
 router.post('/outlet-sales', async (req, res) => {
   try {
     const _user = await requireAuth(req, res); if (!_user) return;
+    // franchise is a view-only role (P&L/Sales/RM Audit/Billing) — explicitly excluded
+    // here since this route otherwise had no role check beyond outlet-match, which would
+    // let them submit sales for their own outlet through a direct API call.
+    if (!['owner', 'store_mgr', 'outlet_mgr', 'chef', 'bainmarry', 'avp'].includes(_user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
     const _outlet = req.body?.outlet_id || req.query?.outlet_id || req.params?.outlet_id;
     if (!ensureOutletAccess(_user, _outlet, res)) return;
     const { outlet_id, date, total_sale, swiggy_sale, zomato_sale, other_delivery_sale,
@@ -2044,7 +2051,10 @@ router.get('/closing-stocks', async (req, res) => {
 // ── GET /api/orders — Get orders/demands for a date (optionally filter by outlet)
 router.get('/orders', async (req, res) => {
   try {
-    const { date, outlet_id, status, from } = req.query;
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { date, status, from } = req.query;
+    const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
     let query = supabase.from('demands').select('*');
     if (date) query = query.eq('date', date);
     if (from) query = query.gte('date', from);
@@ -2988,9 +2998,10 @@ router.delete('/fixed-costs', async (req, res) => {
 // ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
 router.get('/pnl/live/:date', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    if (!user) return;
     const { date } = req.params;
-    const { outlet } = req.query; // optional outlet filter
+    const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise
 
     // 1. Get rate card
     const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
@@ -3802,8 +3813,9 @@ async function computeStockUsageForDate(date, outlet) {
 
 router.get('/stock-usage/:date', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
-    const result = await computeStockUsageForDate(req.params.date, req.query.outlet);
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    if (!user) return;
+    const result = await computeStockUsageForDate(req.params.date, scopedOutletFilter(user, req.query.outlet));
     res.json(result);
   } catch (err) {
     console.error('Stock usage error:', err);
@@ -4230,7 +4242,10 @@ router.get('/system-logs', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/franchise-billing/corrections', async (req, res) => {
   try {
-    const { outlet_id, month } = req.query;
+    const user = await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'head_chef', 'franchise');
+    if (!user) return;
+    const month = req.query.month;
+    const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
     if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month are required' });
     const { data, error } = await supabase.from('app_config').select('value')
       .eq('key', `franchise_billing:${outlet_id}:${month}`).maybeSingle();

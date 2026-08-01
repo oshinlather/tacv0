@@ -361,7 +361,10 @@ const ROLE_OPTIONS = [
   { v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" },
   { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" },
   { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" },
+  { v: "franchise", l: "🤝 Franchise" },
 ];
+// Roles whose account is tied to exactly one outlet (an outlet_id must be assigned).
+const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
 const UsersPanel = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -406,7 +409,7 @@ const UsersPanel = () => {
     try {
       // Outlet assignment only makes sense for outlet-scoped roles — clear it when
       // switching to a cross-outlet role so a stale outlet_id doesn't linger.
-      const outletScoped = ["outlet_mgr", "chef", "bainmarry"].includes(newRole);
+      const outletScoped = OUTLET_SCOPED_ROLES_FE.includes(newRole);
       await api.updateUser(u.id, { role: newRole, ...(outletScoped ? {} : { outlet_id: null }) });
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -414,7 +417,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -431,9 +434,9 @@ const UsersPanel = () => {
           <button key={r.v} onClick={() => setNewRole(r.v)} style={{ flex: "1 1 30%", padding: "8px", borderRadius: 8, border: newRole === r.v ? "none" : "1px solid #E0E0DC", background: newRole === r.v ? "#1A1A1A" : "#fff", color: newRole === r.v ? "#fff" : "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{r.l}</button>
         ))}
       </div>
-      {["outlet_mgr", "chef", "bainmarry"].includes(newRole) && <select value={newOutlet} onChange={(e) => setNewOutlet(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+      {OUTLET_SCOPED_ROLES_FE.includes(newRole) && <select value={newOutlet} onChange={(e) => setNewOutlet(e.target.value)} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
         <option value="">Select Outlet</option>
-        {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+        {(newRole === "franchise" ? OUTLETS.filter(o => o.franchise) : OUTLETS).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>}
       <button onClick={addUser} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Create User (PIN auto-generated)"}</button>
     </div>}
@@ -462,13 +465,13 @@ const UsersPanel = () => {
             {ROLE_OPTIONS.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}
           </select>
         </div>
-        {/* Outlet assignment for outlet managers, chefs, and bainmarry staff */}
-        {["outlet_mgr", "chef", "bainmarry"].includes(u.role) && (
+        {/* Outlet assignment for outlet managers, chefs, bainmarry staff, and franchise partners */}
+        {OUTLET_SCOPED_ROLES_FE.includes(u.role) && (
           <div style={{ marginTop: 8 }}>
             <select value={u.outlet_id || ""} onChange={async (e) => { try { await api.updateUser(u.id, { outlet_id: e.target.value || null }); load(); } catch (err) { alert("Error: " + err.message); } }}
               style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: u.outlet_id ? "#1A1A1A" : "#999", fontWeight: 600 }}>
               <option value="">No outlet assigned</option>
-              {OUTLETS.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              {(u.role === "franchise" ? OUTLETS.filter(o => o.franchise) : OUTLETS).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </div>
         )}
@@ -5547,9 +5550,9 @@ const DemandHistory = () => {
 //  FRANCHISE BILLING — month-wise demand vs dispatch, priced off the rate card,
 //  for franchise outlets only (billed for what Base Kitchen actually supplied)
 // ═════════════════════════════════════════════════════════════════════════════
-const FranchiseBilling = () => {
+const FranchiseBilling = ({ lockedOutlet } = {}) => {
   const franchiseOutlets = OUTLETS.filter((o) => o.franchise);
-  const [selOutlet, setSelOutlet] = useState(franchiseOutlets[0]?.id || null);
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || franchiseOutlets[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -5768,7 +5771,7 @@ const FranchiseBilling = () => {
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No franchise outlets configured</div>
       ) : (<>
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
-          {franchiseOutlets.map((o) => (
+          {!lockedOutlet && franchiseOutlets.map((o) => (
             <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.name}</button>
           ))}
           <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
@@ -5792,7 +5795,7 @@ const FranchiseBilling = () => {
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
-                <button onClick={() => (editMode ? finishEditing() : setEditMode(true))} disabled={items.length === 0 || savingCorrections} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 || savingCorrections ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{savingCorrections ? "⏳ Saving..." : editMode ? "✅ Done" : "✏️ Edit"}</button>
+                {!lockedOutlet && <button onClick={() => (editMode ? finishEditing() : setEditMode(true))} disabled={items.length === 0 || savingCorrections} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 || savingCorrections ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{savingCorrections ? "⏳ Saving..." : editMode ? "✅ Done" : "✏️ Edit"}</button>}
                 <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
               </div>
             </div>
@@ -8971,9 +8974,9 @@ const NeverMappedReport = ({ items }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
-const RMAuditPanel = () => {
+const RMAuditPanel = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
@@ -9002,11 +9005,11 @@ const RMAuditPanel = () => {
           return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
-      </div>
+      </div>}
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing audit...</div>}
 
@@ -9108,12 +9111,14 @@ const RMAuditPanel = () => {
             </div>
           )}
 
-          <QuickRecipeAdder unmatchedDishes={outletData.unmatched_dishes} unmappedIngredients={outletData.unmapped_ingredients} dateStr={dateStr} onSaved={loadAudit} />
-          <div style={{ marginTop: 12 }}><NeverMappedReport items={outletData.never_mapped_items} /></div>
+          {!lockedOutlet && <QuickRecipeAdder unmatchedDishes={outletData.unmatched_dishes} unmappedIngredients={outletData.unmapped_ingredients} dateStr={dateStr} onSaved={loadAudit} />}
+          {!lockedOutlet && <div style={{ marginTop: 12 }}><NeverMappedReport items={outletData.never_mapped_items} /></div>}
         </>
       )}
 
-      <ColdDrinkAuditSection dateStr={dateStr} />
+      {/* Cold Drink Audit is always all-outlets (backend has no per-outlet filter) — not
+          appropriate for a single-outlet locked (franchise) view */}
+      {!lockedOutlet && <ColdDrinkAuditSection dateStr={dateStr} />}
     </div>
   );
 };
@@ -10984,6 +10989,181 @@ const ScopedDashboard = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  FRANCHISE DASHBOARD — read-only view for a franchise partner's own outlet
+//  (Elan, Gaur Siddhartham, ...). Every fetch below is outlet-scoped to
+//  currentUser.outlet_id server-side (see scopedOutletFilter in authGuards.js) —
+//  the `outlet` query params below are what the UI intends to show, not a trust
+//  boundary; the backend forces the actual filter regardless of what's sent.
+// ═════════════════════════════════════════════════════════════════════════════
+const CATEGORY_LABELS = { food: "🍛 Food", dairy: "🥛 Dairy", vegetable: "🥦 Vegetable", grocery: "🌾 Grocery", masala: "🌶️ Masala", packaging: "📦 Packaging", cleaning: "🧹 Cleaning", gas: "🔥 Gas" };
+
+const FranchisePnL = ({ outletId }) => {
+  const [selDay, setSelDay] = useState(1);
+  const [pnl, setPnl] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getLivePnl(dateStr, outletId).then((r) => setPnl((r?.pnl || []).find((p) => p.outlet_id === outletId) || null)).catch(() => setPnl(null)).finally(() => setLoading(false));
+  }, [dateStr, outletId]);
+
+  const catCost = Object.entries(pnl?.variable_by_category || {});
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Daily P&L</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Revenue, cost, and net profit for your outlet</p>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+      {!loading && !pnl && <div style={{ textAlign: "center", padding: 40, color: "#999", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No P&L data for {dateStr}</div>}
+
+      {!loading && pnl && (<>
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Effective Sale</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(pnl.effective_sale)}</div>
+          </div>
+          <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Expense</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(pnl.total_expense)}</div>
+          </div>
+          <div style={{ flex: "1 1 140px", background: pnl.net_profit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 12, padding: "12px 16px", border: `1px solid ${pnl.net_profit >= 0 ? "#BBF7D0" : "#FECACA"}`, textAlign: "center" }}>
+            <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Net Profit</div>
+            <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: pnl.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(pnl.net_profit)}</div>
+            <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{pnl.margin}% margin</div>
+          </div>
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Revenue</div>
+          {[["Total Sale", pnl.total_sale], ["Delivery Sale", pnl.delivery_sale], ["Delivery Commission", -pnl.delivery_commission], ["Cancelled Orders", -pnl.cancelled_orders], ["Complimentary", -pnl.complimentary], ["Effective Sale", pnl.effective_sale]].map(([label, val], i, arr) => (
+            <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5, fontWeight: i === arr.length - 1 ? 800 : 500, borderTop: i === arr.length - 1 ? "1px solid #E8E8E4" : "none", marginTop: i === arr.length - 1 ? 4 : 0, paddingTop: i === arr.length - 1 ? 8 : 5 }}>
+              <span style={{ color: "#666" }}>{label}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(val)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Variable Cost by Category — {fmt(pnl.variable_cost)}</div>
+          {catCost.length === 0 && <div style={{ fontSize: 12, color: "#999" }}>No consumption data</div>}
+          {catCost.sort((a, b) => b[1] - a[1]).map(([cat, cost]) => (
+            <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5 }}>
+              <span style={{ color: "#666" }}>{CATEGORY_LABELS[cat] || cat}</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{fmt(cost)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "14px 16px" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 10 }}>Fixed Cost & Purchases</div>
+          {[["Fixed Cost (daily share)", pnl.daily_fixed_cost], ["Base Kitchen Share", pnl.bk_share], ["Local Purchases", pnl.daily_purchases]].map(([label, val]) => (
+            <div key={label} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 12.5 }}>
+              <span style={{ color: "#666" }}>{label}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(val)}</span>
+            </div>
+          ))}
+        </div>
+      </>)}
+    </div>
+  );
+};
+
+const FranchiseSales = ({ outletId }) => {
+  const [days, setDays] = useState(14);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getOutletSales({ outlet_id: outletId, from: istDateAgo(days) }).then((r) => setRows(r || [])).catch(() => setRows([])).finally(() => setLoading(false));
+  }, [outletId, days]);
+
+  const totalSale = rows.reduce((s, r) => s + Number(r.total_sale || 0), 0);
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📤 Sales History</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Daily sales submitted for your outlet</p>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        {[7, 14, 30].map((d) => (<button key={d} onClick={() => setDays(d)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: days === d ? 700 : 500, border: days === d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: days === d ? "#1A1A1A" : "#fff", color: days === d ? "#fff" : "#888" }}>Last {d}d</button>))}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+      {!loading && rows.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales submitted in this range</div>}
+
+      {!loading && rows.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", fontSize: 12, fontWeight: 700, color: "#166534" }}>Total over range: {fmt(totalSale)}</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                {["Date", "Total Sale", "Swiggy", "Zomato", "Other Delivery", "Cash Collected", "UPI Collected"].map((h) => <th key={h} style={{ padding: "8px 10px", textAlign: h === "Date" ? "left" : "right", fontSize: 10, fontWeight: 700, color: "#666", textTransform: "uppercase", borderBottom: "2px solid #E8E8E4", whiteSpace: "nowrap" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ padding: "8px 10px", fontWeight: 600 }}>{r.date}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(r.total_sale)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.swiggy_sale)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.zomato_sale)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.other_delivery_sale)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.cash_collected)}</td>
+                    <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.upi_collected)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const FRANCHISE_TABS = [
+  { id: "pnl", label: "💰 P&L" },
+  { id: "sales", label: "📤 Sales" },
+  { id: "audit", label: "🔍 RM Audit" },
+  { id: "billing", label: "🧾 Order Challans" },
+];
+const FranchiseDashboard = () => {
+  const currentUser = getCurrentUser();
+  const outletId = currentUser?.outlet_id;
+  const outletName = OUTLETS.find((o) => o.id === outletId)?.name || outletId;
+  const [tab, setTab] = useState("pnl");
+  const doLogout = () => { localStorage.removeItem("ananda_user"); window.location.reload(); };
+
+  return (<div style={PAGE}>{FONT}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 16, fontWeight: 800 }}>🤝 Franchise Dashboard</div>
+        <div style={{ fontSize: 11, color: "#999" }}>{outletName}{currentUser ? ` · ${currentUser.name}` : ""}</div>
+      </div>
+      <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>
+    </div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>
+      {FRANCHISE_TABS.map((t) => (<button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: tab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+    </div>
+    <div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 18px" }}>
+      {!outletId && <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>No outlet assigned to this account — contact the owner.</div>}
+      {outletId && tab === "pnl" && <FranchisePnL outletId={outletId} />}
+      {outletId && tab === "sales" && <FranchiseSales outletId={outletId} />}
+      {outletId && tab === "audit" && <RMAuditPanel lockedOutlet={outletId} />}
+      {outletId && tab === "billing" && <FranchiseBilling lockedOutlet={outletId} />}
+    </div>
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -11059,6 +11239,7 @@ export default function AnandaCafe() {
       else if (currentUser.role === "store_mgr") setApp("store");
       else if (currentUser.role === "outlet_mgr") setApp("outlet");
       else if (currentUser.role === "driver") setApp("driver");
+      else if (currentUser.role === "franchise") setApp("franchise");
     }
   }, [currentUser]);
 
@@ -11067,7 +11248,7 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : null;
+  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : null;
   const effectiveApp = lockedApp || app;
 
   // Load master data from DB on startup — updates in-memory arrays
@@ -11265,6 +11446,7 @@ export default function AnandaCafe() {
 
   if (effectiveApp === "outlet") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? null : (urlRole ? null : () => setApp("launcher"))} /></div></div>);
   if (effectiveApp === "scoped") return <ScopedDashboard />;
+  if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>

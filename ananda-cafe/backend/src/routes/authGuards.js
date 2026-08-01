@@ -67,7 +67,11 @@ async function requireOwner(req, res) {
   return true;
 }
 
-// Returns true if user role is in allowedRoles, otherwise 403.
+// Returns the user object if their role is in allowedRoles, otherwise sends 403 and
+// returns false. (Returns the user, not just `true`, so callers that need it — e.g. to
+// force-scope a query to the caller's own outlet — don't have to look it up twice. Every
+// existing `if (!await requireRole(...)) return;` call site still works unchanged since
+// a user object is truthy.)
 async function requireRole(req, res, ...allowedRoles) {
   const user = await requireAuth(req, res);
   if (!user) return false;
@@ -75,15 +79,16 @@ async function requireRole(req, res, ...allowedRoles) {
     res.status(403).json({ error: 'Insufficient permissions' });
     return false;
   }
-  return true;
+  return user;
 }
 
 // For routes that return/modify outlet data: outlet_mgr, chef, and bainmarry can only
 // touch their own outlet (chef/bainmarry punch category-scoped demand/wastage/closing
-// stock for one outlet, same as outlet_mgr). Owner and store_mgr are unrestricted.
-// Call this AFTER requireAuth has returned a user.
+// stock for one outlet, same as outlet_mgr). franchise is read-only (see route-level
+// requireRole checks) but scoped the same way defensively. Owner and store_mgr are
+// unrestricted. Call this AFTER requireAuth has returned a user.
 // Returns true if access OK, else sends 403 and returns false.
-const OUTLET_SCOPED_ROLES = ['outlet_mgr', 'chef', 'bainmarry'];
+const OUTLET_SCOPED_ROLES = ['outlet_mgr', 'chef', 'bainmarry', 'franchise'];
 function ensureOutletAccess(user, requestedOutletId, res) {
   if (!OUTLET_SCOPED_ROLES.includes(user.role)) return true; // owner & store_mgr unrestricted
   if (!requestedOutletId) return true; // no outlet specified; caller handles
@@ -92,6 +97,15 @@ function ensureOutletAccess(user, requestedOutletId, res) {
     return false;
   }
   return true;
+}
+
+// For read endpoints that accept an optional ?outlet= filter (P&L, RM Audit, stock
+// usage): franchise is confined to their own outlet_id no matter what the client sends
+// — the query param is only ever advisory for owner/avp/head_chef, who may legitimately
+// ask for 'all' or another outlet. Same OUTLET_SCOPED_ROLES list as ensureOutletAccess,
+// but resolves to a value instead of a pass/fail.
+function scopedOutletFilter(user, requestedOutlet) {
+  return OUTLET_SCOPED_ROLES.includes(user.role) ? user.outlet_id : requestedOutlet;
 }
 
 // Clears the cache for a specific user. Call when a user's role is changed.
@@ -146,6 +160,7 @@ module.exports = {
   requireOwner,
   requireRole,
   ensureOutletAccess,
+  scopedOutletFilter,
   invalidateUser,
   filterItemsToRoleScope,
 };
