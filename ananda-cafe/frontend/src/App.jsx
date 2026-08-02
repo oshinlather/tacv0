@@ -6823,27 +6823,17 @@ const OutletMgr = ({ onBack }) => {
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" });
   const [prevCash, setPrevCash] = useState(0);
-  // Cash Expense — auto-computed from this outlet's own Cash Purchase entries (payment
-  // mode "cash") for the selected date, instead of the manager retyping a number that
-  // can drift from what was actually punched. Expandable to review/edit those entries.
-  const [cashPurchases, setCashPurchases] = useState([]);
-  const [showCashExpense, setShowCashExpense] = useState(false);
-  const [editingCashPurchase, setEditingCashPurchase] = useState(null); // { id, item, qty, amount }
-  const [cashPurchaseSaving, setCashPurchaseSaving] = useState(false);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesSaving, setSalesSaving] = useState(false);
   const [existingData, setExistingData] = useState(null);
   const [salesLoaded, setSalesLoaded] = useState(false);
-  // Cash Purchase — quick-add one expense at a time (submits immediately), instead of
-  // filling a multi-row batch and submitting once. Each expense supports multiple bill photos.
-  const [quickItem, setQuickItem] = useState(""); const [quickQty, setQuickQty] = useState(""); const [quickAmount, setQuickAmount] = useState("");
-  const [quickVendor, setQuickVendor] = useState(""); const [quickType, setQuickType] = useState("new_purchase"); const [quickPhotos, setQuickPhotos] = useState([]);
-  const [quickNote, setQuickNote] = useState(""); const [paymentMode, setPaymentMode] = useState("cash"); const [quickSaving, setQuickSaving] = useState(false);
-  const [todaysPurchases, setTodaysPurchases] = useState([]); const [purchaseToast, setPurchaseToast] = useState(null);
   // Dairy / Cold Drink Purchase — a fixed catalog per category, qty + total amount paid
   // per line. Manager enters what they actually paid, not a per-unit price they'd have
-  // to calculate themselves — price/unit is derived (amount ÷ qty) same as Cash Purchase
-  // already does for inventory-linked lines (see creditStockIn in POST /purchases).
+  // to calculate themselves — price/unit is derived (amount ÷ qty). Purely a record for
+  // inventory/audit purposes (RM Audit, P&L cost) — never treated as a cash expense the
+  // outlet manager needs to be reimbursed for; the freeform Cash Purchase flow that used
+  // to feed that concept has been removed entirely (owner pays these outlets' dairy/cold
+  // drink directly, always).
   const [dcCategory, setDcCategory] = useState("dairy");
   const [dcQty, setDcQty] = useState({}); const [dcAmount, setDcAmount] = useState({}); const [dcSaving, setDcSaving] = useState(false);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
@@ -6856,8 +6846,6 @@ const OutletMgr = ({ onBack }) => {
       🌙 It's past midnight — defaulted to <b>yesterday's</b> date since you're likely closing out yesterday's business. Tap a date above if that's wrong.
     </div>
   ) : null;
-  // Clears the in-progress draft only — todaysPurchases (already-saved entries) stays intact.
-  const resetPurchase = () => { setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickType("new_purchase"); setQuickPhotos([]); setQuickNote(""); setPaymentMode("cash"); setErr(null); };
   const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); };
   const submitDcPurchase = async () => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
@@ -6993,26 +6981,6 @@ const OutletMgr = ({ onBack }) => {
 
   const staffFoodItems = staffItems.filter((i) => i.category === "food");
   const staffDressItems = staffItems.filter((i) => i.category === "dress");
-
-  // Saves this one expense immediately (its own purchase record) and clears the draft
-  // for the next entry — no batching, no "submit at the end of the day" risk of loss.
-  const submitQuickExpense = async () => {
-    if (!quickItem.trim() || !quickAmount) return;
-    setQuickSaving(true); setErr(null);
-    try {
-      const apiItems = [{ item_name: quickItem.trim(), quantity: Number(quickQty) || null, unit: "Kg", amount: Number(quickAmount), vendor: quickVendor.trim() || null, type: quickType }];
-      const result = await api.createPurchase({ items: apiItems, payment_mode: paymentMode, note: quickNote, outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
-      for (let i = 0; i < quickPhotos.length; i++) {
-        try { await api.uploadPurchasePhoto(result.id, quickPhotos[i], `bill_${i + 1}`); } catch (e) { console.log("Photo upload skipped:", e.message); }
-      }
-      const entry = { id: result.id, item: quickItem.trim(), amount: Number(quickAmount), vendor: quickVendor.trim(), photoCount: quickPhotos.length, time: timeNow() };
-      setTodaysPurchases((p) => [entry, ...p]);
-      setQuickItem(""); setQuickQty(""); setQuickAmount(""); setQuickVendor(""); setQuickPhotos([]); setQuickNote("");
-      setPurchaseToast(`✅ Added ${fmt(Number(quickAmount))} — ${entry.item}`);
-      setTimeout(() => setPurchaseToast(null), 2500);
-    } catch (error) { setErr(error.message); alert(`❌ Failed to save: ${error.message}`); }
-    finally { setQuickSaving(false); }
-  };
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
@@ -7232,7 +7200,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "purchase", icon: "🧾", t: "Cash Purchase", sub: "Record local purchase with bill", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetPurchase(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -7326,8 +7294,7 @@ const OutletMgr = ({ onBack }) => {
       Promise.all([
         api.getOutletSales({ outlet_id: outlet, date: selectedDate }).catch(() => []),
         api.getLatestCash(outlet, selectedDate).catch(() => null),
-        api.getPurchases({ outlet_id: outlet, date: selectedDate, payment_mode: "cash" }).catch(() => []),
-      ]).then(([sales, prev, purchases]) => {
+      ]).then(([sales, prev]) => {
         if (sales && sales.length > 0) {
           const s = sales[0];
           setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", cash_deposited_to: s.cash_deposited_by || "", notes: s.notes || "" });
@@ -7337,30 +7304,9 @@ const OutletMgr = ({ onBack }) => {
           const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0);
           setPrevCash(closingCash);
         }
-        // Belt-and-suspenders: Dairy/Cold Drink Purchase now saves as payment_mode "upi"
-        // (owner pays it directly, not out of the manager's cash — see submitDcPurchase),
-        // so a fresh entry never reaches here at all — this filter only guards against any
-        // already-saved record from before that change that's still tagged "cash".
-        const DC_TYPES = new Set(["dairy_purchase", "cold_drink_purchase"]);
-        setCashPurchases((purchases || []).filter((p) => !(p.items || []).some((it) => DC_TYPES.has(it.type))));
       }).finally(() => setSalesLoading(false));
     };
     if (!salesLoaded) { setSalesLoaded(true); loadSalesData(); }
-
-    const cashExpenseTotal = cashPurchases.reduce((s, p) => s + (Number(p.total_amount) || 0), 0);
-
-    const startEditCashPurchase = (p) => { const it = (p.items || [])[0] || {}; setEditingCashPurchase({ id: p.id, item: it.item_name || "", qty: it.quantity ?? "", amount: p.total_amount }); };
-    const saveCashPurchaseEdit = async () => {
-      if (!editingCashPurchase) return;
-      setCashPurchaseSaving(true);
-      try {
-        const items = [{ item_name: editingCashPurchase.item.trim(), quantity: Number(editingCashPurchase.qty) || null, unit: "Kg", amount: Number(editingCashPurchase.amount) || 0 }];
-        await api.updatePurchaseRecord(editingCashPurchase.id, { items });
-        setEditingCashPurchase(null);
-        loadSalesData();
-      } catch (e) { alert("Error: " + e.message); }
-      finally { setCashPurchaseSaving(false); }
-    };
 
     const n = (v) => Number(v) || 0;
     const totalSale = n(salesData.total_sale);
@@ -7374,13 +7320,18 @@ const OutletMgr = ({ onBack }) => {
     const paymentTotal = upi + cash;
     const effectivePayment = paymentTotal - zomatoDistrict;
     const paymentDiff = storeSale - effectivePayment;
-    const closingCash = prevCash + cash - cashExpenseTotal - n(salesData.cash_deposited);
+    // Cash Expense (Cash Purchase) has been removed as a concept for outlet managers —
+    // there's no more flow to create one. This only reads back whatever's already stored
+    // on the record for dates that had one before the removal, so historical closing-cash
+    // math for those dates stays accurate; every date going forward is simply 0.
+    const existingCashExpense = n(salesData.cash_expense);
+    const closingCash = prevCash + cash - existingCashExpense - n(salesData.cash_deposited);
 
     const submitSales = async () => {
       if (n(salesData.cash_deposited) > 0 && !salesData.cash_deposited_to) { alert("Please select who the cash was submitted to"); return; }
       setSalesSaving(true);
       try {
-        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: cashExpenseTotal, cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
+        await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: existingCashExpense, cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
         alert(`✅ Daily sales saved!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}`);
         setScreen("home");
       } catch (e) { alert("Error: " + e.message); }
@@ -7457,44 +7408,12 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ fontSize: 10, fontWeight: 700, color: "#9333EA", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Cash Management</div>
         <V label="Previous Day Cash" value={prevCash} color="#555" />
         <V label="+ Today Cash" value={cash} color="#16A34A" />
-        {/* Cash Expense — auto-summed from this outlet's own Cash Purchase entries for
-            the date, not typed in here. Expand to review each entry and fix one if it's
-            wrong, instead of overriding the total by hand. */}
-        <div onClick={() => setShowCashExpense((v) => !v)} style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3", cursor: cashPurchases.length > 0 ? "pointer" : "default" }}>
-          <span style={{ flex: 1, fontSize: 12, color: "#555" }}>− Cash Expense {cashPurchases.length > 0 && <span style={{ color: "#BBB", fontSize: 10 }}>({cashPurchases.length}) {showCashExpense ? "▲" : "▼"}</span>}</span>
-          <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-          <span style={{ fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, minWidth: 100, textAlign: "right" }}>{cashExpenseTotal}</span>
-        </div>
-        {showCashExpense && cashPurchases.length > 0 && (
-          <div style={{ padding: "6px 0 8px", borderBottom: "1px solid #F5F5F3" }}>
-            {cashPurchases.map((p) => {
-              const it = (p.items || [])[0] || {};
-              const isEditing = editingCashPurchase?.id === p.id;
-              return isEditing ? (
-                <div key={p.id} style={{ padding: "8px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 6 }}>
-                  <input value={editingCashPurchase.item} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, item: e.target.value }))} placeholder="Item"
-                    style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 6, boxSizing: "border-box" }} />
-                  <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                    <input value={editingCashPurchase.qty} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, qty: e.target.value }))} type="number" inputMode="decimal" placeholder="Qty"
-                      style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
-                    <input value={editingCashPurchase.amount} onChange={(e) => setEditingCashPurchase((s) => ({ ...s, amount: e.target.value }))} type="number" inputMode="numeric" placeholder="Amount"
-                      style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", textAlign: "center", fontWeight: 700, color: "#B45309" }} />
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={saveCashPurchaseEdit} disabled={cashPurchaseSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{cashPurchaseSaving ? "Saving..." : "Save"}</button>
-                    <button onClick={() => setEditingCashPurchase(null)} disabled={cashPurchaseSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                  </div>
-                </div>
-              ) : (
-                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
-                  <span style={{ flex: 1, color: "#555" }}>{it.item_name || "—"}{it.quantity ? ` · ${it.quantity} ${it.unit || ""}` : ""}</span>
-                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(p.total_amount)}</span>
-                  <button onClick={() => startEditCashPurchase(p)} style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#fff", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#2563EB", fontWeight: 700 }}>✏️</button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {/* Cash Purchase (and the Cash Expense deduction it fed) has been removed as a
+            concept for outlet managers — no more entry flow, no more breakdown to review
+            or edit here. This only shows up at all for a date that already has a legacy
+            value recorded from before the removal, read-only, so historical closing-cash
+            math stays correct without giving the impression it's still editable. */}
+        {existingCashExpense > 0 && <V label="− Cash Expense (legacy)" value={existingCashExpense} color="#B45309" />}
         {salesRow("− Cash Deposited", "cash_deposited", "₹")}
         {n(salesData.cash_deposited) > 0 && (<>
           {existingData?.cash_deposited_by && Number(existingData.cash_deposited) === n(salesData.cash_deposited) && (
@@ -7877,55 +7796,6 @@ const OutletMgr = ({ onBack }) => {
     </>)}
   </div>); }
 
-  if (screen === "purchase") {
-    const canAdd = quickItem.trim() && Number(quickAmount) > 0;
-    const todayTotal = todaysPurchases.reduce((s, p) => s + p.amount, 0);
-    return (<div><SavingOverlay />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Cash Purchase</div>{todayTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", color: "#B45309", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(todayTotal)}</span>}</div>
-      <DatePicker value={selectedDate} onChange={setSelectedDate} />
-
-      <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E8E8E4", padding: 16, marginBottom: 14 }}>
-        <input value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} type="number" inputMode="numeric" placeholder="₹ Amount"
-          style={{ width: "100%", padding: 14, borderRadius: 12, border: "2px solid #FDE68A", background: "#FFFBEB", fontSize: 26, fontWeight: 800, textAlign: "center", fontFamily: "'JetBrains Mono'", color: "#B45309", marginBottom: 10, boxSizing: "border-box" }} />
-        <input value={quickItem} onChange={(e) => setQuickItem(e.target.value)} placeholder="What did you buy? (e.g. Vegetables, Gas)"
-          style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 15, fontFamily: "inherit", fontWeight: 600, marginBottom: 8, boxSizing: "border-box" }} />
-        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-          <input value={quickQty} onChange={(e) => setQuickQty(e.target.value)} type="number" inputMode="decimal" placeholder="Qty (optional)"
-            style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "center", boxSizing: "border-box" }} />
-          <input value={quickVendor} onChange={(e) => setQuickVendor(e.target.value)} placeholder="Shop / Vendor (optional)"
-            style={{ flex: 2, padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
-        </div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>{[{ id: "new_purchase", label: "🧾 New Purchase" }, { id: "vendor_payment", label: "🤝 Vendor Payment" }].map((t) => (
-          <button key={t.id} onClick={() => setQuickType(t.id)} style={{ flex: 1, padding: 8, borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: quickType === t.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: quickType === t.id ? "#EFF6FF" : "#fff", color: quickType === t.id ? "#2563EB" : "#888" }}>{t.label}</button>
-        ))}</div>
-        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>{[{ id: "cash", label: "💵 Cash" }, { id: "upi", label: "📱 UPI" }, { id: "credit", label: "📒 Udhar" }].map((m) => (
-          <button key={m.id} onClick={() => setPaymentMode(m.id)} style={{ flex: 1, padding: 8, borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: paymentMode === m.id ? "2px solid #B45309" : "1px solid #E0E0DC", background: paymentMode === m.id ? "#FFFBEB" : "#fff", color: paymentMode === m.id ? "#B45309" : "#888" }}>{m.label}</button>
-        ))}</div>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 6 }}>{quickPhotos.length > 0 ? `Bill Photos (${quickPhotos.length})` : "Bill Photo (optional — can add more than one)"}</div>
-        <MultiPhotoUpload images={quickPhotos} onAdd={(img) => setQuickPhotos((p) => [...p, img])} onRemove={(i) => setQuickPhotos((p) => p.filter((_, idx) => idx !== i))} />
-        <ErrBar />
-        <button onClick={submitQuickExpense} disabled={!canAdd || quickSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: canAdd && !quickSaving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: canAdd && !quickSaving ? "pointer" : "not-allowed", fontFamily: "inherit", marginTop: 12 }}>
-          {quickSaving ? "⏳ Saving..." : `+ Add Expense${quickAmount ? ` — ${fmt(Number(quickAmount))}` : ""}`}
-        </button>
-      </div>
-
-      {purchaseToast && <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", color: "#166534", fontSize: 13, fontWeight: 600, marginBottom: 12, textAlign: "center" }}>{purchaseToast}</div>}
-
-      {todaysPurchases.length > 0 && <>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 8 }}>Added Today ({todaysPurchases.length})</div>
-        {todaysPurchases.map((p) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 6 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{p.item}</div>
-              <div style={{ fontSize: 10, color: "#999" }}>{p.vendor ? `${p.vendor} · ` : ""}{p.time}{p.photoCount > 0 ? ` · 📷 ${p.photoCount}` : ""}</div>
-            </div>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(p.amount)}</div>
-          </div>
-        ))}
-      </>}
-    </div>);
-  }
-
   if (screen === "dairy_cold_drink") {
     const dcActiveCat = DC_PURCHASE_CATEGORIES.find((c) => c.id === dcCategory) || DC_PURCHASE_CATEGORIES[0];
     const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
@@ -7933,6 +7803,7 @@ const OutletMgr = ({ onBack }) => {
     const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0);
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🥛 Dairy / Cold Drink Purchase</div>{dcTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#2563EB", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(dcTotal)}</span>}</div>
+      <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>📋 For inventory & audit records only — this isn't a cash expense you're paying for, so it won't be deducted from your cash to deposit.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
 
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
