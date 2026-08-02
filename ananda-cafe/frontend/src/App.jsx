@@ -6866,7 +6866,13 @@ const OutletMgr = ({ onBack }) => {
     setDcSaving(true); setErr(null);
     try {
       const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
-      await api.createPurchase({ items: apiItems, payment_mode: "cash", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
+      // payment_mode: "company_account", not "cash" — the owner pays these directly from
+      // the company account, the outlet manager never takes it out of their cash-in-hand.
+      // Daily Sales' Cash Expense total only ever pulls payment_mode="cash" purchases (see
+      // loadSalesData below), so tagging it this way keeps it out of that deduction — it
+      // still counts as a real cost in P&L (which sums all purchases regardless of mode),
+      // just not against what the manager owes to deposit.
+      await api.createPurchase({ items: apiItems, payment_mode: "company_account", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
       alert(`✅ Purchase saved — ${filled.length} items`);
       resetDcPurchase(); setScreen("home");
     } catch (e) { setErr(e.message); alert(`❌ Failed to save: ${e.message}`); }
@@ -7328,7 +7334,12 @@ const OutletMgr = ({ onBack }) => {
           const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0);
           setPrevCash(closingCash);
         }
-        setCashPurchases(purchases || []);
+        // Belt-and-suspenders: Dairy/Cold Drink Purchase now saves as payment_mode
+        // "company_account" (owner pays it directly, not out of the manager's cash), so a
+        // fresh entry never reaches here at all — this filter only guards against any
+        // already-saved record from before that change that's still tagged "cash".
+        const DC_TYPES = new Set(["dairy_purchase", "cold_drink_purchase"]);
+        setCashPurchases((purchases || []).filter((p) => !(p.items || []).some((it) => DC_TYPES.has(it.type))));
       }).finally(() => setSalesLoading(false));
     };
     if (!salesLoaded) { setSalesLoaded(true); loadSalesData(); }
