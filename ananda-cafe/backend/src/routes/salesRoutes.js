@@ -870,9 +870,13 @@ async function computeRMAudit(date, outletFilter) {
   const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
   const targetOutlets = outletFilter && outletFilter !== 'all' ? [outletFilter] : outletIds;
 
-  const sales = await fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' });
-  const { data: recipes } = await supabase.from('recipes')
-    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
+  // Independent of each other — fired concurrently. costingContext is reused below instead
+  // of computeStockUsageForDate fetching its own copy of the same six tables a second time.
+  const [sales, { data: recipes }, costingContext] = await Promise.all([
+    fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' }),
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
+    buildCostingContext(),
+  ]);
 
   const recipeByNormName = {};
   (recipes || []).forEach(r => { recipeByNormName[normalizeDishName(r.item_name)] = r; });
@@ -889,10 +893,10 @@ async function computeRMAudit(date, outletFilter) {
     if (ing.raw_material) recipeIngredientNames.add(normalizeIngredientName(ing.raw_material));
   }));
 
-  const stockUsage = await computeStockUsageForDate(date, outletFilter);
+  const stockUsage = await computeStockUsageForDate(date, outletFilter, costingContext);
   const actualByOutlet = {};
   stockUsage.outlets.forEach(o => { actualByOutlet[o.outlet_id] = o; });
-  const { rateMap, bkRecipeMap, convFactorFor } = await buildCostingContext();
+  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
 
   const results = [];
   for (const oid of targetOutlets) {
@@ -3017,46 +3021,47 @@ router.get('/pnl/live/:date', async (req, res) => {
     const { date } = req.params;
     const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise
 
-    // 1. Get rate card
-    const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
+    // None of these nine queries depend on each other's results — fired concurrently
+    // instead of one-at-a-time, so this endpoint's total latency is bounded by the
+    // slowest single query rather than the sum of all of them.
+    const [
+      { data: rates },
+      { data: allOrders },
+      { data: demandItemsRaw },
+      { data: unitConversions },
+      { data: purchases },
+      { data: outletSales },
+      { data: fixedCosts },
+      { data: bkRecipes },
+      { data: bkIngredients },
+      { data: invItemsList },
+    ] = await Promise.all([
+      supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
+      supabase.from('demands').select('*').eq('date', date),
+      supabase.from('demand_items').select('id, unit').eq('active', true),
+      supabase.from('unit_conversions').select('*').eq('active', true),
+      supabase.from('purchases').select('*').eq('date', date),
+      supabase.from('daily_outlet_sales').select('*').eq('date', date),
+      supabase.from('fixed_costs').select('*').eq('active', true),
+      supabase.from('bk_recipes').select('*'),
+      supabase.from('bk_recipe_ingredients').select('*'),
+      supabase.from('inventory_items').select('id, name, demand_item_id'),
+    ]);
     const rateMap = {};
     (rates || []).forEach(r => { rateMap[r.id] = r; });
-
-    // 2. Get dispatched orders for this date (fulfilled orders with dispatch_items)
-    let orderQuery = supabase.from('demands').select('*').eq('date', date);
-    const { data: allOrders } = await orderQuery;
     const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
-
-    // 2b. Get demand items for unit info
-    const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, unit').eq('active', true);
     const demandUnitMap = {};
     (demandItemsRaw || []).forEach(i => { demandUnitMap[i.id] = i.unit; });
-
-    // 2c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
-    const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
     const convMap = {};
     (unitConversions || []).forEach(c => {
       convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
     });
 
-    // 3. Get daily purchases for this date
-    const { data: purchases } = await supabase.from('purchases').select('*').eq('date', date);
-
-    // 4. Get outlet sales for this date
-    const { data: outletSales } = await supabase.from('daily_outlet_sales').select('*').eq('date', date);
-
-    // 5. Get fixed costs
-    const { data: fixedCosts } = await supabase.from('fixed_costs').select('*').eq('active', true);
-
-    // 6. Get days in month for daily fixed cost
+    // Get days in month for daily fixed cost
     const dateObj = new Date(date);
     const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
 
-    // 6b. Get BK recipes for food cost calculation
-    const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
-    const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
     // Get inventory items for mapping raw_material_id → rate_card id
-    const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
     const invByName = {};
     (invItemsList || []).forEach(i => { invByName[i.name?.toLowerCase()] = i.id; invByName[i.id] = i.id; });
     
@@ -3455,19 +3460,28 @@ router.get('/pnl/live/:date', async (req, res) => {
 // rate-card/recipe/conversion resolution instead of a third, possibly-drifting copy of
 // this logic (RecipesPanel and CogsDash on the frontend already each have their own).
 async function buildCostingContext() {
-  // 1. Rate card
-  const { data: rates } = await supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true);
+  // None of these six queries depend on each other's results — fired concurrently instead
+  // of one-at-a-time so this function's total latency is bounded by the slowest single
+  // query, not the sum of all of them (this alone was most of /stock-usage and /audit's
+  // multi-second load time).
+  const [
+    { data: rates },
+    { data: bkRecipes },
+    { data: bkIngredients },
+    { data: invItemsList },
+    { data: demandItemsRaw },
+    { data: unitConversions },
+  ] = await Promise.all([
+    supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
+    supabase.from('bk_recipes').select('*'),
+    supabase.from('bk_recipe_ingredients').select('*'),
+    supabase.from('inventory_items').select('id, name, demand_item_id'),
+    supabase.from('demand_items').select('id, name, unit').eq('active', true),
+    supabase.from('unit_conversions').select('*').eq('active', true),
+  ]);
   const rateMap = {};
   (rates || []).forEach(r => { rateMap[r.id] = r; });
 
-  // 1b. BK Recipes — for pricing BK prep items via recipe cost
-  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
-  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
-  const { data: invItemsList } = await supabase.from('inventory_items').select('id, name, demand_item_id');
-  const { data: demandItemsRaw } = await supabase.from('demand_items').select('id, name, unit').eq('active', true);
-
-  // 1c. Unit conversions (e.g., 1 Batch dosa_batter = 9 Kg)
-  const { data: unitConversions } = await supabase.from('unit_conversions').select('*').eq('active', true);
   const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
   (unitConversions || []).forEach(c => {
     convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit };
@@ -3649,42 +3663,49 @@ router.get('/closing-stock-draft-alerts', async (req, res) => {
 // per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
 // possibly-drifting computation. Internal function — no req/res, no auth check (callers
 // that expose this over HTTP are responsible for their own requireOwner).
-async function computeStockUsageForDate(date, outlet) {
+// `costingContext` is optional — pass an already-built one (see buildCostingContext) when
+// the caller needs it separately too (computeRMAudit used to call buildCostingContext()
+// a second time after this function's own internal call, duplicating six queries for
+// nothing); omit it and this fetches its own, same as before.
+async function computeStockUsageForDate(date, outlet, costingContext) {
   {
     const prevDate = new Date(date);
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = prevDate.toISOString().split('T')[0];
 
-    const { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
-
-    // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
-    // filter excludes a still-in-progress Chef/Bainmarry draft from being treated as the
-    // day's real closing figure.
-    const { data: prevClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items, items_units').eq('date', prevDateStr).eq('status', 'submitted');
-
-    // 3. Today closing stock
-    const { data: todayClosing } = await supabase.from('closing_stocks')
-      .select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted');
-
-    // Draft-status closing stock (same dates) — queried separately so the P&L can tell
-    // the owner "someone punched this but it was never finalized" apart from "nobody
-    // touched it at all". Both read as has_..._submitted: false above, but they call for
-    // very different action (nudge the outlet manager to finalize vs. chase the outlet
-    // for numbers), so collapsing them into one generic "missing" warning was misleading.
-    const { data: prevClosingDraft } = await supabase.from('closing_stocks')
-      .select('outlet_id').eq('date', prevDateStr).eq('status', 'draft');
-    const { data: todayClosingDraft } = await supabase.from('closing_stocks')
-      .select('outlet_id').eq('date', date).eq('status', 'draft');
-
-    // 4. Today wastage — status filter excludes a still-in-progress Chef/Bainmarry draft
-    // from being treated as real wastage until the manager finalizes it.
-    const { data: todayWastage } = await supabase.from('demands')
-      .select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date).eq('status', 'submitted');
-
-    // 5. Today dispatched
-    const { data: todayOrders } = await supabase.from('demands')
-      .select('outlet_id, items, items_units, dispatch_items, status').eq('date', date);
+    // buildCostingContext() (unless already provided) and the six queries below don't
+    // depend on each other's results (only the computation further down needs all of them
+    // together), so they're all fired in one batch instead of one-at-a-time — this was
+    // most of this endpoint's multi-second load time.
+    const [
+      { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor },
+      { data: prevClosing },
+      { data: todayClosing },
+      { data: prevClosingDraft },
+      { data: todayClosingDraft },
+      { data: todayWastage },
+      { data: todayOrders },
+    ] = await Promise.all([
+      costingContext ? Promise.resolve(costingContext) : buildCostingContext(),
+      // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
+      // filter excludes a still-in-progress Chef/Bainmarry draft from being treated as the
+      // day's real closing figure.
+      supabase.from('closing_stocks').select('outlet_id, items, items_units').eq('date', prevDateStr).eq('status', 'submitted'),
+      // 3. Today closing stock
+      supabase.from('closing_stocks').select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted'),
+      // Draft-status closing stock (same dates) — queried separately so the P&L can tell
+      // the owner "someone punched this but it was never finalized" apart from "nobody
+      // touched it at all". Both read as has_..._submitted: false above, but they call for
+      // very different action (nudge the outlet manager to finalize vs. chase the outlet
+      // for numbers), so collapsing them into one generic "missing" warning was misleading.
+      supabase.from('closing_stocks').select('outlet_id').eq('date', prevDateStr).eq('status', 'draft'),
+      supabase.from('closing_stocks').select('outlet_id').eq('date', date).eq('status', 'draft'),
+      // 4. Today wastage — status filter excludes a still-in-progress Chef/Bainmarry draft
+      // from being treated as real wastage until the manager finalizes it.
+      supabase.from('demands').select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date).eq('status', 'submitted'),
+      // 5. Today dispatched
+      supabase.from('demands').select('outlet_id, items, items_units, dispatch_items, status').eq('date', date),
+    ]);
     const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
     // 6. Compute per outlet
