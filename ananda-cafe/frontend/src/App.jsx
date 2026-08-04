@@ -1781,6 +1781,16 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   }, [lockedOutlet]);
   const [newDishId, setNewDishId] = useState("");
   const [newDishQty, setNewDishQty] = useState("");
+  const [newDishUnit, setNewDishUnit] = useState("GM"); // only used by the "no dish yet" entry point, which has no sibling row to borrow a unit from
+  // Dishes to exclude from the "+ Add dish" picker — GET /api/recipes already returns each
+  // dish's full recipe_ingredients, so this is the real, complete answer (any dish already
+  // linked to this ingredient, whether or not it sold any units today), unlike using
+  // sc_breakdown alone (only today's sold dishes) which would let a dish that already has
+  // this ingredient in its recipe, but just didn't sell today, get a silent duplicate row.
+  const dishesAlreadyLinked = (ingredientName) => {
+    const key = (ingredientName || "").trim().toLowerCase();
+    return new Set(allDishes.filter((r) => (r.recipe_ingredients || []).some((ri) => (ri.raw_material || "").trim().toLowerCase() === key)).map((r) => r.id));
+  };
   const [addDishSaving, setAddDishSaving] = useState(false);
 
   // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
@@ -2517,8 +2527,8 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                     = {item.should_consume} {displayUnit}
                                   </div>
                                   {scEditing && (() => {
-                                    const usedDishNames = new Set(item.sc_breakdown.map((b) => b.dish.trim().toLowerCase()));
-                                    const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !usedDishNames.has((r.item_name || "").trim().toLowerCase())).sort((a, b) => a.item_name.localeCompare(b.item_name));
+                                    const linkedIds = dishesAlreadyLinked(item.name);
+                                    const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
                                     const rowUnit = item.sc_breakdown.find((b) => b.recipe_ingredient_unit)?.recipe_ingredient_unit || "GM";
                                     return (<>
                                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px dashed #E0E0DC" }}>
@@ -2550,6 +2560,46 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                 );
                               })()}
                             </>)}
+                          {/* No dish references this ingredient at all yet (should_consume
+                              never computed — zero recipe rows, not just zero sold today),
+                              so there's no should-consume line/toggle to hang the usual
+                              "+ Add dish" off of. Same link-a-dish action, just its own
+                              always-visible entry point instead of nested under one. */}
+                          {isStockBased && item.should_consume == null && (
+                            <div style={{ padding: "0 16px 6px 32px" }}>
+                              {!lockedOutlet && editingScItem === item.item_id ? (() => {
+                                const linkedIds = dishesAlreadyLinked(item.name);
+                                const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+                                return (
+                                  <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 8 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍽️ No dish uses {item.name} yet — link one:</div>
+                                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                      <select value={newDishId} onChange={(e) => setNewDishId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                                        <option value="">Pick dish...</option>
+                                        {dishOptions.map((r) => <option key={r.id} value={r.id}>{r.item_name}</option>)}
+                                      </select>
+                                      <input type="number" inputMode="decimal" step="any" placeholder="Qty" value={newDishQty} onChange={(e) => setNewDishQty(e.target.value)}
+                                        style={{ width: 70, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                      <select value={newDishUnit} onChange={(e) => setNewDishUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                                        {["GM", "ML", "Kg", "Ltr", "Pcs"].map((u) => <option key={u} value={u}>{u}</option>)}
+                                      </select>
+                                      <button onClick={() => addDishToIngredient(item, newDishUnit)} disabled={addDishSaving}
+                                        style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: addDishSaving ? "#D0D0CC" : "#B45309", color: "#fff", fontSize: 11, fontWeight: 700, cursor: addDishSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                        {addDishSaving ? "⏳..." : "+ Add"}</button>
+                                      <button onClick={() => { setEditingScItem(null); setNewDishId(""); setNewDishQty(""); }} disabled={addDishSaving}
+                                        style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+                                    </div>
+                                  </div>
+                                );
+                              })() : !lockedOutlet && (
+                                <button onClick={() => { setEditingScItem(item.item_id); setNewDishId(""); setNewDishQty(""); setNewDishUnit(displayUnit === "Pcs" ? "Pcs" : "GM"); }}
+                                  title="No dish recipe references this ingredient yet"
+                                  style={{ padding: "3px 8px", border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#B45309", fontWeight: 700 }}>
+                                  🍽️ Not in any dish recipe — Add
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
