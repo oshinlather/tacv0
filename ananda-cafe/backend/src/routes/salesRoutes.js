@@ -836,6 +836,7 @@ const RECIPE_RAW_MATERIAL_MAP = {
   'pineapple halwa': 'pineapple_halwa',
   'vada batter': 'vada_batter',
   'rawa mix': 'rawa_mix',
+  'rawa batter': 'rawa_mix', // dish recipes (e.g. Rawa Masala Dosa) call it "Rawa Batter" — same BK-prepared item as Rawa Mix, confirmed with owner
   'roasted peanuts': 'roasted_peanuts',
   'sevya payasam': 'sevya_payasam',
   'rasam': 'rasam',
