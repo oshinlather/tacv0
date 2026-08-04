@@ -1062,22 +1062,34 @@ function unitsCompatible(a, b) {
 // resolve is reported as unpriced rather than guessed.
 // Builds a memoized "cost per 1 unit of yield" lookup for BK-prepared items (Dosa Batter,
 // Sambhar, chutneys), shared across every dish being costed in one call so a BK item used
-// by many dishes (e.g. Dosa Batter) is only priced once, not once per dish.
+// by many dishes (e.g. Dosa Batter) is only priced once, not once per dish. An ingredient
+// can itself be another BK recipe's output (e.g. a combo recipe using Dosa Batter) — priced
+// recursively via that recipe's own cost per Kg, with `visited` guarding a circular
+// reference (A uses B uses A) from recursing forever.
 function buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) {
   const cache = {};
-  return (bkId) => {
+  const resolve = (bkId, visited) => {
     if (cache[bkId] !== undefined) return cache[bkId];
     const bk = (bkRecipes || []).find(r => r.id === bkId);
-    if (!bk) return (cache[bkId] = null);
+    if (!bk || visited.has(bkId)) return null;
+    const nextVisited = new Set(visited); nextVisited.add(bkId);
     let total = 0;
     (bkIngredientsByRecipe[bkId] || []).forEach(ing => {
       const rmId = ing.raw_material_id;
       const rateId = rateMap[rmId] ? rmId : (BK_INGREDIENT_TO_RATE[rmId] && rateMap[BK_INGREDIENT_TO_RATE[rmId]] ? BK_INGREDIENT_TO_RATE[rmId] : null);
-      if (rateId) total += Number(ing.qty || 0) * Number(rateMap[rateId].price);
+      if (rateId) {
+        total += Number(ing.qty || 0) * Number(rateMap[rateId].price);
+      } else if (rmId !== bkId && (bkRecipes || []).some(r => r.id === rmId)) {
+        const nested = resolve(rmId, nextVisited);
+        if (nested) total += Number(ing.qty || 0) * nested.perUnit;
+      }
     });
     const yieldQty = Number(bk.yield_qty) || 1;
-    return (cache[bkId] = { perUnit: yieldQty > 0 ? total / yieldQty : 0, unit: bk.yield_unit });
+    const result = { perUnit: yieldQty > 0 ? total / yieldQty : 0, unit: bk.yield_unit };
+    cache[bkId] = result;
+    return result;
   };
+  return (bkId) => resolve(bkId, new Set());
 }
 
 // Pure per-recipe costing — no DB calls — so it can run once per dish inside a bulk loop
@@ -3103,9 +3115,9 @@ router.get('/pnl/live/:date', async (req, res) => {
     const bkRecipeMap = {};
     (bkRecipes || []).forEach(r => {
       const ings = (bkIngredients || []).filter(i => i.recipe_id === r.id);
-      bkRecipeMap[r.id] = { 
-        ...r, 
-        yieldQty: Number(r.yield_qty) || 1, 
+      bkRecipeMap[r.id] = {
+        ...r,
+        yieldQty: Number(r.yield_qty) || 1,
         ingredients: ings.map(i => {
           // Try to find rate card item: raw_material_id might be inventory item id or name
           const rmId = i.raw_material_id || i.raw_material;
@@ -3114,6 +3126,52 @@ router.get('/pnl/live/:date', async (req, res) => {
         })
       };
     });
+
+    // Cost per Kg for a BK recipe, recursively — an ingredient can itself be another BK
+    // recipe's output (e.g. a combo recipe using Dosa Batter), priced via that recipe's own
+    // cost instead of being silently skipped as unpriced. `visited` guards a circular
+    // reference (A uses B uses A) from recursing forever; memoized since the same nested
+    // recipe can be reused by several dispatched items in one P&L computation.
+    // Self-contained unit conversion (SI + unit_conversions table) rather than reusing the
+    // per-outlet-loop `getUnitConv` below, since this helper is built once, outside that loop.
+    const bkIngredientUnitConv = (fromUnit, rateUnit, rmId) => {
+      const fu = (fromUnit || 'kg').toLowerCase();
+      const ru = (rateUnit || 'kg').toLowerCase();
+      let factor = 1;
+      let unit = fu;
+      const conv = convMap[rmId];
+      if (conv && fu === conv.fromUnit.toLowerCase()) { factor = conv.qty; unit = (conv.baseUnit || '').toLowerCase(); }
+      if (unit !== ru) {
+        if ((unit === 'gm' || unit === 'g') && ru === 'kg') factor *= 0.001;
+        else if (unit === 'kg' && (ru === 'gm' || ru === 'g')) factor *= 1000;
+        else if (unit === 'ml' && (ru === 'ltr' || ru === 'l')) factor *= 0.001;
+        else if ((unit === 'ltr' || unit === 'l') && ru === 'ml') factor *= 1000;
+      }
+      return factor;
+    };
+    const bkCostPerKgCache = {};
+    const bkCostPerKg = (recipeId, visited = new Set()) => {
+      if (bkCostPerKgCache[recipeId] !== undefined) return bkCostPerKgCache[recipeId];
+      const recipe = bkRecipeMap[recipeId];
+      if (!recipe || visited.has(recipeId)) return null;
+      const nextVisited = new Set(visited); nextVisited.add(recipeId);
+      let cost = 0;
+      (recipe.ingredients || []).forEach(ing => {
+        const rmId = ing.inv_id || ing.rawId;
+        const rateId = findRateId(rmId);
+        const ingRate = rateId ? rateMap[rateId] : null;
+        if (ingRate) {
+          const factor = bkIngredientUnitConv(ing.unit, ingRate.unit, rmId);
+          cost += ing.qty * factor * Number(ingRate.price);
+        } else if (rmId !== recipeId && bkRecipeMap[rmId]) {
+          const nested = bkCostPerKg(rmId, nextVisited);
+          if (nested != null) cost += ing.qty * nested;
+        }
+      });
+      const result = recipe.yieldQty > 0 ? cost / recipe.yieldQty : 0;
+      bkCostPerKgCache[recipeId] = result;
+      return result;
+    };
 
     // Helper: get demand item display name
     const demandItemNameMap = {};
@@ -3243,6 +3301,12 @@ router.get('/pnl/live/:date', async (req, res) => {
                 const ingFactor = getUnitConv(ing.unit || 'kg', ingRate.unit);
                 const ingCost = ingQty * ingFactor * Number(ingRate.price);
                 itemCost += ingCost;
+              } else if (rmId !== itemId && bkRecipeMap[rmId]) {
+                // No rate-card price, but this ingredient is itself another BK recipe's
+                // output (e.g. this recipe uses Dosa Batter) — price via that recipe's own
+                // cost per Kg instead of silently contributing ₹0.
+                const nested = bkCostPerKg(rmId);
+                if (nested != null) itemCost += ing.qty * batches * nested;
               }
             });
             if (itemCost > 0) {
@@ -3468,13 +3532,23 @@ async function buildCostingContext() {
       return null;
     };
 
-    // Build BK recipe map with computed cost per Kg
+    // Build BK recipe map with computed cost per Kg. An ingredient can itself be another
+    // BK recipe's output (e.g. a combo recipe using Dosa Batter) — priced recursively via
+    // that recipe's own cost per Kg, with `visited` guarding a circular reference (A uses
+    // B uses A) from recursing forever.
+    const bkRecipesById = {};
+    (bkRecipes || []).forEach(r => { bkRecipesById[r.id] = r; });
+    const bkIngredientsByRecipeId = {};
+    (bkIngredients || []).forEach(i => { (bkIngredientsByRecipeId[i.recipe_id] ||= []).push(i); });
     const bkRecipeMap = {};
-    (bkRecipes || []).forEach(r => {
-      const ings = (bkIngredients || []).filter(i => i.recipe_id === r.id);
+    const computeBkRecipe = (recipeId, visited = new Set()) => {
+      if (bkRecipeMap[recipeId]) return bkRecipeMap[recipeId];
+      const r = bkRecipesById[recipeId];
+      if (!r || visited.has(recipeId)) return null;
+      const nextVisited = new Set(visited); nextVisited.add(recipeId);
       const yieldQty = Number(r.yield_qty) || 1;
       let batchCost = 0;
-      ings.forEach(ing => {
+      (bkIngredientsByRecipeId[recipeId] || []).forEach(ing => {
         const rmId = ing.raw_material_id || ing.raw_material;
         const rateId = resolveRateId(rmId);
         const ingRate = rateId ? rateMap[rateId] : null;
@@ -3497,11 +3571,17 @@ async function buildCostingContext() {
             else if ((fromUnit === 'ltr' || fromUnit === 'l') && rateUnit === 'ml') factor *= 1000;
           }
           batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
+        } else if (rmId !== recipeId && bkRecipesById[rmId]) {
+          const nested = computeBkRecipe(rmId, nextVisited);
+          if (nested) batchCost += (Number(ing.qty) || 0) * nested.costPerKg;
         }
       });
       const costPerKg = yieldQty > 0 ? batchCost / yieldQty : 0;
-      bkRecipeMap[r.id] = { name: r.name || r.id, costPerKg, yieldQty };
-    });
+      const result = { name: r.name || r.id, costPerKg, yieldQty };
+      bkRecipeMap[recipeId] = result;
+      return result;
+    };
+    (bkRecipes || []).forEach(r => computeBkRecipe(r.id));
 
     // Conversion factor from a specific recorded unit to a target (usually rate-card)
     // unit — chains through unit_conversions then an SI step, same as everywhere else.

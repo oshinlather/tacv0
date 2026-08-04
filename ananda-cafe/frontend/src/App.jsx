@@ -4731,30 +4731,22 @@ const RecipesPanel = () => {
     let totalCost = 0;
     let hasUnpriced = false;
     const ingredients = (recipe.ingredients || []).map(ing => {
-      const rawMat = RAW_MATERIALS.find(r => r.id === ing.rawId);
-      // Only treat it as a nested recipe if it isn't already a known raw material —
-      // the two id namespaces don't currently collide, but raw materials win if they ever do.
-      const nestedRecipe = !rawMat ? RECIPES[ing.rawId] : null;
-      const rawName = rawMat?.name || nestedRecipe?.name || ing.rawId;
+      // A recipe-id match takes priority over a raw-material match — an ingredient that
+      // references another recipe (e.g. "Dosa Batter" inside a combo recipe) also gets a
+      // real raw_materials row created for it (see addIngredient) purely to satisfy the DB
+      // foreign key bk_recipe_ingredients needs to save; costing must still go through the
+      // nested recipe's own batch cost, not treat that shadow row as a priceable raw material.
+      const nestedRecipe = RECIPES[ing.rawId];
+      const rawMat = !nestedRecipe ? RAW_MATERIALS.find(r => r.id === ing.rawId) : null;
+      const rawName = nestedRecipe?.name || rawMat?.name || ing.rawId;
       // Every RECIPES entry yields in Kg (see the `yield` strings above — always "... Kg
       // (...)"), so a nested-recipe ingredient's unit is always Kg.
       const rawUnit = rawMat?.unit || 'Kg';
 
-      // Try to find rate card entry using the mapping chain
-      let rate = rateMap[ing.rawId];
-      if (!rate && rawToRate[ing.rawId]) rate = rateMap[rawToRate[ing.rawId]];
-      if (!rate) {
-        const stripped = ing.rawId.replace(/_raw$/, '');
-        rate = rateMap[stripped];
-      }
-      if (!rate) rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
-
+      let rate = null;
       let ingCost = 0;
       let nestedRate = null; // derived ₹/Kg when priced via a nested recipe instead of the rate card
-      if (rate) {
-        const factor = getUnitConv(rawUnit, rate.unit);
-        ingCost = ing.qty * factor * Number(rate.price);
-      } else if (nestedRecipe && nestedRecipe.yieldQty > 0) {
+      if (nestedRecipe && nestedRecipe.yieldQty > 0) {
         const nestedCosted = computeRecipeCost(ing.rawId, nextVisited);
         if (nestedCosted) {
           nestedRate = nestedCosted.totalCost / nestedRecipe.yieldQty;
@@ -4767,7 +4759,21 @@ const RecipesPanel = () => {
           hasUnpriced = true;
         }
       } else {
-        hasUnpriced = true;
+        // Try to find rate card entry using the mapping chain
+        rate = rateMap[ing.rawId];
+        if (!rate && rawToRate[ing.rawId]) rate = rateMap[rawToRate[ing.rawId]];
+        if (!rate) {
+          const stripped = ing.rawId.replace(/_raw$/, '');
+          rate = rateMap[stripped];
+        }
+        if (!rate) rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
+
+        if (rate) {
+          const factor = getUnitConv(rawUnit, rate.unit);
+          ingCost = ing.qty * factor * Number(rate.price);
+        } else {
+          hasUnpriced = true;
+        }
       }
 
       totalCost += ingCost;
@@ -4873,7 +4879,7 @@ const RecipesPanel = () => {
     });
   };
 
-  const addIngredient = () => {
+  const addIngredient = async () => {
     if (!newIngName.trim() || !newIngQty) return;
     const typedName = newIngName.trim();
     // If the typed/selected name matches an existing recipe (e.g. "Dosa Batter" used as an
@@ -4882,9 +4888,20 @@ const RecipesPanel = () => {
     const matchedRecipe = Object.entries(RECIPES).find(([, r]) => r.name.toLowerCase() === typedName.toLowerCase());
     if (matchedRecipe && matchedRecipe[0] === sel) { alert("A recipe can't use itself as an ingredient."); return; }
     const rawId = matchedRecipe ? matchedRecipe[0] : typedName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    // Only create a new raw material entry when this isn't a reference to an existing recipe.
-    if (!matchedRecipe && !RAW_MATERIALS.find((r) => r.id === rawId)) {
-      RAW_MATERIALS.push({ id: rawId, name: typedName, unit: newIngUnit });
+    const rawName = matchedRecipe ? matchedRecipe[1].name : typedName;
+    const rawUnit = matchedRecipe ? "Kg" : newIngUnit; // every RECIPES entry yields in Kg
+    // bk_recipe_ingredients.raw_material_id is a real DB foreign key into raw_materials — a
+    // brand-new name (whether a genuinely new raw material, or a reference to an existing
+    // recipe's output) needs a row there before the recipe can be saved, or the save fails
+    // with a foreign-key violation. computeRecipeCost still prices a recipe-id reference via
+    // that recipe's own batch cost, not this row's (nonexistent) rate-card entry.
+    if (!RAW_MATERIALS.find((r) => r.id === rawId)) {
+      setSaving(true);
+      try {
+        await api.addRawMaterial({ id: rawId, name: rawName, unit: rawUnit });
+        RAW_MATERIALS.push({ id: rawId, name: rawName, unit: rawUnit });
+      } catch (e) { alert("Failed to register ingredient: " + e.message); setSaving(false); return; }
+      setSaving(false);
     }
     setEditRecipes((prev) => {
       const copy = JSON.parse(JSON.stringify(prev));
@@ -5161,7 +5178,7 @@ const RecipesPanel = () => {
                 style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
                 <option value="Kg">Kg</option><option value="Ltr">Ltr</option><option value="Gm">Gm</option><option value="Pcs">Pcs</option><option value="Bunch">Bunch</option>
               </select>
-              <button onClick={addIngredient} disabled={!newIngName.trim() || !newIngQty} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: newIngName.trim() && newIngQty ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newIngName.trim() && newIngQty ? "pointer" : "not-allowed", fontFamily: "inherit" }}>+ Add</button>
+              <button onClick={addIngredient} disabled={!newIngName.trim() || !newIngQty || saving} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: newIngName.trim() && newIngQty && !saving ? "#1A1A1A" : "#D0D0CC", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newIngName.trim() && newIngQty && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>{saving ? "⏳..." : "+ Add"}</button>
             </div>
           </div>
         )}
