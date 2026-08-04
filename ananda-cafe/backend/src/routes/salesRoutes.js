@@ -1136,7 +1136,7 @@ function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateBy
     // rate_card/bk_recipes row using this exact id is picked up immediately, no redeploy
     // needed. Genuinely novel ingredient names (mappedId null) fall back to name-matching —
     // see the "Add Price" handler, which sets the new row's `name` to match `raw_material`.
-    const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit, mapped_id: mappedId };
+    const base = { id: ing.id, raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit, mapped_id: mappedId };
 
     if (!mappedId) {
       const nestedDish = dishCostLookup && dishCostLookup(ing.raw_material);
@@ -1231,8 +1231,8 @@ function buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByNa
 
 async function computeDishCost(recipeId) {
   const [{ data: recipe }, { data: allRecipes }, costingContext] = await Promise.all([
-    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single(),
-    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('id', recipeId).single(),
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
     loadCostingContext(),
   ]);
   if (!recipe) return null;
@@ -1248,7 +1248,7 @@ async function computeDishCost(recipeId) {
 // (many item rows) show cost-per-item without one API round trip per row.
 async function computeAllDishCosts() {
   const { data: recipes } = await supabase.from('recipes')
-    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
+    .select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active');
   const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
   const recipesByNormName = {};
   (recipes || []).forEach(r => { recipesByNormName[normalizeDishName(r.item_name)] = r; });
