@@ -8492,6 +8492,16 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const [newRecipeIngRawId, setNewRecipeIngRawId] = useState("");
   const [newRecipeIngQty, setNewRecipeIngQty] = useState("");
   const [addSaving, setAddSaving] = useState(false);
+  // The Add Recipe ingredient picker needs the FULL priced-items list (rate_card, ~136
+  // items), not just RAW_MATERIALS (~55) — a real ingredient like Potato may already be
+  // priced but never added to raw_materials since nothing used it in a recipe yet. Loaded
+  // once, lazily, only if this role can actually open the Add Recipe form.
+  const [rateCardItems, setRateCardItems] = useState([]);
+  useEffect(() => {
+    if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
+      api.getRateCard().then(setRateCardItems).catch(() => setRateCardItems([]));
+    }
+  }, [lockedOutlet]);
   const fileRef = useRef(null);
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
@@ -8569,6 +8579,17 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
     if (newRecipeIngredients.length === 0) { alert("Add at least 1 ingredient"); return; }
     setAddSaving(true);
     try {
+      // bk_recipe_ingredients.raw_material_id has a real FK into raw_materials — an
+      // ingredient picked from the rate-card side of the picker (priced, but never used in
+      // a recipe before, e.g. Potato) doesn't have a row there yet. Backfill it with the
+      // same id/name/unit before saving, so the two tables stay linked under one id instead
+      // of drifting into duplicates.
+      for (const ri of newRecipeIngredients) {
+        if (!RAW_MATERIALS.find((r) => r.id === ri.rawId)) {
+          const rc = rateCardItems.find((r) => r.id === ri.rawId);
+          if (rc) { await api.addRawMaterial({ id: rc.id, name: rc.name, unit: rc.unit }); RAW_MATERIALS.push({ id: rc.id, name: rc.name, unit: rc.unit }); }
+        }
+      }
       await api.saveRecipe({
         id: ing.mapped_id, name: ing.raw_material, yield_qty: Number(newRecipeYieldQty), yield_unit: newRecipeYieldUnit,
         yield_label: `${newRecipeYieldQty} ${newRecipeYieldUnit}`, ingredients: newRecipeIngredients,
@@ -8837,7 +8858,12 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                                 <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
                                                   <select value={newRecipeIngRawId} onChange={(e) => setNewRecipeIngRawId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
                                                     <option value="">Pick ingredient...</option>
-                                                    {RAW_MATERIALS.slice().sort((a, b) => a.name.localeCompare(b.name)).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>)}
+                                                    {(() => {
+                                                      const byId = {};
+                                                      RAW_MATERIALS.forEach((r) => { byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+                                                      rateCardItems.forEach((r) => { if (!byId[r.id]) byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+                                                      return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>);
+                                                    })()}
                                                   </select>
                                                   <input type="number" inputMode="decimal" placeholder="Qty" value={newRecipeIngQty} onChange={(e) => setNewRecipeIngQty(e.target.value)}
                                                     style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
@@ -8846,7 +8872,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                                 {newRecipeIngredients.length > 0 && (
                                                   <div style={{ marginBottom: 8 }}>
                                                     {newRecipeIngredients.map((ri, ri_i) => {
-                                                      const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId);
+                                                      const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId) || rateCardItems.find((r) => r.id === ri.rawId);
                                                       return (<div key={ri_i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 6px", background: "#fff", borderRadius: 5, marginBottom: 3 }}>
                                                         <span>{rm?.name || ri.rawId} — {ri.qty} {rm?.unit}</span>
                                                         <span onClick={() => setNewRecipeIngredients((p) => p.filter((_, idx) => idx !== ri_i))} style={{ color: "#DC2626", cursor: "pointer", fontWeight: 700 }}>✕</span>

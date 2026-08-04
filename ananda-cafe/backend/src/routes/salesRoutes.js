@@ -2968,7 +2968,10 @@ router.delete('/staff-demands/items/:id', async (req, res) => {
 // ── GET /api/rate-card — All active rates
 router.get('/rate-card', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    // avp/head_chef need read access too — the Item-wise Sales "+ Recipe" ingredient
+    // picker (SalesUpload) loads the full rate card to offer as ingredient candidates
+    // alongside raw_materials, and those two roles can already reach it.
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { data, error } = await supabase.from('rate_card').select('*')
       .eq('active', true).order('category').order('name');
     if (error) throw error;
