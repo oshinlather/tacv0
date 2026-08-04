@@ -1770,6 +1770,18 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   const [editingScItem, setEditingScItem] = useState(null); // item_id currently in bulk-edit mode
   const [scEditValues, setScEditValues] = useState({}); // { recipe_ingredient_id: "new qty string" }
   const [scSaving, setScSaving] = useState(false);
+  // "+ Add dish" — link this ingredient into a dish that doesn't use it yet (a real gap,
+  // not a qty correction), same edit panel as the bulk qty edit above. Dish list loaded
+  // once, lazily, only for roles that can actually write a recipe.
+  const [allDishes, setAllDishes] = useState([]);
+  useEffect(() => {
+    if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
+      api.getRecipes(true).then((r) => setAllDishes(r || [])).catch(() => setAllDishes([]));
+    }
+  }, [lockedOutlet]);
+  const [newDishId, setNewDishId] = useState("");
+  const [newDishQty, setNewDishQty] = useState("");
+  const [addDishSaving, setAddDishSaving] = useState(false);
 
   // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
   const [editMaster, setEditMaster] = useState(null); // { _idx, item_id, name, kind: 'price'|'conv', value, unit, demandUnit, currentValue }
@@ -2049,6 +2061,25 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       alert("Failed to save: " + e.message);
     } finally {
       setScSaving(false);
+    }
+  };
+
+  // Links this ingredient into a dish's recipe for the first time (POST, not PATCH — no
+  // existing recipe_ingredients row yet) — e.g. Carrot genuinely never listed under Upma's
+  // recipe before. Saved immediately (not batched with the qty edits above) since it's a
+  // distinct action with its own dish picker, not a value being corrected.
+  const addDishToIngredient = async (item, unit) => {
+    if (!newDishId) { alert("Pick a dish"); return; }
+    if (!newDishQty || Number(newDishQty) <= 0) { alert("Enter a qty"); return; }
+    setAddDishSaving(true);
+    try {
+      await api.addRecipeIngredient(newDishId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
+      setNewDishId(""); setNewDishQty("");
+      await fetchPnl();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setAddDishSaving(false);
     }
   };
 
@@ -2485,12 +2516,33 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                   <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
                                     = {item.should_consume} {displayUnit}
                                   </div>
+                                  {scEditing && (() => {
+                                    const usedDishNames = new Set(item.sc_breakdown.map((b) => b.dish.trim().toLowerCase()));
+                                    const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !usedDishNames.has((r.item_name || "").trim().toLowerCase())).sort((a, b) => a.item_name.localeCompare(b.item_name));
+                                    const rowUnit = item.sc_breakdown.find((b) => b.recipe_ingredient_unit)?.recipe_ingredient_unit || "GM";
+                                    return (<>
+                                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px dashed #E0E0DC" }}>
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: "#B45309" }}>+ Add to a dish that doesn't use {item.name} yet:</span>
+                                      </div>
+                                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+                                        <select value={newDishId} onChange={(e) => setNewDishId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                                          <option value="">Pick dish...</option>
+                                          {dishOptions.map((r) => <option key={r.id} value={r.id}>{r.item_name}</option>)}
+                                        </select>
+                                        <input type="number" inputMode="decimal" step="any" placeholder={`Qty (${rowUnit})`} value={newDishQty} onChange={(e) => setNewDishQty(e.target.value)}
+                                          style={{ width: 90, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                        <button onClick={() => addDishToIngredient(item, rowUnit)} disabled={addDishSaving}
+                                          style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", color: "#B45309", fontSize: 11, fontWeight: 700, cursor: addDishSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                          {addDishSaving ? "⏳..." : "+ Add"}</button>
+                                      </div>
+                                    </>);
+                                  })()}
                                   {scEditing && (
                                     <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
                                       <button onClick={() => saveScEdits(item.sc_breakdown)} disabled={scSaving}
                                         style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: scSaving ? "#D0D0CC" : "#1D4ED8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: scSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                                         {scSaving ? "⏳ Saving..." : "💾 Save All"}</button>
-                                      <button onClick={() => { setEditingScItem(null); setScEditValues({}); }} disabled={scSaving}
+                                      <button onClick={() => { setEditingScItem(null); setScEditValues({}); setNewDishId(""); setNewDishQty(""); }} disabled={scSaving}
                                         style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
                                     </div>
                                   )}
