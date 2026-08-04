@@ -4719,15 +4719,25 @@ const RecipesPanel = () => {
     whole_red_chilli_raw: 'whole_red_chilli',
   };
 
-  // Compute cost for a single recipe
-  const computeRecipeCost = (recipeKey) => {
+  // Compute cost for a single recipe. `visited` tracks the chain of recipe keys already
+  // being costed in this call stack — an ingredient can itself be another recipe's output
+  // (e.g. "Dosa Batter" used inside a combo recipe), costed recursively via that recipe's
+  // own batch cost per Kg; `visited` guards against a circular reference (A uses B uses A)
+  // ever recursing forever.
+  const computeRecipeCost = (recipeKey, visited = new Set()) => {
     const recipe = RECIPES[recipeKey];
-    if (!recipe) return null;
+    if (!recipe || visited.has(recipeKey)) return null;
+    const nextVisited = new Set(visited); nextVisited.add(recipeKey);
     let totalCost = 0;
     let hasUnpriced = false;
     const ingredients = (recipe.ingredients || []).map(ing => {
       const rawMat = RAW_MATERIALS.find(r => r.id === ing.rawId);
-      const rawName = rawMat?.name || ing.rawId;
+      // Only treat it as a nested recipe if it isn't already a known raw material —
+      // the two id namespaces don't currently collide, but raw materials win if they ever do.
+      const nestedRecipe = !rawMat ? RECIPES[ing.rawId] : null;
+      const rawName = rawMat?.name || nestedRecipe?.name || ing.rawId;
+      // Every RECIPES entry yields in Kg (see the `yield` strings above — always "... Kg
+      // (...)"), so a nested-recipe ingredient's unit is always Kg.
       const rawUnit = rawMat?.unit || 'Kg';
 
       // Try to find rate card entry using the mapping chain
@@ -4740,9 +4750,22 @@ const RecipesPanel = () => {
       if (!rate) rate = rateCard.find(r => r.name?.toLowerCase() === rawName.toLowerCase());
 
       let ingCost = 0;
+      let nestedRate = null; // derived ₹/Kg when priced via a nested recipe instead of the rate card
       if (rate) {
         const factor = getUnitConv(rawUnit, rate.unit);
         ingCost = ing.qty * factor * Number(rate.price);
+      } else if (nestedRecipe && nestedRecipe.yieldQty > 0) {
+        const nestedCosted = computeRecipeCost(ing.rawId, nextVisited);
+        if (nestedCosted) {
+          nestedRate = nestedCosted.totalCost / nestedRecipe.yieldQty;
+          ingCost = ing.qty * nestedRate;
+          // The nested recipe's own cost may itself be understated if some of its
+          // ingredients are unpriced — surface that up so this recipe's total isn't
+          // silently wrong without the INCOMPLETE warning showing.
+          if (nestedCosted.hasUnpriced) hasUnpriced = true;
+        } else {
+          hasUnpriced = true;
+        }
       } else {
         hasUnpriced = true;
       }
@@ -4753,10 +4776,11 @@ const RecipesPanel = () => {
         name: rawName,
         qty: ing.qty,
         unit: rawUnit,
-        rate: rate ? Number(rate.price) : null,
-        rateUnit: rate?.unit || null,
+        rate: rate ? Number(rate.price) : (nestedRate != null ? Math.round(nestedRate * 100) / 100 : null),
+        rateUnit: rate?.unit || (nestedRate != null ? 'Kg' : null),
         cost: ingCost,
-        hasRate: !!rate,
+        hasRate: !!rate || nestedRate != null,
+        isNestedRecipe: nestedRate != null,
       };
     });
 
@@ -4778,7 +4802,7 @@ const RecipesPanel = () => {
   // Compute all recipe costs
   const allCosts = useMemo(() => {
     if (rateCard.length === 0) return [];
-    return Object.keys(RECIPES).map(computeRecipeCost).filter(Boolean).sort((a, b) => b.costPerKg - a.costPerKg);
+    return Object.keys(RECIPES).map((k) => computeRecipeCost(k)).filter(Boolean).sort((a, b) => b.costPerKg - a.costPerKg);
   }, [rateCard]);
 
   const recipe = editRecipes[sel];
@@ -4851,11 +4875,16 @@ const RecipesPanel = () => {
 
   const addIngredient = () => {
     if (!newIngName.trim() || !newIngQty) return;
-    // Find or create rawId
-    const rawId = newIngName.trim().toLowerCase().replace(/[^a-z0-9]/g, "_");
-    // Check if raw material exists, if not add to RAW_MATERIALS
-    if (!RAW_MATERIALS.find((r) => r.id === rawId)) {
-      RAW_MATERIALS.push({ id: rawId, name: newIngName.trim(), unit: newIngUnit });
+    const typedName = newIngName.trim();
+    // If the typed/selected name matches an existing recipe (e.g. "Dosa Batter" used as an
+    // ingredient inside another recipe), reference that recipe's own id instead of creating
+    // a phantom raw material — computeRecipeCost costs it via that recipe's own batch cost.
+    const matchedRecipe = Object.entries(RECIPES).find(([, r]) => r.name.toLowerCase() === typedName.toLowerCase());
+    if (matchedRecipe && matchedRecipe[0] === sel) { alert("A recipe can't use itself as an ingredient."); return; }
+    const rawId = matchedRecipe ? matchedRecipe[0] : typedName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    // Only create a new raw material entry when this isn't a reference to an existing recipe.
+    if (!matchedRecipe && !RAW_MATERIALS.find((r) => r.id === rawId)) {
+      RAW_MATERIALS.push({ id: rawId, name: typedName, unit: newIngUnit });
     }
     setEditRecipes((prev) => {
       const copy = JSON.parse(JSON.stringify(prev));
@@ -5077,7 +5106,7 @@ const RecipesPanel = () => {
               const ingCost = costMap[ing.rawId];
               return (
                 <tr key={idx} style={{ borderBottom: "1px solid #F0F0EC", background: ingCost && !ingCost.hasRate ? "#FEF2F2" : "transparent" }}>
-                  <td style={{ ...tdS, fontWeight: 600 }}>{raw?.name || ing.rawId}</td>
+                  <td style={{ ...tdS, fontWeight: 600 }}>{ingCost?.name || raw?.name || RECIPES[ing.rawId]?.name || ing.rawId}{ingCost?.isNestedRecipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (recipe)</span>}</td>
                   <td style={tdS}>
                     {editMode ? (
                       <input type="number" step="0.01" value={ing.qty} onChange={(e) => updateQty(idx, e.target.value)} style={{ width: 70, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309" }} />
@@ -5120,7 +5149,12 @@ const RecipesPanel = () => {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               <input type="text" placeholder="Material name" value={newIngName} onChange={(e) => setNewIngName(e.target.value)} list="raw-materials-list"
                 style={{ flex: "1 1 140px", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
-              <datalist id="raw-materials-list">{RAW_MATERIALS.map((r) => <option key={r.id} value={r.name} />)}</datalist>
+              <datalist id="raw-materials-list">
+                {RAW_MATERIALS.map((r) => <option key={r.id} value={r.name} />)}
+                {/* Every existing recipe (Dosa Batter, Idli Batter, Sambhar, ...) is also
+                    selectable here — lets one recipe use another's output as an ingredient. */}
+                {Object.entries(RECIPES).map(([id, r]) => <option key={`recipe-${id}`} value={r.name} />)}
+              </datalist>
               <input type="number" step="0.01" placeholder="Qty" value={newIngQty} onChange={(e) => setNewIngQty(e.target.value)}
                 style={{ width: 70, padding: "8px 6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, textAlign: "center", fontFamily: "inherit" }} />
               <select value={newIngUnit} onChange={(e) => setNewIngUnit(e.target.value)}
