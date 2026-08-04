@@ -1765,6 +1765,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   const [editSaving, setEditSaving] = useState(false);
   const [expandedCats, setExpandedCats] = useState({});
   const [expandedScItem, setExpandedScItem] = useState(null); // item_id of the row showing its "should consume" dish breakdown
+  // Bulk-edit every dish's recipe qty for one ingredient (e.g. Sambhar) at once — one
+  // pencil click makes every row in the breakdown editable, one Save writes them all.
+  const [editingScItem, setEditingScItem] = useState(null); // item_id currently in bulk-edit mode
+  const [scEditValues, setScEditValues] = useState({}); // { recipe_ingredient_id: "new qty string" }
+  const [scSaving, setScSaving] = useState(false);
 
   // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
   const [editMaster, setEditMaster] = useState(null); // { _idx, item_id, name, kind: 'price'|'conv', value, unit, demandUnit, currentValue }
@@ -2022,6 +2027,28 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       alert("Failed to save: " + e.message);
     } finally {
       setMasterSaving(false);
+    }
+  };
+
+  // Saves every changed row from the bulk should-consume edit in one go — each row is a
+  // different dish's own recipe (PATCH /recipes/ingredients/:id), so this is genuinely N
+  // separate writes, not one shared value; "changed" is just whatever differs from what
+  // was pre-filled, so leaving most rows untouched costs nothing.
+  const saveScEdits = async (breakdown) => {
+    const changed = breakdown.filter((b) => scEditValues[b.recipe_ingredient_id] !== undefined && Number(scEditValues[b.recipe_ingredient_id]) !== b.per_dish && String(scEditValues[b.recipe_ingredient_id]).trim() !== "");
+    if (changed.length === 0) { setEditingScItem(null); setScEditValues({}); return; }
+    if (!confirm(`Update the recipe qty for ${changed.length} dish(es)?\n\nThis changes each dish's own recipe — affects every future order, not just this date's P&L.`)) return;
+    setScSaving(true);
+    try {
+      for (const b of changed) {
+        await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty: Number(scEditValues[b.recipe_ingredient_id]) });
+      }
+      setEditingScItem(null); setScEditValues({});
+      await fetchPnl();
+    } catch (e) {
+      alert("Failed to save: " + e.message);
+    } finally {
+      setScSaving(false);
     }
   };
 
@@ -2431,19 +2458,45 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                 </span>
                                 <span style={{ color: "#2563EB", fontWeight: 600, marginRight: 6 }}>{fmt(scCost)}</span>
                               </div>
-                              {scOpen && (
+                              {scOpen && (() => {
+                                const scEditing = !lockedOutlet && editingScItem === item.item_id;
+                                return (
                                 <div style={{ padding: "4px 16px 10px 32px", background: "#FAFAF8" }}>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "4px 0 4px" }}>Should Consume — from dishes sold</div>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "4px 0 4px" }}>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5 }}>Should Consume — from dishes sold</span>
+                                    {!lockedOutlet && !scEditing && (
+                                      <button onClick={() => { setEditingScItem(item.item_id); setScEditValues(Object.fromEntries(item.sc_breakdown.filter((b) => b.recipe_ingredient_id).map((b) => [b.recipe_ingredient_id, String(b.per_dish)]))); }}
+                                        title="Edit this ingredient's qty across every dish that uses it"
+                                        style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>✏️ Edit qty per dish</button>
+                                    )}
+                                  </div>
                                   {item.sc_breakdown.map((b, j) => (
-                                    <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
-                                      {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+                                    <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0", display: "flex", alignItems: "center", gap: 4 }}>
+                                      <span>{b.qty_sold} × </span>
+                                      {scEditing && b.recipe_ingredient_id ? (
+                                        <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
+                                          onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
+                                          style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                                      ) : <span>{b.per_dish}</span>}
+                                      <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
+                                      <span> = {b.subtotal}</span>
                                     </div>
                                   ))}
                                   <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
                                     = {item.should_consume} {displayUnit}
                                   </div>
+                                  {scEditing && (
+                                    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                                      <button onClick={() => saveScEdits(item.sc_breakdown)} disabled={scSaving}
+                                        style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: scSaving ? "#D0D0CC" : "#1D4ED8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: scSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                                        {scSaving ? "⏳ Saving..." : "💾 Save All"}</button>
+                                      <button onClick={() => { setEditingScItem(null); setScEditValues({}); }} disabled={scSaving}
+                                        style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
+                                );
+                              })()}
                             </>)}
                         </div>
                       );

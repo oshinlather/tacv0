@@ -890,7 +890,7 @@ async function computeRMAudit(date, outletFilter) {
   // of computeStockUsageForDate fetching its own copy of the same six tables a second time.
   const [sales, { data: recipes }, costingContext] = await Promise.all([
     fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' }),
-    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
     buildCostingContext(),
   ]);
 
@@ -934,7 +934,10 @@ async function computeRMAudit(date, outletFilter) {
         const perDish = ing.qty_kg != null ? Number(ing.qty_kg) : Number(ing.qty || 0);
         if (ing.qty_kg != null) theoretical[key].qty_kg += perDish * qty;
         else theoretical[key].qty_count += perDish * qty;
-        theoretical[key].breakdown.push({ dish: dishName, qty_sold: qty, per_dish: perDish, subtotal: Math.round(perDish * qty * 1000) / 1000 });
+        // recipe_ingredient_id lets the owner correct a dish's recipe qty right from this
+        // breakdown (PATCH /recipes/ingredients/:id) instead of hunting it down in Dish
+        // Recipes — same row this whole "per_dish" figure was read from.
+        theoretical[key].breakdown.push({ dish: dishName, qty_sold: qty, per_dish: perDish, subtotal: Math.round(perDish * qty * 1000) / 1000, recipe_ingredient_id: ing.id, recipe_ingredient_unit: ing.unit });
       });
     });
 
