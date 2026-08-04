@@ -861,6 +861,21 @@ function normalizeIngredientName(s) {
   return (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Resolves a normalized dish-recipe ingredient name to a rate_card id, or a bk_recipes id
+// for a BK-prepared item priced via its own recipe cost instead. RECIPE_RAW_MATERIAL_MAP is
+// checked first since it deliberately overrides a handful of names (BK-prepared items like
+// "Dosa Batter" that were never going to match a rate card name, or a packaging item priced
+// under a different display name) — but most raw materials entered into a dish recipe are
+// typed with the exact same name they already have in the rate card (Ginger, Tata Salt,
+// Haldi Powder...), so this falls back to a direct case-insensitive name match against the
+// rate card rather than requiring every single one to also get its own manual map entry.
+// Without this fallback, a dish recipe's ingredients silently show as "not linked to any
+// rate card item" — and drop out of should-consume entirely — purely because nobody
+// remembered to add a RECIPE_RAW_MATERIAL_MAP line for an otherwise perfectly priced item.
+function resolveIngredientRateId(key, rateByName) {
+  return RECIPE_RAW_MATERIAL_MAP[key] || rateByName[key] || null;
+}
+
 // Theoretical (recipe) consumption vs ACTUAL outlet-level consumption — the same
 // Yesterday Closing + Dispatched − Wastage − Today Closing figure P&L and COGS Compare
 // already show (via computeStockUsageForDate), not Base Kitchen's internal issuance
@@ -881,13 +896,14 @@ async function computeRMAudit(date, outletFilter) {
   const recipeByNormName = {};
   (recipes || []).forEach(r => { recipeByNormName[normalizeDishName(r.item_name)] = r; });
 
-  // For the "ordered but never in any recipe" gap report — RECIPE_RAW_MATERIAL_MAP is
-  // the actual gate on whether an item can ever get a should-consume figure, regardless
-  // of what any recipe's ingredient text says, so "mapped" means "has a map entry" here,
-  // not "some recipe happens to mention it by name". recipeIngredientNames is a second,
-  // looser signal: if a recipe DOES reference it by name, the fix is a one-line map
+  // For the "ordered but never in any recipe" gap report — resolveIngredientRateId is the
+  // actual gate on whether an item can ever get a should-consume figure, regardless of what
+  // any recipe's ingredient text says, so "mapped" means "resolvable" here (either a
+  // RECIPE_RAW_MATERIAL_MAP override, or a rate-card item a recipe could reference by its
+  // own name), not "some recipe happens to mention it by name". recipeIngredientNames is a
+  // second, looser signal: if a recipe DOES reference it by name, the fix is a one-line map
   // addition; if not, someone needs to add it to a recipe first.
-  const mappedItemIds = new Set(Object.values(RECIPE_RAW_MATERIAL_MAP));
+  const mappedItemIds = new Set([...Object.values(RECIPE_RAW_MATERIAL_MAP), ...Object.keys(costingContext.rateMap)]);
   const recipeIngredientNames = new Set();
   (recipes || []).forEach(r => (r.recipe_ingredients || []).forEach(ing => {
     if (ing.raw_material) recipeIngredientNames.add(normalizeIngredientName(ing.raw_material));
@@ -927,7 +943,7 @@ async function computeRMAudit(date, outletFilter) {
     const unmappedIngredients = new Set();
     const items = Object.values(theoretical).map(t => {
       const key = normalizeIngredientName(t.raw_material);
-      const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
+      const mappedId = resolveIngredientRateId(key, costingContext.rateByName);
       if (!mappedId) { unmappedIngredients.add(t.raw_material); return null; }
       const actualItem = actualById[mappedId];
       // Count-based ingredients (qty_kg null) are recorded per-dish in the recipe's own
@@ -995,9 +1011,10 @@ async function computeRMAudit(date, outletFilter) {
     // Deliberately NOT filtered to items that also happen to be tracked as this outlet's
     // own demand items (unlike should_consume_actual_cost elsewhere) — a recipe
     // ingredient's theoretical cost doesn't depend on whether it's separately punched as
-    // a demand line, only on whether it has a rate card price. Items with no
-    // RECIPE_RAW_MATERIAL_MAP entry (should_consume_cost null) are simply excluded, same
-    // gap the never_mapped_items/unmapped_ingredients reports above surface for fixing.
+    // a demand line, only on whether it resolves to a price at all (see
+    // resolveIngredientRateId). Items that don't (should_consume_cost null) are simply
+    // excluded, same gap the never_mapped_items/unmapped_ingredients reports above surface
+    // for fixing.
     const idealMaterialCost = items.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
 
     results.push({
@@ -1098,11 +1115,17 @@ function buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) {
 
 // Pure per-recipe costing — no DB calls — so it can run once per dish inside a bulk loop
 // without re-fetching rate_card/bk_recipes for every dish.
-function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit) {
+function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateByName, convMap) {
   const ingredients = (recipeIngredients || []).map(ing => {
     const key = normalizeIngredientName(ing.raw_material);
-    const mappedId = RECIPE_RAW_MATERIAL_MAP[key];
-    const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit };
+    const mappedId = resolveIngredientRateId(key, rateByName || {});
+    // Exposed so the frontend's "Add Price"/"Add Recipe" shortcut (Item-wise Sales'
+    // ingredient breakdown) knows what id to save under — RECIPE_RAW_MATERIAL_MAP already
+    // has a manual entry for most known-unpriced BK Food items (e.g. aloo_masala), so a new
+    // rate_card/bk_recipes row using this exact id is picked up immediately, no redeploy
+    // needed. Genuinely novel ingredient names (mappedId null) fall back to name-matching —
+    // see the "Add Price" handler, which sets the new row's `name` to match `raw_material`.
+    const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit, mapped_id: mappedId };
 
     if (!mappedId) return { ...base, priced: false, reason: 'not linked to any rate card item or BK recipe', cost: null, rate: null };
 
@@ -1110,8 +1133,28 @@ function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit) {
       const rate = rateMap[mappedId];
       let qty = Number(ing.qty || 0), unit = ing.unit;
       const u = (unit || '').toLowerCase(), ru = (rate.unit || '').toLowerCase();
-      if (u === 'gm' && ru === 'kg') { qty = qty / 1000; unit = 'Kg'; }
-      else if (u === 'ml' && (ru === 'ltr' || ru === 'ltr.')) { qty = qty / 1000; unit = 'Ltr'; }
+      // Chain through unit_conversions (e.g. a recipe entering Papad in "Piece" while the
+      // rate card prices it per "Pkt" — 1 Pkt = 200 Pcs, already configured there) before
+      // falling back to the hardcoded Gm/Ml SI step, same precedence the rest of the app's
+      // costing paths already use for a bulk unit. The invert branch is deliberately
+      // restricted to the Piece/Pcs/Pc synonym case (Papad's actual scenario) rather than
+      // any unit matching the conversion's base_unit — Haldi Powder's own conversion row
+      // happens to have base_unit "Gm" too (1 Pkt = 500 Gm), which would otherwise get
+      // wrongly caught here and diverted through Pkt instead of straight to the Gm→Kg SI
+      // step right below, which is already exactly correct for it on its own.
+      const conv = convMap && convMap[mappedId];
+      if (conv) {
+        const convFrom = (conv.fromUnit || '').toLowerCase();
+        const convBase = (conv.baseUnit || '').toLowerCase();
+        if (u === convFrom || (PIECE_UNITS.has(u) && PIECE_UNITS.has(convFrom))) {
+          qty *= Number(conv.qty) || 1; unit = conv.baseUnit;
+        } else if (PIECE_UNITS.has(u) && PIECE_UNITS.has(convBase)) {
+          qty /= Number(conv.qty) || 1; unit = conv.fromUnit;
+        }
+      }
+      const uu = (unit || '').toLowerCase();
+      if (uu === 'gm' && ru === 'kg') { qty = qty / 1000; unit = 'Kg'; }
+      else if (uu === 'ml' && (ru === 'ltr' || ru === 'ltr.')) { qty = qty / 1000; unit = 'Ltr'; }
       if (!unitsCompatible(unit, rate.unit)) {
         return { ...base, priced: false, reason: `priced per ${rate.unit}, recipe uses ${ing.unit} — conversion not configured`, cost: null, rate: rate.price, rate_unit: rate.unit };
       }
@@ -1131,22 +1174,28 @@ function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit) {
 }
 
 async function loadCostingContext() {
-  const { data: rates } = await supabase.from('rate_card').select('*').eq('active', true);
+  const [{ data: rates }, { data: bkRecipes }, { data: bkIngredients }, { data: unitConversions }] = await Promise.all([
+    supabase.from('rate_card').select('*').eq('active', true),
+    supabase.from('bk_recipes').select('*'),
+    supabase.from('bk_recipe_ingredients').select('*'),
+    supabase.from('unit_conversions').select('*').eq('active', true),
+  ]);
   const rateMap = {};
-  (rates || []).forEach(r => { rateMap[r.id] = r; });
-  const { data: bkRecipes } = await supabase.from('bk_recipes').select('*');
-  const { data: bkIngredients } = await supabase.from('bk_recipe_ingredients').select('*');
+  const rateByName = {};
+  (rates || []).forEach(r => { rateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
   const bkIngredientsByRecipe = {};
   (bkIngredients || []).forEach(i => { (bkIngredientsByRecipe[i.recipe_id] = bkIngredientsByRecipe[i.recipe_id] || []).push(i); });
-  return { rateMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
+  const convMap = {};
+  (unitConversions || []).forEach(c => { convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit }; });
+  return { rateMap, rateByName, convMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
 }
 
 async function computeDishCost(recipeId) {
   const { data: recipe } = await supabase.from('recipes')
     .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single();
   if (!recipe) return null;
-  const { rateMap, bkCostPerUnit } = await loadCostingContext();
-  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit);
+  const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
+  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap);
   return { item_name: recipe.item_name, ...costed };
 }
 
@@ -1155,10 +1204,10 @@ async function computeDishCost(recipeId) {
 async function computeAllDishCosts() {
   const { data: recipes } = await supabase.from('recipes')
     .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
-  const { rateMap, bkCostPerUnit } = await loadCostingContext();
+  const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
   const byNormName = {};
   (recipes || []).forEach(r => {
-    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit);
+    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap);
     byNormName[normalizeDishName(r.item_name)] = { item_name: r.item_name, ...costed };
   });
   return byNormName;
@@ -3480,7 +3529,8 @@ async function buildCostingContext() {
     supabase.from('unit_conversions').select('*').eq('active', true),
   ]);
   const rateMap = {};
-  (rates || []).forEach(r => { rateMap[r.id] = r; });
+  const rateByName = {};
+  (rates || []).forEach(r => { rateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
 
   const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
   (unitConversions || []).forEach(c => {
@@ -3629,7 +3679,7 @@ async function buildCostingContext() {
       return factor;
     };
 
-    return { rateMap, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
+    return { rateMap, rateByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
 }
 
 // Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was
