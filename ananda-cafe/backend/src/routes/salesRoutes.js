@@ -1070,8 +1070,10 @@ const BK_INGREDIENT_TO_RATE = {
 };
 
 const PIECE_UNITS = new Set(['piece', 'pcs', 'pc']);
+// Trailing period stripped before comparing — a recipe entering "Ltr." where the rate card
+// says "Ltr" is the same unit, just punctuated differently, not an actual mismatch.
 function unitsCompatible(a, b) {
-  const ua = (a || '').toLowerCase(), ub = (b || '').toLowerCase();
+  const ua = (a || '').toLowerCase().replace(/\.+$/, ''), ub = (b || '').toLowerCase().replace(/\.+$/, '');
   if (ua === ub) return true;
   return PIECE_UNITS.has(ua) && PIECE_UNITS.has(ub);
 }

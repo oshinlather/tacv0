@@ -8862,6 +8862,11 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                                       const byId = {};
                                                       RAW_MATERIALS.forEach((r) => { byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
                                                       rateCardItems.forEach((r) => { if (!byId[r.id]) byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+                                                      // A BK recipe (Onion Masala, Sambhar, Dosa Batter...) can itself be an ingredient of
+                                                      // another BK recipe being built here, same as Manage Recipes' own ingredient picker —
+                                                      // without this, only raw/rate-card items were selectable, silently excluding every
+                                                      // already-prepared item.
+                                                      Object.entries(RECIPES).forEach(([id, r]) => { if (!byId[id]) byId[id] = { id, name: r.name, unit: "Kg" }; });
                                                       return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>);
                                                     })()}
                                                   </select>
@@ -8872,7 +8877,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                                 {newRecipeIngredients.length > 0 && (
                                                   <div style={{ marginBottom: 8 }}>
                                                     {newRecipeIngredients.map((ri, ri_i) => {
-                                                      const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId) || rateCardItems.find((r) => r.id === ri.rawId);
+                                                      const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId) || rateCardItems.find((r) => r.id === ri.rawId) || (RECIPES[ri.rawId] && { name: RECIPES[ri.rawId].name, unit: "Kg" });
                                                       return (<div key={ri_i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 6px", background: "#fff", borderRadius: 5, marginBottom: 3 }}>
                                                         <span>{rm?.name || ri.rawId} — {ri.qty} {rm?.unit}</span>
                                                         <span onClick={() => setNewRecipeIngredients((p) => p.filter((_, idx) => idx !== ri_i))} style={{ color: "#DC2626", cursor: "pointer", fontWeight: 700 }}>✕</span>
