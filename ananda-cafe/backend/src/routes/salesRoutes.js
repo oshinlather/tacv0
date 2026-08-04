@@ -1118,7 +1118,12 @@ function buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) {
 
 // Pure per-recipe costing — no DB calls — so it can run once per dish inside a bulk loop
 // without re-fetching rate_card/bk_recipes for every dish.
-function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateByName, convMap) {
+// `dishCostLookup`, if given, is called with the raw ingredient text as a last resort when
+// nothing else resolves — lets a combo dish (e.g. "Lemon Rice And Filter Coffee") use
+// another whole dish recipe (e.g. "Lemon Rice") as one of its own ingredients, priced at
+// that dish's own total_cost per serving. qty is treated as a serving multiplier (qty 1 =
+// one full serving of the nested dish included in this combo), not a weight/volume amount.
+function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup) {
   const ingredients = (recipeIngredients || []).map(ing => {
     const key = normalizeIngredientName(ing.raw_material);
     const mappedId = resolveIngredientRateId(key, rateByName || {});
@@ -1130,34 +1135,43 @@ function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateBy
     // see the "Add Price" handler, which sets the new row's `name` to match `raw_material`.
     const base = { raw_material: ing.raw_material, qty: ing.qty, unit: ing.unit, mapped_id: mappedId };
 
-    if (!mappedId) return { ...base, priced: false, reason: 'not linked to any rate card item or BK recipe', cost: null, rate: null };
+    if (!mappedId) {
+      const nestedDish = dishCostLookup && dishCostLookup(ing.raw_material);
+      if (nestedDish) {
+        const servings = Number(ing.qty) || 1;
+        return { ...base, priced: true, rate: nestedDish.total_cost, rate_unit: 'serving', cost: Math.round(servings * nestedDish.total_cost * 100) / 100, via_dish_recipe: true };
+      }
+      return { ...base, priced: false, reason: 'not linked to any rate card item or BK recipe', cost: null, rate: null };
+    }
 
     if (rateMap[mappedId]) {
       const rate = rateMap[mappedId];
       let qty = Number(ing.qty || 0), unit = ing.unit;
       const u = (unit || '').toLowerCase(), ru = (rate.unit || '').toLowerCase();
-      // Chain through unit_conversions (e.g. a recipe entering Papad in "Piece" while the
-      // rate card prices it per "Pkt" — 1 Pkt = 200 Pcs, already configured there) before
-      // falling back to the hardcoded Gm/Ml SI step, same precedence the rest of the app's
-      // costing paths already use for a bulk unit. The invert branch is deliberately
-      // restricted to the Piece/Pcs/Pc synonym case (Papad's actual scenario) rather than
-      // any unit matching the conversion's base_unit — Haldi Powder's own conversion row
-      // happens to have base_unit "Gm" too (1 Pkt = 500 Gm), which would otherwise get
-      // wrongly caught here and diverted through Pkt instead of straight to the Gm→Kg SI
-      // step right below, which is already exactly correct for it on its own.
-      const conv = convMap && convMap[mappedId];
-      if (conv) {
-        const convFrom = (conv.fromUnit || '').toLowerCase();
-        const convBase = (conv.baseUnit || '').toLowerCase();
-        if (u === convFrom || (PIECE_UNITS.has(u) && PIECE_UNITS.has(convFrom))) {
-          qty *= Number(conv.qty) || 1; unit = conv.baseUnit;
-        } else if (PIECE_UNITS.has(u) && PIECE_UNITS.has(convBase)) {
-          qty /= Number(conv.qty) || 1; unit = conv.fromUnit;
+      // 1. Try the plain SI step first (Gm->Kg, Ml->Ltr) — resolves the common case (e.g.
+      // Haldi Powder: recipe in Gm, priced per Kg) without ever consulting unit_conversions,
+      // even if this same item also happens to have an unrelated bulk-unit conversion row
+      // (Haldi's own is "1 Pkt = 500 Gm", irrelevant here since the rate card unit is Kg).
+      let siApplied = false;
+      if (u === 'gm' && ru === 'kg') { qty = qty / 1000; unit = 'Kg'; siApplied = true; }
+      else if (u === 'ml' && (ru === 'ltr' || ru === 'ltr.')) { qty = qty / 1000; unit = 'Ltr'; siApplied = true; }
+      // 2. Only if the SI step didn't apply, chain through unit_conversions instead — e.g.
+      // Papad entering "Piece" while priced per "Pkt" (1 Pkt = 200 Pcs), or Coconut entering
+      // "Gm" (crushed) while priced per "Pcs" (1 Pc = 200 Gm crushed). Whichever side of the
+      // conversion (fromUnit or baseUnit) the recipe's own unit matches, convert onto the
+      // other side — Piece/Pcs/Pc are treated as the same unit here too.
+      if (!siApplied) {
+        const conv = convMap && convMap[mappedId];
+        if (conv) {
+          const convFrom = (conv.fromUnit || '').toLowerCase();
+          const convBase = (conv.baseUnit || '').toLowerCase();
+          if (u === convFrom || (PIECE_UNITS.has(u) && PIECE_UNITS.has(convFrom))) {
+            qty *= Number(conv.qty) || 1; unit = conv.baseUnit;
+          } else if (u === convBase || (PIECE_UNITS.has(u) && PIECE_UNITS.has(convBase))) {
+            qty /= Number(conv.qty) || 1; unit = conv.fromUnit;
+          }
         }
       }
-      const uu = (unit || '').toLowerCase();
-      if (uu === 'gm' && ru === 'kg') { qty = qty / 1000; unit = 'Kg'; }
-      else if (uu === 'ml' && (ru === 'ltr' || ru === 'ltr.')) { qty = qty / 1000; unit = 'Ltr'; }
       if (!unitsCompatible(unit, rate.unit)) {
         return { ...base, priced: false, reason: `priced per ${rate.unit}, recipe uses ${ing.unit} — conversion not configured`, cost: null, rate: rate.price, rate_unit: rate.unit };
       }
@@ -1193,12 +1207,37 @@ async function loadCostingContext() {
   return { rateMap, rateByName, convMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
 }
 
+// Recursive, memoized dish-cost resolver — lets a combo dish (e.g. "Lemon Rice And Filter
+// Coffee") use another dish recipe (e.g. "Lemon Rice") as one of its own ingredients,
+// looked up by name (see costRecipeIngredients' dishCostLookup param). `visited` guards a
+// circular reference (A includes B includes A) from recursing forever.
+function buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap) {
+  const cache = {};
+  const resolve = (dishName, visited) => {
+    const norm = normalizeDishName(dishName);
+    if (cache[norm] !== undefined) return cache[norm];
+    const recipe = recipesByNormName[norm];
+    if (!recipe || visited.has(norm)) return (cache[norm] = null);
+    const nextVisited = new Set(visited); nextVisited.add(norm);
+    const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, (name) => resolve(name, nextVisited));
+    cache[norm] = costed;
+    return costed;
+  };
+  return (dishName) => resolve(dishName, new Set());
+}
+
 async function computeDishCost(recipeId) {
-  const { data: recipe } = await supabase.from('recipes')
-    .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single();
+  const [{ data: recipe }, { data: allRecipes }, costingContext] = await Promise.all([
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('id', recipeId).single(),
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
+    loadCostingContext(),
+  ]);
   if (!recipe) return null;
-  const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
-  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap);
+  const { rateMap, rateByName, convMap, bkCostPerUnit } = costingContext;
+  const recipesByNormName = {};
+  (allRecipes || []).forEach(r => { if (r.id !== recipeId) recipesByNormName[normalizeDishName(r.item_name)] = r; });
+  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap);
+  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup);
   return { item_name: recipe.item_name, ...costed };
 }
 
@@ -1208,9 +1247,12 @@ async function computeAllDishCosts() {
   const { data: recipes } = await supabase.from('recipes')
     .select('id, item_name, recipe_ingredients ( raw_material, qty, unit, qty_kg )').eq('status', 'Active');
   const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
+  const recipesByNormName = {};
+  (recipes || []).forEach(r => { recipesByNormName[normalizeDishName(r.item_name)] = r; });
+  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap);
   const byNormName = {};
   (recipes || []).forEach(r => {
-    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap);
+    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup);
     byNormName[normalizeDishName(r.item_name)] = { item_name: r.item_name, ...costed };
   });
   return byNormName;
