@@ -5829,9 +5829,15 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
     return opts;
   }, []);
 
+  const [bkRecipeCosts, setBkRecipeCosts] = useState({}); // { [item_id]: { name, costPerKg, yieldQty } }
   useEffect(() => {
     api.getRateCard().then((r) => setRateCard(r || [])).catch(() => setRateCard([]));
     api.getConversions().then((c) => setConversions(c || {})).catch(() => setConversions({}));
+    // BK-prepared items (Sambhar, Dosa Batter, chutneys, ...) never have a rate_card entry
+    // of their own — they're priced via their own recipe cost instead, same rate-card-
+    // first-then-BK-recipe-fallback rule P&L/RM Audit use. Without this, every one of them
+    // billed at ₹0 here despite being priced correctly everywhere else in the app.
+    api.getBkRecipeCosts().then((c) => setBkRecipeCosts(c || {})).catch(() => setBkRecipeCosts({}));
   }, []);
 
   const rateMap = useMemo(() => { const m = {}; rateCard.forEach((r) => { m[r.id] = r; }); return m; }, [rateCard]);
@@ -5887,9 +5893,15 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
     return Object.entries(merged).map(([id, data]) => {
       const def = allDemandItems.find((i) => i.id === id);
       const rate = rateMap[id];
-      const displayUnit = def?.unit || rate?.unit || '';
+      // BK-prepared items (Sambhar, Dosa Batter, chutneys, ...) never get their own
+      // rate_card row — priced via their own recipe cost instead, same fallback P&L/RM
+      // Audit already use. bkRecipeCosts' cost is always per Kg (BK recipes always yield
+      // in Kg), so it's treated exactly like a Kg-priced rate for the unit conversion below.
+      const bkCost = !rate ? bkRecipeCosts[id] : null;
+      const displayUnit = def?.unit || rate?.unit || (bkCost ? 'Kg' : '');
       let rateUnit = displayUnit, unitPrice = 0, convFactor = 1;
       if (rate) { unitPrice = Number(rate.price); rateUnit = rate.unit || displayUnit; convFactor = getUnitConv(displayUnit, rateUnit, id); }
+      else if (bkCost && bkCost.costPerKg > 0) { unitPrice = Number(bkCost.costPerKg); rateUnit = 'Kg'; convFactor = getUnitConv(displayUnit, 'Kg', id); }
       // Billed on what was actually dispatched (supplied), not just demanded
       const computedDispatchQty = data.hasDispatch ? Math.round(data.dispatchedQty * 100) / 100 : null;
       const computedRate = Math.round(unitPrice * 100) / 100;
@@ -5911,7 +5923,7 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
         catId: sec?.id || '_other', catEmoji: sec?.emoji || '📦', catLabel: sec?.titleHi || 'Other',
       };
     }).filter((i) => i.demandQty > 0 || i.billedQty > 0).sort((a, b) => b.amount - a.amount);
-  }, [demands, rateMap, convMap, edits]);
+  }, [demands, rateMap, convMap, edits, bkRecipeCosts]);
 
   // Category pills — built off the full item set so counts don't shrink as you filter.
   const billCatGroups = useMemo(() => {

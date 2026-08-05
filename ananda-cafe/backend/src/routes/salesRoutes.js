@@ -4485,6 +4485,21 @@ router.get('/system-logs', async (req, res) => {
 // dedicated table, so this works immediately with no schema migration required. Saved in
 // a single batch when "Done" is tapped, not per-keystroke.
 // ────────────────────────────────────────────────────────────
+
+// ── GET /api/bk-recipe-costs — cost-per-unit for every BK-prepared item (Sambhar, Dosa
+// Batter, chutneys, ...), the same rate-card-first-then-BK-recipe-cost rule P&L/RM Audit/
+// dish costing already use. Franchise Billing was pricing these purely off the rate card
+// (which BK-prepared items never have — they're priced via their own recipe instead), so
+// every one of them billed at ₹0. Reuses buildCostingContext's bkRecipeMap rather than a
+// second implementation of the same resolution logic.
+router.get('/bk-recipe-costs', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'head_chef', 'franchise')) return;
+    const { bkRecipeMap } = await buildCostingContext();
+    res.json(bkRecipeMap);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/franchise-billing/corrections', async (req, res) => {
   try {
     const user = await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'head_chef', 'franchise');

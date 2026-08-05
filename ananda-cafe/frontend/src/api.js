@@ -84,6 +84,7 @@ const api = {
   getColdDrinkAudit: (date) => get(`/api/audit/cold-drink/${date}`),
   getPackagingAudit: (days) => get("/api/audit/packaging", days ? { days } : {}),
 
+  getBkRecipeCosts: () => get("/api/bk-recipe-costs"),
   // ── Franchise Billing corrections (persisted Qty/Rate edits) ──
   getFranchiseBillingCorrections: (outlet_id, month) => get("/api/franchise-billing/corrections", { outlet_id, month }),
   saveFranchiseBillingCorrections: (data) => post("/api/franchise-billing/corrections", data),
@@ -232,6 +233,10 @@ const api = {
   getUsers: () => get("/api/auth/users"),
   createUser: (data) => post("/api/auth/users", data),
   updateUser: (id, data) => patch(`/api/auth/users/${id}`, data),
+  // Employee Master (full staff directory, incl. staff without app login)
+  getEmployees: () => get("/api/employees"),
+  createEmployee: (data) => post("/api/employees", data),
+  updateEmployee: (id, data) => patch(`/api/employees/${id}`, data),
 };
 
 // ── Helpers ──
