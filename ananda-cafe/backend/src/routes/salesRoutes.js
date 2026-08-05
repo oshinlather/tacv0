@@ -1853,46 +1853,8 @@ router.patch('/auth/users/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ============================================================
-// EMPLOYEE MASTER — full staff directory (superset of app_users; covers
-// staff without app login too), grouped by department: an outlet id, 'bk'
-// (Base Kitchen), or 'top_mgmt' (Top Management). Owner-only.
-// ============================================================
-
-router.get('/employees', async (req, res) => {
-  try {
-    if (!await requireOwner(req, res)) return;
-    const { data, error } = await supabase.from('employees').select('*').order('name');
-    if (error) throw error;
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/employees', async (req, res) => {
-  try {
-    if (!await requireOwner(req, res)) return;
-    const { name, designation, department, phone, joining_date, notes, app_user_id } = req.body;
-    if (!name || !designation || !department) return res.status(400).json({ error: "name, designation, and department are required" });
-    const { data, error } = await supabase.from('employees')
-      .insert({ name, designation, department, phone: phone || null, joining_date: joining_date || null, notes: notes || null, app_user_id: app_user_id || null })
-      .select('*').single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.patch('/employees/:id', async (req, res) => {
-  try {
-    if (!await requireOwner(req, res)) return;
-    const updates = { updated_at: new Date().toISOString() };
-    for (const f of ['name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active']) {
-      if (req.body[f] !== undefined) updates[f] = req.body[f];
-    }
-    const { data, error } = await supabase.from('employees').update(updates).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// Employee Master (staff directory, attendance, roster, bank details) now lives in
+// its own router — see routes/employees.js, mounted at /api/employees in server.js.
 
 // ── POST /api/demands — Create demand (robust version, handles all types)
 router.post('/demands', async (req, res) => {

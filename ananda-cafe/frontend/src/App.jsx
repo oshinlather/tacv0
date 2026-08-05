@@ -492,31 +492,166 @@ const UsersPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  EMPLOYEE MASTER — full staff directory, grouped by Outlet / Base Kitchen /
-//  Top Management. Superset of UsersPanel's app_users: covers staff who never
-//  log into the app (helpers, cooks, cleaners), and can optionally link to an
-//  app_users row for those who also have login access.
+//  EMPLOYEE MASTER — mini HRMS: full staff directory (employee code, salary,
+//  shift/roster timing, bank/UPI details), grouped by Outlet / Base Kitchen /
+//  Top Management, plus per-employee daily attendance marking. Superset of
+//  UsersPanel's app_users — covers staff who never log into the app (helpers,
+//  cooks, cleaners), and can optionally link to an app_users row for those who
+//  do. Staff advances are NOT duplicated here — they stay tracked in Books
+//  Ledger (books_ledger.employee_id) and this panel just shows the resulting
+//  outstanding balance per employee.
 // ═════════════════════════════════════════════════════════════════════════════
 const EMPLOYEE_DEPARTMENTS = [
   ...OUTLETS.map(o => ({ id: o.id, label: `🏪 ${o.name}` })),
   { id: "bk", label: "🏭 Base Kitchen" },
   { id: "top_mgmt", label: "👑 Top Management" },
 ];
+const SALARY_TYPES = [{ v: "monthly", l: "Monthly" }, { v: "daily", l: "Daily" }];
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const EMPLOYEE_FORM_DEFAULTS = {
+  name: "", designation: "", department: EMPLOYEE_DEPARTMENTS[0].id, phone: "", joining_date: "", app_user_id: "",
+  salary: "", salary_type: "monthly", shift_start: "", shift_end: "", weekly_off: "",
+  bank_account_name: "", bank_account_number: "", bank_ifsc: "", upi_id: "",
+};
+const employeeFormToPayload = (f) => ({
+  name: f.name, designation: f.designation, department: f.department,
+  phone: f.phone || null, joining_date: f.joining_date || null, app_user_id: f.app_user_id || null,
+  salary: f.salary === "" ? null : Number(f.salary), salary_type: f.salary_type,
+  shift_start: f.shift_start || null, shift_end: f.shift_end || null, weekly_off: f.weekly_off || null,
+  bank_account_name: f.bank_account_name || null, bank_account_number: f.bank_account_number || null,
+  bank_ifsc: f.bank_ifsc || null, upi_id: f.upi_id || null,
+});
+
+// Daily attendance grid for one employee — tap a day to cycle through
+// present → absent → half-day → leave → (cleared). One month at a time.
+const ATTENDANCE_STATUS_CYCLE = ["present", "absent", "half_day", "leave"];
+const ATTENDANCE_STYLE = {
+  present: { l: "P", bg: "#DCFCE7", color: "#16A34A" },
+  absent: { l: "A", bg: "#FEE2E2", color: "#DC2626" },
+  half_day: { l: "½", bg: "#FEF3C7", color: "#B45309" },
+  leave: { l: "L", bg: "#DBEAFE", color: "#2563EB" },
+};
+const EmployeeAttendance = ({ employee }) => {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [records, setRecords] = useState({}); // date -> attendance row
+  const [loading, setLoading] = useState(true);
+
+  const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  const from = `${month}-01`;
+  const to = `${month}-${String(daysInMonth).padStart(2, "0")}`;
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getAttendance({ employee_id: employee.id, from, to })
+      .then((rows) => { const map = {}; rows.forEach((r) => { map[r.date] = r; }); setRecords(map); })
+      .catch(() => setRecords({}))
+      .finally(() => setLoading(false));
+  }, [employee.id, from, to]);
+  useEffect(load, [load]);
+
+  const cycle = async (date) => {
+    const existing = records[date];
+    const idx = existing ? ATTENDANCE_STATUS_CYCLE.indexOf(existing.status) : -1;
+    if (idx === ATTENDANCE_STATUS_CYCLE.length - 1) {
+      try { await api.deleteAttendance(existing.id); } catch (e) { alert("Error: " + e.message); return; }
+      setRecords((p) => { const n = { ...p }; delete n[date]; return n; });
+      return;
+    }
+    const nextStatus = ATTENDANCE_STATUS_CYCLE[idx + 1];
+    try {
+      const saved = await api.markAttendance({ employee_id: employee.id, date, status: nextStatus });
+      setRecords((p) => ({ ...p, [date]: saved }));
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const counts = ATTENDANCE_STATUS_CYCLE.reduce((acc, s) => { acc[s] = Object.values(records).filter((r) => r.status === s).length; return acc; }, {});
+
+  return (<div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>←</button>
+      <span style={{ fontSize: 12, fontWeight: 700, flex: 1, textAlign: "center" }}>{month}</span>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>→</button>
+    </div>
+    {loading ? <div style={{ fontSize: 11, color: "#999", textAlign: "center", padding: 10 }}>⏳ Loading...</div> : (<>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+        {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+          const date = `${month}-${String(day).padStart(2, "0")}`;
+          const rec = records[date];
+          const style = rec ? ATTENDANCE_STYLE[rec.status] : null;
+          return (
+            <button key={day} onClick={() => cycle(date)} title={rec ? `${date}: ${rec.status.replace("_", " ")}` : `${date}: tap to mark`}
+              style={{ width: 27, height: 27, borderRadius: 6, border: style ? "none" : "1px solid #E8E8E4", background: style ? style.bg : "#FAFAF8", color: style ? style.color : "#BBB", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              {style ? style.l : day}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ display: "flex", gap: 10, fontSize: 10, color: "#888", flexWrap: "wrap" }}>
+        <span>🟢 {counts.present} present</span>
+        <span>🔴 {counts.absent} absent</span>
+        <span>🟡 {counts.half_day} half-day</span>
+        <span>🔵 {counts.leave} leave</span>
+      </div>
+    </>)}
+  </div>);
+};
+
+// Shared field set for both the Add form and the inline Edit form on Employee
+// Master. Defined at module scope (not inside EmployeeMasterPanel) so it isn't
+// recreated — and its inputs don't lose focus — on every keystroke.
+const employeeFieldInputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
+const employeeFieldHalfStyle = { ...employeeFieldInputStyle, flex: 1 };
+const employeeFieldLabelStyle = { fontSize: 10, color: "#999", marginBottom: 4, marginTop: 4, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 };
+const EmployeeFields = ({ form, setForm, users }) => (<>
+  <input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} style={employeeFieldInputStyle} />
+  <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={form.designation} onChange={(e) => setForm({ ...form, designation: e.target.value })} style={employeeFieldInputStyle} />
+  <select value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} style={employeeFieldInputStyle}>
+    {EMPLOYEE_DEPARTMENTS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+  </select>
+  <input type="tel" placeholder="Phone (optional)" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })} style={employeeFieldInputStyle} />
+  <div style={employeeFieldLabelStyle}>Joining Date</div>
+  <input type="date" value={form.joining_date} onChange={(e) => setForm({ ...form, joining_date: e.target.value })} style={employeeFieldInputStyle} />
+  <select value={form.app_user_id} onChange={(e) => setForm({ ...form, app_user_id: e.target.value })} style={employeeFieldInputStyle}>
+    <option value="">No app login linked</option>
+    {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.phone})</option>)}
+  </select>
+
+  <div style={employeeFieldLabelStyle}>Salary</div>
+  <div style={{ display: "flex", gap: 8 }}>
+    <input type="number" inputMode="numeric" placeholder="₹ amount" value={form.salary} onChange={(e) => setForm({ ...form, salary: e.target.value })} style={employeeFieldHalfStyle} />
+    <select value={form.salary_type} onChange={(e) => setForm({ ...form, salary_type: e.target.value })} style={employeeFieldHalfStyle}>
+      {SALARY_TYPES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+    </select>
+  </div>
+
+  <div style={employeeFieldLabelStyle}>Shift Timing</div>
+  <div style={{ display: "flex", gap: 8 }}>
+    <input type="time" value={form.shift_start} onChange={(e) => setForm({ ...form, shift_start: e.target.value })} style={employeeFieldHalfStyle} />
+    <input type="time" value={form.shift_end} onChange={(e) => setForm({ ...form, shift_end: e.target.value })} style={employeeFieldHalfStyle} />
+  </div>
+  <select value={form.weekly_off} onChange={(e) => setForm({ ...form, weekly_off: e.target.value })} style={employeeFieldInputStyle}>
+    <option value="">No weekly off set</option>
+    {WEEKDAYS.map(w => <option key={w} value={w}>Weekly off: {w}</option>)}
+  </select>
+
+  <div style={employeeFieldLabelStyle}>Bank / UPI Details</div>
+  <input placeholder="Account holder name" value={form.bank_account_name} onChange={(e) => setForm({ ...form, bank_account_name: e.target.value })} style={employeeFieldInputStyle} />
+  <input placeholder="Account number" value={form.bank_account_number} onChange={(e) => setForm({ ...form, bank_account_number: e.target.value })} style={employeeFieldInputStyle} />
+  <input placeholder="IFSC code" value={form.bank_ifsc} onChange={(e) => setForm({ ...form, bank_ifsc: e.target.value.toUpperCase() })} style={employeeFieldInputStyle} />
+  <input placeholder="UPI ID (optional)" value={form.upi_id} onChange={(e) => setForm({ ...form, upi_id: e.target.value })} style={employeeFieldInputStyle} />
+</>);
+
 const EmployeeMasterPanel = () => {
   const [employees, setEmployees] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newDesignation, setNewDesignation] = useState("");
-  const [newDepartment, setNewDepartment] = useState(EMPLOYEE_DEPARTMENTS[0].id);
-  const [newPhone, setNewPhone] = useState("");
-  const [newJoiningDate, setNewJoiningDate] = useState("");
-  const [newAppUserId, setNewAppUserId] = useState("");
+  const [newForm, setNewForm] = useState(EMPLOYEE_FORM_DEFAULTS);
   const [saving, setSaving] = useState(false);
   const [collapsed, setCollapsed] = useState({});
   const [editId, setEditId] = useState(null);
-  const [editDraft, setEditDraft] = useState({});
+  const [editDraft, setEditDraft] = useState(EMPLOYEE_FORM_DEFAULTS);
+  const [attendanceOpenId, setAttendanceOpenId] = useState(null);
 
   const load = () => {
     Promise.all([api.getEmployees(), api.getUsers().catch(() => [])])
@@ -526,14 +661,12 @@ const EmployeeMasterPanel = () => {
   };
   useEffect(load, []);
 
-  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
-
   const addEmployee = async () => {
-    if (!newName || !newDesignation) { alert("Name and designation required"); return; }
+    if (!newForm.name || !newForm.designation) { alert("Name and designation required"); return; }
     setSaving(true);
     try {
-      await api.createEmployee({ name: newName, designation: newDesignation, department: newDepartment, phone: newPhone || null, joining_date: newJoiningDate || null, app_user_id: newAppUserId || null });
-      setNewName(""); setNewDesignation(""); setNewPhone(""); setNewJoiningDate(""); setNewAppUserId(""); setShowAdd(false);
+      await api.createEmployee(employeeFormToPayload(newForm));
+      setNewForm(EMPLOYEE_FORM_DEFAULTS); setShowAdd(false);
       load();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
@@ -543,9 +676,20 @@ const EmployeeMasterPanel = () => {
     try { await api.updateEmployee(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
-  const startEdit = (emp) => { setEditId(emp.id); setEditDraft({ name: emp.name, designation: emp.designation, department: emp.department, phone: emp.phone || "", joining_date: emp.joining_date || "" }); };
+  const startEdit = (emp) => {
+    setEditId(emp.id);
+    setEditDraft({
+      name: emp.name, designation: emp.designation, department: emp.department,
+      phone: emp.phone || "", joining_date: emp.joining_date || "", app_user_id: emp.app_user_id || "",
+      salary: emp.salary != null ? String(emp.salary) : "", salary_type: emp.salary_type || "monthly",
+      shift_start: emp.shift_start ? emp.shift_start.slice(0, 5) : "", shift_end: emp.shift_end ? emp.shift_end.slice(0, 5) : "",
+      weekly_off: emp.weekly_off || "",
+      bank_account_name: emp.bank_account_name || "", bank_account_number: emp.bank_account_number || "",
+      bank_ifsc: emp.bank_ifsc || "", upi_id: emp.upi_id || "",
+    });
+  };
   const saveEdit = async (id) => {
-    try { await api.updateEmployee(id, editDraft); setEditId(null); load(); } catch (e) { alert("Error: " + e.message); }
+    try { await api.updateEmployee(id, employeeFormToPayload(editDraft)); setEditId(null); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
@@ -560,18 +704,8 @@ const EmployeeMasterPanel = () => {
     </div>
 
     {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
-      <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
-      <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={inputStyle} />
-      <select value={newDepartment} onChange={(e) => setNewDepartment(e.target.value)} style={inputStyle}>
-        {EMPLOYEE_DEPARTMENTS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
-      </select>
-      <input type="tel" placeholder="Phone (optional)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
-      <input type="date" value={newJoiningDate} onChange={(e) => setNewJoiningDate(e.target.value)} style={inputStyle} />
-      <select value={newAppUserId} onChange={(e) => setNewAppUserId(e.target.value)} style={inputStyle}>
-        <option value="">No app login linked</option>
-        {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.phone})</option>)}
-      </select>
-      <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Add Employee"}</button>
+      <EmployeeFields form={newForm} setForm={setNewForm} users={users} />
+      <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 4 }}>{saving ? "⏳..." : "✅ Add Employee"}</button>
     </div>}
 
     {grouped.map(d => (
@@ -586,13 +720,7 @@ const EmployeeMasterPanel = () => {
           : d.emps.map(emp => (
             <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
               {editId === emp.id ? (<>
-                <input value={editDraft.name} onChange={(e) => setEditDraft(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
-                <input value={editDraft.designation} onChange={(e) => setEditDraft(p => ({ ...p, designation: e.target.value }))} style={inputStyle} />
-                <select value={editDraft.department} onChange={(e) => setEditDraft(p => ({ ...p, department: e.target.value }))} style={inputStyle}>
-                  {EMPLOYEE_DEPARTMENTS.map(d2 => <option key={d2.id} value={d2.id}>{d2.label}</option>)}
-                </select>
-                <input type="tel" value={editDraft.phone} onChange={(e) => setEditDraft(p => ({ ...p, phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} style={inputStyle} />
-                <input type="date" value={editDraft.joining_date || ""} onChange={(e) => setEditDraft(p => ({ ...p, joining_date: e.target.value }))} style={inputStyle} />
+                <EmployeeFields form={editDraft} setForm={setEditDraft} users={users} />
                 <div style={{ display: "flex", gap: 8 }}>
                   <button onClick={() => saveEdit(emp.id)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✓ Save</button>
                   <button onClick={() => setEditId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
@@ -600,15 +728,23 @@ const EmployeeMasterPanel = () => {
               </>) : (<>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
                     <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
+                    <div style={{ fontSize: 11, color: "#999", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {emp.salary != null && <span>💰 {fmt(emp.salary)}/{emp.salary_type === "daily" ? "day" : "mo"}</span>}
+                      {(emp.shift_start || emp.shift_end) && <span>🕐 {emp.shift_start?.slice(0, 5) || "?"}–{emp.shift_end?.slice(0, 5) || "?"}</span>}
+                      {emp.weekly_off && <span>🛌 Off: {emp.weekly_off}</span>}
+                    </div>
                     {emp.app_user_id && <div style={{ fontSize: 11, color: "#2563EB", marginTop: 2 }}>🔗 has app login</div>}
+                    {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                   <button onClick={() => startEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                  <button onClick={() => setAttendanceOpenId(attendanceOpenId === emp.id ? null : emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: attendanceOpenId === emp.id ? "#EDE9FE" : "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>📅 Attendance</button>
                   <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: 1, padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚫 Disable" : "✅ Enable"}</button>
                 </div>
+                {attendanceOpenId === emp.id && <EmployeeAttendance employee={emp} />}
               </>)}
             </div>
           )))}
@@ -1256,7 +1392,7 @@ const booksCatLabel = (id) => BOOKS_CATEGORIES.find((c) => c.id === id)?.label |
 
 const BOOKS_ENTRY_DEFAULTS = {
   entry_date: "", entry_time: "", submitted_by: "", description: "", category: "uncategorized",
-  amount: "", payment_mode: "cash", vendor_or_recipient: "", is_advance: false, advance_to: "", needs_review: false,
+  amount: "", payment_mode: "cash", vendor_or_recipient: "", is_advance: false, advance_to: "", employee_id: "", needs_review: false,
 };
 
 const TODO_CATEGORIES = [
@@ -1465,6 +1601,10 @@ const BooksLedger = () => {
   const [formOpen, setFormOpen] = useState(null);
   const [form, setForm] = useState(BOOKS_ENTRY_DEFAULTS);
   const [formSaving, setFormSaving] = useState(false);
+  // Employees list, so an advance can be linked to a specific Employee Master record
+  // (accurate balance tracking) rather than only a free-text name.
+  const [employees, setEmployees] = useState([]);
+  useEffect(() => { api.getEmployees().then(setEmployees).catch(() => setEmployees([])); }, []);
 
   const daysInMonth = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
   const from = `${month}-01`;
@@ -1503,7 +1643,7 @@ const BooksLedger = () => {
       entry_date: e.entry_date || today(), entry_time: e.entry_time || "", submitted_by: e.submitted_by || "",
       description: e.description || "", category: e.category || "uncategorized", amount: e.amount != null ? String(e.amount) : "",
       payment_mode: e.payment_mode || "cash", vendor_or_recipient: e.vendor_or_recipient || "",
-      is_advance: !!e.is_advance, advance_to: e.advance_to || "", needs_review: !!e.needs_review,
+      is_advance: !!e.is_advance, advance_to: e.advance_to || "", employee_id: e.employee_id || "", needs_review: !!e.needs_review,
     });
     setFormOpen(e.id);
   };
@@ -1515,6 +1655,7 @@ const BooksLedger = () => {
         ...form, amount: Number(form.amount), entry_time: form.entry_time || null,
         vendor_or_recipient: form.vendor_or_recipient || null,
         advance_to: form.is_advance ? (form.advance_to || null) : null,
+        employee_id: form.is_advance ? (form.employee_id || null) : null,
       };
       if (formOpen === "new") await api.createBooksEntry(payload);
       else await api.updateBooksEntry(formOpen, payload);
@@ -1721,6 +1862,14 @@ const BooksLedger = () => {
         </label>
 
         {form.is_advance && (<>
+          <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Link to employee (optional — for accurate balance tracking on Employee Master)</div>
+          <select value={form.employee_id} onChange={(e) => {
+            const emp = employees.find((x) => String(x.id) === e.target.value);
+            setForm({ ...form, employee_id: e.target.value, advance_to: emp ? emp.name : form.advance_to });
+          }} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }}>
+            <option value="">Not linked — enter a name below</option>
+            {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name} ({emp.designation})</option>)}
+          </select>
           <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Advance to</div>
           <input value={form.advance_to} onChange={(e) => setForm({ ...form, advance_to: e.target.value })} placeholder="person's name"
             style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />

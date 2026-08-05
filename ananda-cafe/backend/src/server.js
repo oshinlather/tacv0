@@ -14,6 +14,7 @@ const inventoryRouter = require("./routes/inventory");
 const salesRoutes = require('./routes/salesRoutes');
 const booksRouter = require("./routes/books");
 const todosRouter = require("./routes/todos");
+const employeesRouter = require("./routes/employees");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -42,6 +43,7 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/inventory", inventoryRouter);
 app.use("/api/books", booksRouter);
 app.use("/api/todos", todosRouter);
+app.use("/api/employees", employeesRouter);
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {

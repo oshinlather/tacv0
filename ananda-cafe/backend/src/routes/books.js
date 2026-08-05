@@ -83,7 +83,7 @@ router.post('/', async (req, res) => {
     if (user.role !== 'owner') return res.status(403).json({ error: 'Owners only' });
     const {
       entry_date, entry_time, submitted_by, description, category, amount,
-      payment_mode, vendor_or_recipient, is_advance, advance_to, outlet_id, raw_message,
+      payment_mode, vendor_or_recipient, is_advance, advance_to, employee_id, outlet_id, raw_message,
     } = req.body;
 
     if (!entry_date || !description || !category || amount === undefined) {
@@ -98,6 +98,7 @@ router.post('/', async (req, res) => {
       description, category, amount: Number(amount),
       payment_mode: payment_mode || null, vendor_or_recipient: vendor_or_recipient || null,
       is_advance: !!is_advance, advance_to: is_advance ? (advance_to || null) : null,
+      employee_id: is_advance ? (employee_id || null) : null,
       outlet_id: outlet_id || null, source: 'manual', raw_message: raw_message || null,
       created_by: user.id,
     }).select('*').single();
@@ -115,7 +116,7 @@ router.patch('/:id', async (req, res) => {
     const updates = {};
     const editable = [
       'entry_date', 'entry_time', 'submitted_by', 'description', 'category', 'amount',
-      'payment_mode', 'vendor_or_recipient', 'is_advance', 'advance_to', 'outlet_id',
+      'payment_mode', 'vendor_or_recipient', 'is_advance', 'advance_to', 'employee_id', 'outlet_id',
       'needs_review', 'settled', 'settled_date', 'settled_note',
     ];
     for (const key of editable) {

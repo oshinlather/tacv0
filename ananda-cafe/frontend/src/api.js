@@ -237,6 +237,9 @@ const api = {
   getEmployees: () => get("/api/employees"),
   createEmployee: (data) => post("/api/employees", data),
   updateEmployee: (id, data) => patch(`/api/employees/${id}`, data),
+  getAttendance: (params) => get("/api/employees/attendance", params),
+  markAttendance: (data) => post("/api/employees/attendance", data),
+  deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
 };
 
 // ── Helpers ──
