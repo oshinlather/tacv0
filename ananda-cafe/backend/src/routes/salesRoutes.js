@@ -864,17 +864,21 @@ function normalizeIngredientName(s) {
 
 // Resolves a normalized dish-recipe ingredient name to a rate_card id, or a bk_recipes id
 // for a BK-prepared item priced via its own recipe cost instead. RECIPE_RAW_MATERIAL_MAP is
-// checked first since it deliberately overrides a handful of names (BK-prepared items like
-// "Dosa Batter" that were never going to match a rate card name, or a packaging item priced
-// under a different display name) — but most raw materials entered into a dish recipe are
-// typed with the exact same name they already have in the rate card (Ginger, Tata Salt,
-// Haldi Powder...), so this falls back to a direct case-insensitive name match against the
-// rate card rather than requiring every single one to also get its own manual map entry.
-// Without this fallback, a dish recipe's ingredients silently show as "not linked to any
-// rate card item" — and drop out of should-consume entirely — purely because nobody
-// remembered to add a RECIPE_RAW_MATERIAL_MAP line for an otherwise perfectly priced item.
-function resolveIngredientRateId(key, rateByName) {
-  return RECIPE_RAW_MATERIAL_MAP[key] || rateByName[key] || null;
+// checked first since it deliberately overrides a handful of names (a packaging item priced
+// under a different display name, or a genuine alias like "Rawa Batter" -> the "Rawa Mix"
+// BK recipe) — but most ingredients are typed with the exact same name they already have in
+// the rate card (Ginger, Tata Salt, Haldi Powder...) or, for a BK-prepared item, the exact
+// same name its bk_recipes row already has (Dosa Batter, Sambhar, Onion Masala...) — so this
+// falls back to a direct case-insensitive name match against each of those in turn, rather
+// than requiring every single one to also get its own manual map entry. Without these
+// fallbacks, a dish recipe's ingredients silently show as "not linked to any rate card item
+// or BK recipe" — and drop out of should-consume entirely — purely because nobody remembered
+// to add a RECIPE_RAW_MATERIAL_MAP line for an otherwise perfectly priced/produced item. This
+// also means a brand-new BK recipe created for a previously-unmapped ingredient (e.g. via the
+// "not linked to a tracked inventory item" quick-add) is picked up immediately by name, with
+// no code change needed, as long as its bk_recipes.name matches the ingredient text.
+function resolveIngredientRateId(key, rateByName, bkRecipeByName) {
+  return RECIPE_RAW_MATERIAL_MAP[key] || rateByName[key] || (bkRecipeByName && bkRecipeByName[key]) || null;
 }
 
 // Theoretical (recipe) consumption vs ACTUAL outlet-level consumption — the same
@@ -904,7 +908,7 @@ async function computeRMAudit(date, outletFilter) {
   // own name), not "some recipe happens to mention it by name". recipeIngredientNames is a
   // second, looser signal: if a recipe DOES reference it by name, the fix is a one-line map
   // addition; if not, someone needs to add it to a recipe first.
-  const mappedItemIds = new Set([...Object.values(RECIPE_RAW_MATERIAL_MAP), ...Object.keys(costingContext.rateMap)]);
+  const mappedItemIds = new Set([...Object.values(RECIPE_RAW_MATERIAL_MAP), ...Object.keys(costingContext.rateMap), ...Object.keys(costingContext.bkRecipeMap)]);
   const recipeIngredientNames = new Set();
   (recipes || []).forEach(r => (r.recipe_ingredients || []).forEach(ing => {
     if (ing.raw_material) recipeIngredientNames.add(normalizeIngredientName(ing.raw_material));
@@ -947,7 +951,7 @@ async function computeRMAudit(date, outletFilter) {
     const unmappedIngredients = new Set();
     const items = Object.values(theoretical).map(t => {
       const key = normalizeIngredientName(t.raw_material);
-      const mappedId = resolveIngredientRateId(key, costingContext.rateByName);
+      const mappedId = resolveIngredientRateId(key, costingContext.rateByName, costingContext.bkRecipeByName);
       if (!mappedId) { unmappedIngredients.add(t.raw_material); return null; }
       const actualItem = actualById[mappedId];
       // Count-based ingredients (qty_kg null) are recorded per-dish in the recipe's own
@@ -1126,10 +1130,10 @@ function buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) {
 // another whole dish recipe (e.g. "Lemon Rice") as one of its own ingredients, priced at
 // that dish's own total_cost per serving. qty is treated as a serving multiplier (qty 1 =
 // one full serving of the nested dish included in this combo), not a weight/volume amount.
-function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup) {
+function costRecipeIngredients(recipeIngredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup, bkRecipeByName) {
   const ingredients = (recipeIngredients || []).map(ing => {
     const key = normalizeIngredientName(ing.raw_material);
-    const mappedId = resolveIngredientRateId(key, rateByName || {});
+    const mappedId = resolveIngredientRateId(key, rateByName || {}, bkRecipeByName);
     // Exposed so the frontend's "Add Price"/"Add Recipe" shortcut (Item-wise Sales'
     // ingredient breakdown) knows what id to save under — RECIPE_RAW_MATERIAL_MAP already
     // has a manual entry for most known-unpriced BK Food items (e.g. aloo_masala), so a new
@@ -1203,18 +1207,23 @@ async function loadCostingContext() {
   const rateMap = {};
   const rateByName = {};
   (rates || []).forEach(r => { rateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
+  const bkRecipeByName = {};
+  // `active !== false` (not a strict `=== true`) since the column defaults null/undefined
+  // on older rows that predate soft-delete — only an explicit false (a real DELETE
+  // /master/recipes/:id) should exclude a recipe from being found by name here.
+  (bkRecipes || []).filter(r => r.active !== false).forEach(r => { bkRecipeByName[normalizeIngredientName(r.name)] = r.id; });
   const bkIngredientsByRecipe = {};
   (bkIngredients || []).forEach(i => { (bkIngredientsByRecipe[i.recipe_id] = bkIngredientsByRecipe[i.recipe_id] || []).push(i); });
   const convMap = {};
   (unitConversions || []).forEach(c => { convMap[c.item_id] = { fromUnit: c.unit_type, qty: Number(c.qty), baseUnit: c.base_unit }; });
-  return { rateMap, rateByName, convMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
+  return { rateMap, rateByName, bkRecipeByName, convMap, bkCostPerUnit: buildBkCostLookup(rateMap, bkRecipes, bkIngredientsByRecipe) };
 }
 
 // Recursive, memoized dish-cost resolver — lets a combo dish (e.g. "Lemon Rice And Filter
 // Coffee") use another dish recipe (e.g. "Lemon Rice") as one of its own ingredients,
 // looked up by name (see costRecipeIngredients' dishCostLookup param). `visited` guards a
 // circular reference (A includes B includes A) from recursing forever.
-function buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap) {
+function buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap, bkRecipeByName) {
   const cache = {};
   const resolve = (dishName, visited) => {
     const norm = normalizeDishName(dishName);
@@ -1222,7 +1231,7 @@ function buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByNa
     const recipe = recipesByNormName[norm];
     if (!recipe || visited.has(norm)) return (cache[norm] = null);
     const nextVisited = new Set(visited); nextVisited.add(norm);
-    const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, (name) => resolve(name, nextVisited));
+    const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, (name) => resolve(name, nextVisited), bkRecipeByName);
     cache[norm] = costed;
     return costed;
   };
@@ -1236,11 +1245,11 @@ async function computeDishCost(recipeId) {
     loadCostingContext(),
   ]);
   if (!recipe) return null;
-  const { rateMap, rateByName, convMap, bkCostPerUnit } = costingContext;
+  const { rateMap, rateByName, bkRecipeByName, convMap, bkCostPerUnit } = costingContext;
   const recipesByNormName = {};
   (allRecipes || []).forEach(r => { if (r.id !== recipeId) recipesByNormName[normalizeDishName(r.item_name)] = r; });
-  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap);
-  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup);
+  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap, bkRecipeByName);
+  const costed = costRecipeIngredients(recipe.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup, bkRecipeByName);
   return { item_name: recipe.item_name, ...costed };
 }
 
@@ -1249,13 +1258,13 @@ async function computeDishCost(recipeId) {
 async function computeAllDishCosts() {
   const { data: recipes } = await supabase.from('recipes')
     .select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active');
-  const { rateMap, rateByName, convMap, bkCostPerUnit } = await loadCostingContext();
+  const { rateMap, rateByName, bkRecipeByName, convMap, bkCostPerUnit } = await loadCostingContext();
   const recipesByNormName = {};
   (recipes || []).forEach(r => { recipesByNormName[normalizeDishName(r.item_name)] = r; });
-  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap);
+  const dishCostLookup = buildDishCostLookup(recipesByNormName, rateMap, bkCostPerUnit, rateByName, convMap, bkRecipeByName);
   const byNormName = {};
   (recipes || []).forEach(r => {
-    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup);
+    const costed = costRecipeIngredients(r.recipe_ingredients, rateMap, bkCostPerUnit, rateByName, convMap, dishCostLookup, bkRecipeByName);
     byNormName[normalizeDishName(r.item_name)] = { item_name: r.item_name, ...costed };
   });
   return byNormName;
@@ -1839,6 +1848,47 @@ router.patch('/auth/users/:id', async (req, res) => {
     if (req.body.pin) updates.pin = req.body.pin;
     else if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
     const { data, error } = await supabase.from('app_users').update(updates).eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// EMPLOYEE MASTER — full staff directory (superset of app_users; covers
+// staff without app login too), grouped by department: an outlet id, 'bk'
+// (Base Kitchen), or 'top_mgmt' (Top Management). Owner-only.
+// ============================================================
+
+router.get('/employees', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { data, error } = await supabase.from('employees').select('*').order('name');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/employees', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { name, designation, department, phone, joining_date, notes, app_user_id } = req.body;
+    if (!name || !designation || !department) return res.status(400).json({ error: "name, designation, and department are required" });
+    const { data, error } = await supabase.from('employees')
+      .insert({ name, designation, department, phone: phone || null, joining_date: joining_date || null, notes: notes || null, app_user_id: app_user_id || null })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/employees/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const updates = { updated_at: new Date().toISOString() };
+    for (const f of ['name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active']) {
+      if (req.body[f] !== undefined) updates[f] = req.body[f];
+    }
+    const { data, error } = await supabase.from('employees').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3582,6 +3632,11 @@ async function buildCostingContext() {
   const rateMap = {};
   const rateByName = {};
   (rates || []).forEach(r => { rateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
+  const bkRecipeByName = {};
+  // `active !== false` (not a strict `=== true`) since the column defaults null/undefined
+  // on older rows that predate soft-delete — only an explicit false (a real DELETE
+  // /master/recipes/:id) should exclude a recipe from being found by name here.
+  (bkRecipes || []).filter(r => r.active !== false).forEach(r => { bkRecipeByName[normalizeIngredientName(r.name)] = r.id; });
 
   const convMap = {}; // { item_id: { from_unit, qty, base_unit } }
   (unitConversions || []).forEach(c => {
@@ -3730,7 +3785,7 @@ async function buildCostingContext() {
       return factor;
     };
 
-    return { rateMap, rateByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
+    return { rateMap, rateByName, bkRecipeByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
 }
 
 // Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was

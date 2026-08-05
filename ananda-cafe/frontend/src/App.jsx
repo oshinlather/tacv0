@@ -492,6 +492,132 @@ const UsersPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  EMPLOYEE MASTER — full staff directory, grouped by Outlet / Base Kitchen /
+//  Top Management. Superset of UsersPanel's app_users: covers staff who never
+//  log into the app (helpers, cooks, cleaners), and can optionally link to an
+//  app_users row for those who also have login access.
+// ═════════════════════════════════════════════════════════════════════════════
+const EMPLOYEE_DEPARTMENTS = [
+  ...OUTLETS.map(o => ({ id: o.id, label: `🏪 ${o.name}` })),
+  { id: "bk", label: "🏭 Base Kitchen" },
+  { id: "top_mgmt", label: "👑 Top Management" },
+];
+const EmployeeMasterPanel = () => {
+  const [employees, setEmployees] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesignation, setNewDesignation] = useState("");
+  const [newDepartment, setNewDepartment] = useState(EMPLOYEE_DEPARTMENTS[0].id);
+  const [newPhone, setNewPhone] = useState("");
+  const [newJoiningDate, setNewJoiningDate] = useState("");
+  const [newAppUserId, setNewAppUserId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [collapsed, setCollapsed] = useState({});
+  const [editId, setEditId] = useState(null);
+  const [editDraft, setEditDraft] = useState({});
+
+  const load = () => {
+    Promise.all([api.getEmployees(), api.getUsers().catch(() => [])])
+      .then(([emps, us]) => { setEmployees(emps); setUsers(us); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
+
+  const addEmployee = async () => {
+    if (!newName || !newDesignation) { alert("Name and designation required"); return; }
+    setSaving(true);
+    try {
+      await api.createEmployee({ name: newName, designation: newDesignation, department: newDepartment, phone: newPhone || null, joining_date: newJoiningDate || null, app_user_id: newAppUserId || null });
+      setNewName(""); setNewDesignation(""); setNewPhone(""); setNewJoiningDate(""); setNewAppUserId(""); setShowAdd(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const toggleActive = async (id, active) => {
+    try { await api.updateEmployee(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const startEdit = (emp) => { setEditId(emp.id); setEditDraft({ name: emp.name, designation: emp.designation, department: emp.department, phone: emp.phone || "", joining_date: emp.joining_date || "" }); };
+  const saveEdit = async (id) => {
+    try { await api.updateEmployee(id, editDraft); setEditId(null); load(); } catch (e) { alert("Error: " + e.message); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  const activeCount = employees.filter(e => e.active).length;
+  const grouped = EMPLOYEE_DEPARTMENTS.map(d => ({ ...d, emps: employees.filter(e => e.department === d.id) }));
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>👤 Employee Master ({activeCount}/{employees.length})</h3>
+      <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add Employee</button>
+    </div>
+
+    {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
+      <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
+      <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={inputStyle} />
+      <select value={newDepartment} onChange={(e) => setNewDepartment(e.target.value)} style={inputStyle}>
+        {EMPLOYEE_DEPARTMENTS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+      </select>
+      <input type="tel" placeholder="Phone (optional)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
+      <input type="date" value={newJoiningDate} onChange={(e) => setNewJoiningDate(e.target.value)} style={inputStyle} />
+      <select value={newAppUserId} onChange={(e) => setNewAppUserId(e.target.value)} style={inputStyle}>
+        <option value="">No app login linked</option>
+        {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.phone})</option>)}
+      </select>
+      <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Add Employee"}</button>
+    </div>}
+
+    {grouped.map(d => (
+      <div key={d.id} style={{ marginBottom: 16 }}>
+        <div onClick={() => setCollapsed(p => ({ ...p, [d.id]: !p[d.id] }))} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", padding: "8px 0" }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#1A1A1A" }}>{d.label}</span>
+          <span style={{ fontSize: 11, color: "#999" }}>({d.emps.filter(e => e.active).length}/{d.emps.length})</span>
+          <span style={{ marginLeft: "auto", fontSize: 11, color: "#999" }}>{collapsed[d.id] ? "▸" : "▾"}</span>
+        </div>
+        {!collapsed[d.id] && (d.emps.length === 0
+          ? <div style={{ fontSize: 12, color: "#BBB", padding: "4px 0 8px" }}>No employees</div>
+          : d.emps.map(emp => (
+            <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
+              {editId === emp.id ? (<>
+                <input value={editDraft.name} onChange={(e) => setEditDraft(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+                <input value={editDraft.designation} onChange={(e) => setEditDraft(p => ({ ...p, designation: e.target.value }))} style={inputStyle} />
+                <select value={editDraft.department} onChange={(e) => setEditDraft(p => ({ ...p, department: e.target.value }))} style={inputStyle}>
+                  {EMPLOYEE_DEPARTMENTS.map(d2 => <option key={d2.id} value={d2.id}>{d2.label}</option>)}
+                </select>
+                <input type="tel" value={editDraft.phone} onChange={(e) => setEditDraft(p => ({ ...p, phone: e.target.value.replace(/\D/g, "").slice(0, 10) }))} style={inputStyle} />
+                <input type="date" value={editDraft.joining_date || ""} onChange={(e) => setEditDraft(p => ({ ...p, joining_date: e.target.value }))} style={inputStyle} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => saveEdit(emp.id)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✓ Save</button>
+                  <button onClick={() => setEditId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              </>) : (<>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}</div>
+                    <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
+                    {emp.app_user_id && <div style={{ fontSize: 11, color: "#2563EB", marginTop: 2 }}>🔗 has app login</div>}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  <button onClick={() => startEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                  <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: 1, padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚫 Disable" : "✅ Enable"}</button>
+                </div>
+              </>)}
+            </div>
+          )))}
+      </div>
+    ))}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  PAYTM RECONCILIATION — Monthly sheet with actuals vs reported
 // ═════════════════════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════════════════════
@@ -8629,6 +8755,130 @@ const DailyReviewSummary = () => {
   </div>);
 };
 
+// ── 4-Week Same-Weekday Comparison — e.g. this Wednesday vs the last 3 Wednesdays,
+// so trend/seasonality shows up instead of noisy day-to-day swings. Reuses the
+// existing single-date /api/sales endpoint with 4 parallel calls (same pattern as
+// CogsCompare's multi-date fetch) rather than adding a new backend route.
+const FourWeekComparison = ({ selDay, selOutlet }) => {
+  const [weeks, setWeeks] = useState(null); // [{ date, weekdayShort, weekdayLong, res }] oldest → current
+  const [loading, setLoading] = useState(false);
+
+  const offsets = useMemo(() => [selDay + 21, selDay + 14, selDay + 7, selDay], [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all(offsets.map((d) => api.getSales({ date: istDateAgo(d), outlet: selOutlet || "all" }).catch(() => null)))
+      .then((results) => {
+        setWeeks(offsets.map((d, i) => {
+          const ist = istNow();
+          ist.setDate(ist.getDate() - d);
+          return {
+            date: istDateAgo(d),
+            weekdayShort: ist.toLocaleDateString("en-US", { weekday: "short" }),
+            weekdayLong: ist.toLocaleDateString("en-US", { weekday: "long" }),
+            res: results[i],
+          };
+        }));
+      })
+      .finally(() => setLoading(false));
+  }, [offsets, selOutlet]);
+
+  if (loading || !weeks) {
+    return (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999", marginBottom: 20 }}>
+        ⏳ Loading 4-week comparison...
+      </div>
+    );
+  }
+
+  const rowOutlets = selOutlet ? OUTLETS.filter((o) => o.id === selOutlet) : OUTLETS;
+  const current = weeks[weeks.length - 1];
+
+  const getRevenue = (week, outletId) => {
+    if (!week.res) return null;
+    if (!outletId) return week.res.total_revenue || 0; // grand-total row
+    const o = week.res.outlets?.find((x) => x.outlet_code === outletId);
+    return o ? o.revenue : 0;
+  };
+  const getOrders = (week, outletId) => {
+    if (!week.res) return null;
+    if (!outletId) return week.res.total_orders || 0;
+    const o = week.res.outlets?.find((x) => x.outlet_code === outletId);
+    return o ? o.orders : 0;
+  };
+  const delta = (cur, prev) => {
+    if (cur == null || prev == null) return null; // one side's fetch failed
+    if (prev === 0) return cur > 0 ? { pct: null, label: "🆕 New" } : null; // no baseline to compare
+    const pct = ((cur - prev) / prev) * 100;
+    return { pct, label: `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%` };
+  };
+
+  const renderCell = (week, prevWeek, outletId, isTotal) => {
+    const rev = getRevenue(week, outletId);
+    const hasData = rev != null && rev > 0;
+    const ord = hasData ? getOrders(week, outletId) : null;
+    const d = hasData && prevWeek ? delta(rev, getRevenue(prevWeek, outletId)) : null;
+    return (
+      <td key={week.date} style={{ padding: "12px 14px", textAlign: "right", borderBottom: "1px solid #F0F0EC" }}>
+        {!hasData ? (
+          <span style={{ color: "#CCC" }}>–</span>
+        ) : (
+          <>
+            <div style={{ fontWeight: isTotal ? 800 : 600, fontFamily: "'JetBrains Mono', monospace", color: isTotal ? "#B45309" : "#333", fontSize: isTotal ? 14 : 13 }}>
+              {fmt(rev)}
+            </div>
+            {ord != null && <div style={{ fontSize: 10, color: "#AAA", marginTop: 1 }}>{ord} orders</div>}
+            {d && (
+              <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: d.pct == null ? "#2563EB" : d.pct >= 0 ? "#16A34A" : "#DC2626" }}>
+                {d.label}
+              </div>
+            )}
+          </>
+        )}
+      </td>
+    );
+  };
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
+      <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4" }}>
+        <span style={{ fontWeight: 700, fontSize: 14 }}>📊 4-Week {current.weekdayLong} Comparison</span>
+        <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>
+          {selOutlet ? OUTLETS.find((o) => o.id === selOutlet)?.name : "All Outlets"} · last 4 {current.weekdayLong}s, week-over-week change
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Outlet</th>
+              {weeks.map((w, i) => (
+                <th key={w.date} style={{ ...thS, textAlign: "right", ...(i === weeks.length - 1 ? { color: "#B45309" } : {}) }}>
+                  {w.weekdayShort} {w.date.slice(5)}{i === weeks.length - 1 ? " (Current)" : ""}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rowOutlets.map((o) => (
+              <tr key={o.id}>
+                <td style={{ padding: "12px 14px", fontWeight: 600, borderBottom: "1px solid #F0F0EC" }}>{o.short}</td>
+                {weeks.map((w, i) => renderCell(w, i > 0 ? weeks[i - 1] : null, o.id, false))}
+              </tr>
+            ))}
+            {!selOutlet && (
+              <tr style={{ background: "#FFFBEB" }}>
+                <td style={{ padding: "12px 14px", fontWeight: 800 }}>TOTAL</td>
+                {weeks.map((w, i) => renderCell(w, i > 0 ? weeks[i - 1] : null, null, true))}
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 const SalesUpload = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's uploads are usually still incomplete
   const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
@@ -9163,6 +9413,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
               </div>
             </div>
           )}
+          {!selMonth && <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />}
         </>
       )}
     </div>
@@ -9181,6 +9432,15 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
   const [recipeCategories, setRecipeCategories] = useState([]);
   const [rawMaterialNames, setRawMaterialNames] = useState([]); // known ingredient names, for dropdown-while-typing
   const [allRecipes, setAllRecipes] = useState([]); // full recipes (with ingredients), for "copy from" source
+  // "Recipe ingredients not linked to a tracked inventory item" (e.g. Mysore Chutney) means
+  // the ingredient is itself a BK-prepared item with no bk_recipes entry yet — same "tap to
+  // add" affordance as unmatchedDishes above, but creates a BK recipe (bk_recipes +
+  // bk_recipe_ingredients) instead of a dish recipe. Once saved, resolveIngredientRateId's
+  // name-match against bk_recipes picks it up immediately — no separate linking step needed.
+  const [quickBkRecipe, setQuickBkRecipe] = useState(null); // { ingredientName, yieldQty, yieldUnit, rows: [{rawId, qty}] }
+  const [savingBkRecipe, setSavingBkRecipe] = useState(false);
+  const [rateCardItems, setRateCardItems] = useState([]);
+  useEffect(() => { api.getRateCard().then((r) => setRateCardItems(r || [])).catch(() => setRateCardItems([])); }, []);
 
   useEffect(() => {
     api.getRecipes(true).then((rs) => {
@@ -9231,6 +9491,48 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
     finally { setSavingRecipe(false); }
   };
 
+  const openQuickBkRecipe = (ingredientName) => setQuickBkRecipe({ ingredientName, yieldQty: "", yieldUnit: "Kg", rows: [{ rawId: "", qty: "" }] });
+  const updateBkRow = (idx, field, value) => setQuickBkRecipe((p) => ({ ...p, rows: p.rows.map((r, i) => (i === idx ? { ...r, [field]: value } : r)) }));
+  const addBkRow = () => setQuickBkRecipe((p) => ({ ...p, rows: [...p.rows, { rawId: "", qty: "" }] }));
+  const removeBkRow = (idx) => setQuickBkRecipe((p) => ({ ...p, rows: p.rows.filter((_, i) => i !== idx) }));
+
+  // Every RAW_MATERIALS + rate_card + RECIPES entry, merged the same way SalesUpload's own
+  // "+ Recipe" ingredient picker does — a BK recipe can itself use another BK recipe or a
+  // plain rate-card item as one of its ingredients.
+  const bkIngredientOptions = useMemo(() => {
+    const byId = {};
+    RAW_MATERIALS.forEach((r) => { byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+    rateCardItems.forEach((r) => { if (!byId[r.id]) byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+    Object.entries(RECIPES).forEach(([id, r]) => { if (!byId[id]) byId[id] = { id, name: r.name, unit: "Kg" }; });
+    return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name));
+  }, [rateCardItems]);
+
+  const saveQuickBkRecipe = async () => {
+    if (!quickBkRecipe) return;
+    const { ingredientName, yieldQty, yieldUnit, rows } = quickBkRecipe;
+    const validRows = rows.filter((r) => r.rawId && Number(r.qty) > 0);
+    if (!yieldQty || Number(yieldQty) <= 0 || validRows.length === 0) return;
+    setSavingBkRecipe(true);
+    try {
+      const id = ingredientName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+      // Same FK backfill as SalesUpload's "+ Recipe": an ingredient picked from the
+      // rate-card side of the picker may not have a raw_materials row yet.
+      for (const r of validRows) {
+        if (!RAW_MATERIALS.find((m) => m.id === r.rawId)) {
+          const rc = rateCardItems.find((m) => m.id === r.rawId);
+          if (rc) { await api.addRawMaterial({ id: rc.id, name: rc.name, unit: rc.unit }); RAW_MATERIALS.push({ id: rc.id, name: rc.name, unit: rc.unit }); }
+        }
+      }
+      await api.saveRecipe({
+        id, name: ingredientName, yield_qty: Number(yieldQty), yield_unit: yieldUnit,
+        yield_label: `${yieldQty} ${yieldUnit}`, ingredients: validRows.map((r) => ({ rawId: r.rawId, qty: Number(r.qty) })),
+      });
+      setQuickBkRecipe(null);
+      onSaved && onSaved();
+    } catch (e) { alert("Failed: " + e.message); }
+    finally { setSavingBkRecipe(false); }
+  };
+
   if ((unmatchedDishes || []).length === 0 && (unmappedIngredients || []).length === 0) return null;
 
   return (<>
@@ -9250,10 +9552,10 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
             </div>
           </>)}
           {unmappedIngredients.length > 0 && (<>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Recipe ingredients not linked to a tracked inventory item</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Recipe ingredients not linked to a tracked inventory item — tap one to add its recipe</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {unmappedIngredients.map((name, i) => (
-                <span key={i} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E" }}>{name}</span>
+                <button key={i} onClick={() => openQuickBkRecipe(name)} style={{ background: "#fff", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 10px", fontSize: 11, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>{name} <span style={{ color: "#D97706" }}>＋</span></button>
               ))}
             </div>
           </>)}
@@ -9304,6 +9606,46 @@ const QuickRecipeAdder = ({ unmatchedDishes, unmappedIngredients, dateStr, onSav
           <button onClick={saveQuickRecipe} disabled={savingRecipe || !quickRecipe.category.trim() || !quickRecipe.rows.some((r) => r.raw_material.trim() && Number(r.qty) > 0)}
             style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: savingRecipe ? 0.7 : 1 }}>{savingRecipe ? "Saving..." : "Save Recipe"}</button>
           <button onClick={() => setQuickRecipe(null)} disabled={savingRecipe} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    </>)}
+
+    {quickBkRecipe && (<>
+      <div onClick={() => !savingBkRecipe && setQuickBkRecipe(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(480px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>🍲 New BK Recipe</div>
+        <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{quickBkRecipe.ingredientName} <span style={{ color: "#BBB" }}>· referenced as an ingredient but never produced</span></div>
+
+        <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Yields</label>
+        <div style={{ display: "flex", gap: 6, margin: "4px 0 14px" }}>
+          <input type="number" inputMode="decimal" value={quickBkRecipe.yieldQty} onChange={(e) => setQuickBkRecipe((p) => ({ ...p, yieldQty: e.target.value }))} placeholder="Qty"
+            style={{ flex: 1, padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'" }} />
+          <select value={quickBkRecipe.yieldUnit} onChange={(e) => setQuickBkRecipe((p) => ({ ...p, yieldUnit: e.target.value }))}
+            style={{ padding: "9px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+            {["Kg", "Ltr", "Pcs"].map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+
+        <label style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5 }}>Ingredients</label>
+        <div style={{ margin: "4px 0 10px" }}>
+          {quickBkRecipe.rows.map((r, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <select value={r.rawId} onChange={(e) => updateBkRow(idx, "rawId", e.target.value)} style={{ flex: 2, padding: "7px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+                <option value="">Pick ingredient...</option>
+                {bkIngredientOptions.map((o) => <option key={o.id} value={o.id}>{o.name} ({o.unit})</option>)}
+              </select>
+              <input type="number" inputMode="decimal" value={r.qty} onChange={(e) => updateBkRow(idx, "qty", e.target.value)} placeholder="Qty"
+                style={{ width: 64, padding: "7px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+              <button onClick={() => removeBkRow(idx)} disabled={quickBkRecipe.rows.length === 1} style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 13, cursor: quickBkRecipe.rows.length === 1 ? "default" : "pointer", flexShrink: 0, opacity: quickBkRecipe.rows.length === 1 ? 0.4 : 1 }}>✕</button>
+            </div>
+          ))}
+          <button onClick={addBkRow} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, color: "#555", cursor: "pointer", fontFamily: "inherit" }}>+ Add ingredient</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button onClick={saveQuickBkRecipe} disabled={savingBkRecipe || !quickBkRecipe.yieldQty || !quickBkRecipe.rows.some((r) => r.rawId && Number(r.qty) > 0)}
+            style={{ flex: 1, padding: "10px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: savingBkRecipe ? 0.7 : 1 }}>{savingBkRecipe ? "Saving..." : "Save Recipe"}</button>
+          <button onClick={() => setQuickBkRecipe(null)} disabled={savingBkRecipe} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
         </div>
       </div>
     </>)}
@@ -11477,7 +11819,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -11633,6 +11975,7 @@ export default function AnandaCafe() {
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
+          { id: "employees", label: "👤 Employee Master", sub: "Full staff directory by outlet, BK & top mgmt" },
           { id: "corrections", label: "🧾 Corrections Log", sub: "Owner edits of dispatched qty" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
@@ -11706,6 +12049,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "pp_recipes" && <DishRecipesPanel />}
       {auditUnlocked && ownerTab === "dish_cost" && <DishCostingPanel />}
       {auditUnlocked && ownerTab === "users" && <UsersPanel />}
+      {auditUnlocked && ownerTab === "employees" && <EmployeeMasterPanel />}
     </div>
   </div>);
 
