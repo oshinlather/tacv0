@@ -9032,6 +9032,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's uploads are usually still incomplete
   const [selMonth, setSelMonth] = useState(null); // non-null = month view instead of day pills
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || null); // null = All Outlets
+  const [salesTab, setSalesTab] = useState("items"); // items | compare — pill switch so either view is 1 click away, no scrolling
   const [sales, setSales] = useState(null);
   const [loading, setLoading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -9349,7 +9350,15 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
               </div>
             ))}
           </div>
-          {sales.items && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+            {[
+              { key: "items", label: "📋 Item-wise Sales" },
+              { key: "compare", label: "📊 4-Week Comparison" },
+            ].map((t) => (
+              <button key={t.key} onClick={() => setSalesTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: salesTab === t.key ? 700 : 500, border: salesTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: salesTab === t.key ? "#1A1A1A" : "#fff", color: salesTab === t.key ? "#fff" : "#888" }}>{t.label}</button>
+            ))}
+          </div>
+          {salesTab === "items" && sales.items && (
             <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
               <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
@@ -9562,7 +9571,13 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
               </div>
             </div>
           )}
-          {!selMonth && <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />}
+          {salesTab === "compare" && (
+            selMonth ? (
+              <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+                Pick a single day (not month view) above to compare weekdays.
+              </div>
+            ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
+          )}
         </>
       )}
     </div>
