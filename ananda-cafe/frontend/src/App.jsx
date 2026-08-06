@@ -7472,7 +7472,6 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   }, []);
 
   useEffect(() => {
-    setExpandedCell(null);
     fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth);
   }, [selDay, selMonth, monthDates, fetchDates]);
 
