@@ -2303,10 +2303,42 @@ const PUNCH_TYPES = [
   { key: "closing", icon: "📊", label: "Closing Stock" },
 ];
 
-// Missing Punches — one pill inside Daily P&L, single-day only (a month of missing
-// punches isn't actionable the same way "nudge them right now" is). Reuses the parent's
-// date/outlet pills so this is just another lens on the same day, not a separate page.
-const MissingPunches = ({ date, selOutlet }) => {
+// Missing Punches — one pill inside Daily P&L. Keeps its own date pills (5 quick days +
+// month) rather than the parent's, since the parent's month view switches the whole page
+// into a monthly-aggregate mode that doesn't apply here — this only ever checks one day.
+const MissingPunches = ({ selOutlet }) => {
+  const [selDay, setSelDay] = useState(0);
+  const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for the 5 quick-day pills
+  const [monthDay, setMonthDay] = useState(null); // specific date picked within selMonth
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  const monthDates = useMemo(() => {
+    if (!selMonth) return null;
+    const [y, mo] = selMonth.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const todayStr = today();
+    const result = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      result.push(ds);
+    }
+    return result;
+  }, [selMonth]);
+
+  const date = selMonth ? (monthDay || (monthDates || [])[monthDates.length - 1] || today()) : istDateAgo(selDay);
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -2314,10 +2346,7 @@ const MissingPunches = ({ date, selOutlet }) => {
     api.getPunchStatus(date).then((r) => setData(r)).catch(() => setData(null)).finally(() => setLoading(false));
   }, [date]);
 
-  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>;
-  if (!data) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load punch status</div>;
-
-  const outlets = (data.outlets || []).filter((o) => !selOutlet || o.outlet_id === selOutlet);
+  const outlets = (data?.outlets || []).filter((o) => !selOutlet || o.outlet_id === selOutlet);
   const missingOutlets = outlets.filter((o) => o.missing.length > 0);
   const doneOutlets = outlets.filter((o) => o.missing.length === 0);
 
@@ -2338,7 +2367,31 @@ const MissingPunches = ({ date, selOutlet }) => {
 
   return (
     <div>
-      {missingOutlets.length === 0 && (
+      {/* Date pills */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+        {Array.from({ length: 5 }, (_, i) => {
+          const dd = istNow(); dd.setDate(dd.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
+        <select value={selMonth || ""} onChange={(e) => { setSelMonth(e.target.value || null); setMonthDay(null); }}
+          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
+          <option value="">📅 Month view...</option>
+          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+      </div>
+      {selMonth && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+          {(monthDates || []).map((ds) => (
+            <button key={ds} onClick={() => setMonthDay(ds)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: date === ds ? 700 : 500, border: date === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: date === ds ? "#1A1A1A" : "#fff", color: date === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</button>
+          ))}
+        </div>
+      )}
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>}
+      {!loading && !data && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load punch status</div>}
+
+      {!loading && data && missingOutlets.length === 0 && (
         <div style={{ textAlign: "center", padding: 40 }}>
           <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
           <div style={{ color: "#16A34A", fontWeight: 700 }}>All punches done for {date}</div>
@@ -3500,13 +3553,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </div>
         ) : <ColdDrinkAuditSection dateStr={dateStr} />
       )}
-      {pnlTab === "punches" && !lockedOutlet && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Missing Punches.
-          </div>
-        ) : <MissingPunches date={dateStr} selOutlet={selOutlet} />
-      )}
+      {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} />}
     </div>
   );
 };
