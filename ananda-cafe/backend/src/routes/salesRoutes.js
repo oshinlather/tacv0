@@ -465,58 +465,124 @@ res.status(500).json({ error: err.message });
 }
 });
 
+// The Cold Drink & Water section's 4 physical stock items — mirrors
+// DEMAND_SECTIONS's "cold_drink" section in App.jsx (frontend-only, so duplicated here).
+// Purchase form items match these names exactly (fixed dropdown); PetPooja sale item
+// names are free text and messy ("Water Bottel 20 Mrp", "Small Colddrink" etc), so sales
+// are matched via classifyColdDrinkSale below instead of an exact-name lookup.
+const COLD_DRINK_ITEMS = [
+  { id: 'cold_drink', name: 'Cold Drink', unit: 'Pcs' },
+  { id: 'diet_coke', name: 'Diet Coke', unit: 'Pcs' },
+  { id: 'small_water_bottle', name: 'Small Water Bottle', unit: 'Pcs' },
+  { id: 'water_bottle_1l', name: 'Water Bottle (1L)', unit: 'Pcs' },
+];
+
+// Classifies a PetPooja sale line into one of the 4 physical items above by name alone
+// (not price — real data has cold drinks/water billed at all sorts of prices: ₹10, ₹20,
+// ₹30, even ₹70 for Diet Coke). Order matters: check "diet coke" and "small water" before
+// the generic "water"/"cold drink" checks so they don't get swallowed by the broader match.
+// Returns null for lines that don't match any tracked item (Energy Drink, Soft Drink Can,
+// Coke Can, Medium Soft Drink, ...) — these have no closing-stock/purchase item to audit
+// against, so they're surfaced separately as "unmatched" rather than silently dropped or
+// forced into the wrong bucket.
+function classifyColdDrinkSale(name) {
+  const compact = (name || '').toLowerCase().replace(/[^a-z]/g, '');
+  if (compact.includes('dietcoke')) return 'diet_coke';
+  if (compact.includes('smallwater')) return 'small_water_bottle';
+  if (compact.includes('water')) return 'water_bottle_1l';
+  if (compact.includes('colddrink')) return 'cold_drink';
+  return null;
+}
+
 // ────────────────────────────────────────────────────────────
 // 3D-2. GET /api/audit/cold-drink/:date — Cold Drink & Water Bottle Audit
-// Straight tally from daily_sales (no recipe needed) of ₹10/₹20 cold-drink and
-// water-bottle line items, bucketed per outlet — a quick daily bottle-count check
-// against physical stock. Matching is on the item name (spaces stripped, so
-// "Small Colddrink" / "Cold Drink" both hit) plus the line's rounded item_price.
-// Always covers all outlets, regardless of the RM Audit outlet filter.
+// Same consumed-material formula as RM Audit/P&L, but Purchase instead of Dispatch since
+// outlets buy cold drinks/water directly rather than getting them from Base Kitchen:
+//   Consumed = Yesterday Closing + Today Purchase − Today Closing
+// That theoretical consumed figure is then checked against what PetPooja actually billed
+// today for the same item — a gap means bottles left the fridge without being rung up
+// (comps, theft, spoilage) or the reverse (billed more than physically consumed, usually
+// a missed/duplicate closing-stock or purchase entry). Always covers all outlets,
+// regardless of the RM Audit outlet filter.
 // ────────────────────────────────────────────────────────────
 router.get('/audit/cold-drink/:date', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const { date } = req.params;
-    const rows = await fetchAllDailySales({
-      date,
-      select: 'outlet_code, outlet, item_name, item_price, item_quantity, item_total',
+    const prevDate = new Date(date);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = prevDate.toISOString().split('T')[0];
+
+    const [{ data: prevClosing }, { data: todayClosing }, { data: todayPurchases }, salesRows] = await Promise.all([
+      supabase.from('closing_stocks').select('outlet_id, items').eq('date', prevDateStr).eq('status', 'submitted'),
+      supabase.from('closing_stocks').select('outlet_id, items').eq('date', date).eq('status', 'submitted'),
+      supabase.from('purchases').select('outlet_id, items').eq('date', date),
+      fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' }),
+    ]);
+
+    const prevClosingByOutlet = {};
+    (prevClosing || []).forEach((r) => { prevClosingByOutlet[r.outlet_id] = r.items || {}; });
+    const todayClosingByOutlet = {};
+    (todayClosing || []).forEach((r) => { todayClosingByOutlet[r.outlet_id] = r.items || {}; });
+
+    const purchasedByOutlet = {}; // outlet_id -> item_id -> qty
+    (todayPurchases || []).forEach((p) => {
+      (p.items || []).filter((i) => i.type === 'cold_drink_purchase').forEach((i) => {
+        const item = COLD_DRINK_ITEMS.find((ci) => ci.name.toLowerCase() === (i.item_name || '').toLowerCase());
+        if (!item) return;
+        purchasedByOutlet[p.outlet_id] = purchasedByOutlet[p.outlet_id] || {};
+        purchasedByOutlet[p.outlet_id][item.id] = (purchasedByOutlet[p.outlet_id][item.id] || 0) + (Number(i.quantity) || 0);
+      });
     });
 
-    const FIELDS = ['cold_drink_10', 'cold_drink_20', 'water_10', 'water_20'];
-    const empty = () => ({ qty: 0, revenue: 0 });
-    const buckets = {}; // outlet_code -> { outlet_code, outlet_name, cold_drink_10: {qty,revenue}, ... }
-    const matchedItems = { cold_drink_10: new Set(), cold_drink_20: new Set(), water_10: new Set(), water_20: new Set() };
-
-    for (const row of rows) {
-      const norm = (row.item_name || '').toLowerCase().replace(/\s+/g, '');
-      let type = null;
-      if (norm.includes('water')) type = 'water';
-      else if (norm.includes('colddrink')) type = 'cold_drink';
-      if (!type) continue;
-
-      const price = Math.round(Number(row.item_price) || 0);
-      if (price !== 10 && price !== 20) continue;
-
-      const field = `${type}_${price}`;
-      const outletCode = row.outlet_code || 'unknown';
-      if (!buckets[outletCode]) {
-        buckets[outletCode] = { outlet_code: outletCode, outlet_name: row.outlet || outletCode, cold_drink_10: empty(), cold_drink_20: empty(), water_10: empty(), water_20: empty() };
+    const billedByOutlet = {}; // outlet_id -> item_id -> qty
+    const unmatchedByOutlet = {}; // outlet_id -> { item_name -> qty }
+    (salesRows || []).forEach((r) => {
+      const oc = r.outlet_code || 'unknown';
+      const itemId = classifyColdDrinkSale(r.item_name);
+      if (!itemId) {
+        // Only surface genuinely cold-drink-adjacent unmatched lines (not every unrelated
+        // dish) — a slightly wider net than the classifier itself so Soft Drink
+        // Can/Energy Drink/Coke Can show up here instead of vanishing silently.
+        const compact = (r.item_name || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (!/colddrink|water|softdrink|energydrink|coke/.test(compact)) return;
+        unmatchedByOutlet[oc] = unmatchedByOutlet[oc] || {};
+        unmatchedByOutlet[oc][r.item_name] = (unmatchedByOutlet[oc][r.item_name] || 0) + (Number(r.item_quantity) || 0);
+        return;
       }
-      buckets[outletCode][field].qty += Number(row.item_quantity) || 0;
-      buckets[outletCode][field].revenue += Number(row.item_total) || 0;
-      matchedItems[field].add(row.item_name);
-    }
-
-    const outlets = Object.values(buckets).sort((a, b) => a.outlet_code.localeCompare(b.outlet_code));
-    const totals = { cold_drink_10: empty(), cold_drink_20: empty(), water_10: empty(), water_20: empty() };
-    outlets.forEach((o) => FIELDS.forEach((f) => { totals[f].qty += o[f].qty; totals[f].revenue += o[f].revenue; }));
-
-    res.json({
-      date,
-      outlets,
-      totals,
-      matched_items: Object.fromEntries(FIELDS.map((f) => [f, [...matchedItems[f]].sort()])),
+      billedByOutlet[oc] = billedByOutlet[oc] || {};
+      billedByOutlet[oc][itemId] = (billedByOutlet[oc][itemId] || 0) + (Number(r.item_quantity) || 0);
     });
+
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+    const outlets = outletIds.map((oid) => {
+      const prevItems = prevClosingByOutlet[oid] || {};
+      const todayItems = todayClosingByOutlet[oid] || {};
+      const purchased = purchasedByOutlet[oid] || {};
+      const billed = billedByOutlet[oid] || {};
+      const items = COLD_DRINK_ITEMS.map((ci) => {
+        const csKey = `cs_${ci.id}`;
+        const hasClosingData = csKey in prevItems || csKey in todayItems;
+        const prev = Number(prevItems[csKey] || 0);
+        const closing = Number(todayItems[csKey] || 0);
+        const purchase = Number(purchased[ci.id] || 0);
+        const consumed = Math.round((prev + purchase - closing) * 100) / 100;
+        const billedQty = Math.round((billed[ci.id] || 0) * 100) / 100;
+        return {
+          item_id: ci.id, name: ci.name, unit: ci.unit,
+          prev_closing: prev, purchased: purchase, closing, consumed,
+          billed: billedQty,
+          variance: hasClosingData ? Math.round((consumed - billedQty) * 100) / 100 : null,
+        };
+      });
+      return {
+        outlet_id: oid,
+        items,
+        unmatched_sales: Object.entries(unmatchedByOutlet[oid] || {}).map(([item_name, qty]) => ({ item_name, qty })),
+      };
+    });
+
+    res.json({ date, outlets });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

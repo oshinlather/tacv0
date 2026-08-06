@@ -2880,6 +2880,31 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Live from dispatched items × rate card + fixed costs + purchases</p>
       </div>
 
+      {/* View pills — right under the header, above the date/outlet filters, since
+          switching P&L/COGS/Audit/Missing Punches is the primary nav here and the
+          filters below just refine whichever view is picked. overflowX + whiteSpace
+          nowrap (same treatment as the date pills) instead of flex-wrap/shrink, which
+          on a phone-width screen was squeezing every label into 2-line wrapped text. */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+        {[
+          { key: "pnl", label: "💰 P&L" },
+          { key: "cogs", label: "📊 COGS Compare" },
+          { key: "compare", label: "📊 4-Week Comparison" },
+          { key: "dairy_audit", label: "🥛 Dairy Audit" },
+          // Cold Drink Audit's own outlet-pill switcher isn't outlet-locked (it always
+          // offers all 6) — showing it to a locked franchise outlet would let them switch
+          // to and see every other outlet's numbers, so it's owner/staff only, same
+          // restriction RMAuditPanel already applies to this component.
+          ...(lockedOutlet ? [] : [{ key: "cold_drink_audit", label: "🥤 Cold Drink Audit" }]),
+          // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
+          // don't punch through this system (they manage their own cash/stock), so this
+          // pill is meaningless on a locked franchise view and hidden there too.
+          ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
+        ].map((t) => (
+          <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
+        ))}
+      </div>
+
       {/* Date pills */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {Array.from({ length: 10 }, (_, i) => {
@@ -2899,26 +2924,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
       </div>}
-
-      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-        {[
-          { key: "pnl", label: "💰 P&L" },
-          { key: "cogs", label: "📊 COGS Compare" },
-          { key: "compare", label: "📊 4-Week Comparison" },
-          { key: "dairy_audit", label: "🥛 Dairy Audit" },
-          // Cold Drink Audit has no per-outlet filter (backend tallies straight from
-          // daily_sales across ALL outlets in one table) — showing it to a locked
-          // franchise outlet would leak every other outlet's sales, so it's owner/staff
-          // only, same restriction RMAuditPanel already applies to this component.
-          ...(lockedOutlet ? [] : [{ key: "cold_drink_audit", label: "🥤 Cold Drink Audit" }]),
-          // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
-          // don't punch through this system (they manage their own cash/stock), so this
-          // pill is meaningless on a locked franchise view and hidden there too.
-          ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
-        ].map((t) => (
-          <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888" }}>{t.label}</button>
-        ))}
-      </div>
 
       {pnlTab === "pnl" && !selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
 
@@ -10780,8 +10785,8 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
         </>
       )}
 
-      {/* Cold Drink Audit is always all-outlets (backend has no per-outlet filter) — not
-          appropriate for a single-outlet locked (franchise) view */}
+      {/* Cold Drink Audit's outlet switcher isn't outlet-locked (always offers all 6) —
+          not appropriate for a single-outlet locked (franchise) view */}
       {!lockedOutlet && <ColdDrinkAuditSection dateStr={dateStr} />}
     </div>
   );
@@ -10955,37 +10960,41 @@ const PackagingAuditPanel = () => {
   );
 };
 
-// ── Cold Drink & Water Bottle Audit — a plain tally straight from daily_sales (no recipe
-// needed) of ₹10/₹20 cold-drink and water-bottle line items, one row per outlet, for
-// whichever date is selected above. Always shows all outlets, independent of the RM
-// Audit outlet filter, so the owner can compare outlets side by side and cross-check
-// against physical bottle stock without waiting on recipe matching.
-const COLD_DRINK_COLS = [
-  { key: "cold_drink_10", label: "Cold Drink ₹10" },
-  { key: "cold_drink_20", label: "Cold Drink ₹20" },
-  { key: "water_10", label: "Water ₹10" },
-  { key: "water_20", label: "Water ₹20" },
-];
-
+// ── Cold Drink & Water Bottle Audit — same consumed-material formula as RM/Dairy Audit,
+// but Purchase instead of Dispatch (outlets buy cold drinks/water directly, not from Base
+// Kitchen): Consumed = Yesterday Closing + Today Purchase − Today Closing, checked
+// against what PetPooja actually billed for that item today. One outlet at a time (own
+// pill switcher, all outlets fetched in a single call so switching is instant), since —
+// same as RM/Dairy Audit — this is inherently a per-outlet figure, not something that
+// aggregates meaningfully into one cross-outlet row. Sale lines that don't match any of
+// the 4 tracked items (Energy Drink, Coke Can, ...) are listed separately below the table
+// instead of silently vanishing from the audit.
 const ColdDrinkAuditSection = ({ dateStr }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [showItems, setShowItems] = useState(false);
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
 
   useEffect(() => {
     setLoading(true);
     api.getColdDrinkAudit(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
   }, [dateStr]);
 
-  const rows = OUTLETS.map((o) => ({ outlet: o, d: data?.outlets?.find((x) => x.outlet_code === o.id) }));
-  const grandQty = (field) => rows.reduce((s, r) => s + (r.d?.[field]?.qty || 0), 0);
-  const anyMatched = data?.matched_items && Object.values(data.matched_items).some((v) => v.length > 0);
+  const outletData = data?.outlets?.find((o) => o.outlet_id === selOutlet) || null;
+  const items = outletData?.items || [];
+  const unmatched = outletData?.unmatched_sales || [];
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
 
   return (
     <div style={{ marginTop: 28 }}>
       <div style={{ marginBottom: 12 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🥤 Cold Drink & Water Audit</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>₹10/₹20 cold drink & water bottles sold on {dateStr}, straight from sales data — all outlets, independent of the outlet filter above.</p>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>(Yesterday Closing + Today Purchase) − Today Closing = Consumed, checked against what was actually billed on {dateStr}.</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
@@ -10995,50 +11004,42 @@ const ColdDrinkAuditSection = ({ dateStr }) => {
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={thS}>Outlet</th>
-                {COLD_DRINK_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
-                <th style={{ ...thS, textAlign: "right" }}>Total Bottles</th>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Prev Closing</th>
+                <th style={{ ...thS, textAlign: "right" }}>Purchase</th>
+                <th style={{ ...thS, textAlign: "right" }}>Today Closing</th>
+                <th style={{ ...thS, textAlign: "right" }}>Consumed</th>
+                <th style={{ ...thS, textAlign: "right" }}>Billed</th>
+                <th style={{ ...thS, textAlign: "right" }}>Variance</th>
               </tr></thead>
               <tbody>
-                {rows.map(({ outlet, d }) => {
-                  const total = COLD_DRINK_COLS.reduce((s, c) => s + (d?.[c.key]?.qty || 0), 0);
+                {items.map((it) => {
+                  const hasVariance = it.variance != null;
+                  const isOver = hasVariance && it.variance > 0;
                   return (
-                    <tr key={outlet.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                      <td style={{ ...tdS, fontWeight: 600 }}>{outlet.short}</td>
-                      {COLD_DRINK_COLS.map((c) => {
-                        const qty = d?.[c.key]?.qty || 0;
-                        return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", color: qty > 0 ? "#1A1A1A" : "#CCC" }}>{qty}</td>;
-                      })}
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{total}</td>
+                    <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{it.name}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.prev_closing}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.purchased}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.closing}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{it.consumed}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.billed}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasVariance ? "#999" : isOver ? "#DC2626" : it.variance < 0 ? "#16A34A" : "#999" }}>
+                        {hasVariance ? `${isOver ? "+" : ""}${it.variance}` : "no closing stock data"}
+                      </td>
                     </tr>
                   );
                 })}
-                <tr style={{ background: "#FAFAF8" }}>
-                  <td style={{ ...tdS, fontWeight: 800 }}>Total</td>
-                  {COLD_DRINK_COLS.map((c) => <td key={c.key} style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{grandQty(c.key)}</td>)}
-                  <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace" }}>{COLD_DRINK_COLS.reduce((s, c) => s + grandQty(c.key), 0)}</td>
-                </tr>
               </tbody>
             </table>
           </div>
-          {!data?.outlets?.length && <div style={{ padding: 16, textAlign: "center", color: "#999", fontSize: 12 }}>No sales data uploaded for {dateStr}</div>}
+          {items.length === 0 && <div style={{ padding: 16, textAlign: "center", color: "#999", fontSize: 12 }}>No data for {outletName} on {dateStr}</div>}
         </div>
       )}
 
-      {anyMatched && (
-        <div style={{ marginTop: 8 }}>
-          <span onClick={() => setShowItems(!showItems)} style={{ fontSize: 11, color: "#2563EB", cursor: "pointer", fontWeight: 600 }}>
-            {showItems ? "▲ hide" : "▼ show"} which PetPooja item names are counted in each column
-          </span>
-          {showItems && (
-            <div style={{ marginTop: 6, padding: "10px 14px", background: "#FAFAF8", borderRadius: 10, border: "1px solid #E8E8E4", fontSize: 11.5, color: "#555" }}>
-              {COLD_DRINK_COLS.map((c) => (
-                <div key={c.key} style={{ marginBottom: 4 }}>
-                  <strong>{c.label}:</strong> {(data.matched_items[c.key] || []).join(", ") || "—"}
-                </div>
-              ))}
-            </div>
-          )}
+      {!loading && unmatched.length > 0 && (
+        <div style={{ marginTop: 8, padding: "10px 14px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 11.5, color: "#92400E" }}>
+          <strong>⚠️ Billed but not tracked as a stock item</strong> (no closing stock/purchase to audit against): {unmatched.map((u) => `${u.item_name} ×${u.qty}`).join(", ")}
         </div>
       )}
     </div>
