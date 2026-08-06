@@ -2303,12 +2303,13 @@ const PUNCH_TYPES = [
   { key: "closing", icon: "📊", label: "Closing Stock" },
 ];
 
-// Missing Punches — one pill inside Daily P&L. Keeps its own date pills (5 quick days +
-// month) rather than the parent's, since the parent's month view switches the whole page
-// into a monthly-aggregate mode that doesn't apply here — this only ever checks one day.
-const MissingPunches = ({ selOutlet }) => {
-  const [selDay, setSelDay] = useState(0);
-  const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for the 5 quick-day pills
+// syncDate: optional { selDay, selMonth } — when passed (always, from Daily P&L's own
+// pills), reuses that date instead of showing a second, redundant date picker here.
+const MissingPunches = ({ selOutlet, syncDate }) => {
+  const [intSelDay, setIntSelDay] = useState(1); // 0=Today, 1=Yesterday (default)
+  const [intSelMonth, setIntSelMonth] = useState(null); // 'YYYY-MM', or null for day pills
+  const selDay = syncDate ? syncDate.selDay : intSelDay;
+  const selMonth = syncDate ? syncDate.selMonth : intSelMonth;
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -2383,19 +2384,21 @@ const MissingPunches = ({ selOutlet }) => {
 
   return (
     <div>
-      {/* Date pills */}
+      {/* Date pills — omitted when syncDate is passed, since the parent already shows one */}
+      {!syncDate && (
       <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
         {Array.from({ length: 5 }, (_, i) => {
           const dd = istNow(); dd.setDate(dd.getDate() - i);
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
-          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+          return (<button key={i} onClick={() => { setIntSelDay(i); setIntSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
-        <select value={selMonth || ""} onChange={(e) => setSelMonth(e.target.value || null)}
+        <select value={selMonth || ""} onChange={(e) => setIntSelMonth(e.target.value || null)}
           style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
           <option value="">📅 Month view...</option>
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
+      )}
 
       {selMonth ? (
         // Spreadsheet-style grid — one row per outlet's punch type, one column per date in
@@ -3619,7 +3622,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </div>
         ) : <ColdDrinkAuditSection dateStr={dateStr} />
       )}
-      {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} />}
+      {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
     </div>
   );
 };
@@ -3738,7 +3741,7 @@ const CorrectionsLog = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const DailyStockUsage = () => {
   const [selOutlet, setSelOutlet] = useState(null);
-  const [selDay, setSelDay] = useState(0);
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's data is usually still incomplete
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandCat, setExpandCat] = useState(null);
@@ -11486,7 +11489,7 @@ const DishCostingPanel = () => {
 //  ISSUANCE AUDIT — Calculated vs Actually Issued
 // ═════════════════════════════════════════════════════════════════════════════
 const IssuanceAudit = () => {
-  const [selDay, setSelDay] = useState(0);
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's data is usually still incomplete
   const [auditData, setAuditData] = useState([]);
   const [loading, setLoading] = useState(false);
 
