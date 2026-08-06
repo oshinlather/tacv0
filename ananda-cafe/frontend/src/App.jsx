@@ -7394,17 +7394,6 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
             </span>
           )}
         </span>
-        <div style={{ display: "flex", gap: 4 }}>
-          {!lockedOutlet && <button onClick={() => setEditItem({ value: String(item.closing || 0), reason: "", recordType: "closing_stock", leg: "closing" })}
-            title="Correct closing stock, dispatched, or wastage (this date only)"
-            style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}>✏️ Edit</button>}
-          {!lockedOutlet && item.has_rate_card && <button onClick={() => setEditMaster({ kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}
-            title="Edit master Rate Card price (all outlets)"
-            style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>💲 Price</button>}
-          {!lockedOutlet && hasConvEdit && <button onClick={() => setEditMaster({ kind: 'conv', value: String(item.conv_qty), unit: item.conv_base_unit, demandUnit: item.demand_unit, currentValue: item.conv_qty })}
-            title="Edit master unit conversion (all outlets)"
-            style={{ padding: "2px 6px", border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#B45309", fontWeight: 700 }}>🔄 Conv</button>}
-        </div>
       </div>
       {(item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
         <div style={{ fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'", marginBottom: 2 }}>
