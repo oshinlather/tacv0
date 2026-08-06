@@ -874,8 +874,11 @@ const TeamPanel = ({ onBack }) => {
 //  settles whatever advances were outstanding at that moment — see
 //  routes/payroll.js. Owner/AVP/Head Chef only, same tier as salary/bank data.
 // ═════════════════════════════════════════════════════════════════════════════
-const MonthlyPayrollPanel = () => {
-  const [month, setMonth] = useState(() => today().slice(0, 7));
+// syncMonth: optional 'YYYY-MM' — when passed (e.g. embedded in Attendance's month view),
+// reuses that month instead of showing a second, redundant month picker here.
+const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
+  const [intMonth, setIntMonth] = useState(() => today().slice(0, 7));
+  const month = syncMonth || intMonth;
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [otDraft, setOtDraft] = useState({}); // employee_id -> string being edited
@@ -923,11 +926,13 @@ const MonthlyPayrollPanel = () => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Leave allowance ± advances, computed the same way as the salary sheet — finalize to lock a month in and settle advances</p>
     </div>
 
+    {!syncMonth && (
     <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
-      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
-      <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={{ flex: 1, maxWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
-      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setIntMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} onChange={(e) => setIntMonth(e.target.value)} style={{ flex: 1, maxWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setIntMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
     </div>
+    )}
 
     {!loading && rows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
@@ -3616,11 +3621,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       )}
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
       {pnlTab === "attendance" && !lockedOutlet && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Attendance.
-          </div>
-        ) : <DailyAttendanceSection dateStr={dateStr} />
+        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} />
       )}
     </div>
   );
