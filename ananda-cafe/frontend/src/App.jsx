@@ -2407,9 +2407,9 @@ const MissingPunches = ({ selOutlet }) => {
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead><tr style={{ background: "#FAFAF8" }}>
-                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 190 }}>Outlet · Punch</th>
+                  <th style={{ ...thS, position: "sticky", left: 0, top: 102, background: "#FAFAF8", zIndex: 4, minWidth: 190 }}>Outlet · Punch</th>
                   {(monthDates || []).map((ds) => (
-                    <th key={ds} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</th>
+                    <th key={ds} style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 3, textAlign: "center", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</th>
                   ))}
                 </tr></thead>
                 <tbody>
