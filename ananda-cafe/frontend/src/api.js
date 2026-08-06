@@ -137,6 +137,7 @@ const api = {
   saveBkClosingStock: (date, items, submitted_by) => post("/api/inventory/closing-stock", { date, items, submitted_by }),
   getBkClosingStockRange: (from) => get("/api/inventory/closing-stock", { from }),
   getBkInventoryAudit: (date) => get(`/api/inventory/audit/${date}`),
+  getBkAuditFull: (date) => get(`/api/inventory/audit-full/${date}`),
   getInventoryLedger: (from, to) => get("/api/inventory/ledger", { from, to }),
 
   // ── Master Data ──
@@ -243,9 +244,13 @@ const api = {
   deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
+  // Employee Profile (particulars + KYC documents)
+  getEmployee: (id) => get(`/api/employees/${id}`),
+  uploadEmployeeDoc: (id, data) => post(`/api/employees/${id}/documents`, data),
   // Monthly Payroll
   getPayroll: (month) => get("/api/payroll", { month }),
   setEmployeeOT: (data) => post("/api/payroll/ot", data),
+  setPayrollOverride: (data) => patch("/api/payroll/override", data),
   finalizePayroll: (data) => post("/api/payroll/finalize", data),
   reopenPayroll: (data) => post("/api/payroll/reopen", data),
 };

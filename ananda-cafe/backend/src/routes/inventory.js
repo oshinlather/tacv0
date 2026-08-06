@@ -3,12 +3,17 @@ const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
 const { requireRole, requireOwner } = require("./authGuards");
+const { istDate, bucketMovementsByItemAndDay, walkBackwardBalances } = require("../inventoryLedger");
 
 // All inventory operations are BK/store operations — restricted to owner + store_mgr.
 // Tiny helper to keep each route terse.
 async function gate(req, res) {
   return await requireRole(req, res, "owner", "store_mgr", "avp");
 }
+
+const shiftDay = (dateStr, n) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const prevDay = (dateStr) => shiftDay(dateStr, -1);
+const nextDay = (dateStr) => shiftDay(dateStr, 1);
 
 // Get all inventory items with current stock + threshold status
 router.get("/", async (req, res) => {
@@ -267,29 +272,10 @@ router.get("/ledger", async (req, res) => {
     const { data: movements } = await supabase.from("inventory_movements").select("item_id, type, quantity, created_at").order("created_at", { ascending: true });
     const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").gte("date", from).lte("date", to);
 
-    // IST calendar day for a timestamp — same +5:30 shift convention used elsewhere in
-    // this codebase (todayIST, the /movements route's date filtering).
-    const istDate = (iso) => { const d = new Date(iso); d.setMinutes(d.getMinutes() + 330); return d.toISOString().slice(0, 10); };
     const todayStr = istDate(new Date().toISOString());
-
     const currentQtyByItem = {};
     (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
-
-    // Per item, per IST day: how much moved in vs out. Positive adjustments (from the
-    // Closing Stock "Adjust" action, or any manual correction) count as stock_in and
-    // negative ones as stock_out, so the running balance stays true even across a
-    // correction — not filtered by date range, since anchoring below needs every
-    // movement through today, not just the ones inside [from, to].
-    const deltasByItem = {};
-    (movements || []).forEach((m) => {
-      const date = istDate(m.created_at);
-      const perDate = (deltasByItem[m.item_id] = deltasByItem[m.item_id] || {});
-      const day = (perDate[date] = perDate[date] || { in: 0, out: 0 });
-      const qty = Number(m.quantity) || 0;
-      if (m.type === "stock_out") day.out += Math.abs(qty);
-      else if (qty >= 0) day.in += qty;
-      else day.out += Math.abs(qty);
-    });
+    const deltasByItem = bucketMovementsByItemAndDay(movements);
 
     const closingByDate = {};
     (closings || []).forEach((c) => { closingByDate[c.date] = c.items || {}; });
@@ -299,39 +285,28 @@ router.get("/ledger", async (req, res) => {
       dateList.push(d.toISOString().slice(0, 10));
     }
 
-    // Walk backward from TODAY — whose closing balance is the live, always-correct
-    // inventory_stock.current_qty — down to `from`. inventory_movements is an append-only
-    // log that can drift from the live balance in practice (e.g. a correction made
-    // directly in the database rather than through this app's own Adjust action), so
-    // forward-replaying from an assumed zero start would silently misreport every day.
-    // Anchoring to today and subtracting each day's net delta as we step backward means
-    // any such drift gets absorbed into the earliest date's Opening instead of
-    // propagating a wrong number through the whole reported range.
+    const balances = walkBackwardBalances(items, currentQtyByItem, deltasByItem, dateList);
+
     const resultsByDate = {};
     (items || []).forEach((item) => {
-      let closingRunning = currentQtyByItem[item.id] || 0;
-      for (let i = dateList.length - 1; i >= 0; i--) {
-        const date = dateList[i];
-        const bucket = (deltasByItem[item.id] || {})[date] || { in: 0, out: 0 };
-        const closing = closingRunning;
-        const opening = closing - bucket.in + bucket.out;
-        closingRunning = opening;
-        if (date < from) continue;
+      dateList.forEach((date) => {
+        if (date < from) return;
+        const { opening, closing, stock_in, stock_out } = balances[item.id][date];
 
         const closingMap = closingByDate[date];
-        if (!closingMap || closingMap[item.id] === undefined) continue;
+        if (!closingMap || closingMap[item.id] === undefined) return;
         const actual = Number(closingMap[item.id]);
         const variance = Math.round((actual - closing) * 1000) / 1000;
-        if (variance === 0) continue;
+        if (variance === 0) return;
 
         if (!resultsByDate[date]) resultsByDate[date] = [];
         resultsByDate[date].push({
           item_id: item.id, name: item.name, category: item.category, unit: item.unit,
-          opening: Math.round(opening * 1000) / 1000, stock_in: Math.round(bucket.in * 1000) / 1000,
-          stock_out: Math.round(bucket.out * 1000) / 1000, expected_closing: Math.round(closing * 1000) / 1000,
+          opening: Math.round(opening * 1000) / 1000, stock_in: Math.round(stock_in * 1000) / 1000,
+          stock_out: Math.round(stock_out * 1000) / 1000, expected_closing: Math.round(closing * 1000) / 1000,
           actual_closing: actual, variance,
         });
-      }
+      });
     });
 
     const days = [];
@@ -380,6 +355,117 @@ router.get("/audit/:date", async (req, res) => {
     date, submitted: !!closing, submitted_by: closing?.submitted_by || null, submitted_at: closing?.submitted_at || null,
     categories,
   });
+});
+
+// ── GET /api/inventory/audit-full/:date — "Base Kitchen Audit": two independent
+// reconciliation checks for a single day, both keyed off inventory_items (only items
+// with a demand_item_id link participate in the demand/dispatch check — the ~11 raw
+// ingredients that are only ever consumed inside a BK recipe, never demanded directly,
+// have no "demanded" figure and are simply omitted from that half).
+//
+// (1) Demand vs Stock-Out: the demand→dispatch pipeline (Outlet Manager/BK "demand" a
+// qty, Store "dispatch"es it) and the Inventory stock-out screen (Store manually types
+// what physically left the shelf) are two completely disconnected systems today — dispatch
+// never touches inventory_movements. This sums both sides for the day and surfaces the
+// gap, so a mismatch between "what Store said it sent" and "what Store said it removed
+// from stock" doesn't sit invisible.
+// (2) Inventory roll-forward: reuses the exact same drift-safe backward-walk balance
+// math as /ledger (previous day's closing + today's stock-in − today's stock-out =
+// expected current), compared against today's actual bk_closing_stock count (or, if
+// today hasn't been counted yet, the live running balance, clearly labeled as such).
+router.get("/audit-full/:date", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { date } = req.params;
+  try {
+    const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
+    const { data: stocks } = await supabase.from("inventory_stock").select("item_id, current_qty");
+    const { data: movements } = await supabase.from("inventory_movements").select("item_id, type, quantity, created_at");
+    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").in("date", [date, prevDay(date)]);
+
+    // ── Part 2: roll-forward balance, via the shared Ledger helper ──
+    const todayStr = istDate(new Date().toISOString());
+    const currentQtyByItem = {};
+    (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
+    const deltasByItem = bucketMovementsByItemAndDay(movements);
+    const dateList = [];
+    for (let d = new Date(`${prevDay(date)}T00:00:00Z`); d.toISOString().slice(0, 10) <= todayStr; d.setUTCDate(d.getUTCDate() + 1)) {
+      dateList.push(d.toISOString().slice(0, 10));
+    }
+    const balances = walkBackwardBalances(items, currentQtyByItem, deltasByItem, dateList);
+
+    const closingByDate = {};
+    (closings || []).forEach((c) => { closingByDate[c.date] = c.items || {}; });
+    const loggedToday = closingByDate[date]; // undefined if not yet submitted for this date
+    const isToday = date === todayStr;
+
+    // ── Part 1: demand vs dispatch vs stock-out, for the same calendar day ──
+    // "Demanded from Base Kitchen and outlets" = the 6 real outlets' regular demand
+    // (type='manual') plus Base Kitchen's own demand from Store (type='bk_demand',
+    // outlet_id='bk') — both share the same demands table/dispatch route (see
+    // BaseKitchen/Dispatch components), and both draw down Store's physical stock once
+    // dispatched. Bucketed by the day they were actually DISPATCHED (not the demand's
+    // requested delivery date), to line up with stock-out movements on that same day.
+    const { data: demandRows } = await supabase.from("demands")
+      .select("outlet_id, type, items, dispatch_items, status, dispatched_at")
+      .in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
+      .gte("dispatched_at", `${date}T00:00:00Z`).lt("dispatched_at", `${nextDay(date)}T00:00:00Z`);
+
+    const demandItemIdToInvId = {};
+    (items || []).forEach((i) => { if (i.demand_item_id) demandItemIdToInvId[i.demand_item_id] = i.id; });
+
+    const demandedByInvId = {};
+    const dispatchedByInvId = {};
+    (demandRows || []).forEach((row) => {
+      Object.entries(row.items || {}).forEach(([id, qty]) => {
+        const invId = demandItemIdToInvId[id];
+        if (!invId || !(Number(qty) > 0)) return;
+        demandedByInvId[invId] = (demandedByInvId[invId] || 0) + Number(qty);
+      });
+      Object.entries(row.dispatch_items || {}).forEach(([id, qty]) => {
+        const invId = demandItemIdToInvId[id];
+        if (!invId || !(Number(qty) > 0)) return;
+        dispatchedByInvId[invId] = (dispatchedByInvId[invId] || 0) + Number(qty);
+      });
+    });
+
+    const round = (n) => Math.round(n * 1000) / 1000;
+    const byCategory = {};
+    (items || []).forEach((item) => {
+      const bal = balances[item.id]?.[date];
+      const loggedCurrent = loggedToday && loggedToday[item.id] !== undefined ? Number(loggedToday[item.id])
+        : (isToday ? currentQtyByItem[item.id] || 0 : null);
+      const loggedIsLive = isToday && !(loggedToday && loggedToday[item.id] !== undefined);
+      const balanceVariance = bal && loggedCurrent != null ? round(loggedCurrent - bal.closing) : null;
+
+      const demanded = item.demand_item_id ? (demandedByInvId[item.id] || 0) : null;
+      const dispatched = item.demand_item_id ? (dispatchedByInvId[item.id] || 0) : null;
+      const stockOut = bal ? bal.stock_out : 0;
+      const dispatchVariance = item.demand_item_id ? round(stockOut - dispatched) : null;
+
+      // Skip items with nothing to say: no demand/dispatch activity, no stock movement, no variance.
+      const hasDemandActivity = (demanded || 0) > 0 || (dispatched || 0) > 0;
+      const hasStockMovement = !!bal && (bal.stock_in > 0 || bal.stock_out > 0);
+      const hasVariance = !!balanceVariance;
+      if (!hasDemandActivity && !hasStockMovement && !hasVariance) return;
+
+      const cat = item.category || "Other";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push({
+        item_id: item.id, name: item.name, unit: item.unit,
+        demanded, dispatched, stock_out: round(stockOut), dispatch_variance: dispatchVariance,
+        opening: bal ? round(bal.opening) : null, stock_in: bal ? round(bal.stock_in) : null,
+        expected_current: bal ? round(bal.closing) : null, logged_current: loggedCurrent != null ? round(loggedCurrent) : null,
+        logged_is_live: loggedIsLive, balance_variance: balanceVariance,
+      });
+    });
+
+    const categories = Object.entries(byCategory).map(([category, catItems]) => ({
+      category,
+      items: catItems.sort((a, b) => Math.abs(b.dispatch_variance || 0) + Math.abs(b.balance_variance || 0) - Math.abs(a.dispatch_variance || 0) - Math.abs(a.balance_variance || 0)),
+    }));
+
+    res.json({ date, is_today: isToday, closing_submitted: !!(loggedToday && Object.keys(loggedToday).length), categories });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Summary — owner only (financial data across entire store)

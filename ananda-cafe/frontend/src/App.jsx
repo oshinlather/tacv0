@@ -655,6 +655,171 @@ const EmployeeFields = ({ form, setForm, users }) => (<>
   <input placeholder="UPI ID (optional)" value={form.upi_id} onChange={(e) => setForm({ ...form, upi_id: e.target.value })} style={employeeFieldInputStyle} />
 </>);
 
+const KYC_DOC_TYPES = [
+  { id: "aadhar", label: "Aadhar Card", emoji: "🪪" },
+  { id: "pan", label: "PAN Card", emoji: "💳" },
+  { id: "police_verification", label: "Police Verification", emoji: "👮" },
+  { id: "offer_letter", label: "Offer Letter", emoji: "📄" },
+  { id: "id_card", label: "ID Card", emoji: "🆔" },
+];
+
+// One KYC document slot — upload/replace via file input (image or PDF; no inline
+// preview since offer letters/ID cards are often PDFs), just an "uploaded" state
+// with a View link to the signed URL and a Replace option.
+const KycDocSlot = ({ config, doc, uploading, onUpload }) => {
+  const uid = `kyc-${config.id}`;
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    if (f) { const r = new FileReader(); r.onload = (ev) => onUpload(ev.target.result, f.name); r.readAsDataURL(f); }
+    e.target.value = "";
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${doc ? "#BBF7D0" : "#E0E0DC"}`, background: doc ? "#F0FDF4" : "#FAFAF8", flexWrap: "wrap" }}>
+      <span style={{ fontSize: 22 }}>{config.emoji}</span>
+      <div style={{ flex: 1, minWidth: 120 }}>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>{config.label}</div>
+        {doc ? <div style={{ fontSize: 11, color: "#16A34A" }}>✅ Uploaded{doc.file_name ? ` · ${doc.file_name}` : ""}</div> : <div style={{ fontSize: 11, color: "#999" }}>Not uploaded</div>}
+      </div>
+      {doc?.url && <a href={doc.url} target="_blank" rel="noreferrer" style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontSize: 11, fontWeight: 700, textDecoration: "none" }}>👁️ View</a>}
+      <label htmlFor={uid} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: uploading ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: uploading ? "not-allowed" : "pointer" }}>
+        {uploading ? "⏳..." : doc ? "🔄 Replace" : "📤 Upload"}
+      </label>
+      <input id={uid} type="file" accept="image/*,application/pdf" onChange={pick} disabled={uploading} style={{ display: "none" }} />
+    </div>
+  );
+};
+
+// Full single-employee profile — particulars with Edit Profile, KYC documents,
+// Active/Churned status, advance history. Reached by tapping an employee's name
+// from Employee Master or Monthly Payroll. Fetches its own user list (for the
+// app-login dropdown in Edit Profile) so it doesn't depend on the caller having
+// one already loaded.
+const EmployeeProfile = ({ employeeId, onBack }) => {
+  const [emp, setEmp] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(EMPLOYEE_FORM_DEFAULTS);
+  const [saving, setSaving] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getEmployee(employeeId).then(setEmp).catch(() => setEmp(null)).finally(() => setLoading(false));
+  }, [employeeId]);
+  useEffect(load, [load]);
+  useEffect(() => { api.getUsers().then(setUsers).catch(() => setUsers([])); }, []);
+
+  const startEdit = () => {
+    setEditDraft({
+      name: emp.name, designation: emp.designation, department: emp.department,
+      phone: emp.phone || "", joining_date: emp.joining_date || "", app_user_id: emp.app_user_id || "",
+      salary: emp.salary != null ? String(emp.salary) : "", salary_type: emp.salary_type || "monthly",
+      leave_allowed: emp.leave_allowed != null ? String(emp.leave_allowed) : "",
+      shift_start: emp.shift_start ? emp.shift_start.slice(0, 5) : "", shift_end: emp.shift_end ? emp.shift_end.slice(0, 5) : "",
+      weekly_off: emp.weekly_off || "",
+      bank_account_name: emp.bank_account_name || "", bank_account_number: emp.bank_account_number || "",
+      bank_ifsc: emp.bank_ifsc || "", upi_id: emp.upi_id || "",
+    });
+    setEditing(true);
+  };
+  const saveEdit = async () => {
+    setSaving(true);
+    try { await api.updateEmployee(employeeId, employeeFormToPayload(editDraft)); setEditing(false); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+  const toggleActive = async () => {
+    setBusy(true);
+    try { await api.updateEmployee(employeeId, { active: !emp.active }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusy(false); }
+  };
+  const uploadDoc = async (docType, base64, fileName) => {
+    setUploadingDoc(docType);
+    try { await api.uploadEmployeeDoc(employeeId, { doc_type: docType, base64, file_name: fileName }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setUploadingDoc(null); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+  if (!emp) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Employee not found</div>;
+
+  const docsByType = {};
+  (emp.documents || []).forEach((d) => { docsByType[d.doc_type] = d; });
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <BackBtn onClick={onBack} />
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 17, fontWeight: 800 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 12, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+        <div style={{ fontSize: 12, color: "#888" }}>{emp.designation} · {EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</div>
+      </div>
+      <span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emp.active ? "#F0FDF4" : "#FEF2F2", color: emp.active ? "#16A34A" : "#DC2626", border: `1px solid ${emp.active ? "#BBF7D0" : "#FECACA"}` }}>{emp.active ? "✅ Active" : "🚫 Churned"}</span>
+    </div>
+
+    {editing ? (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
+        <EmployeeFields form={editDraft} setForm={setEditDraft} users={users} />
+        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+          <button onClick={saveEdit} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 10, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✓ Save"}</button>
+          <button onClick={() => setEditing(false)} style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    ) : (<>
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>📋 Particulars</div>
+          <button onClick={startEdit} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit Profile</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, fontSize: 12 }}>
+          <div><div style={employeeFieldLabelStyle}>Phone</div><div>{emp.phone || "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Joined</div><div>{emp.joining_date || "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Salary</div><div>{emp.salary != null ? `${fmt(emp.salary)}/${emp.salary_type === "daily" ? "day" : "mo"}` : "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Paid Leaves/Mo</div><div>{emp.leave_allowed ?? "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Shift</div><div>{emp.shift_start ? `${emp.shift_start.slice(0, 5)}–${emp.shift_end?.slice(0, 5) || "?"}` : "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Weekly Off</div><div>{emp.weekly_off || "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>Bank A/C</div><div>{emp.bank_account_name ? `${emp.bank_account_name} · ${emp.bank_account_number || "?"}` : "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>IFSC</div><div>{emp.bank_ifsc || "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>UPI</div><div>{emp.upi_id || "—"}</div></div>
+          <div><div style={employeeFieldLabelStyle}>App Login</div><div>{emp.app_user_id ? "🔗 linked" : "—"}</div></div>
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>🗂️ KYC Documents</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {KYC_DOC_TYPES.map((cfg) => (
+            <KycDocSlot key={cfg.id} config={cfg} doc={docsByType[cfg.id]} uploading={uploadingDoc === cfg.id} onUpload={(base64, fileName) => uploadDoc(cfg.id, base64, fileName)} />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800 }}>🤝 Advances</div>
+          {emp.outstanding_advance > 0 && <span style={{ fontSize: 12, fontWeight: 700, color: "#B45309" }}>{fmt(emp.outstanding_advance)} outstanding</span>}
+        </div>
+        {(emp.advances || []).length === 0 ? <div style={{ fontSize: 12, color: "#BBB" }}>No advances recorded</div> : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {emp.advances.slice(0, 10).map((a) => (
+              <div key={a.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0", borderBottom: "1px solid #F0F0EC" }}>
+                <span>{a.entry_date}{a.description ? ` · ${a.description}` : ""}</span>
+                <span style={{ fontWeight: 700, color: a.settled ? "#16A34A" : "#B45309" }}>{fmt(a.amount)}{a.settled ? " ✓ settled" : ""}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <button onClick={toggleActive} disabled={busy} style={{ width: "100%", padding: 12, borderRadius: 12, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
+        {busy ? "⏳..." : emp.active ? "🚫 Mark as Churned" : "✅ Mark as Active"}
+      </button>
+    </>)}
+  </div>);
+};
+
 const EmployeeMasterPanel = () => {
   const [employees, setEmployees] = useState([]);
   const [users, setUsers] = useState([]);
@@ -666,6 +831,7 @@ const EmployeeMasterPanel = () => {
   const [editId, setEditId] = useState(null);
   const [editDraft, setEditDraft] = useState(EMPLOYEE_FORM_DEFAULTS);
   const [attendanceOpenId, setAttendanceOpenId] = useState(null);
+  const [profileId, setProfileId] = useState(null);
 
   const load = () => {
     Promise.all([api.getEmployees(), api.getUsers().catch(() => [])])
@@ -674,6 +840,8 @@ const EmployeeMasterPanel = () => {
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+
+  if (profileId) return <EmployeeProfile employeeId={profileId} onBack={() => { setProfileId(null); load(); }} />;
 
   const addEmployee = async () => {
     if (!newForm.name || !newForm.designation) { alert("Name and designation required"); return; }
@@ -743,7 +911,7 @@ const EmployeeMasterPanel = () => {
               </>) : (<>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+                    <div onClick={() => setProfileId(emp.id)} style={{ fontSize: 14, fontWeight: 700, color: "#2563EB", cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
                     <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
                     <div style={{ fontSize: 11, color: "#999", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {emp.salary != null && <span>💰 {fmt(emp.salary)}/{emp.salary_type === "daily" ? "day" : "mo"}</span>}
@@ -876,6 +1044,21 @@ const TeamPanel = ({ onBack }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 // syncMonth: optional 'YYYY-MM' — when passed (e.g. embedded in Attendance's month view),
 // reuses that month instead of showing a second, redundant month picker here.
+// Every payroll column except OT Hours (which has its own dedicated save flow
+// below) is editable via PATCH /api/payroll/override — see MonthlyPayrollPanel.
+const PAYROLL_OVERRIDE_FIELDS = ["base_salary", "leave_allowed", "leaves_taken", "leaves_cashin", "ot_days", "working_days", "prorated_salary", "advances_deducted", "net_payable"];
+
+// Module scope (not inside MonthlyPayrollPanel) so it isn't recreated on every
+// keystroke — same reasoning as EmployeeFields above; an inline component
+// would remount on each parent re-render and drop input focus after 1 char.
+const PayrollEditableCell = ({ draft, changed, saving, onChange, onSave }) => (
+  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+    <input type="number" inputMode="decimal" value={draft} onChange={onChange}
+      style={{ width: 62, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+    {changed && <button onClick={onSave} disabled={saving} style={{ padding: "2px 6px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✓</button>}
+  </div>
+);
+
 const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
   const [intMonth, setIntMonth] = useState(() => today().slice(0, 7));
   const month = syncMonth || intMonth;
@@ -883,12 +1066,17 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
   const [loading, setLoading] = useState(true);
   const [otDraft, setOtDraft] = useState({}); // employee_id -> string being edited
   const [busyId, setBusyId] = useState(null); // employee_id currently saving/finalizing/reopening
+  const [cellDraft, setCellDraft] = useState({}); // "employeeId:field" -> string being edited
+  const [savingCell, setSavingCell] = useState(null); // "employeeId:field" currently saving
+  const [profileId, setProfileId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
-    api.getPayroll(month).then((res) => { setRows(res.rows || []); setOtDraft({}); }).catch(() => setRows([])).finally(() => setLoading(false));
+    api.getPayroll(month).then((res) => { setRows(res.rows || []); setOtDraft({}); setCellDraft({}); }).catch(() => setRows([])).finally(() => setLoading(false));
   }, [month]);
   useEffect(load, [load]);
+
+  if (profileId) return <EmployeeProfile employeeId={profileId} onBack={() => { setProfileId(null); load(); }} />;
 
   const saveOT = async (employeeId) => {
     const val = otDraft[employeeId];
@@ -897,6 +1085,28 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
     try { await api.setEmployeeOT({ employee_id: employeeId, month, ot_hours: Number(val) || 0 }); load(); }
     catch (e) { alert("Error: " + e.message); }
     finally { setBusyId(null); }
+  };
+
+  const cellKey = (employeeId, field) => `${employeeId}:${field}`;
+  const saveCell = async (employeeId, field) => {
+    const key = cellKey(employeeId, field);
+    const val = cellDraft[key];
+    if (val === undefined) return;
+    setSavingCell(key);
+    try { await api.setPayrollOverride({ employee_id: employeeId, month, field, value: val === "" ? null : Number(val) }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setSavingCell(null); }
+  };
+  // decimals: how many places the read display rounds to (matches the old plain-text
+  // formatting per field) so opening the editor doesn't show a longer number than what
+  // was on screen a second ago. Plain function (not a component) — PayrollEditableCell
+  // itself lives at module scope so its input never loses focus mid-edit.
+  const cellProps = (r, field, decimals) => {
+    const key = cellKey(r.employee_id, field);
+    const raw = Number(r[field] || 0);
+    const draft = cellDraft[key] !== undefined ? cellDraft[key] : (decimals != null ? raw.toFixed(decimals) : String(raw));
+    const changed = cellDraft[key] !== undefined && cellDraft[key] !== "" && Number(cellDraft[key]) !== raw;
+    return { draft, changed, saving: savingCell === key, onChange: (e) => setCellDraft((p) => ({ ...p, [key]: e.target.value })), onSave: () => saveCell(r.employee_id, field) };
   };
 
   const finalize = async (employeeId, name) => {
@@ -980,13 +1190,13 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
                 return (
                   <tr key={r.employee_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td style={tdS}>
-                      <div style={{ fontWeight: 700 }}>{r.name}</div>
+                      <div onClick={() => setProfileId(r.employee_id)} style={{ fontWeight: 700, color: "#2563EB", cursor: "pointer" }}>{r.name}{r.has_overrides && <span title="Has manual corrections" style={{ marginLeft: 4 }}>✎</span>}</div>
                       <div style={{ fontSize: 9, color: "#999" }}>{r.designation}{r.employee_code ? ` · ${r.employee_code}` : ""}</div>
                     </td>
                     <td style={tdS}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === r.department)?.label || r.department}</td>
-                    <td style={numS}>{fmt(r.base_salary)}</td>
-                    <td style={numS}>{r.leave_allowed}</td>
-                    <td style={numS}>{r.leaves_taken}</td>
+                    <td style={numS}>{isFinal ? fmt(r.base_salary) : <PayrollEditableCell {...cellProps(r, "base_salary")} />}</td>
+                    <td style={numS}>{isFinal ? r.leave_allowed : <PayrollEditableCell {...cellProps(r, "leave_allowed")} />}</td>
+                    <td style={numS}>{isFinal ? r.leaves_taken : <PayrollEditableCell {...cellProps(r, "leaves_taken")} />}</td>
                     <td style={{ ...tdS, textAlign: "right" }}>
                       {isFinal ? r.ot_hours : (
                         <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
@@ -996,12 +1206,12 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
                         </div>
                       )}
                     </td>
-                    <td style={{ ...numS, color: r.leaves_cashin < 0 ? "#DC2626" : "#16A34A" }}>{r.leaves_cashin}</td>
-                    <td style={numS}>{r.ot_days.toFixed(2)}</td>
-                    <td style={numS}>{r.working_days.toFixed(2)}</td>
-                    <td style={numS}>{fmt(r.prorated_salary)}</td>
-                    <td style={{ ...numS, color: r.advances_deducted > 0 ? "#B45309" : "#999" }}>{fmt(r.advances_deducted)}</td>
-                    <td style={{ ...numS, fontWeight: 800, color: "#1A1A1A" }}>{fmt(r.net_payable)}</td>
+                    <td style={{ ...numS, color: r.leaves_cashin < 0 ? "#DC2626" : "#16A34A" }}>{isFinal ? r.leaves_cashin : <PayrollEditableCell {...cellProps(r, "leaves_cashin")} />}</td>
+                    <td style={numS}>{isFinal ? r.ot_days.toFixed(2) : <PayrollEditableCell {...cellProps(r, "ot_days", 2)} />}</td>
+                    <td style={numS}>{isFinal ? r.working_days.toFixed(2) : <PayrollEditableCell {...cellProps(r, "working_days", 2)} />}</td>
+                    <td style={numS}>{isFinal ? fmt(r.prorated_salary) : <PayrollEditableCell {...cellProps(r, "prorated_salary")} />}</td>
+                    <td style={{ ...numS, color: r.advances_deducted > 0 ? "#B45309" : "#999" }}>{isFinal ? fmt(r.advances_deducted) : <PayrollEditableCell {...cellProps(r, "advances_deducted")} />}</td>
+                    <td style={{ ...numS, fontWeight: 800, color: "#1A1A1A" }}>{isFinal ? fmt(r.net_payable) : <PayrollEditableCell {...cellProps(r, "net_payable")} />}</td>
                     <td style={tdS}>
                       {isFinal ? (<>
                         <div style={{ color: "#16A34A", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>✅ Finalized</div>
@@ -12045,6 +12255,91 @@ const BKClosingStock = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  BASE KITCHEN AUDIT — two independent reconciliation checks for one day, backed by
+//  GET /api/inventory/audit-full/:date:
+//  (1) Demanded (outlet + BK demand, once dispatched) vs Stock-Out logged in Inventory —
+//      these are two disconnected systems today (dispatch never touches inventory
+//      movements), so a gap here means Store said it sent something the Inventory
+//      screen never recorded as leaving stock, or vice versa.
+//  (2) Previous day's closing + today's Stock In − Stock Out = Expected current
+//      inventory, vs what was actually logged (physically counted, or — if today hasn't
+//      been counted yet — the live system balance, clearly labeled).
+// ═════════════════════════════════════════════════════════════════════════════
+const BKAudit = () => {
+  const [selDay, setSelDay] = useState(1); // default Yesterday — today's dispatch/stock-out is usually still incomplete
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getBkAuditFull(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
+  const deltaColor = (n) => !n ? "#888" : n > 0 ? "#16A34A" : "#DC2626";
+
+  const totalFlagged = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
+
+  return (<div>
+    <div style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Base Kitchen Audit</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Demanded/Dispatched vs Stock-Out, and Opening + In − Out vs what was actually logged — only rows with a gap are shown.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+      {Array.from({ length: 7 }, (_, i) => {
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+        return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+      })}
+    </div>
+
+    {loading ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading audit...</div>
+    ) : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {dateStr}</div>
+    ) : (<>
+      {!data.closing_submitted && !data.is_today && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 12 }}>
+          ⏳ No BK Closing Stock count was submitted for {dateStr} — the inventory roll-forward check below can't compare against a logged value for this date, only the demand/stock-out check applies.
+        </div>
+      )}
+      {data.is_today && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
+          ℹ️ Today's "Logged" figures use the live system balance until a Closing Stock count is submitted for today — a real variance won't show until then.
+        </div>
+      )}
+      {totalFlagged === 0 ? (
+        <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing to flag for {dateStr}</div></div>
+      ) : data.categories.map((cat) => (
+        <div key={cat.category} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({cat.items.length} flagged)</span></div>
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            {cat.items.map((i, idx) => (
+              <div key={i.item_id} style={{ padding: "10px 14px", borderBottom: idx < cat.items.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({i.unit})</span></div>
+                {i.demanded !== null && (i.demanded > 0 || i.dispatched > 0 || i.stock_out > 0) && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#888", marginBottom: 3 }}>
+                    <span>Demanded {fmtQty(i.demanded)} · Dispatched {fmtQty(i.dispatched)} · Stock-Out {fmtQty(i.stock_out)}</span>
+                    <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono'", color: deltaColor(i.dispatch_variance) }}>{i.dispatch_variance > 0 ? "+" : ""}{fmtQty(i.dispatch_variance)}</span>
+                  </div>
+                )}
+                {i.balance_variance !== null && i.balance_variance !== 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: "#888" }}>
+                    <span>Opening {fmtQty(i.opening)} + In {fmtQty(i.stock_in)} − Out {fmtQty(i.stock_out)} = Expected {fmtQty(i.expected_current)} · Logged {fmtQty(i.logged_current)}{i.logged_is_live ? " (live)" : ""}</span>
+                    <span style={{ fontWeight: 800, fontFamily: "'JetBrains Mono'", color: deltaColor(i.balance_variance) }}>{i.balance_variance > 0 ? "+" : ""}{fmtQty(i.balance_variance)}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  INVENTORY LEDGER — owner-only. Date-wise Opening + Stock In − Stock Out = Expected
 //  Closing, tallied against the store manager's actual submitted closing count
 //  (BK Closing Stock), mismatches highlighted in red. Backed by GET /api/inventory/ledger,
@@ -12892,7 +13187,7 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: tab === "payroll" || tab === "cogs_compare" ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -12902,6 +13197,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "demands" && <DemandHistory />}
       {tab === "store" && storeView === "inventory" && <Inventory />}
       {tab === "store" && storeView === "bk_closing" && <BKClosingStock />}
+      {tab === "store" && storeView === "bk_audit" && <BKAudit />}
       {tab === "store" && storeView === "sales" && <SalesUpload />}
       {tab === "store" && storeView === "cash" && <CashLedger />}
       {tab === "store" && storeView === "custodian_ledger" && <CustodianLedger />}
@@ -13145,7 +13441,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -13158,6 +13454,7 @@ export default function AnandaCafe() {
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
           { id: "bk_closing", label: "📊 BK Closing Stock", sub: "Daily count & audit" },
+          { id: "bk_audit", label: "🔍 BK Audit", sub: "Demand vs Stock-Out, logged vs expected inventory" },
           { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
@@ -13247,6 +13544,7 @@ export default function AnandaCafe() {
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "bk_closing" && <BKClosingStock />}
+      {ownerTab === "bk_audit" && <BKAudit />}
       {ownerTab === "inv_ledger" && <InventoryLedger />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
@@ -13278,13 +13576,14 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "demands" && <DemandHistory />}
       {storeView === "inventory" && <Inventory />}
       {storeView === "bk_closing" && <BKClosingStock />}
+      {storeView === "bk_audit" && <BKAudit />}
       {storeView === "sales" && <SalesUpload />}
       {storeView === "cash" && <CashLedger />}
       {storeView === "custodian_ledger" && <CustodianLedger />}

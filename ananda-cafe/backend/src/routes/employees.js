@@ -22,6 +22,8 @@ const supabase = require('../supabase');
 const { requireRole } = require('./authGuards');
 
 const ATTENDANCE_STATUSES = ['present', 'absent', 'half_day', 'leave', 'holiday'];
+const DOC_TYPES = ['aadhar', 'pan', 'police_verification', 'offer_letter', 'id_card'];
+const DOC_BUCKET = 'employee-docs';
 
 const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef'];
 const SCOPED_MANAGER_ROLES = ['outlet_mgr', 'store_mgr', 'bk_manager'];
@@ -249,6 +251,76 @@ router.delete('/attendance/:id', async (req, res) => {
     const { error } = await supabase.from('employee_attendance').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/employees/:id — single employee for the profile page: full
+// particulars, KYC documents (with signed URLs), and advance history.
+// Owner-level only — bank/salary details plus ID-proof scans are the most
+// sensitive data in this app, more than the directory list justifies for a
+// scoped manager.
+router.get('/:id', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+
+    const { data: emp, error } = await supabase.from('employees').select('*').eq('id', req.params.id).single();
+    if (error || !emp) return res.status(404).json({ error: 'Employee not found' });
+
+    const [{ data: docs }, { data: advances }] = await Promise.all([
+      supabase.from('employee_documents').select('*').eq('employee_id', req.params.id),
+      supabase.from('books_ledger').select('*').eq('employee_id', req.params.id).eq('is_advance', true).order('entry_date', { ascending: false }).limit(20),
+    ]);
+
+    const documents = await Promise.all((docs || []).map(async (d) => {
+      const { data: signed } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(d.storage_path, 86400);
+      return { ...d, url: signed?.signedUrl || null };
+    }));
+
+    const outstanding_advance = (advances || []).filter((a) => !a.settled).reduce((s, a) => s + Number(a.amount || 0), 0);
+    res.json({ ...emp, documents, advances: advances || [], outstanding_advance });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/employees/:id/documents — upload or replace one KYC document
+// (aadhar, pan, police_verification, offer_letter, id_card). Stored in the
+// private 'employee-docs' bucket — signed URLs only, never a public link,
+// since these are ID-proof scans. Re-uploading the same doc_type overwrites
+// the record (unique on employee_id+doc_type) and best-effort deletes the
+// previous file from storage.
+router.post('/:id/documents', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+    const { doc_type, base64, file_name } = req.body;
+    if (!doc_type || !DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: `doc_type must be one of: ${DOC_TYPES.join(', ')}` });
+    if (!base64) return res.status(400).json({ error: 'base64 file data is required' });
+
+    const { data: emp } = await supabase.from('employees').select('id').eq('id', req.params.id).single();
+    if (!emp) return res.status(404).json({ error: 'Employee not found' });
+
+    const match = /^data:(.+);base64,(.+)$/.exec(base64);
+    const contentType = match ? match[1] : 'application/octet-stream';
+    const buffer = Buffer.from(match ? match[2] : base64, 'base64');
+    const ext = contentType.includes('pdf') ? 'pdf' : (contentType.split('/')[1] || 'jpg');
+    const storagePath = `${req.params.id}/${doc_type}_${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage.from(DOC_BUCKET).upload(storagePath, buffer, { contentType, upsert: true });
+    if (upErr) throw upErr;
+
+    const { data: existing } = await supabase.from('employee_documents').select('storage_path')
+      .eq('employee_id', req.params.id).eq('doc_type', doc_type).maybeSingle();
+    if (existing && existing.storage_path !== storagePath) {
+      supabase.storage.from(DOC_BUCKET).remove([existing.storage_path]).catch(() => {});
+    }
+
+    const { data, error } = await supabase.from('employee_documents')
+      .upsert({ employee_id: req.params.id, doc_type, storage_path: storagePath, file_name: file_name || null, uploaded_by: user.name, created_at: new Date().toISOString() }, { onConflict: 'employee_id,doc_type' })
+      .select('*').single();
+    if (error) throw error;
+
+    const { data: signed } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(storagePath, 86400);
+    res.json({ ...data, url: signed?.signedUrl || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

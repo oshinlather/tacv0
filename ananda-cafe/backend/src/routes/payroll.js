@@ -143,6 +143,34 @@ router.post('/ot', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── PATCH /api/payroll/override — manually correct one cell of one employee's
+// draft month (any column except OT Hours, which uses POST /ot instead).
+// Blocked once the month is finalized — reopen it first, same as every other
+// edit path on this sheet. Sending an empty value clears the override, which
+// reverts that cell back to the live formula.
+router.patch('/override', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...PAYROLL_ROLES);
+    if (!user) return;
+    const { employee_id, month, field, value } = req.body;
+    if (!employee_id || !month || !field) return res.status(400).json({ error: 'employee_id, month, and field are required' });
+    if (!OVERRIDE_FIELDS.includes(field)) return res.status(400).json({ error: `field must be one of: ${OVERRIDE_FIELDS.join(', ')}` });
+
+    const { data: existingRun } = await supabase.from('employee_payroll_runs').select('employee_id').eq('employee_id', employee_id).eq('month', month).maybeSingle();
+    if (existingRun) return res.status(400).json({ error: 'This month is already finalized — reopen it before editing' });
+
+    const { data: existing } = await supabase.from('employee_payroll_overrides').select('*').eq('employee_id', employee_id).eq('month', month).maybeSingle();
+    const row = {
+      ...(existing || { employee_id, month }),
+      [field]: value === '' || value === null || value === undefined ? null : Number(value),
+      updated_by: user.name, updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from('employee_payroll_overrides').upsert(row, { onConflict: 'employee_id,month' }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── POST /api/payroll/finalize — snapshot one employee's month and settle
 // whatever advances are outstanding for them right now.
 router.post('/finalize', async (req, res) => {
@@ -156,16 +184,17 @@ router.post('/finalize', async (req, res) => {
     if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
 
     const { monthDays, from, to } = monthRange(month);
-    const [{ data: attendance }, { data: otRow }, { data: outstandingAdvances }] = await Promise.all([
+    const [{ data: attendance }, { data: otRow }, { data: outstandingAdvances }, { data: overrideRow }] = await Promise.all([
       supabase.from('employee_attendance').select('employee_id, status').eq('employee_id', employee_id).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('ot_hours').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
       supabase.from('books_ledger').select('id, amount').eq('employee_id', employee_id).eq('is_advance', true).eq('settled', false),
+      supabase.from('employee_payroll_overrides').select('*').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
     ]);
 
     const leavesTaken = (leavesFromAttendance(attendance))[employee_id] || 0;
     const otHours = Number(otRow?.ot_hours || 0);
     const advancesDeducted = (outstandingAdvances || []).reduce((s, a) => s + Number(a.amount || 0), 0);
-    const computed = computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays });
+    const computed = computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays, overrides: overrideRow || {} });
 
     const { data: run, error: runErr } = await supabase.from('employee_payroll_runs')
       .upsert({ employee_id, month, ...computed, finalized_by: user.name, finalized_at: new Date().toISOString() }, { onConflict: 'employee_id,month' })
