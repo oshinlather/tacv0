@@ -59,6 +59,16 @@ const pct = (n) => (n || 0).toFixed(1) + "%";
 // Mirrors the backend's normalizeDishName (salesRoutes.js) so PetPooja sales rows key
 // into the same /api/recipes/costs-bulk map the server built from recipe item_names.
 const normalizeDishName = (s) => (s || "").toLowerCase().trim().replace(/\.+$/, "").replace(/\s+/g, " ");
+// Inverse of the backend's ingredientQtyKg (salesRoutes.js) — the should-consume
+// breakdown's "per_dish" figure is always Kg-normalized (recipe_ingredients.qty_kg), but
+// PATCH /recipes/ingredients/:id writes the raw `qty` column as-is in that row's own
+// unit. GM/ML rows store qty as grams/mL (qty_kg = qty/1000), so a Kg value typed into
+// the bulk edit form must be scaled back up before saving, or it silently lands 1000x
+// too small (e.g. 0.26 Kg typed → saved as 0.26 GM instead of 260 GM).
+const toNativeIngredientQty = (kgQty, unit) => {
+  const u = (unit || "").trim().toUpperCase();
+  return ["GM", "G", "GMS", "GRAM", "GRAMS", "ML"].includes(u) ? kgQty * 1000 : kgQty;
+};
 
 // ─── P&L LINE ITEMS (from user's Excel) ─────────────────────────────────────
 const PNL_REVENUE = [
@@ -2432,7 +2442,8 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
     setScSaving(true);
     try {
       for (const b of changed) {
-        await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty: Number(scEditValues[b.recipe_ingredient_id]) });
+        const qty = toNativeIngredientQty(Number(scEditValues[b.recipe_ingredient_id]), b.recipe_ingredient_unit);
+        await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty });
       }
       setEditingScItem(null); setScEditValues({});
       await fetchPnl();
@@ -3206,7 +3217,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </>);
         })()}
       </>)}
-      {pnlTab === "cogs" && <CogsCompare syncDate={{ selDay, selMonth }} />}
+      {pnlTab === "cogs" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={lockedOutlet} />}
       {pnlTab === "compare" && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
@@ -6936,7 +6947,10 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
     if (!confirm(`Update the recipe qty for ${changed.length} dish(es)?\n\nThis changes each dish's own recipe — affects every future order, not just this date's P&L.`)) return;
     setScSaving(true);
     try {
-      for (const b of changed) await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty: Number(scEditValues[b.recipe_ingredient_id]) });
+      for (const b of changed) {
+        const qty = toNativeIngredientQty(Number(scEditValues[b.recipe_ingredient_id]), b.recipe_ingredient_unit);
+        await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty });
+      }
       setScEditing(false); setScEditValues({});
       await onSaved();
     } catch (e) { alert("Failed to save: " + e.message); }
