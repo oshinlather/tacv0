@@ -3782,16 +3782,14 @@ router.get('/closing-stock-draft-alerts', async (req, res) => {
 
 // ── GET /api/punch-status/:date — Which of the 7 required daily punches (Sales,
 // Wastage, Demand, Closing, Dairy Purchase, Cold Drink Purchase, Verify Dispatch) each
-// own outlet has NOT done yet for a given date. Powers the Daily P&L "Missing Punches"
-// pill so the owner can see exactly what to chase instead of checking each outlet by
-// hand. Franchise outlets (elan, gaursid) manage their own cash/stock and don't punch
-// through this system, so they're excluded — same set closing-stock-draft-alerts and
-// computeStockUsageForDate loop over minus the two franchise ids.
+// outlet (including franchises) has NOT done yet for a given date. Powers the Daily
+// P&L "Missing Punches" pill so the owner can see exactly what to chase instead of
+// checking each outlet by hand.
 router.get('/punch-status/:date', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
     const date = req.params.date;
-    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14'];
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
     const [
       { data: sales },
       { data: wastage },
