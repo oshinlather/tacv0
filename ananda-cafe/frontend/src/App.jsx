@@ -287,7 +287,7 @@ const DEMAND_SECTIONS = [
 ];
 
 // Closing stock = all demand items (dynamic from master data)
-const CLOSING_HIDDEN = new Set(["plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
+const CLOSING_HIDDEN = new Set(["plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice", "roti", "sabji", "daal", "rice"]);
 const CLOSING_STOCK = DEMAND_SECTIONS.flatMap((sec) => sec.items.filter((i) => !CLOSING_HIDDEN.has(i.id)).map((i) => ({ id: `cs_${i.id}`, name: i.name, unit: i.unit, section: sec.id, sectionName: sec.titleHi })));
 
 // ─── STYLES ─────────────────────────────────────────────────────────────────
@@ -2288,6 +2288,97 @@ const PaytmRecon = () => {
   </div>);
 };
 
+// The 7 punches an outlet manager is expected to make every day, in the order they'd
+// naturally come up during the day (morning demand first, dispatch verify once BK
+// sends it, sales/wastage/closing/purchases at day's end). 'dispatch_verify' only ever
+// shows up as missing when the backend actually found a dispatched-but-unreceived
+// order — every other key is unconditional, checked once per outlet per day.
+const PUNCH_TYPES = [
+  { key: "demand", icon: "✏️", label: "Demand" },
+  { key: "dispatch_verify", icon: "🚚", label: "Verify Dispatch Challan" },
+  { key: "dairy_purchase", icon: "🥛", label: "Dairy Purchase" },
+  { key: "cold_drink_purchase", icon: "🥤", label: "Cold Drink Purchase" },
+  { key: "sales", icon: "💰", label: "Sales" },
+  { key: "wastage", icon: "🗑️", label: "Wastage" },
+  { key: "closing", icon: "📊", label: "Closing Stock" },
+];
+
+// Missing Punches — one pill inside Daily P&L, single-day only (a month of missing
+// punches isn't actionable the same way "nudge them right now" is). Reuses the parent's
+// date/outlet pills so this is just another lens on the same day, not a separate page.
+const MissingPunches = ({ date, selOutlet }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    api.getPunchStatus(date).then((r) => setData(r)).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [date]);
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>;
+  if (!data) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load punch status</div>;
+
+  const outlets = (data.outlets || []).filter((o) => !selOutlet || o.outlet_id === selOutlet);
+  const missingOutlets = outlets.filter((o) => o.missing.length > 0);
+  const doneOutlets = outlets.filter((o) => o.missing.length === 0);
+
+  const waText = () => {
+    const lines = [`*⚠️ Missing Punches — ${date}*`, ""];
+    missingOutlets.forEach((o) => {
+      const oName = OUTLETS.find((x) => x.id === o.outlet_id)?.name || o.outlet_id;
+      lines.push(`*${oName}*`);
+      o.missing.forEach((m) => {
+        const t = PUNCH_TYPES.find((p) => p.key === m);
+        lines.push(`• ${t ? `${t.icon} ${t.label}` : m}`);
+      });
+      lines.push("");
+    });
+    lines.push("Please punch these ASAP 🙏");
+    return lines.join("\n");
+  };
+
+  return (
+    <div>
+      {missingOutlets.length === 0 && (
+        <div style={{ textAlign: "center", padding: 40 }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+          <div style={{ color: "#16A34A", fontWeight: 700 }}>All punches done for {date}</div>
+        </div>
+      )}
+      {missingOutlets.length > 0 && (<>
+        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText())}`, "_blank")}
+          style={{ width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+          💬 Share Missing Punches on WhatsApp
+        </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {missingOutlets.map((o) => {
+            const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+            return (
+              <div key={o.outlet_id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{oData?.name || o.outlet_id}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {o.missing.map((m) => {
+                    const t = PUNCH_TYPES.find((p) => p.key === m);
+                    return (
+                      <span key={m} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
+                        {t ? `${t.icon} ${t.label}` : m}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {doneOutlets.length > 0 && (
+          <div style={{ marginTop: 16, fontSize: 11, color: "#888" }}>
+            ✅ {doneOutlets.map((o) => OUTLETS.find((x) => x.id === o.outlet_id)?.short || o.outlet_id).join(", ")} — all punched
+          </div>
+        )}
+      </>)}
+    </div>
+  );
+};
+
 const DailyPnL = ({ lockedOutlet } = {}) => {
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || null);
   const [selDay, setSelDay] = useState(1);
@@ -2698,6 +2789,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // franchise outlet would leak every other outlet's sales, so it's owner/staff
           // only, same restriction RMAuditPanel already applies to this component.
           ...(lockedOutlet ? [] : [{ key: "cold_drink_audit", label: "🥤 Cold Drink Audit" }]),
+          // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
+          // don't punch through this system (they manage their own cash/stock), so this
+          // pill is meaningless on a locked franchise view and hidden there too.
+          ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
         ].map((t) => (
           <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888" }}>{t.label}</button>
         ))}
@@ -3404,6 +3499,13 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             Pick a single day (not month view) above for Cold Drink Audit.
           </div>
         ) : <ColdDrinkAuditSection dateStr={dateStr} />
+      )}
+      {pnlTab === "punches" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Missing Punches.
+          </div>
+        ) : <MissingPunches date={dateStr} selOutlet={selOutlet} />
       )}
     </div>
   );
@@ -7809,7 +7911,7 @@ const MoveSubmissionDate = () => {
 const SystemLogs = () => {
   const [selOutlet, setSelOutlet] = useState(null); // null = all outlets
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
-  const [activeCats, setActiveCats] = useState(() => new Set(LOG_CATEGORIES.map((c) => c.id)));
+  const [selCat, setSelCat] = useState(null); // null = all categories; else isolates just that one
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -7837,13 +7939,7 @@ const SystemLogs = () => {
       .finally(() => setLoading(false));
   }, [selOutlet, selMonth]);
 
-  const toggleCat = (id) => setActiveCats((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-
-  const filtered = logs.filter((l) => activeCats.has(l.category));
+  const filtered = logs.filter((l) => !selCat || l.category === selCat);
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
 
   const toIST = (ts) => {
@@ -7860,10 +7956,12 @@ const SystemLogs = () => {
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Who did what, when, for which outlet and date — every submission and edit, unfiltered</p>
       </div>
 
-      {/* Category filters */}
+      {/* Category filters — clicking a pill isolates that category (shows only it),
+          click again (or "All") to go back to unfiltered */}
       <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All</button>
         {LOG_CATEGORIES.map((c) => (
-          <button key={c.id} onClick={() => toggleCat(c.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: activeCats.has(c.id) ? 700 : 500, border: activeCats.has(c.id) ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: activeCats.has(c.id) ? c.bg : "#fff", color: activeCats.has(c.id) ? c.color : "#BBB", opacity: activeCats.has(c.id) ? 1 : 0.6 }}>{c.label}</button>
+          <button key={c.id} onClick={() => setSelCat(selCat === c.id ? null : c.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c.id ? 700 : 500, border: selCat === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.id ? c.bg : "#fff", color: selCat === c.id ? c.color : "#BBB", opacity: !selCat || selCat === c.id ? 1 : 0.6 }}>{c.label}</button>
         ))}
       </div>
 
@@ -8001,7 +8099,7 @@ const OutletMgr = ({ onBack }) => {
   // drink directly, always).
   const [dcCategory, setDcCategory] = useState("dairy");
   const [dcQty, setDcQty] = useState({}); const [dcAmount, setDcAmount] = useState({}); const [dcSaving, setDcSaving] = useState(false);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
   // moment the manager picks a date themselves, since selectedDate then stops matching.
@@ -8127,25 +8225,6 @@ const OutletMgr = ({ onBack }) => {
       </select>
     );
   };
-
-  // ── Staff Demand State ──
-  const [staffItems, setStaffItems] = useState([]); // master items from DB
-  const [staffFood, setStaffFood] = useState({}); // { roti: 10, sabji: 2 }
-  const [staffShift, setStaffShift] = useState(() => istHour() < 14 ? "am" : "pm");
-  const [staffDress, setStaffDress] = useState([]); // [{ item: "tshirt", role: "Chef", size: "XL" }]
-  const [staffSaving, setStaffSaving] = useState(false);
-  const [staffItemsLoaded, setStaffItemsLoaded] = useState(false);
-
-  // Load staff demand items from DB once
-  useEffect(() => {
-    if (!staffItemsLoaded) {
-      api.getStaffDemandItems().then(setStaffItems).catch(() => setStaffItems([]));
-      setStaffItemsLoaded(true);
-    }
-  }, [staffItemsLoaded]);
-
-  const staffFoodItems = staffItems.filter((i) => i.category === "food");
-  const staffDressItems = staffItems.filter((i) => i.category === "dress");
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
@@ -8732,18 +8811,15 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "manual" && demandSlot) {
     const ft = Object.values(draft).filter((v) => v > 0).length;
-    const staffFoodCount = Object.values(staffFood).filter((v) => v > 0).length;
-    const totalCount = ft + staffFoodCount + staffDress.length;
-    const isStaffFood = expSec === "__staff_food";
-    const isStaffDress = expSec === "__staff_dress";
-    const isRegular = !isStaffFood && !isStaffDress;
-    // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas and
-    // Staff Food/Dress stay Outlet Manager-only); everyone else sees everything. Cold
-    // Drink & Water is excluded here specifically — BK doesn't stock or dispatch it, the
-    // outlet buys it directly via Dairy/Cold Drink Purchase — but it still shows in
-    // Closing Stock and Wastage, which build their own section list separately.
+    const totalCount = ft;
+    // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas —
+    // Staff Food/Dress stay Outlet Manager-only since they're not in any role's scope);
+    // everyone else sees everything. Cold Drink & Water is excluded here specifically —
+    // BK doesn't stock or dispatch it, the outlet buys it directly via Dairy/Cold Drink
+    // Purchase — but it still shows in Closing Stock and Wastage, which build their own
+    // section list separately.
     const visibleSections = (roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS).filter((s) => s.id !== "cold_drink");
-    const activeSec = isRegular ? (visibleSections.find((s) => s.id === expSec) || visibleSections[0]) : null;
+    const activeSec = visibleSections.find((s) => s.id === expSec) || visibleSections[0];
     if (!expSec) setExpSec(visibleSections[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
@@ -8771,40 +8847,6 @@ const OutletMgr = ({ onBack }) => {
       finally { setSaving(false); }
     };
 
-    const submitStaffFood = async () => {
-      if (staffFoodCount === 0) return;
-      setStaffSaving(true); setErr(null);
-      try {
-        const foodItems = Object.entries(staffFood).filter(([, q]) => q > 0).map(([item, qty]) => ({ item, qty }));
-        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: getCurrentUser()?.name || outlet });
-        alert(`✅ Staff food (${staffShift.toUpperCase()}) submitted — ${foodItems.length} items`);
-        setStaffFood({});
-      } catch (e) { setErr(e.message); }
-      finally { setStaffSaving(false); }
-    };
-
-    const submitStaffDress = async () => {
-      if (staffDress.length === 0) return;
-      setStaffSaving(true); setErr(null);
-      try {
-        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: null, category: "dress", items: staffDress, note, submitted_by: getCurrentUser()?.name || outlet });
-        alert(`✅ Dress request submitted — ${staffDress.length} items`);
-        setStaffDress([]);
-      } catch (e) { setErr(e.message); }
-      finally { setStaffSaving(false); }
-    };
-
-    const addDressRow = () => {
-      setStaffDress((p) => [...p, { item: "tshirt", role: "", size: "" }]);
-    };
-    const updateDress = (idx, field, val) => setStaffDress((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
-    const removeDress = (idx) => setStaffDress((p) => p.filter((_, i) => i !== idx));
-
-    // Get dress item config from DB
-    const tshirtConfig = staffDressItems.find((d) => d.id === "tshirt");
-    const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
-    const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
-
     return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {viewingSubmitted && !isDraftRole ? (<>
@@ -8822,24 +8864,18 @@ const OutletMgr = ({ onBack }) => {
     {isDraftRole && existingRecord?.status === "submitted" && (
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized this slot's demand — showing what was submitted.</div>
     )}
-    {/* Category Pills — regular + staff */}
+    {/* Category Pills — Staff Food/Dress now appear here like any other section, since
+        they're real demand_sections rows; still Outlet Manager-only because Chef/Bainmarry's
+        roleCategoryScope doesn't include "staff_food"/"dress". */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {visibleSections.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; const isSaved = savedSections[sec.id]; return (
         <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || visibleSections[0].id) === sec.id ? 700 : 500, border: (expSec || visibleSections[0].id) === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || visibleSections[0].id) === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: (expSec || visibleSections[0].id) === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
           {isSaved && <span style={{ fontSize: 10 }}>✅</span>}<span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
-      {/* Staff Food/Dress stay Outlet Manager-only, not part of Chef/Bainmarry's scope */}
-      {!isDraftRole && <button onClick={() => setExpSec("__staff_food")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffFood ? 700 : 500, border: isStaffFood ? "none" : "1px solid #FED7AA", cursor: "pointer", fontFamily: "inherit", background: isStaffFood ? "#D97706" : "#fff", color: isStaffFood ? "#fff" : "#D97706", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
-        <span>🍛</span>Staff Food{staffFoodCount > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffFoodCount}</span>}
-      </button>}
-      {!isDraftRole && <button onClick={() => setExpSec("__staff_dress")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffDress ? 700 : 500, border: isStaffDress ? "none" : "1px solid #C4B5FD", cursor: "pointer", fontFamily: "inherit", background: isStaffDress ? "#7C3AED" : "#fff", color: isStaffDress ? "#fff" : "#7C3AED", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
-        <span>👕</span>Staff Dress{staffDress.length > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffDress.length}</span>}
-      </button>}
     </div>
 
-    {/* ── REGULAR DEMAND SECTIONS ── */}
-    {isRegular && activeSec && (<>
+    {activeSec && (<>
       <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
         <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 18 }}>{activeSec.emoji}</span>
@@ -8869,98 +8905,6 @@ const OutletMgr = ({ onBack }) => {
         </div>
       </div>
     </>)}
-
-    {/* ── STAFF FOOD SECTION ── */}
-    {isStaffFood && (
-      <div>
-        {/* AM/PM shift pills */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          {["am", "pm"].map((s) => (
-            <button key={s} onClick={() => setStaffShift(s)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: staffShift === s ? "none" : "1px solid #FDE68A", background: staffShift === s ? "#D97706" : "#FFFBEB", color: staffShift === s ? "#fff" : "#B45309", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase" }}>
-              {s === "am" ? "☀️ Morning" : "🌙 Evening"}
-            </button>
-          ))}
-        </div>
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ padding: "10px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 18 }}>🍛</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#B45309" }}>Staff Food — {staffShift === "am" ? "Morning" : "Evening"}</span>
-          </div>
-          <div style={{ padding: "10px 14px" }}>
-            {staffFoodItems.map((item) => (
-              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 10, background: staffFood[item.id] > 0 ? "#FFFBEB" : "#FAFAF8", marginBottom: 4 }}>
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span>
-                <input type="number" inputMode="numeric" min="0" placeholder="0" value={staffFood[item.id] || ""}
-                  onChange={(e) => setStaffFood((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
-                  style={{ width: 64, padding: "8px", borderRadius: 8, border: "1px solid #FDE68A", background: "#fff", fontSize: 16, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309" }} />
-                <span style={{ fontSize: 11, color: "#999", width: 30 }}>{item.unit}</span>
-              </div>
-            ))}
-            {staffFoodItems.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No food items configured. Add via Master Data.</div>}
-          </div>
-        </div>
-        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., extra roti for event)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
-          <ErrBar />
-          <button onClick={submitStaffFood} disabled={staffFoodCount === 0 || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffFoodCount > 0 && !staffSaving ? "#D97706" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffFoodCount > 0 && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-            {staffSaving ? "⏳ Submitting..." : `🍛 Submit Staff Food — ${staffShift.toUpperCase()} (${staffFoodCount} items)`}
-          </button>
-        </div>
-      </div>
-    )}
-
-    {/* ── STAFF DRESS SECTION ── */}
-    {isStaffDress && (
-      <div>
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #C4B5FD", overflow: "hidden", marginBottom: 12 }}>
-          <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #C4B5FD", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 18 }}>👕</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "#7C3AED" }}>Staff Dress Request</span>
-          </div>
-          <div style={{ padding: "10px 14px" }}>
-            {staffDress.length === 0 && (
-              <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items added yet. Tap "+ Add T-Shirt" below.</div>
-            )}
-            {staffDress.map((row, idx) => (
-              <div key={idx} style={{ background: "#F5F3FF", borderRadius: 12, padding: "12px 14px", marginBottom: 8, border: "1px solid #DDD6FE" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#7C3AED" }}>👕 T-Shirt #{idx + 1}</span>
-                  <button onClick={() => removeDress(idx)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Role</div>
-                    <select value={row.role} onChange={(e) => updateDress(idx, "role", e.target.value)}
-                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.role ? "#7C3AED" : "#999", cursor: "pointer" }}>
-                      <option value="">Select Role</option>
-                      {dressRoles.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Size</div>
-                    <select value={row.size} onChange={(e) => updateDress(idx, "size", e.target.value)}
-                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.size ? "#7C3AED" : "#999", cursor: "pointer" }}>
-                      <option value="">Select Size</option>
-                      {dressSizes.map((s) => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            ))}
-            <button onClick={addDressRow} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px dashed #C4B5FD", background: "transparent", fontSize: 13, fontWeight: 700, color: "#7C3AED", cursor: "pointer", fontFamily: "inherit" }}>
-              + Add T-Shirt
-            </button>
-          </div>
-        </div>
-        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
-          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., urgent, replacing torn)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
-          <ErrBar />
-          <button onClick={submitStaffDress} disabled={staffDress.length === 0 || staffDress.some((d) => !d.role || !d.size) || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "#7C3AED" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-            {staffSaving ? "⏳ Submitting..." : staffDress.some((d) => !d.role || !d.size) ? "👕 Select Role & Size for all" : `👕 Submit Dress Request (${staffDress.length} items)`}
-          </button>
-        </div>
-      </div>
-    )}
     </>)}
   </div>); }
 

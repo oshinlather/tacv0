@@ -185,6 +185,7 @@ const api = {
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),
   getStockUsage: (date, outlet) => get(`/api/stock-usage/${date}`, outlet ? { outlet } : {}),
   getClosingStockDraftAlerts: () => get('/api/closing-stock-draft-alerts'),
+  getPunchStatus: (date) => get(`/api/punch-status/${date}`),
   getWastageCost: (from) => get('/api/wastage/cost', { from }),
 
   // RM Order Config

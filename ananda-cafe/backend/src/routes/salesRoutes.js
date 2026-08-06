@@ -3780,6 +3780,55 @@ router.get('/closing-stock-draft-alerts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/punch-status/:date — Which of the 7 required daily punches (Sales,
+// Wastage, Demand, Closing, Dairy Purchase, Cold Drink Purchase, Verify Dispatch) each
+// own outlet has NOT done yet for a given date. Powers the Daily P&L "Missing Punches"
+// pill so the owner can see exactly what to chase instead of checking each outlet by
+// hand. Franchise outlets (elan, gaursid) manage their own cash/stock and don't punch
+// through this system, so they're excluded — same set closing-stock-draft-alerts and
+// computeStockUsageForDate loop over minus the two franchise ids.
+router.get('/punch-status/:date', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const date = req.params.date;
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14'];
+    const [
+      { data: sales },
+      { data: wastage },
+      { data: demand },
+      { data: closing },
+      { data: purchases },
+      { data: dispatched },
+    ] = await Promise.all([
+      supabase.from('daily_outlet_sales').select('outlet_id').eq('date', date).in('outlet_id', outletIds),
+      supabase.from('demands').select('outlet_id').eq('date', date).eq('type', 'wastage').eq('status', 'submitted').in('outlet_id', outletIds),
+      supabase.from('demands').select('outlet_id').eq('date', date).eq('type', 'manual').in('status', ['submitted', 'fulfilled']).in('outlet_id', outletIds),
+      supabase.from('closing_stocks').select('outlet_id').eq('date', date).eq('status', 'submitted').in('outlet_id', outletIds),
+      supabase.from('purchases').select('outlet_id, items').eq('date', date).in('outlet_id', outletIds),
+      // Only 'fulfilled' orders (actually dispatched) count toward "needs verifying" —
+      // an outlet with nothing dispatched that day has nothing to verify, so it's not
+      // flagged at all rather than showing a false-positive missing punch.
+      supabase.from('demands').select('outlet_id, received_at').eq('date', date).eq('status', 'fulfilled').in('outlet_id', outletIds),
+    ]);
+
+    const has = (rows, oid) => (rows || []).some(r => r.outlet_id === oid);
+    const outlets = outletIds.map((oid) => {
+      const missing = [];
+      if (!has(sales, oid)) missing.push('sales');
+      if (!has(wastage, oid)) missing.push('wastage');
+      if (!has(demand, oid)) missing.push('demand');
+      if (!has(closing, oid)) missing.push('closing');
+      const oPurchases = (purchases || []).filter(p => p.outlet_id === oid);
+      if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'dairy_purchase'))) missing.push('dairy_purchase');
+      if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'cold_drink_purchase'))) missing.push('cold_drink_purchase');
+      if ((dispatched || []).some(d => d.outlet_id === oid && !d.received_at)) missing.push('dispatch_verify');
+      return { outlet_id: oid, missing };
+    });
+
+    res.json({ date, outlets });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Extracted so /api/audit/:date (recipe-based leakage audit) can reuse the exact same
 // per-outlet consumption numbers P&L and COGS Compare already show, instead of a second,
 // possibly-drifting computation. Internal function — no req/res, no auth check (callers
