@@ -520,13 +520,14 @@ const SALARY_TYPES = [{ v: "monthly", l: "Monthly" }, { v: "daily", l: "Daily" }
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const EMPLOYEE_FORM_DEFAULTS = {
   name: "", designation: "", department: EMPLOYEE_DEPARTMENTS[0].id, phone: "", joining_date: "", app_user_id: "",
-  salary: "", salary_type: "monthly", shift_start: "", shift_end: "", weekly_off: "",
+  salary: "", salary_type: "monthly", leave_allowed: "", shift_start: "", shift_end: "", weekly_off: "",
   bank_account_name: "", bank_account_number: "", bank_ifsc: "", upi_id: "",
 };
 const employeeFormToPayload = (f) => ({
   name: f.name, designation: f.designation, department: f.department,
   phone: f.phone || null, joining_date: f.joining_date || null, app_user_id: f.app_user_id || null,
   salary: f.salary === "" ? null : Number(f.salary), salary_type: f.salary_type,
+  leave_allowed: f.leave_allowed === "" ? 0 : Number(f.leave_allowed),
   shift_start: f.shift_start || null, shift_end: f.shift_end || null, weekly_off: f.weekly_off || null,
   bank_account_name: f.bank_account_name || null, bank_account_number: f.bank_account_number || null,
   bank_ifsc: f.bank_ifsc || null, upi_id: f.upi_id || null,
@@ -634,6 +635,9 @@ const EmployeeFields = ({ form, setForm, users }) => (<>
     </select>
   </div>
 
+  <div style={employeeFieldLabelStyle}>Paid Leaves Allowed / Month (for payroll)</div>
+  <input type="number" inputMode="numeric" placeholder="e.g. 4" value={form.leave_allowed} onChange={(e) => setForm({ ...form, leave_allowed: e.target.value })} style={employeeFieldInputStyle} />
+
   <div style={employeeFieldLabelStyle}>Shift Timing</div>
   <div style={{ display: "flex", gap: 8 }}>
     <input type="time" value={form.shift_start} onChange={(e) => setForm({ ...form, shift_start: e.target.value })} style={employeeFieldHalfStyle} />
@@ -692,6 +696,7 @@ const EmployeeMasterPanel = () => {
       name: emp.name, designation: emp.designation, department: emp.department,
       phone: emp.phone || "", joining_date: emp.joining_date || "", app_user_id: emp.app_user_id || "",
       salary: emp.salary != null ? String(emp.salary) : "", salary_type: emp.salary_type || "monthly",
+      leave_allowed: emp.leave_allowed != null ? String(emp.leave_allowed) : "",
       shift_start: emp.shift_start ? emp.shift_start.slice(0, 5) : "", shift_end: emp.shift_end ? emp.shift_end.slice(0, 5) : "",
       weekly_off: emp.weekly_off || "",
       bank_account_name: emp.bank_account_name || "", bank_account_number: emp.bank_account_number || "",
@@ -853,6 +858,161 @@ const TeamPanel = ({ onBack }) => {
           )}
         </div>
       ))}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  MONTHLY PAYROLL — replicates the owner's existing salary-sheet formulas:
+//    Leaves Cash-in  = Leave Allowed − Leaves Taken   (can go negative)
+//    OT Days         = OT Hours ÷ 10
+//    Working Days    = Month Days + Leaves Cash-in + OT Days
+//    Prorated Salary = (Working Days ÷ Month Days) × Base Salary
+//    Net Payable     = Prorated Salary − outstanding advances
+//  Leaves Taken is computed live from daily attendance (absent/leave = 1,
+//  half-day = 0.5). OT hours are a manual per-employee-per-month entry for now
+//  (PetPooja isn't connected yet). Finalizing a month freezes the numbers and
+//  settles whatever advances were outstanding at that moment — see
+//  routes/payroll.js. Owner/AVP/Head Chef only, same tier as salary/bank data.
+// ═════════════════════════════════════════════════════════════════════════════
+const MonthlyPayrollPanel = () => {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [otDraft, setOtDraft] = useState({}); // employee_id -> string being edited
+  const [busyId, setBusyId] = useState(null); // employee_id currently saving/finalizing/reopening
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getPayroll(month).then((res) => { setRows(res.rows || []); setOtDraft({}); }).catch(() => setRows([])).finally(() => setLoading(false));
+  }, [month]);
+  useEffect(load, [load]);
+
+  const saveOT = async (employeeId) => {
+    const val = otDraft[employeeId];
+    if (val === undefined) return;
+    setBusyId(employeeId);
+    try { await api.setEmployeeOT({ employee_id: employeeId, month, ot_hours: Number(val) || 0 }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  const finalize = async (employeeId, name) => {
+    if (!window.confirm(`Finalize ${month} payroll for ${name}? This locks in the numbers and marks their outstanding advance as settled.`)) return;
+    setBusyId(employeeId);
+    try { await api.finalizePayroll({ employee_id: employeeId, month }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  const reopen = async (employeeId, name) => {
+    if (!window.confirm(`Reopen ${month} payroll for ${name}? It goes back to a live draft — already-settled advances stay settled.`)) return;
+    setBusyId(employeeId);
+    try { await api.reopenPayroll({ employee_id: employeeId, month }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  const totalNet = rows.reduce((s, r) => s + Number(r.net_payable || 0), 0);
+  const totalAdvances = rows.reduce((s, r) => s + Number(r.advances_deducted || 0), 0);
+  const finalizedCount = rows.filter((r) => r.status === "finalized").length;
+  const numS = { ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" };
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Monthly Payroll</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Leave allowance ± advances, computed the same way as the salary sheet — finalize to lock a month in and settle advances</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() - 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} style={{ flex: 1, maxWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {!loading && rows.length > 0 && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalNet)}</div>
+          <div style={{ fontSize: 9, color: "#999" }}>total net payable</div>
+        </div>
+        <div style={{ background: "#FFFBEB", borderRadius: 10, border: "1px solid #FDE68A", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(totalAdvances)}</div>
+          <div style={{ fontSize: 9, color: "#B45309" }}>advances deducted</div>
+        </div>
+        <div style={{ background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#16A34A" }}>{finalizedCount}/{rows.length}</div>
+          <div style={{ fontSize: 9, color: "#16A34A" }}>finalized</div>
+        </div>
+      </div>
+    )}
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
+      <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No active employees</div>
+    ) : (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Employee</th>
+              <th style={thS}>Dept</th>
+              <th style={{ ...thS, textAlign: "right" }}>Base</th>
+              <th style={{ ...thS, textAlign: "right" }}>Leave Allwd</th>
+              <th style={{ ...thS, textAlign: "right" }}>Leaves Taken</th>
+              <th style={{ ...thS, textAlign: "right" }}>OT Hrs</th>
+              <th style={{ ...thS, textAlign: "right" }}>Leave Cash-in</th>
+              <th style={{ ...thS, textAlign: "right" }}>OT Days</th>
+              <th style={{ ...thS, textAlign: "right" }}>Working Days</th>
+              <th style={{ ...thS, textAlign: "right" }}>Prorated</th>
+              <th style={{ ...thS, textAlign: "right" }}>Advances</th>
+              <th style={{ ...thS, textAlign: "right" }}>Net Payable</th>
+              <th style={thS}>Status</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const isFinal = r.status === "finalized";
+                const otVal = otDraft[r.employee_id] !== undefined ? otDraft[r.employee_id] : String(r.ot_hours || 0);
+                const otChanged = otDraft[r.employee_id] !== undefined && Number(otDraft[r.employee_id]) !== r.ot_hours;
+                return (
+                  <tr key={r.employee_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={tdS}>
+                      <div style={{ fontWeight: 700 }}>{r.name}</div>
+                      <div style={{ fontSize: 9, color: "#999" }}>{r.designation}{r.employee_code ? ` · ${r.employee_code}` : ""}</div>
+                    </td>
+                    <td style={tdS}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === r.department)?.label || r.department}</td>
+                    <td style={numS}>{fmt(r.base_salary)}</td>
+                    <td style={numS}>{r.leave_allowed}</td>
+                    <td style={numS}>{r.leaves_taken}</td>
+                    <td style={{ ...tdS, textAlign: "right" }}>
+                      {isFinal ? r.ot_hours : (
+                        <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                          <input type="number" inputMode="decimal" value={otVal} onChange={(e) => setOtDraft((p) => ({ ...p, [r.employee_id]: e.target.value }))}
+                            style={{ width: 50, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                          {otChanged && <button onClick={() => saveOT(r.employee_id)} disabled={busyId === r.employee_id} style={{ padding: "2px 6px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✓</button>}
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ ...numS, color: r.leaves_cashin < 0 ? "#DC2626" : "#16A34A" }}>{r.leaves_cashin}</td>
+                    <td style={numS}>{r.ot_days.toFixed(2)}</td>
+                    <td style={numS}>{r.working_days.toFixed(2)}</td>
+                    <td style={numS}>{fmt(r.prorated_salary)}</td>
+                    <td style={{ ...numS, color: r.advances_deducted > 0 ? "#B45309" : "#999" }}>{fmt(r.advances_deducted)}</td>
+                    <td style={{ ...numS, fontWeight: 800, color: "#1A1A1A" }}>{fmt(r.net_payable)}</td>
+                    <td style={tdS}>
+                      {isFinal ? (<>
+                        <div style={{ color: "#16A34A", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>✅ Finalized</div>
+                        <button onClick={() => reopen(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>🔓 Reopen</button>
+                      </>) : (
+                        <button onClick={() => finalize(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyId === r.employee_id ? "⏳..." : "🔒 Finalize"}</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
   </div>);
 };
 
@@ -12317,6 +12477,7 @@ const SCOPED_ROLE_TABS = {
     { id: "recipes", label: "📖 BK Recipes" },
     { id: "pp_recipes", label: "📖 Dish Recipes" },
     { id: "employees", label: "👤 Employee Master" },
+    { id: "payroll", label: "💰 Monthly Payroll" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
@@ -12326,6 +12487,7 @@ const SCOPED_ROLE_TABS = {
     { id: "recipes", label: "📖 BK Recipes" },
     { id: "pp_recipes", label: "📖 Dish Recipes" },
     { id: "employees", label: "👤 Employee Master" },
+    { id: "payroll", label: "💰 Monthly Payroll" },
   ],
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
@@ -12415,6 +12577,7 @@ const ScopedDashboard = () => {
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
       {tab === "employees" && <EmployeeMasterPanel />}
+      {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "team" && <TeamPanel />}
     </div>
   </div>);
@@ -12535,7 +12698,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -12692,6 +12855,7 @@ export default function AnandaCafe() {
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "employees", label: "👤 Employee Master", sub: "Full staff directory by outlet, BK & top mgmt" },
+          { id: "payroll", label: "💰 Monthly Payroll", sub: "Leave/OT/advance-adjusted salary, finalize to pay" },
           { id: "corrections", label: "🧾 Corrections Log", sub: "Owner edits of dispatched qty" },
           { id: "iss_audit", label: "📊 Issue Audit", sub: "Calculated vs issued quantities" },
           { id: "inv_monthly", label: "📊 Monthly Inventory", sub: "Daily stock in/out grid" },
@@ -12765,6 +12929,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "dish_cost" && <DishCostingPanel />}
       {auditUnlocked && ownerTab === "users" && <UsersPanel />}
       {auditUnlocked && ownerTab === "employees" && <EmployeeMasterPanel />}
+      {auditUnlocked && ownerTab === "payroll" && <MonthlyPayrollPanel />}
     </div>
   </div>);
 

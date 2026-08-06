@@ -30,7 +30,7 @@ const ATTENDANCE_ROLES = [...OWNER_LEVEL_ROLES, 'store_mgr'];
 
 const FULL_EDIT_FIELDS = [
   'name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active',
-  'salary', 'salary_type', 'shift_start', 'shift_end', 'weekly_off',
+  'salary', 'salary_type', 'leave_allowed', 'shift_start', 'shift_end', 'weekly_off',
   'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id',
 ];
 // What a scoped manager (outlet_mgr/store_mgr/bk_manager) may create/edit — no
@@ -38,7 +38,7 @@ const FULL_EDIT_FIELDS = [
 const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes'];
 // Fields stripped out of API responses for scoped managers — payroll/bank data
 // isn't their business even read-only.
-const SENSITIVE_FIELDS = ['salary', 'salary_type', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
+const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
 
 // null = unrestricted (owner/avp/head_chef). A string = the one department
 // value (outlet id or 'bk') this user's employees are confined to.

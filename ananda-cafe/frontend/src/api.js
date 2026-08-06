@@ -242,6 +242,11 @@ const api = {
   deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
+  // Monthly Payroll
+  getPayroll: (month) => get("/api/payroll", { month }),
+  setEmployeeOT: (data) => post("/api/payroll/ot", data),
+  finalizePayroll: (data) => post("/api/payroll/finalize", data),
+  reopenPayroll: (data) => post("/api/payroll/reopen", data),
 };
 
 // ── Helpers ──
