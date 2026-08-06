@@ -27,6 +27,11 @@ const { requireRole } = require('./authGuards');
 
 const PAYROLL_ROLES = ['owner', 'avp', 'head_chef'];
 
+// Every column in the payroll sheet except OT Hours (which already has its own
+// override path via employee_monthly_ot / POST /ot) can be manually corrected
+// per employee per month — see employee_payroll_overrides.
+const OVERRIDE_FIELDS = ['base_salary', 'leave_allowed', 'leaves_taken', 'leaves_cashin', 'ot_days', 'working_days', 'prorated_salary', 'advances_deducted', 'net_payable'];
+
 function monthRange(month) {
   const [y, m] = month.split('-').map(Number);
   const monthDays = new Date(y, m, 0).getDate();
@@ -42,18 +47,26 @@ function leavesFromAttendance(rows) {
   return byEmp;
 }
 
-function computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays }) {
-  const baseSalary = Number(emp.salary || 0);
-  const leaveAllowed = Number(emp.leave_allowed || 0);
-  const leavesCashin = leaveAllowed - leavesTaken;
-  const otDays = otHours / 10;
-  const workingDays = monthDays + leavesCashin + otDays;
-  const proratedSalary = monthDays > 0 ? (workingDays / monthDays) * baseSalary : 0;
-  const netPayable = proratedSalary - advancesDeducted;
+// `overrides` (a row from employee_payroll_overrides, or {}) layers manual
+// corrections on top of the formula: each field falls back to its computed
+// value when the override column is null, and a downstream field (e.g.
+// working_days) still recomputes off an upstream override (e.g. leave_allowed)
+// unless that downstream field ALSO has its own explicit override, which wins.
+function computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays, overrides = {} }) {
+  const ov = (field, fallback) => (overrides[field] != null ? Number(overrides[field]) : fallback);
+  const baseSalary = ov('base_salary', Number(emp.salary || 0));
+  const leaveAllowed = ov('leave_allowed', Number(emp.leave_allowed || 0));
+  const leavesTakenFinal = ov('leaves_taken', leavesTaken);
+  const leavesCashin = ov('leaves_cashin', leaveAllowed - leavesTakenFinal);
+  const otDays = ov('ot_days', otHours / 10);
+  const workingDays = ov('working_days', monthDays + leavesCashin + otDays);
+  const proratedSalary = ov('prorated_salary', monthDays > 0 ? (workingDays / monthDays) * baseSalary : 0);
+  const advancesDeductedFinal = ov('advances_deducted', advancesDeducted);
+  const netPayable = ov('net_payable', proratedSalary - advancesDeductedFinal);
   return {
-    base_salary: baseSalary, leave_allowed: leaveAllowed, leaves_taken: leavesTaken, ot_hours: otHours,
+    base_salary: baseSalary, leave_allowed: leaveAllowed, leaves_taken: leavesTakenFinal, ot_hours: otHours,
     month_days: monthDays, leaves_cashin: leavesCashin, ot_days: otDays, working_days: workingDays,
-    prorated_salary: proratedSalary, advances_deducted: advancesDeducted, net_payable: netPayable,
+    prorated_salary: proratedSalary, advances_deducted: advancesDeductedFinal, net_payable: netPayable,
   };
 }
 
@@ -72,11 +85,12 @@ router.get('/', async (req, res) => {
     if (!employees || employees.length === 0) return res.json({ month, rows: [] });
     const empIds = employees.map((e) => e.id);
 
-    const [{ data: attendance }, { data: otRows }, { data: advances }, { data: runs }] = await Promise.all([
+    const [{ data: attendance }, { data: otRows }, { data: advances }, { data: runs }, { data: overrideRows }] = await Promise.all([
       supabase.from('employee_attendance').select('employee_id, status').in('employee_id', empIds).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('*').in('employee_id', empIds).eq('month', month),
       supabase.from('books_ledger').select('employee_id, amount, settled').eq('is_advance', true).not('employee_id', 'is', null).in('employee_id', empIds),
       supabase.from('employee_payroll_runs').select('*').in('employee_id', empIds).eq('month', month),
+      supabase.from('employee_payroll_overrides').select('*').in('employee_id', empIds).eq('month', month),
     ]);
 
     const leavesByEmp = leavesFromAttendance(attendance);
@@ -86,6 +100,8 @@ router.get('/', async (req, res) => {
     (advances || []).forEach((a) => { if (!a.settled) advByEmp[a.employee_id] = (advByEmp[a.employee_id] || 0) + Number(a.amount || 0); });
     const runByEmp = {};
     (runs || []).forEach((r) => { runByEmp[r.employee_id] = r; });
+    const overridesByEmp = {};
+    (overrideRows || []).forEach((r) => { overridesByEmp[r.employee_id] = r; });
 
     const rows = employees.map((e) => {
       const base = { employee_id: e.id, name: e.name, employee_code: e.employee_code, designation: e.designation, department: e.department };
@@ -102,9 +118,9 @@ router.get('/', async (req, res) => {
       }
       const computed = computeRow(e, {
         leavesTaken: leavesByEmp[e.id] || 0, otHours: otByEmp[e.id] || 0,
-        advancesDeducted: advByEmp[e.id] || 0, monthDays,
+        advancesDeducted: advByEmp[e.id] || 0, monthDays, overrides: overridesByEmp[e.id] || {},
       });
-      return { ...base, ...computed, status: 'draft' };
+      return { ...base, ...computed, status: 'draft', has_overrides: !!overridesByEmp[e.id] };
     });
 
     res.json({ month, rows });

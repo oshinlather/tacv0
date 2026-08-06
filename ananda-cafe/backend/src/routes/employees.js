@@ -218,7 +218,7 @@ router.post('/attendance', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
     if (!user) return;
-    const { employee_id, date, status, note } = req.body;
+    const { employee_id, date, status, note, hours_worked } = req.body;
     if (!employee_id || !date || !status) return res.status(400).json({ error: 'employee_id, date, and status are required' });
     if (!ATTENDANCE_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` });
 
@@ -229,7 +229,7 @@ router.post('/attendance', async (req, res) => {
     }
 
     const { data, error } = await supabase.from('employee_attendance')
-      .upsert({ employee_id, date, status, note: note || null, marked_by: user.name, updated_at: new Date().toISOString() }, { onConflict: 'employee_id,date' })
+      .upsert({ employee_id, date, status, note: note || null, hours_worked: hours_worked !== undefined ? Number(hours_worked) : null, marked_by: user.name, updated_at: new Date().toISOString() }, { onConflict: 'employee_id,date' })
       .select('*').single();
     if (error) throw error;
     res.json(data);

@@ -2888,18 +2888,19 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
         {[
           { key: "pnl", label: "💰 P&L" },
+          // Dairy Audit and Cold Drink Audit live inside COGS Compare now (as sub-tabs,
+          // since they're the same kind of per-outlet leakage detail), not as separate
+          // top-level pills. COGS Compare's own cross-outlet table is hidden for a locked
+          // franchise view (no way to scope it to just one outlet without leaking every
+          // other outlet's cost %), but the pill itself stays — the two audits underneath
+          // are per-outlet and safe to show there.
           { key: "cogs", label: "📊 COGS Compare" },
           { key: "compare", label: "📊 4-Week Comparison" },
-          { key: "dairy_audit", label: "🥛 Dairy Audit" },
-          // Cold Drink Audit's own outlet-pill switcher isn't outlet-locked (it always
-          // offers all 6) — showing it to a locked franchise outlet would let them switch
-          // to and see every other outlet's numbers, so it's owner/staff only, same
-          // restriction RMAuditPanel already applies to this component.
-          ...(lockedOutlet ? [] : [{ key: "cold_drink_audit", label: "🥤 Cold Drink Audit" }]),
           // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
           // don't punch through this system (they manage their own cash/stock), so this
           // pill is meaningless on a locked franchise view and hidden there too.
           ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
+          ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
         ].map((t) => (
           <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
@@ -3613,21 +3614,14 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </div>
         ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
       )}
-      {pnlTab === "dairy_audit" && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Dairy Audit.
-          </div>
-        ) : <DairyAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
-      )}
-      {pnlTab === "cold_drink_audit" && !lockedOutlet && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Cold Drink Audit.
-          </div>
-        ) : <ColdDrinkAuditSection dateStr={dateStr} />
-      )}
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
+      {pnlTab === "attendance" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Attendance.
+          </div>
+        ) : <DailyAttendanceSection dateStr={dateStr} />
+      )}
     </div>
   );
 };
@@ -7583,6 +7577,12 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   const [intSelMonth, setIntSelMonth] = useState(null); // non-null = month view instead of day pills
   const selDay = syncDate ? syncDate.selDay : intSelDay;
   const selMonth = syncDate ? syncDate.selMonth : intSelMonth;
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  // Dairy Audit and Cold Drink Audit are per-outlet leakage detail same as this table, so
+  // they live here as sub-tabs instead of separate top-level P&L pills. The cross-outlet
+  // "table" tab leaks every other outlet's cost % with no way to scope it to one outlet,
+  // so a locked franchise view starts on Dairy (the two audits are already outlet-safe).
+  const [cogsView, setCogsView] = useState(lockedOutlet ? "dairy" : "table");
   const [loading, setLoading] = useState(true);
   const [monthData, setMonthData] = useState(null);
   const [drillCat, setDrillCat] = useState(null);
@@ -7790,6 +7790,17 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 COGS Compare</h3>
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {[
+          // Cross-outlet — hidden for a locked franchise view, see cogsView's own comment.
+          ...(lockedOutlet ? [] : [{ key: "table", label: "📊 Category & Item" }]),
+          { key: "dairy", label: "🥛 Dairy Audit" },
+          { key: "cold_drink", label: "🥤 Cold Drink Audit" },
+        ].map((t) => (
+          <button key={t.key} onClick={() => setCogsView(t.key)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: cogsView === t.key ? 700 : 500, border: cogsView === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cogsView === t.key ? "#1A1A1A" : "#fff", color: cogsView === t.key ? "#fff" : "#888", whiteSpace: "nowrap" }}>{t.label}</button>
+        ))}
       </div>
 
       {/* Date pills — omitted when syncDate is passed, since the parent already shows one */}
@@ -8148,9 +8159,13 @@ const compOutlet = (oid) => { const s = SALES[oid]; let tR = { d: 0, a: 0 }, tC 
 // Chef and Bainmarry punch a subset of DEMAND_SECTIONS' categories for Demand, Wastage,
 // and Closing Stock — everything else (Dairy, Cleaning, Gas included) stays Outlet
 // Manager-only. `null`/absent (owner, store_mgr, outlet_mgr) means unrestricted.
+// Cold Drink & Water is Bainmarry's (counter/service-side, same as Packaging) so its
+// closing stock actually gets punched daily via the routine draft flow — it used to sit
+// in the Outlet Manager-only gap and, in practice, almost never got filled in, leaving
+// the Cold Drink Audit's "today closing" figure permanently empty at most outlets.
 const CATEGORY_SCOPE = {
   chef: ["food", "vegetable", "masala", "grocery"],
-  bainmarry: ["packaging"],
+  bainmarry: ["packaging", "cold_drink"],
 };
 
 // Dairy / Cold Drink Purchase — a separate, structured purchase form from the freeform
@@ -10969,10 +10984,10 @@ const PackagingAuditPanel = () => {
 // aggregates meaningfully into one cross-outlet row. Sale lines that don't match any of
 // the 4 tracked items (Energy Drink, Coke Can, ...) are listed separately below the table
 // instead of silently vanishing from the audit.
-const ColdDrinkAuditSection = ({ dateStr }) => {
+const ColdDrinkAuditSection = ({ dateStr, lockedOutlet }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
 
   useEffect(() => {
     setLoading(true);
@@ -10991,11 +11006,11 @@ const ColdDrinkAuditSection = ({ dateStr }) => {
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>(Yesterday Closing + Today Purchase) − Today Closing = Consumed, checked against what was actually billed on {dateStr}.</p>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
-      </div>
+      </div>}
 
       {loading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
 
@@ -11044,6 +11059,137 @@ const ColdDrinkAuditSection = ({ dateStr }) => {
       )}
     </div>
   );
+};
+
+// ─── Daily Attendance — P&L "Attendance" pill. Hours worked per employee per
+// day, across all outlets/BK/Top Management, not just a leave/present flag.
+// OT = hours beyond the 11-hour standard shift. Anyone left at 0 hours is
+// recorded as on leave (status='leave') when saved, rather than left unmarked
+// — mirrors the same employee_attendance rows Monthly Payroll's "Leaves
+// Taken" reads, so a day logged here counts correctly there too.
+const DAILY_STANDARD_HOURS = 11;
+const DailyAttendanceSection = ({ dateStr }) => {
+  const [employees, setEmployees] = useState([]);
+  const [attendance, setAttendance] = useState({}); // employee_id -> attendance row
+  const [loading, setLoading] = useState(true);
+  const [deptFilter, setDeptFilter] = useState("all");
+  const [hoursDraft, setHoursDraft] = useState({}); // employee_id -> string being edited
+  const [busyId, setBusyId] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([api.getEmployees(), api.getAttendance({ date: dateStr })])
+      .then(([emps, att]) => {
+        setEmployees((emps || []).filter((e) => e.active));
+        const map = {};
+        (att || []).forEach((r) => { map[r.employee_id] = r; });
+        setAttendance(map);
+        setHoursDraft({});
+      })
+      .catch(() => { setEmployees([]); setAttendance({}); })
+      .finally(() => setLoading(false));
+  }, [dateStr]);
+  useEffect(load, [load]);
+
+  const saveHours = async (employeeId) => {
+    const val = hoursDraft[employeeId];
+    if (val === undefined) return;
+    const hours = Number(val) || 0;
+    setBusyId(employeeId);
+    try {
+      await api.markAttendance({ employee_id: employeeId, date: dateStr, status: hours > 0 ? "present" : "leave", hours_worked: hours });
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  const rows = employees.filter((e) => deptFilter === "all" || e.department === deptFilter);
+  const hoursFor = (id) => Number(attendance[id]?.hours_worked || 0);
+  const totalHours = rows.reduce((s, e) => s + hoursFor(e.id), 0);
+  const totalOT = rows.reduce((s, e) => s + Math.max(0, hoursFor(e.id) - DAILY_STANDARD_HOURS), 0);
+  const presentCount = rows.filter((e) => hoursFor(e.id) > 0).length;
+  const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>👥 Attendance</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Hours worked on {dateStr} — OT is hours beyond the {DAILY_STANDARD_HOURS}-hour standard shift. Anyone left at 0 hours is recorded on leave when saved.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      <button onClick={() => setDeptFilter("all")} style={pillStyle(deptFilter === "all")}>All</button>
+      {EMPLOYEE_DEPARTMENTS.map((d) => (
+        <button key={d.id} onClick={() => setDeptFilter(d.id)} style={pillStyle(deptFilter === d.id)}>{d.label}</button>
+      ))}
+    </div>
+
+    {!loading && rows.length > 0 && (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
+        <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{totalHours.toFixed(1)}</div>
+          <div style={{ fontSize: 9, color: "#999" }}>total hours</div>
+        </div>
+        <div style={{ background: "#FFFBEB", borderRadius: 10, border: "1px solid #FDE68A", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{totalOT.toFixed(1)}</div>
+          <div style={{ fontSize: 9, color: "#B45309" }}>OT hours</div>
+        </div>
+        <div style={{ background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", padding: 12, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#16A34A" }}>{presentCount}/{rows.length}</div>
+          <div style={{ fontSize: 9, color: "#16A34A" }}>present</div>
+        </div>
+      </div>
+    )}
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
+      <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No active employees{deptFilter !== "all" ? " in this department" : ""}</div>
+    ) : (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Employee</th>
+              <th style={thS}>Dept</th>
+              <th style={{ ...thS, textAlign: "right" }}>Hours Worked</th>
+              <th style={{ ...thS, textAlign: "right" }}>OT</th>
+              <th style={thS}>Status</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((e) => {
+                const existing = attendance[e.id];
+                const hoursVal = hoursDraft[e.id] !== undefined ? hoursDraft[e.id] : String(existing?.hours_worked ?? "");
+                const hoursChanged = hoursDraft[e.id] !== undefined && Number(hoursDraft[e.id] || 0) !== hoursFor(e.id);
+                const ot = Math.max(0, (Number(hoursVal) || 0) - DAILY_STANDARD_HOURS);
+                const isPresent = existing?.status === "present";
+                const isLeave = existing?.status === "leave";
+                return (
+                  <tr key={e.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={tdS}>
+                      <div style={{ fontWeight: 700 }}>{e.name}</div>
+                      <div style={{ fontSize: 9, color: "#999" }}>{e.designation}</div>
+                    </td>
+                    <td style={tdS}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === e.department)?.label || e.department}</td>
+                    <td style={{ ...tdS, textAlign: "right" }}>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <input type="number" inputMode="decimal" value={hoursVal} onChange={(ev) => setHoursDraft((p) => ({ ...p, [e.id]: ev.target.value }))}
+                          style={{ width: 56, padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                        {hoursChanged && <button onClick={() => saveHours(e.id)} disabled={busyId === e.id} style={{ padding: "2px 6px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✓</button>}
+                      </div>
+                    </td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ot > 0 ? "#B45309" : "#999" }}>{ot.toFixed(1)}</td>
+                    <td style={tdS}>
+                      {isPresent ? <span style={{ color: "#16A34A", fontWeight: 700, fontSize: 10 }}>✅ Present</span>
+                        : isLeave ? <span style={{ color: "#DC2626", fontWeight: 700, fontSize: 10 }}>🏖️ Leave</span>
+                        : <span style={{ color: "#BBB", fontSize: 10 }}>— not marked</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </div>);
 };
 
 // ── Dairy Audit — same Sales × Recipe = Should Consume vs actual-consumed math as
