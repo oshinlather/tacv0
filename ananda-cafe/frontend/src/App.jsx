@@ -7756,18 +7756,17 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
                       })}
                     </tr>
                     {outletsWithItem.length > 0 && (
-                      <tr>
-                        <td colSpan={outletsWithData.length + 1} style={{ padding: "8px 10px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
-                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                            {outletsWithItem.map((o) => (
-                              <div key={o.id}>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>{o.short} — {r.name}</div>
-                                <CogsItemDetailBox item={dayEnrichedItems[o.id][r.id]} outletId={o.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
-                                  onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />
-                              </div>
-                            ))}
-                          </div>
-                        </td>
+                      <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={{ position: "sticky", left: 0, background: "#FAFAF8" }} />
+                        {outletsWithData.map((o, i) => {
+                          const oItem = dayEnrichedItems[o.id]?.[r.id];
+                          return (
+                            <td key={i} style={{ padding: "8px 5px", background: "#FAFAF8", verticalAlign: "top", minWidth: 250 }}>
+                              {oItem && <CogsItemDetailBox item={oItem} outletId={o.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
+                                onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />}
+                            </td>
+                          );
+                        })}
                       </tr>
                     )}
                   </Fragment>
