@@ -754,6 +754,99 @@ const EmployeeMasterPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  TEAM PANEL — the narrow slice of Employee Master that lives inside a
+//  manager's own dashboard (Outlet Manager, Store/BK Manager). Onboard staff
+//  and give advances only — no salary/bank editing, no attendance, no picking
+//  a department (the backend forces it to the manager's own outlet/BK scope,
+//  see routes/employees.js). AVP/Head Chef get the full EmployeeMasterPanel
+//  instead, wired into their scoped dashboard tabs.
+// ═════════════════════════════════════════════════════════════════════════════
+const TeamPanel = ({ onBack }) => {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesignation, setNewDesignation] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newJoiningDate, setNewJoiningDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [advanceId, setAdvanceId] = useState(null);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
+  const [advanceSaving, setAdvanceSaving] = useState(false);
+
+  const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
+
+  const addEmployee = async () => {
+    if (!newName || !newDesignation) { alert("Name and designation required"); return; }
+    setSaving(true);
+    try {
+      await api.createEmployee({ name: newName, designation: newDesignation, phone: newPhone || null, joining_date: newJoiningDate || null });
+      setNewName(""); setNewDesignation(""); setNewPhone(""); setNewJoiningDate(""); setShowAdd(false);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const openAdvance = (id) => { setAdvanceId(id); setAdvanceAmount(""); setAdvanceNote(""); };
+  const giveAdvance = async (id) => {
+    if (!advanceAmount || Number(advanceAmount) <= 0) { alert("Enter an amount"); return; }
+    setAdvanceSaving(true);
+    try {
+      await api.giveEmployeeAdvance(id, { amount: Number(advanceAmount), note: advanceNote || null });
+      setAdvanceId(null); setAdvanceAmount(""); setAdvanceNote("");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setAdvanceSaving(false); }
+  };
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      {onBack && <BackBtn onClick={onBack} />}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 15, fontWeight: 800 }}>👥 Team</div>
+        <div style={{ fontSize: 11, color: "#999" }}>Onboard staff & record advances</div>
+      </div>
+      <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
+    </div>
+
+    {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
+      <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
+      <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={inputStyle} />
+      <input type="tel" placeholder="Phone (optional)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
+      <input type="date" value={newJoiningDate} onChange={(e) => setNewJoiningDate(e.target.value)} style={inputStyle} />
+      <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Onboard Employee"}</button>
+    </div>}
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : employees.length === 0
+      ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
+      : employees.map((emp) => (
+        <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+          <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
+          {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
+
+          {advanceId === emp.id ? (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+              <input type="number" inputMode="numeric" placeholder="₹ amount" value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} autoFocus style={inputStyle} />
+              <input placeholder="Note (optional)" value={advanceNote} onChange={(e) => setAdvanceNote(e.target.value)} style={inputStyle} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => giveAdvance(emp.id)} disabled={advanceSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{advanceSaving ? "⏳..." : "✓ Save"}</button>
+                <button onClick={() => setAdvanceId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => openAdvance(emp.id)} style={{ width: "100%", marginTop: 10, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+          )}
+        </div>
+      ))}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  PAYTM RECONCILIATION — Monthly sheet with actuals vs reported
 // ═════════════════════════════════════════════════════════════════════════════
 // ═════════════════════════════════════════════════════════════════════════════
@@ -6780,10 +6873,298 @@ const LOG_CATEGORIES = [
 // unrecorded wastage, theft, or a closing-stock reporting error) rather than expected
 // variation. % is against each outlet's OWN effective sale, so outlets of different
 // sizes/volumes are still directly comparable.
+// Full per-item RM Audit detail (formula, should-consume-by-dish breakdown, and every
+// edit affordance P&L's own Variable Cost breakdown has) for exactly one outlet+item —
+// anchored above that outlet's % cell in COGS Compare's item-wise table instead of a
+// single-outlet page. `item` is already merged with should_consume/sc_breakdown by the
+// caller (same shape DailyPnL's stock_items use); `onSaved` re-triggers the caller's own
+// fetch after any write so the % table reflects it immediately.
+const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, onSaved }) => {
+  const [editItem, setEditItem] = useState(null); // { leg, recordType, value, reason } or null
+  const [editSaving, setEditSaving] = useState(false);
+  const [editMaster, setEditMaster] = useState(null); // { kind: 'price'|'conv', value, unit, demandUnit, currentValue }
+  const [masterSaving, setMasterSaving] = useState(false);
+  const [scEditing, setScEditing] = useState(false);
+  const [scEditValues, setScEditValues] = useState({});
+  const [scSaving, setScSaving] = useState(false);
+  const [newDishId, setNewDishId] = useState("");
+  const [newDishQty, setNewDishQty] = useState("");
+  const [newDishUnit, setNewDishUnit] = useState(item.unit === "Pcs" ? "Pcs" : "GM");
+  const [addDishSaving, setAddDishSaving] = useState(false);
+
+  const dishesAlreadyLinked = (ingredientName) => {
+    const key = (ingredientName || "").trim().toLowerCase();
+    return new Set(allDishes.filter((r) => (r.recipe_ingredients || []).some((ri) => (ri.raw_material || "").trim().toLowerCase() === key)).map((r) => r.id));
+  };
+
+  const saveQtyEdit = async () => {
+    if (!editItem) return;
+    const newQty = Number(editItem.value);
+    if (isNaN(newQty) || newQty < 0) { alert("Enter a valid quantity"); return; }
+    if (!editItem.reason) { alert("Please pick a reason for the change"); return; }
+    setEditSaving(true);
+    try {
+      await api.editItemQty(outletId, dateStr, item.item_id, newQty, editItem.reason, editItem.recordType);
+      setEditItem(null);
+      await onSaved();
+    } catch (e) { alert("Failed to save: " + e.message); }
+    finally { setEditSaving(false); }
+  };
+
+  const saveMasterEdit = async () => {
+    if (!editMaster) return;
+    const newVal = Number(editMaster.value);
+    if (isNaN(newVal) || newVal <= 0) { alert("Enter a valid number"); return; }
+    const msg = editMaster.kind === 'price'
+      ? `Update the master Rate Card price for "${item.name}" from ₹${editMaster.currentValue} to ₹${newVal} per ${editMaster.unit}?\n\nThis changes pricing for ALL outlets — past, present, and future P&L.`
+      : `Update the master unit conversion for "${item.name}" — 1 ${editMaster.demandUnit} = ${newVal} ${editMaster.unit} (was ${editMaster.currentValue} ${editMaster.unit}).\n\nThis changes conversions for ALL outlets — past, present, and future P&L.`;
+    if (!confirm(msg)) return;
+    setMasterSaving(true);
+    try {
+      if (editMaster.kind === 'price') await api.updateRate(item.item_id, { price: newVal });
+      else await api.updateConversion({ unit_type: editMaster.demandUnit, item_id: item.item_id, qty: newVal, base_unit: editMaster.unit, notes: `1 ${editMaster.demandUnit} = ${newVal} ${editMaster.unit}` });
+      setEditMaster(null);
+      await onSaved();
+    } catch (e) { alert("Failed to save: " + e.message); }
+    finally { setMasterSaving(false); }
+  };
+
+  const saveScEdits = async () => {
+    const breakdown = item.sc_breakdown || [];
+    const changed = breakdown.filter((b) => scEditValues[b.recipe_ingredient_id] !== undefined && Number(scEditValues[b.recipe_ingredient_id]) !== b.per_dish && String(scEditValues[b.recipe_ingredient_id]).trim() !== "");
+    if (changed.length === 0) { setScEditing(false); setScEditValues({}); return; }
+    if (!confirm(`Update the recipe qty for ${changed.length} dish(es)?\n\nThis changes each dish's own recipe — affects every future order, not just this date's P&L.`)) return;
+    setScSaving(true);
+    try {
+      for (const b of changed) await api.updateRecipeIngredient(b.recipe_ingredient_id, { qty: Number(scEditValues[b.recipe_ingredient_id]) });
+      setScEditing(false); setScEditValues({});
+      await onSaved();
+    } catch (e) { alert("Failed to save: " + e.message); }
+    finally { setScSaving(false); }
+  };
+
+  const addDishToIngredient = async (unit) => {
+    if (!newDishId) { alert("Pick a dish"); return; }
+    if (!newDishQty || Number(newDishQty) <= 0) { alert("Enter a qty"); return; }
+    setAddDishSaving(true);
+    try {
+      await api.addRecipeIngredient(newDishId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
+      setNewDishId(""); setNewDishQty("");
+      await onSaved();
+    } catch (e) { alert("Failed to save: " + e.message); }
+    finally { setAddDishSaving(false); }
+  };
+
+  const displayUnit = item.unit || '';
+  const displayRate = item.rate;
+  const hasConvEdit = item.conv_qty != null && item.conv_base_unit;
+  const scCost = item.should_consume != null ? item.should_consume * (displayRate || 0) : null;
+
+  if (editMaster) {
+    return (
+      <div style={{ padding: "8px 16px", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#1D4ED8", marginBottom: 6 }}>
+          {editMaster.kind === 'price' ? `💲 Edit Master Price — ${item.name}` : `🔄 Edit Master Conversion — ${item.name}`}
+        </div>
+        <div style={{ fontSize: 10, color: "#888", marginBottom: 6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+          {editMaster.kind === 'price'
+            ? `Current: ₹${editMaster.currentValue} per ${editMaster.unit} — changes the Rate Card for ALL outlets`
+            : `Current: 1 ${editMaster.demandUnit} = ${editMaster.currentValue} ${editMaster.unit} — changes the master conversion for ALL outlets`}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 10, color: "#999", minWidth: 70 }}>{editMaster.kind === 'price' ? 'New price:' : 'New qty:'}</span>
+          <input type="number" inputMode="decimal" step="any" autoFocus value={editMaster.value}
+            onChange={(e) => setEditMaster({ ...editMaster, value: e.target.value })}
+            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+          <span style={{ fontSize: 11, color: "#888" }}>{editMaster.kind === 'price' ? `/ ${editMaster.unit}` : editMaster.unit}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={saveMasterEdit} disabled={masterSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: masterSaving ? "#D0D0CC" : "#1D4ED8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: masterSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{masterSaving ? "⏳ Saving..." : "💾 Save (with confirm)"}</button>
+          <button onClick={() => setEditMaster(null)} disabled={masterSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (editItem) {
+    const LEGS = {
+      closing: { label: "Closing", recordType: "closing_stock", value: item.closing || 0, note: "Used = Prev closing + Dispatched − Wastage − Today closing, so correcting Closing below moves the Used/Cost figure." },
+      dispatched: { label: "Dispatched", recordType: "stock_dispatched", value: item.dispatched || 0, note: "Corrects the total dispatched from Base Kitchen this date — check against the actual challan." },
+      wastage: { label: "Wastage", recordType: "stock_wastage", value: item.wastage || 0, note: "Corrects today's recorded spoilage/disposal for this item." },
+    };
+    const leg = editItem.leg || "closing";
+    return (
+      <div style={{ padding: "8px 16px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>✏️ Edit {item.name}</div>
+        <div style={{ fontSize: 10, color: "#888", marginBottom: 6, lineHeight: 1.6, background: "#F5F5F3", padding: "6px 8px", borderRadius: 6 }}>
+          Prev closing: {item.prev_closing || 0} · Dispatched: {item.dispatched || 0} · Wastage: {item.wastage || 0} · Today closing: {item.closing || 0} → Used: {item.used || 0} {displayUnit}
+          <div style={{ marginTop: 4, color: "#B45309", fontWeight: 600 }}>{LEGS[leg].note}</div>
+        </div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+          {Object.entries(LEGS).map(([key, l]) => (
+            <button key={key} type="button" onClick={() => setEditItem({ ...editItem, leg: key, recordType: l.recordType, value: String(l.value) })}
+              style={{ flex: 1, padding: "5px 4px", borderRadius: 6, border: leg === key ? "1.5px solid #B45309" : "1px solid #E0E0DC", background: leg === key ? "#FEF3C7" : "#fff", fontSize: 10, fontWeight: 700, color: leg === key ? "#92400E" : "#888", cursor: "pointer", fontFamily: "inherit" }}>{l.label}</button>
+          ))}
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>Current {LEGS[leg].label}:</span>
+          <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{LEGS[leg].value} {displayUnit}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: "#999", minWidth: 90 }}>New {LEGS[leg].label}:</span>
+          <input type="number" inputMode="decimal" step="any" autoFocus value={editItem.value} onChange={(e) => setEditItem({ ...editItem, value: e.target.value })}
+            style={{ flex: 1, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+          <span style={{ fontSize: 11, color: "#888" }}>{displayUnit}</span>
+        </div>
+        <select value={editItem.reason} onChange={(e) => setEditItem({ ...editItem, reason: e.target.value })}
+          style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }}>
+          <option value="">-- Reason --</option>
+          <option value="unit_error">Unit error (kg vs g etc.)</option>
+          <option value="typo">Typo</option>
+          <option value="genuine_correction">Genuine correction</option>
+          <option value="other">Other</option>
+        </select>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={saveQtyEdit} disabled={editSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "none", background: editSaving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: editSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{editSaving ? "⏳ Saving..." : "💾 Save"}</button>
+          <button onClick={() => setEditItem(null)} disabled={editSaving} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "8px 16px 10px", background: "#FAFAF8", border: "1px solid #E8E8E4", borderRadius: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <span style={{ fontSize: 11, fontWeight: 700 }}>
+          {item.name} <span style={{ color: "#BBB", fontWeight: 500 }}>({item.used} {displayUnit} × ₹{displayRate})</span>
+          {scCost != null && (
+            <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: item.used_cost - scCost > 0 ? "#DC2626" : item.used_cost - scCost < 0 ? "#16A34A" : "#999" }}>
+              {" "}({Math.round(item.used_cost)}−{Math.round(scCost)}={Math.round(item.used_cost - scCost)})
+            </span>
+          )}
+        </span>
+        <div style={{ display: "flex", gap: 4 }}>
+          {!lockedOutlet && <button onClick={() => setEditItem({ value: String(item.closing || 0), reason: "", recordType: "closing_stock", leg: "closing" })}
+            title="Correct closing stock, dispatched, or wastage (this date only)"
+            style={{ padding: "2px 6px", border: "1px solid #E0E0DC", borderRadius: 5, background: "#FEF2F2", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#DC2626", fontWeight: 700 }}>✏️ Edit</button>}
+          {!lockedOutlet && item.has_rate_card && <button onClick={() => setEditMaster({ kind: 'price', value: String(displayRate), unit: displayUnit, currentValue: displayRate })}
+            title="Edit master Rate Card price (all outlets)"
+            style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>💲 Price</button>}
+          {!lockedOutlet && hasConvEdit && <button onClick={() => setEditMaster({ kind: 'conv', value: String(item.conv_qty), unit: item.conv_base_unit, demandUnit: item.demand_unit, currentValue: item.conv_qty })}
+            title="Edit master unit conversion (all outlets)"
+            style={{ padding: "2px 6px", border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#B45309", fontWeight: 700 }}>🔄 Conv</button>}
+        </div>
+      </div>
+      {(item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
+        <div style={{ fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'", marginBottom: 2 }}>
+          ({item.prev_closing || 0} + {item.dispatched || 0}) − {item.wastage || 0} − {item.closing || 0} = {item.used} {displayUnit}
+        </div>
+      )}
+      {item.should_consume != null && (
+        <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>
+          <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
+          {item.sc_variance_pct != null && (
+            <span style={{ fontWeight: 700, marginLeft: 6, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
+              {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
+            </span>
+          )}
+        </div>
+      )}
+      {item.should_consume != null && (item.sc_breakdown || []).length > 0 && (
+        <div style={{ marginTop: 4, paddingTop: 6, borderTop: "1px solid #E8E8E4" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5 }}>Should Consume — from dishes sold</span>
+            {!lockedOutlet && !scEditing && (
+              <button onClick={() => { setScEditing(true); setScEditValues(Object.fromEntries(item.sc_breakdown.filter((b) => b.recipe_ingredient_id).map((b) => [b.recipe_ingredient_id, String(b.per_dish)]))); }}
+                title="Edit this ingredient's qty across every dish that uses it"
+                style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>✏️ Edit qty per dish</button>
+            )}
+          </div>
+          {item.sc_breakdown.map((b, j) => (
+            <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0", display: "flex", alignItems: "center", gap: 4 }}>
+              <span>{b.qty_sold} × </span>
+              {scEditing && b.recipe_ingredient_id ? (
+                <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
+                  onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
+                  style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+              ) : <span>{b.per_dish}</span>}
+              <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
+              <span> = {b.subtotal}</span>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+            = {item.should_consume} {displayUnit}
+          </div>
+          {scEditing && (() => {
+            const linkedIds = dishesAlreadyLinked(item.name);
+            const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+            const rowUnit = item.sc_breakdown.find((b) => b.recipe_ingredient_unit)?.recipe_ingredient_unit || "GM";
+            return (<>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px dashed #E0E0DC" }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#B45309" }}>+ Add to a dish that doesn't use {item.name} yet:</span>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
+                <select value={newDishId} onChange={(e) => setNewDishId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                  <option value="">Pick dish...</option>
+                  {dishOptions.map((r) => <option key={r.id} value={r.id}>{r.item_name}</option>)}
+                </select>
+                <input type="number" inputMode="decimal" step="any" placeholder={`Qty (${rowUnit})`} value={newDishQty} onChange={(e) => setNewDishQty(e.target.value)}
+                  style={{ width: 90, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                <button onClick={() => addDishToIngredient(rowUnit)} disabled={addDishSaving}
+                  style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", color: "#B45309", fontSize: 11, fontWeight: 700, cursor: addDishSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{addDishSaving ? "⏳..." : "+ Add"}</button>
+              </div>
+            </>);
+          })()}
+          {scEditing && (
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+              <button onClick={saveScEdits} disabled={scSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: scSaving ? "#D0D0CC" : "#1D4ED8", color: "#fff", fontSize: 11, fontWeight: 700, cursor: scSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{scSaving ? "⏳ Saving..." : "💾 Save All"}</button>
+              <button onClick={() => { setScEditing(false); setScEditValues({}); setNewDishId(""); setNewDishQty(""); }} disabled={scSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            </div>
+          )}
+        </div>
+      )}
+      {item.should_consume == null && (
+        <div style={{ marginTop: 4 }}>
+          {!lockedOutlet && scEditing ? (() => {
+            const linkedIds = dishesAlreadyLinked(item.name);
+            const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+            return (
+              <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍽️ No dish uses {item.name} yet — link one:</div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                  <select value={newDishId} onChange={(e) => setNewDishId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                    <option value="">Pick dish...</option>
+                    {dishOptions.map((r) => <option key={r.id} value={r.id}>{r.item_name}</option>)}
+                  </select>
+                  <input type="number" inputMode="decimal" step="any" placeholder="Qty" value={newDishQty} onChange={(e) => setNewDishQty(e.target.value)}
+                    style={{ width: 70, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                  <select value={newDishUnit} onChange={(e) => setNewDishUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                    {["GM", "ML", "Kg", "Ltr", "Pcs"].map((u) => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                  <button onClick={() => addDishToIngredient(newDishUnit)} disabled={addDishSaving}
+                    style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: addDishSaving ? "#D0D0CC" : "#B45309", color: "#fff", fontSize: 11, fontWeight: 700, cursor: addDishSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{addDishSaving ? "⏳..." : "+ Add"}</button>
+                  <button onClick={() => { setScEditing(false); setNewDishId(""); setNewDishQty(""); }} disabled={addDishSaving}
+                    style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Done</button>
+                </div>
+              </div>
+            );
+          })() : !lockedOutlet && (
+            <button onClick={() => { setScEditing(true); setNewDishId(""); setNewDishQty(""); setNewDishUnit(displayUnit === "Pcs" ? "Pcs" : "GM"); }}
+              title="No dish recipe references this ingredient yet"
+              style={{ padding: "3px 8px", border: "1px solid #FDE68A", borderRadius: 5, background: "#FFFBEB", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#B45309", fontWeight: 700 }}>
+              🍽️ Not in any dish recipe — Add
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // syncDate: optional { selDay, selMonth } — when passed (e.g. embedded inside Daily
 // P&L's All Outlets view), this reuses that date instead of showing its own redundant
 // second date picker; the day/month pills below only render when it's omitted.
-const CogsCompare = ({ syncDate } = {}) => {
+const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   const [intSelDay, setIntSelDay] = useState(1); // 0=Today, 1=Yesterday (default), 2.. further back
   const [intSelMonth, setIntSelMonth] = useState(null); // non-null = month view instead of day pills
   const selDay = syncDate ? syncDate.selDay : intSelDay;
@@ -6791,6 +7172,19 @@ const CogsCompare = ({ syncDate } = {}) => {
   const [loading, setLoading] = useState(true);
   const [monthData, setMonthData] = useState(null);
   const [drillCat, setDrillCat] = useState(null);
+  // Full per-outlet ingredient detail (formula, should-consume breakdown, edit affordances)
+  // for the item-wise table — same RM Audit detail P&L shows, just anchored to a specific
+  // outlet's % cell instead of a single-outlet page. Only meaningful for a single day (the
+  // should-consume figure is a recipe × that day's sales calculation, not something that
+  // sums across a month into one editable number), so this stays empty in month view.
+  const [dayEnrichedItems, setDayEnrichedItems] = useState({}); // { [outlet_id]: { [item_id]: fullItem } }
+  const [expandedCell, setExpandedCell] = useState(null); // { itemId, outletId } or null
+  const [allDishes, setAllDishes] = useState([]);
+  useEffect(() => {
+    if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
+      api.getRecipes(true).then((r) => setAllDishes(r || [])).catch(() => setAllDishes([]));
+    }
+  }, [lockedOutlet]);
   // Which outlet column rows are sorted by — index into outletsWithData, so it applies
   // identically to categoryRows and itemRows (their .pcts arrays share that same order).
   // Defaults to the first outlet's % descending (biggest cost category first) — a more
@@ -6829,15 +7223,40 @@ const CogsCompare = ({ syncDate } = {}) => {
     return result;
   }, [selMonth]);
 
-  const fetchDates = useCallback((dates) => {
+  const fetchDates = useCallback((dates, isSingleDay) => {
     setLoading(true);
     Promise.all(dates.map((ds) =>
-      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null)])
-        .then(([pnl, stock]) => {
+      Promise.all([
+        api.getLivePnl(ds).catch(() => null),
+        api.getStockUsage(ds).catch(() => null),
+        // RM Audit's should-consume figure only makes sense for one specific day — skip
+        // it entirely in month view rather than fetching+discarding it 30 times over.
+        isSingleDay ? api.getRMAudit(ds).catch(() => null) : Promise.resolve(null),
+      ])
+        .then(([pnl, stock, audit]) => {
+          // Same should-consume merge DailyPnL uses, so the per-outlet detail box shown
+          // from this table matches P&L's own figures exactly.
+          const scByOutlet = {};
+          (audit?.outlets || []).forEach((o) => {
+            const bucket = scByOutlet[o.outlet_id] = scByOutlet[o.outlet_id] || {};
+            (o.items || []).forEach((it) => {
+              if (it.item_id == null || it.should_consume == null) return;
+              bucket[it.item_id] = { total: it.should_consume, breakdown: it.should_consume_breakdown || [] };
+            });
+          });
           if (pnl?.pnl && stock?.outlets) {
             pnl.pnl.forEach((p) => {
               const su = stock.outlets.find((s) => s.outlet_id === p.outlet_id);
-              if (su) p.stock_items = su.items;
+              if (su) {
+                const scMap = scByOutlet[p.outlet_id] || {};
+                p.stock_items = (su.items || []).map((it) => {
+                  const sc = scMap[it.item_id];
+                  if (sc == null) return it;
+                  const variance = Math.round((it.used - sc.total) * 1000) / 1000;
+                  const variancePct = sc.total > 0 ? Math.round((variance / sc.total) * 1000) / 10 : null;
+                  return { ...it, should_consume: Math.round(sc.total * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct, sc_breakdown: sc.breakdown };
+                });
+              }
             });
           }
           return pnl?.pnl || [];
@@ -6845,6 +7264,7 @@ const CogsCompare = ({ syncDate } = {}) => {
     )).then((results) => {
       const totals = {}; // outlet_id -> { effective_sale }
       const categoryTotals = {}; // outlet_id -> { catId -> { total, items: { item_id -> { name, unit, cost } } } }
+      const enriched = {}; // outlet_id -> { item_id -> full stock item }, single-day only
       results.forEach((pnl) => {
         pnl.forEach((p) => {
           if (p.outlet_id === "all") return;
@@ -6859,14 +7279,20 @@ const CogsCompare = ({ syncDate } = {}) => {
             if (!catMap[catId].items[item.item_id]) catMap[catId].items[item.item_id] = { name: item.name, unit: item.unit, cost: 0 };
             catMap[catId].items[item.item_id].cost += item.used_cost || 0;
           });
+          if (isSingleDay) {
+            if (!enriched[p.outlet_id]) enriched[p.outlet_id] = {};
+            (p.stock_items || []).forEach((item) => { enriched[p.outlet_id][item.item_id] = item; });
+          }
         });
       });
       setMonthData({ totals, categoryTotals });
+      setDayEnrichedItems(enriched);
     }).finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    fetchDates(selMonth ? monthDates : [istDateAgo(selDay)]);
+    setExpandedCell(null);
+    fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth);
   }, [selDay, selMonth, monthDates, fetchDates]);
 
   const outletsWithData = useMemo(() => {
@@ -7009,14 +7435,38 @@ const CogsCompare = ({ syncDate } = {}) => {
                     ))}
                   </tr>
                 ))}
-                {drillCat && sortedItemRows.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
-                    {r.pcts.map((v, i) => (
-                      <td key={i} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>{v != null ? `${v.toFixed(2)}%` : "—"}</td>
-                    ))}
-                  </tr>
-                ))}
+                {drillCat && sortedItemRows.map((r) => {
+                  const expandedInRow = expandedCell && expandedCell.itemId === r.id ? outletsWithData.find((o) => o.id === expandedCell.outletId) : null;
+                  const expandedItem = expandedInRow ? dayEnrichedItems[expandedInRow.id]?.[r.id] : null;
+                  return (
+                  <Fragment key={r.id}>
+                    {expandedInRow && expandedItem && (
+                      <tr>
+                        <td colSpan={outletsWithData.length + 1} style={{ padding: "8px 10px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>{expandedInRow.short} — {r.name}</div>
+                          <CogsItemDetailBox item={expandedItem} outletId={expandedInRow.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
+                            onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />
+                        </td>
+                      </tr>
+                    )}
+                    <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
+                      {outletsWithData.map((o, i) => {
+                        const v = r.pcts[i];
+                        const clickable = !selMonth && !!dayEnrichedItems[o.id]?.[r.id];
+                        const isOpen = expandedCell && expandedCell.itemId === r.id && expandedCell.outletId === o.id;
+                        return (
+                          <td key={i} onClick={clickable ? () => setExpandedCell(isOpen ? null : { itemId: r.id, outletId: o.id }) : undefined}
+                            title={clickable ? "Click for full RM audit detail" : undefined}
+                            style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: isOpen ? "#2563EB" : cellColor(v, r.pcts), cursor: clickable ? "pointer" : "default", textDecoration: clickable ? "underline dotted" : "none", textUnderlineOffset: 3 }}>
+                            {v != null ? `${v.toFixed(2)}%` : "—"}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  </Fragment>
+                  );
+                })}
                 {drillCat && itemRows.length === 0 && (
                   <tr><td colSpan={outletsWithData.length + 1} style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No {drillSection?.titleHi} consumption recorded this month</td></tr>
                 )}
@@ -7711,9 +8161,12 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
+
+  // ── TEAM — onboard staff for this outlet, give an advance ──
+  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} />;
 
   // ── DISPATCHED CHALLANS (outlet-side) — view + confirm receipt ──
   if (screen === "dispatched") {
@@ -8713,9 +9166,21 @@ const StoreMgr = ({ onBack }) => {
         </button>
       )}
 
+      {/* Team */}
+      <button onClick={() => setScreen("team")} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: "1.5px solid #DDD6FE", background: "linear-gradient(135deg, #F5F3FF, #FAF5FF)", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ fontSize: 34 }}>👥</div>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>Team</div>
+          <div style={{ fontSize: 12, color: "#888" }}>Onboard staff, give an advance</div>
+        </div>
+      </button>
+
       {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
     </div>
   );
+
+  // ── TEAM — onboard BK staff, give an advance ──
+  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} />;
 
   // ── ISSUANCE ──
   if (screen === "bk_demand") return (
@@ -8985,31 +9450,58 @@ const FourWeekComparison = ({ selDay, selOutlet }) => {
     const o = week.res.outlets?.find((x) => x.outlet_code === outletId);
     return o ? o.orders : 0;
   };
+  // Store Sales = Dine In + Pickup; Delivery = Swiggy/Zomato/other delivery partners —
+  // same split the backend already classifies orders into, just revenue instead of counts.
+  const getBreakdown = (week, outletId) => {
+    if (!week.res) return null;
+    const outlets = outletId ? week.res.outlets?.filter((x) => x.outlet_code === outletId) : week.res.outlets;
+    if (!outlets || outlets.length === 0) return null;
+    return outlets.reduce((acc, o) => ({
+      store: acc.store + (o.dine_in_revenue || 0) + (o.pickup_revenue || 0),
+      delivery: acc.delivery + (o.delivery_revenue || 0),
+    }), { store: 0, delivery: 0 });
+  };
   const delta = (cur, prev) => {
     if (cur == null || prev == null) return null; // one side's fetch failed
     if (prev === 0) return cur > 0 ? { pct: null, label: "🆕 New" } : null; // no baseline to compare
     const pct = ((cur - prev) / prev) * 100;
     return { pct, label: `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%` };
   };
+  const deltaColor = (d) => (d.pct == null ? "#2563EB" : d.pct >= 0 ? "#16A34A" : "#DC2626");
 
   const renderCell = (week, prevWeek, outletId, isTotal) => {
     const rev = getRevenue(week, outletId);
     const hasData = rev != null && rev > 0;
     const ord = hasData ? getOrders(week, outletId) : null;
-    const d = hasData && prevWeek ? delta(rev, getRevenue(prevWeek, outletId)) : null;
+    const revDelta = hasData && prevWeek ? delta(rev, getRevenue(prevWeek, outletId)) : null;
+    const ordDelta = hasData && prevWeek ? delta(ord, getOrders(prevWeek, outletId)) : null;
+    const brk = hasData ? getBreakdown(week, outletId) : null;
+    const prevBrk = hasData && prevWeek ? getBreakdown(prevWeek, outletId) : null;
+    const storeDelta = brk && prevBrk ? delta(brk.store, prevBrk.store) : null;
+    const deliveryDelta = brk && prevBrk ? delta(brk.delivery, prevBrk.delivery) : null;
     return (
       <td key={week.date} style={{ padding: "12px 14px", textAlign: "right", borderBottom: "1px solid #F0F0EC" }}>
         {!hasData ? (
           <span style={{ color: "#CCC" }}>–</span>
         ) : (
           <>
-            <div style={{ fontWeight: isTotal ? 800 : 600, fontFamily: "'JetBrains Mono', monospace", color: isTotal ? "#B45309" : "#333", fontSize: isTotal ? 14 : 13 }}>
-              {fmt(rev)}
+            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontWeight: isTotal ? 800 : 600, fontFamily: "'JetBrains Mono', monospace", color: isTotal ? "#B45309" : "#333", fontSize: isTotal ? 14 : 13 }}>
+                {fmt(rev)}
+              </span>
+              {revDelta && <span style={{ fontSize: 11, fontWeight: 700, color: deltaColor(revDelta), whiteSpace: "nowrap" }}>{revDelta.label}</span>}
             </div>
-            {ord != null && <div style={{ fontSize: 10, color: "#AAA", marginTop: 1 }}>{ord} orders</div>}
-            {d && (
-              <div style={{ fontSize: 11, fontWeight: 700, marginTop: 3, color: d.pct == null ? "#2563EB" : d.pct >= 0 ? "#16A34A" : "#DC2626" }}>
-                {d.label}
+            {brk && (brk.store > 0 || brk.delivery > 0) && (
+              <div style={{ fontSize: 10, color: "#AAA", marginTop: 2 }}>
+                ({fmt(brk.store)}{storeDelta && <span style={{ fontWeight: 700, color: deltaColor(storeDelta) }}> {storeDelta.label}</span>}
+                {" + "}
+                {fmt(brk.delivery)}{deliveryDelta && <span style={{ fontWeight: 700, color: deltaColor(deliveryDelta) }}> {deliveryDelta.label}</span>})
+              </div>
+            )}
+            {ord != null && (
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 6, marginTop: 3 }}>
+                <span style={{ fontSize: 10, color: "#AAA" }}>{ord} orders</span>
+                {ordDelta && <span style={{ fontSize: 10, fontWeight: 700, color: deltaColor(ordDelta), whiteSpace: "nowrap" }}>{ordDelta.label}</span>}
               </div>
             )}
           </>
@@ -11799,6 +12291,7 @@ const SCOPED_ROLE_TABS = {
     { id: "master", label: "🗂️ Master Data" },
     { id: "recipes", label: "📖 BK Recipes" },
     { id: "pp_recipes", label: "📖 Dish Recipes" },
+    { id: "employees", label: "👤 Employee Master" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
@@ -11807,10 +12300,12 @@ const SCOPED_ROLE_TABS = {
     { id: "master", label: "🗂️ Master Data" },
     { id: "recipes", label: "📖 BK Recipes" },
     { id: "pp_recipes", label: "📖 Dish Recipes" },
+    { id: "employees", label: "👤 Employee Master" },
   ],
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
+    { id: "team", label: "👥 Team" },
   ],
 };
 const SCOPED_ROLE_TITLES = { avp: "🧭 AVP Dashboard", head_chef: "🧑‍🍳 Head Chef Dashboard", bk_manager: "🏭 BK Manager Dashboard" };
@@ -11894,6 +12389,8 @@ const ScopedDashboard = () => {
       {tab === "pp_recipes" && <DishRecipesPanel />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
+      {tab === "employees" && <EmployeeMasterPanel />}
+      {tab === "team" && <TeamPanel />}
     </div>
   </div>);
 };

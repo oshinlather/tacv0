@@ -240,6 +240,8 @@ const api = {
   getAttendance: (params) => get("/api/employees/attendance", params),
   markAttendance: (data) => post("/api/employees/attendance", data),
   deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
+  giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
+  getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
 };
 
 // ── Helpers ──

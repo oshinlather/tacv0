@@ -2862,7 +2862,7 @@ router.get('/sales', async (req, res) => {
       itemMap[row.item_name].revenue += row.item_total;
 
       if (!outletMap[row.outlet_code]) {
-        outletMap[row.outlet_code] = { outlet_code: row.outlet_code, outlet_name: row.outlet, orders: new Set(), revenue: 0, dine_in: 0, delivery: 0, pickup: 0 };
+        outletMap[row.outlet_code] = { outlet_code: row.outlet_code, outlet_name: row.outlet, orders: new Set(), revenue: 0, dine_in: 0, delivery: 0, pickup: 0, dine_in_revenue: 0, delivery_revenue: 0, pickup_revenue: 0 };
       }
       outletMap[row.outlet_code].orders.add(row.invoice_no);
       totalOrders.add(row.invoice_no);
@@ -2876,12 +2876,15 @@ router.get('/sales', async (req, res) => {
       }
     });
 
+    // Store Sales (dine-in + pickup) vs Delivery (Swiggy/Zomato/other delivery partners) —
+    // same order_type classification as the existing dine_in/delivery/pickup order counts,
+    // just summing order_total instead of counting, so the split always matches the totals.
     Object.values(orderRevenue).forEach(order => {
       if (outletMap[order.outlet_code]) {
         outletMap[order.outlet_code].revenue += order.total;
-        if (order.order_type === 'Dine In') outletMap[order.outlet_code].dine_in++;
-        else if (order.order_type?.includes('Delivery')) outletMap[order.outlet_code].delivery++;
-        else if (order.order_type === 'Pick Up') outletMap[order.outlet_code].pickup++;
+        if (order.order_type === 'Dine In') { outletMap[order.outlet_code].dine_in++; outletMap[order.outlet_code].dine_in_revenue += order.total; }
+        else if (order.order_type?.includes('Delivery')) { outletMap[order.outlet_code].delivery++; outletMap[order.outlet_code].delivery_revenue += order.total; }
+        else if (order.order_type === 'Pick Up') { outletMap[order.outlet_code].pickup++; outletMap[order.outlet_code].pickup_revenue += order.total; }
       }
     });
 
