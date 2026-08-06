@@ -7461,7 +7461,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
       )}
       {item.should_consume != null && (
         <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>
-          <span style={{ color: "#999" }}>should consume <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
+          <span style={{ color: "#999" }}>S.C <span style={{ color: "#2563EB", fontWeight: 600 }}>{item.should_consume}</span> {displayUnit}</span>
           {item.sc_variance_pct != null && (
             <span style={{ fontWeight: 700, marginLeft: 6, color: item.sc_variance > 0 ? "#DC2626" : item.sc_variance < 0 ? "#16A34A" : "#999" }}>
               {item.sc_variance > 0 ? "+" : ""}{item.sc_variance} ({item.sc_variance_pct > 0 ? "+" : ""}{item.sc_variance_pct}%)
