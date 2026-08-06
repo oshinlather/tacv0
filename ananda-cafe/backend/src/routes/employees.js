@@ -100,9 +100,14 @@ router.post('/', async (req, res) => {
     const employee_code = `EMP${String(lastNum + 1).padStart(4, '0')}`;
 
     const insertRow = { name, designation, department: finalDepartment, employee_code };
-    const editable = isScoped ? SCOPED_EDIT_FIELDS.filter((f) => f !== 'name' && f !== 'designation') : FULL_EDIT_FIELDS.filter((f) => f !== 'name' && f !== 'designation' && f !== 'department');
-    editable.forEach((f) => { insertRow[f] = req.body[f] !== undefined && req.body[f] !== '' ? req.body[f] : null; });
-    if (!isScoped) insertRow.salary_type = req.body.salary_type || 'monthly';
+    // 'active' is deliberately excluded here (NOT NULL DEFAULT TRUE) — let the DB default
+    // apply rather than risk inserting an explicit NULL if the caller omits it.
+    const editable = isScoped
+      ? SCOPED_EDIT_FIELDS.filter((f) => f !== 'name' && f !== 'designation')
+      : FULL_EDIT_FIELDS.filter((f) => !['name', 'designation', 'department', 'active'].includes(f));
+    // Skip (rather than force-null) anything the caller left out, so NOT NULL DEFAULT
+    // columns like salary_type keep working without special-casing them here.
+    editable.forEach((f) => { if (req.body[f] !== undefined && req.body[f] !== '') insertRow[f] = req.body[f]; });
 
     const { data, error } = await supabase.from('employees').insert(insertRow).select('*').single();
     if (error) throw error;
