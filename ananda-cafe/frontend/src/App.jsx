@@ -7818,13 +7818,28 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
       </div>
       )}
 
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
+      {cogsView === "dairy" && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Dairy Audit.
+          </div>
+        ) : <DairyAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
+      )}
+      {cogsView === "cold_drink" && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Cold Drink Audit.
+          </div>
+        ) : <ColdDrinkAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
+      )}
 
-      {!loading && outletsWithData.length === 0 && (
+      {cogsView === "table" && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
+
+      {cogsView === "table" && !loading && outletsWithData.length === 0 && (
         <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {periodLabel}</div>
       )}
 
-      {!loading && outletsWithData.length > 0 && (
+      {cogsView === "table" && !loading && outletsWithData.length > 0 && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
           <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", display: "flex", alignItems: "center", gap: 10 }}>
             {drillCat ? (<>
