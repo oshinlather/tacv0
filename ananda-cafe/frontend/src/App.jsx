@@ -6902,6 +6902,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
   const [newDishQty, setNewDishQty] = useState("");
   const [newDishUnit, setNewDishUnit] = useState(item.unit === "Pcs" ? "Pcs" : "GM");
   const [addDishSaving, setAddDishSaving] = useState(false);
+  const [scOpen, setScOpen] = useState(false); // should-consume dish breakdown starts folded
 
   const dishesAlreadyLinked = (ingredientName) => {
     const key = (ingredientName || "").trim().toLowerCase();
@@ -7054,6 +7055,13 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
           {scCost != null && (
             <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: item.used_cost - scCost > 0 ? "#DC2626" : item.used_cost - scCost < 0 ? "#16A34A" : "#999" }}>
               {" "}({Math.round(item.used_cost)}−{Math.round(scCost)}={Math.round(item.used_cost - scCost)})
+              {(item.sc_breakdown || []).length > 0 && (
+                <span onClick={() => setScOpen(!scOpen)}
+                  title="Show should-consume breakdown by dish"
+                  style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: "50%", background: "#2563EB", color: "#fff", fontSize: 9, fontWeight: 900, marginLeft: 5, cursor: "pointer", verticalAlign: "middle" }}>
+                  {scOpen ? "▲" : "▼"}
+                </span>
+              )}
             </span>
           )}
         </span>
@@ -7084,7 +7092,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
           )}
         </div>
       )}
-      {item.should_consume != null && (item.sc_breakdown || []).length > 0 && (
+      {item.should_consume != null && scOpen && (item.sc_breakdown || []).length > 0 && (
         <div style={{ marginTop: 4, paddingTop: 6, borderTop: "1px solid #E8E8E4" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
             <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5 }}>Should Consume — from dishes sold</span>
