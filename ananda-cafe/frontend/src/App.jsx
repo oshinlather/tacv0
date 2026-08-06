@@ -2404,12 +2404,19 @@ const MissingPunches = ({ selOutlet }) => {
           {monthGridLoading ? (
             <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>
           ) : (
-            <div style={{ overflowX: "auto" }}>
+            // overflowX + overflowY together (not just overflowX) so this div is its own
+            // real scroll container — position:sticky can only stick relative to its
+            // nearest scrolling ancestor, and an overflowX-only wrapper doesn't count as
+            // one for the vertical axis, so the header row would just scroll away with the
+            // page instead of freezing. Bounding the height turns this into a proper
+            // frozen-header spreadsheet panel (top:0 here, not the page-nav-offset top:102
+            // used elsewhere, since it now sticks to itself, not the page).
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead><tr style={{ background: "#FAFAF8" }}>
-                  <th style={{ ...thS, position: "sticky", left: 0, top: 102, background: "#FAFAF8", zIndex: 4, minWidth: 190 }}>Outlet · Punch</th>
+                  <th style={{ ...thS, position: "sticky", left: 0, top: 0, background: "#FAFAF8", zIndex: 4, minWidth: 190 }}>Outlet · Punch</th>
                   {(monthDates || []).map((ds) => (
-                    <th key={ds} style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 3, textAlign: "center", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</th>
+                    <th key={ds} style={{ ...thS, position: "sticky", top: 0, background: "#FAFAF8", zIndex: 3, textAlign: "center", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</th>
                   ))}
                 </tr></thead>
                 <tbody>
