@@ -7748,8 +7748,12 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
                       <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
                       {outletsWithData.map((o, i) => {
                         const v = r.pcts[i];
+                        // Centered (not right-aligned like every other % cell) — this
+                        // column's width is dictated by the detail box row right below it,
+                        // so centering keeps the % visually tied to its box instead of
+                        // drifting to the far right of a now much-wider column.
                         return (
-                          <td key={i} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>
+                          <td key={i} style={{ ...tdS, textAlign: outletsWithItem.length > 0 ? "center" : "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>
                             {v != null ? `${v.toFixed(2)}%` : "—"}
                           </td>
                         );
