@@ -7200,7 +7200,6 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   // should-consume figure is a recipe × that day's sales calculation, not something that
   // sums across a month into one editable number), so this stays empty in month view.
   const [dayEnrichedItems, setDayEnrichedItems] = useState({}); // { [outlet_id]: { [item_id]: fullItem } }
-  const [expandedCell, setExpandedCell] = useState(null); // { itemId, outletId } or null
   const [allDishes, setAllDishes] = useState([]);
   useEffect(() => {
     if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
@@ -7458,34 +7457,38 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
                   </tr>
                 ))}
                 {drillCat && sortedItemRows.map((r) => {
-                  const expandedInRow = expandedCell && expandedCell.itemId === r.id ? outletsWithData.find((o) => o.id === expandedCell.outletId) : null;
-                  const expandedItem = expandedInRow ? dayEnrichedItems[expandedInRow.id]?.[r.id] : null;
+                  // Single-day view only — should-consume detail is a recipe × that day's
+                  // sales calculation, meaningless summed across a month (see dayEnrichedItems
+                  // comment above).
+                  const outletsWithItem = !selMonth ? outletsWithData.filter((o) => dayEnrichedItems[o.id]?.[r.id]) : [];
                   return (
                   <Fragment key={r.id}>
-                    {expandedInRow && expandedItem && (
-                      <tr>
-                        <td colSpan={outletsWithData.length + 1} style={{ padding: "8px 10px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
-                          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>{expandedInRow.short} — {r.name}</div>
-                          <CogsItemDetailBox item={expandedItem} outletId={expandedInRow.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
-                            onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />
-                        </td>
-                      </tr>
-                    )}
                     <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                       <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span></td>
                       {outletsWithData.map((o, i) => {
                         const v = r.pcts[i];
-                        const clickable = !selMonth && !!dayEnrichedItems[o.id]?.[r.id];
-                        const isOpen = expandedCell && expandedCell.itemId === r.id && expandedCell.outletId === o.id;
                         return (
-                          <td key={i} onClick={clickable ? () => setExpandedCell(isOpen ? null : { itemId: r.id, outletId: o.id }) : undefined}
-                            title={clickable ? "Click for full RM audit detail" : undefined}
-                            style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: isOpen ? "#2563EB" : cellColor(v, r.pcts), cursor: clickable ? "pointer" : "default", textDecoration: clickable ? "underline dotted" : "none", textUnderlineOffset: 3 }}>
+                          <td key={i} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>
                             {v != null ? `${v.toFixed(2)}%` : "—"}
                           </td>
                         );
                       })}
                     </tr>
+                    {outletsWithItem.length > 0 && (
+                      <tr>
+                        <td colSpan={outletsWithData.length + 1} style={{ padding: "8px 10px", background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {outletsWithItem.map((o) => (
+                              <div key={o.id}>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>{o.short} — {r.name}</div>
+                                <CogsItemDetailBox item={dayEnrichedItems[o.id][r.id]} outletId={o.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
+                                  onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />
+                              </div>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                   </Fragment>
                   );
                 })}
