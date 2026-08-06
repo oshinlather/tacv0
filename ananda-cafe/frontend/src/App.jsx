@@ -1105,7 +1105,9 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
     const key = cellKey(r.employee_id, field);
     const raw = Number(r[field] || 0);
     const draft = cellDraft[key] !== undefined ? cellDraft[key] : (decimals != null ? raw.toFixed(decimals) : String(raw));
-    const changed = cellDraft[key] !== undefined && cellDraft[key] !== "" && Number(cellDraft[key]) !== raw;
+    // "" is a valid, savable draft (clears the override back to auto-calculated — see
+    // PATCH /api/payroll/override) so it counts as changed too, not just a different number.
+    const changed = cellDraft[key] !== undefined && (cellDraft[key] === "" || Number(cellDraft[key]) !== raw);
     return { draft, changed, saving: savingCell === key, onChange: (e) => setCellDraft((p) => ({ ...p, [key]: e.target.value })), onSave: () => saveCell(r.employee_id, field) };
   };
 
