@@ -2309,7 +2309,6 @@ const PUNCH_TYPES = [
 const MissingPunches = ({ selOutlet }) => {
   const [selDay, setSelDay] = useState(0);
   const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for the 5 quick-day pills
-  const [monthDay, setMonthDay] = useState(null); // specific date picked within selMonth
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -2337,14 +2336,31 @@ const MissingPunches = ({ selOutlet }) => {
     return result;
   }, [selMonth]);
 
-  const date = selMonth ? (monthDay || (monthDates || [])[monthDates.length - 1] || today()) : istDateAgo(selDay);
+  const date = selMonth ? null : istDateAgo(selDay);
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    if (!date) return;
     setLoading(true);
     api.getPunchStatus(date).then((r) => setData(r)).catch(() => setData(null)).finally(() => setLoading(false));
   }, [date]);
+
+  // Month view — a spreadsheet-style grid (punch type rows × date columns) instead of the
+  // single-day pill list, so a whole month's punching discipline is visible at a glance
+  // instead of clicking through each day. Fetches every day in the month in parallel, same
+  // pattern CogsCompare uses for its own month view.
+  const [monthGrid, setMonthGrid] = useState({}); // { [date]: outlets[] }
+  const [monthGridLoading, setMonthGridLoading] = useState(false);
+  useEffect(() => {
+    if (!selMonth || !monthDates) return;
+    setMonthGridLoading(true);
+    Promise.all(monthDates.map((ds) => api.getPunchStatus(ds).then((r) => [ds, r?.outlets || null]).catch(() => [ds, null])))
+      .then((entries) => setMonthGrid(Object.fromEntries(entries)))
+      .finally(() => setMonthGridLoading(false));
+  }, [selMonth, monthDates]);
+
+  const gridOutletIds = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"].filter((id) => !selOutlet || id === selOutlet);
 
   const outlets = (data?.outlets || []).filter((o) => !selOutlet || o.outlet_id === selOutlet);
   const missingOutlets = outlets.filter((o) => o.missing.length > 0);
@@ -2374,59 +2390,102 @@ const MissingPunches = ({ selOutlet }) => {
           const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
           return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
         })}
-        <select value={selMonth || ""} onChange={(e) => { setSelMonth(e.target.value || null); setMonthDay(null); }}
+        <select value={selMonth || ""} onChange={(e) => setSelMonth(e.target.value || null)}
           style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
           <option value="">📅 Month view...</option>
           {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </select>
       </div>
-      {selMonth && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
-          {(monthDates || []).map((ds) => (
-            <button key={ds} onClick={() => setMonthDay(ds)} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12, fontWeight: date === ds ? 700 : 500, border: date === ds ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: date === ds ? "#1A1A1A" : "#fff", color: date === ds ? "#fff" : "#888", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</button>
-          ))}
-        </div>
-      )}
 
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>}
-      {!loading && !data && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load punch status</div>}
-
-      {!loading && data && missingOutlets.length === 0 && (
-        <div style={{ textAlign: "center", padding: 40 }}>
-          <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
-          <div style={{ color: "#16A34A", fontWeight: 700 }}>All punches done for {date}</div>
-        </div>
-      )}
-      {missingOutlets.length > 0 && (<>
-        <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText())}`, "_blank")}
-          style={{ width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
-          💬 Share Missing Punches on WhatsApp
-        </button>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {missingOutlets.map((o) => {
-            const oData = OUTLETS.find((x) => x.id === o.outlet_id);
-            return (
-              <div key={o.outlet_id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px" }}>
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{oData?.name || o.outlet_id}</div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {o.missing.map((m) => {
-                    const t = PUNCH_TYPES.find((p) => p.key === m);
+      {selMonth ? (
+        // Spreadsheet-style grid — one row per outlet's punch type, one column per date in
+        // the month, ✅/❌ per cell — instead of picking one day at a time.
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          {monthGridLoading ? (
+            <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 190 }}>Outlet · Punch</th>
+                  {(monthDates || []).map((ds) => (
+                    <th key={ds} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap" }}>{ds.slice(8, 10)}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {gridOutletIds.map((oid) => {
+                    const oData = OUTLETS.find((x) => x.id === oid);
                     return (
-                      <span key={m} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
-                        {t ? `${t.icon} ${t.label}` : m}
-                      </span>
+                      <Fragment key={oid}>
+                        <tr style={{ background: "#FAFAF8" }}>
+                          <td colSpan={(monthDates || []).length + 1} style={{ ...tdS, position: "sticky", left: 0, background: "#FAFAF8", fontWeight: 700 }}>{oData?.name || oid}</td>
+                        </tr>
+                        {PUNCH_TYPES.map((t) => (
+                          <tr key={t.key} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                            <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap", paddingLeft: 24 }}>{t.icon} {t.label}</td>
+                            {(monthDates || []).map((ds) => {
+                              const outletsForDay = monthGrid[ds];
+                              const missing = outletsForDay?.find((o) => o.outlet_id === oid)?.missing;
+                              const punched = missing ? !missing.includes(t.key) : null;
+                              return (
+                                <td key={ds} style={{ ...tdS, textAlign: "center" }}>
+                                  {punched == null ? <span style={{ color: "#DDD" }}>—</span>
+                                    : punched ? <span style={{ color: "#16A34A", fontWeight: 700 }}>✅</span>
+                                    : <span style={{ color: "#DC2626", fontWeight: 700 }}>❌</span>}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </Fragment>
                     );
                   })}
-                </div>
-              </div>
-            );
-          })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-        {doneOutlets.length > 0 && (
-          <div style={{ marginTop: 16, fontSize: 11, color: "#888" }}>
-            ✅ {doneOutlets.map((o) => OUTLETS.find((x) => x.id === o.outlet_id)?.short || o.outlet_id).join(", ")} — all punched
+      ) : (<>
+        {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Checking punches...</div>}
+        {!loading && !data && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load punch status</div>}
+
+        {!loading && data && missingOutlets.length === 0 && (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+            <div style={{ color: "#16A34A", fontWeight: 700 }}>All punches done for {date}</div>
           </div>
         )}
+        {missingOutlets.length > 0 && (<>
+          <button onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(waText())}`, "_blank")}
+            style={{ width: "100%", padding: "12px", borderRadius: 12, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>
+            💬 Share Missing Punches on WhatsApp
+          </button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {missingOutlets.map((o) => {
+              const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+              return (
+                <div key={o.outlet_id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{oData?.name || o.outlet_id}</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {o.missing.map((m) => {
+                      const t = PUNCH_TYPES.find((p) => p.key === m);
+                      return (
+                        <span key={m} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
+                          {t ? `${t.icon} ${t.label}` : m}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {doneOutlets.length > 0 && (
+            <div style={{ marginTop: 16, fontSize: 11, color: "#888" }}>
+              ✅ {doneOutlets.map((o) => OUTLETS.find((x) => x.id === o.outlet_id)?.short || o.outlet_id).join(", ")} — all punched
+            </div>
+          )}
+        </>)}
       </>)}
     </div>
   );
