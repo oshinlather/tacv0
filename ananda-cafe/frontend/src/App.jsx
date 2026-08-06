@@ -7815,17 +7815,23 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
               <div style={{ fontSize: 13, fontWeight: 700 }}>Category-wise · {periodLabel} · tap a row to see item-wise</div>
             )}
           </div>
-          <div style={{ overflowX: "auto" }}>
+          {/* overflowX + overflowY together (not just overflowX), with a bounded height,
+              so this div is its own real scroll container — position:sticky can only
+              stick relative to its nearest scrolling ancestor, and an overflowX-only
+              wrapper doesn't count as one for the vertical axis, so the header row would
+              just scroll away instead of freezing (see the same fix on Missing Punches'
+              grid). top:0 here because it sticks to this panel, not the page. */}
+          <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 170 }}>
+                <th style={{ ...thS, position: "sticky", left: 0, top: 0, background: "#FAFAF8", zIndex: 4, minWidth: 170 }}>
                   {drillCat ? "Item" : "Category"}
                   {!(sortIdx === 0 && sortDir === "desc") && (
                     <span onClick={() => { setSortIdx(0); setSortDir("desc"); }} title="Reset to default sort" style={{ marginLeft: 6, fontSize: 10, color: "#2563EB", cursor: "pointer", fontWeight: 700 }}>↺ reset</span>
                   )}
                 </th>
                 {outletsWithData.map((o, i) => (
-                  <th key={o.id} onClick={() => toggleSort(i)} title={`Sort by ${o.short}`} style={{ ...thS, textAlign: "right", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", color: sortIdx === i ? "#1A1A1A" : thS.color }}>
+                  <th key={o.id} onClick={() => toggleSort(i)} title={`Sort by ${o.short}`} style={{ ...thS, position: "sticky", top: 0, background: "#FAFAF8", zIndex: 3, textAlign: "center", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", color: sortIdx === i ? "#1A1A1A" : thS.color }}>
                     {o.short} <span style={{ fontSize: 9, color: sortIdx === i ? "#2563EB" : "#BBB" }}>{sortIdx === i ? (sortDir === "desc" ? "▼" : "▲") : "↕"}</span>
                   </th>
                 ))}
