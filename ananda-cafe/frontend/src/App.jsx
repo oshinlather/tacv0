@@ -2692,6 +2692,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           { key: "pnl", label: "💰 P&L" },
           { key: "cogs", label: "📊 COGS Compare" },
           { key: "compare", label: "📊 4-Week Comparison" },
+          { key: "dairy_audit", label: "🥛 Dairy Audit" },
+          // Cold Drink Audit has no per-outlet filter (backend tallies straight from
+          // daily_sales across ALL outlets in one table) — showing it to a locked
+          // franchise outlet would leak every other outlet's sales, so it's owner/staff
+          // only, same restriction RMAuditPanel already applies to this component.
+          ...(lockedOutlet ? [] : [{ key: "cold_drink_audit", label: "🥤 Cold Drink Audit" }]),
         ].map((t) => (
           <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888" }}>{t.label}</button>
         ))}
@@ -3384,6 +3390,20 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             Pick a single day (not month view) above to compare weekdays.
           </div>
         ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
+      )}
+      {pnlTab === "dairy_audit" && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Dairy Audit.
+          </div>
+        ) : <DairyAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
+      )}
+      {pnlTab === "cold_drink_audit" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Cold Drink Audit.
+          </div>
+        ) : <ColdDrinkAuditSection dateStr={dateStr} />
       )}
     </div>
   );
@@ -10967,6 +10987,106 @@ const ColdDrinkAuditSection = ({ dateStr }) => {
   );
 };
 
+// ── Dairy Audit — same Sales × Recipe = Should Consume vs actual-consumed math as
+// RMAuditPanel, filtered down to just the Dairy section's items (Butter, Cheese, Paneer,
+// Amul Cream, Dahi, Milk). Its own pill in the Daily P&L page so the owner can jump
+// straight to dairy leakage without wading through every other category first. Fetches
+// all outlets in one call (no outlet param) so switching the outlet pill below is
+// instant — no refetch — and reuses whichever single date the P&L page above is on.
+const DAIRY_ITEM_IDS = new Set(DEMAND_SECTIONS.find((s) => s.id === "dairy")?.items.map((i) => i.id) || []);
+
+const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
+  const [audit, setAudit] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
+  const [expandedItem, setExpandedItem] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getRMAudit(dateStr).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const outletData = audit?.outlets?.find((o) => o.outlet_id === selOutlet) || null;
+  const items = (outletData?.items || []).filter((it) => DAIRY_ITEM_IDS.has(it.item_id));
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🥛 Dairy Audit</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume, checked against actual consumption, for Butter/Cheese/Paneer/Amul Cream/Dahi/Milk on {dateStr}.</p>
+      </div>
+
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+      </div>}
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing audit...</div>}
+
+      {!loading && items.length === 0 && (
+        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No dairy consumption data for {outletName} on {dateStr}</div>
+      )}
+
+      {!loading && items.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Item</th>
+              <th style={thS}>Unit</th>
+              <th style={{ ...thS, textAlign: "right" }}>Should Consume</th>
+              <th style={{ ...thS, textAlign: "right" }}>Actual Consumed</th>
+              <th style={{ ...thS, textAlign: "right" }}>Leakage</th>
+            </tr></thead>
+            <tbody>
+              {items.map((item, i) => {
+                const hasActual = item.actual_consumed != null;
+                const isOver = hasActual && item.variance > 0;
+                const isOpen = expandedItem === item.raw_material;
+                const ab = item.actual_breakdown;
+                const hasSoldBreakdown = (item.should_consume_breakdown || []).length > 0;
+                return (<Fragment key={i}>
+                  <tr onClick={() => hasSoldBreakdown && setExpandedItem(isOpen ? null : item.raw_material)} style={{ borderBottom: "none", cursor: hasSoldBreakdown ? "pointer" : "default" }}>
+                    <td style={{ ...tdS, fontWeight: 600, paddingBottom: 2 }}>{item.raw_material} {hasSoldBreakdown && <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>}</td>
+                    <td style={{ ...tdS, color: "#888", paddingBottom: 2 }}>{item.unit}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB", paddingBottom: 2 }}>{Number(item.should_consume).toFixed(2)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", paddingBottom: 2 }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A", paddingBottom: 2 }}>
+                      {hasActual ? `${isOver ? "+" : ""}${Number(item.variance).toFixed(2)}${item.variance_pct != null ? ` (${isOver ? "+" : ""}${item.variance_pct}%)` : ""}` : "no closing stock data"}
+                    </td>
+                  </tr>
+                  <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td colSpan={5} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
+                      {ab
+                        ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
+                        : "no closing stock submitted — actual consumption can't be computed"}
+                    </td>
+                  </tr>
+                  {isOpen && (
+                    <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td colSpan={5} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
+                        {(item.should_consume_breakdown || []).map((b, j) => (
+                          <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
+                            {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+                          = {Number(item.should_consume).toFixed(2)} {item.unit}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>);
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  PETPOOJA RECIPES — from PetPooja recipe export
