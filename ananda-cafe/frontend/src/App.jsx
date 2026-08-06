@@ -2028,6 +2028,7 @@ const PaytmRecon = () => {
 const DailyPnL = ({ lockedOutlet } = {}) => {
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || null);
   const [selDay, setSelDay] = useState(1);
+  const [pnlTab, setPnlTab] = useState("pnl"); // pnl | cogs | compare — pill switch so each view is 1 click away, no scrolling
   const [pnlData, setPnlData] = useState(null);
   const [loading, setLoading] = useState(true);
   // Variable Cost is the useful-by-default view — that's where the leakage numbers live —
@@ -2422,11 +2423,21 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
       </div>}
 
-      {!selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        {[
+          { key: "pnl", label: "💰 P&L" },
+          { key: "cogs", label: "📊 COGS Compare" },
+          { key: "compare", label: "📊 4-Week Comparison" },
+        ].map((t) => (
+          <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888" }}>{t.label}</button>
+        ))}
+      </div>
 
-      {!selMonth && !loading && !currentData && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
+      {pnlTab === "pnl" && !selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
 
-      {!selMonth && !loading && currentData && (<>
+      {pnlTab === "pnl" && !selMonth && !loading && !currentData && <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>📊</div><div style={{ color: "#999" }}>No data for {dateStr}</div></div>}
+
+      {pnlTab === "pnl" && !selMonth && !loading && currentData && (<>
         {/* Stock data warnings */}
         {d.has_prev_closing === false && (
           <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>
@@ -2510,9 +2521,8 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
 
         {/* Detailed P&L Table — a single blended P&L across all outlets isn't that
             meaningful (the "ideal vs actual" comparison and per-item edits below only
-            make sense for one real outlet); for All Outlets, COGS Compare's per-outlet
-            category breakdown is the more useful view, so it's shown instead. */}
-        {!selOutlet && <CogsCompare syncDate={{ selDay, selMonth: null }} />}
+            make sense for one real outlet); for All Outlets, switch to the COGS Compare
+            pill above for the per-outlet category breakdown instead. */}
         {selOutlet && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
           {/* REVENUE — collapsed to just this one header line by default, with the
@@ -2934,7 +2944,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       </>)}
 
       {/* Month view — aggregates the same per-day P&L + stock-usage data across a whole month */}
-      {selMonth && (<>
+      {pnlTab === "pnl" && selMonth && (<>
         {monthLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing month...</div>}
         {!monthLoading && monthData && (() => {
           const md = (selOutlet ? monthData.totals[selOutlet] : monthData.totals['all']) || {};
@@ -3103,6 +3113,14 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </>);
         })()}
       </>)}
+      {pnlTab === "cogs" && <CogsCompare syncDate={{ selDay, selMonth }} />}
+      {pnlTab === "compare" && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above to compare weekdays.
+          </div>
+        ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
+      )}
     </div>
   );
 };
@@ -8409,9 +8427,21 @@ const OutletMgr = ({ onBack }) => {
 //  a recipe/audit mapping, so BK's own demand shows up correctly in Dispatch and RM
 //  Audit exactly like any outlet's does, gas included.
 // ═════════════════════════════════════════════════════════════════════════════
-const BK_DEMAND_SECTIONS = DEMAND_SECTIONS.filter((s) => s.id !== "food");
+// The "food" section mixes two different things: items BK actually PRODUCES via its own
+// recipe (Sambhar, Dosa Batter, chutneys...) — BK can't demand those from itself — and raw
+// commodities BK just receives from the store and stores/dispatches as-is (Roasted Chana,
+// Sona Masoori Rice, Boiled Rice, Upma Sooji — used as ingredients INSIDE those recipes, but
+// with no recipe of their own). The old blanket "drop the whole food section" filter dropped
+// both, silently leaving BK with no way to demand the raw commodities it genuinely needs from
+// the store. Same RECIPES-based distinction Inventory's isBkPrepared already uses. Computed
+// fresh (not a frozen module-level constant) so it reflects RECIPES once master data has
+// loaded, rather than whatever was in the hardcoded seed at first paint.
+const getBkDemandSections = () => DEMAND_SECTIONS
+  .map((s) => (s.id === "food" ? { ...s, items: s.items.filter((i) => !RECIPES[i.id]) } : s))
+  .filter((s) => s.items.length > 0);
 
 const BKDemandForm = () => {
+  const BK_DEMAND_SECTIONS = getBkDemandSections();
   const [draft, setDraft] = useState({});
   const [expSec, setExpSec] = useState(BK_DEMAND_SECTIONS[0].id);
   const [saving, setSaving] = useState(false);
@@ -12089,7 +12119,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "cogs_compare", label: "📊 COGS Compare" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
@@ -12181,7 +12211,6 @@ export default function AnandaCafe() {
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
-      {ownerTab === "cogs_compare" && <CogsCompare />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
       {ownerTab === "todo" && <OwnerTodos />}
