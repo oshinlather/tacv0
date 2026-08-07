@@ -3919,6 +3919,7 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
       { data: todayClosingDraft },
       { data: todayWastage },
       { data: todayOrders },
+      { data: confirmedTransfers },
     ] = await Promise.all([
       costingContext ? Promise.resolve(costingContext) : buildCostingContext(),
       // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
@@ -3939,6 +3940,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
       supabase.from('demands').select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date).eq('status', 'submitted'),
       // 5. Today dispatched
       supabase.from('demands').select('outlet_id, items, items_units, dispatch_items, status').eq('date', date),
+      // 6. Today's confirmed inter-outlet transfers — a pending (unconfirmed) transfer
+      // deliberately doesn't show up here at all, so it can't affect either outlet's
+      // numbers until the receiver has actually confirmed what arrived.
+      supabase.from('outlet_transfers').select('from_outlet_id, to_outlet_id, received_items').eq('date', date).eq('status', 'confirmed'),
     ]);
     const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
@@ -3979,11 +3984,35 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         });
       });
 
+      // Aggregate inter-outlet transfers — received_items (the receiver-confirmed actual
+      // qty) is the number both sides' math uses, so what leaves the sender exactly
+      // equals what enters the receiver by construction, same value read from both sides
+      // of the same row. No per-entry unit override like dispatch/wastage have (the
+      // Transfer form only offers each item's own demand unit), so unit is always null
+      // here and convFactorFor falls back to the item's default demand unit.
+      const transferOutEntries = {};
+      const transferInEntries = {};
+      confirmedTransfers.forEach(t => {
+        if (t.from_outlet_id === oid) {
+          Object.entries(t.received_items || {}).forEach(([id, qty]) => {
+            if (!transferOutEntries[id]) transferOutEntries[id] = [];
+            transferOutEntries[id].push({ qty: Number(qty) || 0, unit: null });
+          });
+        }
+        if (t.to_outlet_id === oid) {
+          Object.entries(t.received_items || {}).forEach(([id, qty]) => {
+            if (!transferInEntries[id]) transferInEntries[id] = [];
+            transferInEntries[id].push({ qty: Number(qty) || 0, unit: null });
+          });
+        }
+      });
+
       // All unique item IDs — normalize cs_ prefix to avoid duplicates
       // closing_stocks uses cs_butter, dispatched uses butter — both refer to same item
       const allIdsRaw = [
         ...Object.keys(prevItems), ...Object.keys(todayItems),
         ...Object.keys(wastageEntries), ...Object.keys(dispatchedEntries),
+        ...Object.keys(transferOutEntries), ...Object.keys(transferInEntries),
       ];
       // Normalize: strip cs_ prefix, deduplicate
       const allIds = new Set(allIdsRaw.map(id => id.startsWith('cs_') ? id.replace('cs_', '') : id));
@@ -4032,6 +4061,8 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         const closingQty = rawClosing * convFactorFor(itemId, rawClosingUnit, itemUnit);
         const wastageQty = (wastageEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
         const dispatchedQty = (dispatchedEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
+        const transferOutQty = (transferOutEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
+        const transferInQty = (transferInEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
 
         // Default demand unit's conversion — used only for display labeling (conv_qty /
         // conv_base_unit below), independent of which unit any specific entry actually used.
@@ -4041,7 +4072,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         const conv = convMap[itemId];
         const defaultFactor = convFactorFor(itemId, demandUnit, itemUnit);
 
-        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty;
+        // Transfer in/out slot in exactly like an extra dispatch leg — positive for the
+        // receiving outlet, negative for the sending one — so a confirmed transfer moves
+        // "used" between the two outlets' books without changing their combined total.
+        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty + transferInQty - transferOutQty;
         const usedQty = Math.max(0, openingQty - closingQty);
         const usedCost = usedQty * unitPrice;
 
@@ -4049,14 +4083,16 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         // unit), show the item's own unit rather than an unrelated conv-table base unit.
         const displayUnit = du === ru || defaultFactor === 1 ? itemUnit : (conv ? conv.baseUnit : itemUnit);
 
-        if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0) {
+        if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0 || transferInQty > 0 || transferOutQty > 0) {
           itemDetails.push({
             item_id: itemId, name: itemName, category: itemCategory,
             unit: displayUnit,
             demand_unit: demandUnit,
             prev_closing: Math.round(prevQty * 1000) / 1000, 
             wastage: Math.round(wastageQty * 1000) / 1000,
-            dispatched: Math.round(dispatchedQty * 1000) / 1000, 
+            dispatched: Math.round(dispatchedQty * 1000) / 1000,
+            transfer_in: Math.round(transferInQty * 1000) / 1000,
+            transfer_out: Math.round(transferOutQty * 1000) / 1000,
             closing: Math.round(closingQty * 1000) / 1000,
             used: Math.round(usedQty * 1000) / 1000,
             // Default demand unit's conversion factor — for display only; the actual costing

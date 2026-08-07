@@ -56,6 +56,12 @@ const api = {
     post(`/api/purchases/${purchaseId}/photos`, { base64, label }),
   getPurchaseSummary: (date) => get("/api/purchases/summary", { date }),
 
+  // ── Inter-Outlet Transfers ──
+  getTransfers: (params) => get("/api/transfers", params),
+  createTransfer: (data) => post("/api/transfers", data),
+  confirmTransfer: (id, data) => patch(`/api/transfers/${id}/confirm`, data),
+  cancelTransfer: (id) => patch(`/api/transfers/${id}/cancel`, {}),
+
   // ── P&L ──
   getPnl: (params) => get("/api/pnl", params),
   upsertPnl: (data) => post("/api/pnl", data),

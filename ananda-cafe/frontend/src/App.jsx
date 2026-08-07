@@ -3475,7 +3475,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                           </div>
                           {isStockBased && (item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
                             <div style={{ padding: "0 16px 4px 32px", fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'" }}>
-                              ({item.prev_closing || 0} + {item.dispatched || 0}) − {item.wastage || 0} − {item.closing || 0} = {displayQty} {displayUnit}
+                              ({item.prev_closing || 0} + {item.dispatched || 0}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {displayQty} {displayUnit}
                             </div>
                           )}
                           {/* RM Audit's theoretical (recipe × sales) consumption, folded in here so
@@ -7678,7 +7678,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
       </div>
       {(item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
         <div style={{ fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'", marginBottom: 2 }}>
-          ({item.prev_closing || 0} + {item.dispatched || 0}) − {item.wastage || 0} − {item.closing || 0} = {item.used} {displayUnit}
+          ({item.prev_closing || 0} + {item.dispatched || 0}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {item.used} {displayUnit}
         </div>
       )}
       {item.should_consume != null && (
@@ -8523,6 +8523,53 @@ const OutletMgr = ({ onBack }) => {
     finally { setReceiptSaving(false); }
   };
 
+  // Inter-outlet Transfer — "Send" (this outlet ships stock directly to another outlet,
+  // bypassing Base Kitchen) and "Incoming" (confirm what actually arrived from another
+  // outlet's transfer to us). Two-step, same shape as the dispatch/receive flow above —
+  // a transfer doesn't touch either outlet's audit numbers until confirmed here.
+  const [transferTab, setTransferTab] = useState("send");
+  const [transferSec, setTransferSec] = useState(null);
+  const [transferDraft, setTransferDraft] = useState({});
+  const [transferDest, setTransferDest] = useState(null);
+  const [transferNote, setTransferNote] = useState("");
+  const [transferSaving, setTransferSaving] = useState(false);
+  const [incomingTransfers, setIncomingTransfers] = useState([]);
+  const [incomingLoading, setIncomingLoading] = useState(false);
+  const [openIncomingTransfer, setOpenIncomingTransfer] = useState(null);
+  const [incomingReceivedDraft, setIncomingReceivedDraft] = useState({});
+  const [incomingConfirmSaving, setIncomingConfirmSaving] = useState(false);
+  const loadIncomingTransfers = useCallback(() => {
+    if (!outlet) return;
+    setIncomingLoading(true);
+    api.getTransfers({ outlet, status: "pending" })
+      .then((rows) => setIncomingTransfers((rows || []).filter((t) => t.to_outlet_id === outlet)))
+      .catch(() => setIncomingTransfers([]))
+      .finally(() => setIncomingLoading(false));
+  }, [outlet]);
+  useEffect(() => { if (screen === "transfer" && transferTab === "incoming") loadIncomingTransfers(); }, [screen, transferTab, loadIncomingTransfers]);
+  const sendTransfer = async () => {
+    if (!transferDest) { alert("Pick a destination outlet"); return; }
+    const items = Object.fromEntries(Object.entries(transferDraft).filter(([, v]) => v > 0));
+    if (Object.keys(items).length === 0) { alert("Enter qty for at least 1 item"); return; }
+    setTransferSaving(true);
+    try {
+      await api.createTransfer({ from_outlet_id: outlet, to_outlet_id: transferDest, date: selectedDate, items, note: transferNote || "" });
+      alert(`✅ Transfer sent to ${OWN_OUTLETS.find((o) => o.id === transferDest)?.name} — they'll confirm what arrived on their end.`);
+      setTransferDraft({}); setTransferNote(""); setTransferDest(null);
+      setScreen("home");
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setTransferSaving(false); }
+  };
+  const confirmIncomingTransfer = async (transfer) => {
+    setIncomingConfirmSaving(true);
+    try {
+      const received = { ...(transfer.sent_items || {}), ...incomingReceivedDraft };
+      await api.confirmTransfer(transfer.id, { received_items: received });
+      setOpenIncomingTransfer(null); setIncomingReceivedDraft({}); loadIncomingTransfers();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setIncomingConfirmSaving(false); }
+  };
+
   // What's still owed to this outlet from the last week — items demanded but never
   // dispatched at all (still sitting pending), plus items dispatched short of what was
   // asked (partial). Surfaced on Home so a manager sees it without having to remember to
@@ -8806,7 +8853,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -9116,6 +9163,118 @@ const OutletMgr = ({ onBack }) => {
     </div>
     </>)}
   </div>); }
+
+  if (screen === "transfer") {
+    if (openIncomingTransfer) {
+      const t = openIncomingTransfer;
+      const items = t.sent_items || {};
+      const fromName = OUTLETS.find((o) => o.id === t.from_outlet_id)?.name || t.from_outlet_id;
+      return (<div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <BackBtn onClick={() => { setOpenIncomingTransfer(null); setIncomingReceivedDraft({}); }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>🔁 From {fromName}</div>
+            <div style={{ fontSize: 11, color: "#999" }}>{t.date} · {Object.keys(items).length} items{t.note ? ` · "${t.note}"` : ""}</div>
+          </div>
+        </div>
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14 }}>Confirm what actually arrived — adjust any qty that's short before confirming.</div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          {Object.entries(items).map(([id, sentQty]) => {
+            const item = DEMAND_SECTIONS.flatMap((s) => s.items).find((i) => i.id === id);
+            return (
+              <div key={id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: "1px solid #F0F0EC" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{item?.name || id}</div>
+                  <div style={{ fontSize: 11, color: "#999" }}>Sent {sentQty} {item?.unit || ""}</div>
+                </div>
+                <input type="number" inputMode="decimal" value={incomingReceivedDraft[id] !== undefined ? incomingReceivedDraft[id] : sentQty}
+                  onChange={(e) => setIncomingReceivedDraft((p) => ({ ...p, [id]: Math.max(0, +e.target.value || 0) }))}
+                  style={{ width: 64, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 700 }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
+          <button onClick={() => confirmIncomingTransfer(t)} disabled={incomingConfirmSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: incomingConfirmSaving ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: incomingConfirmSaving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+            {incomingConfirmSaving ? "⏳ Saving..." : "✅ Confirm Received"}
+          </button>
+        </div>
+      </div>);
+    }
+
+    const ft = Object.values(transferDraft).filter((v) => v > 0).length;
+    const activeTSec = DEMAND_SECTIONS.find((s) => s.id === transferSec) || DEMAND_SECTIONS[0];
+    if (!transferSec || !DEMAND_SECTIONS.find((s) => s.id === transferSec)) setTransferSec(DEMAND_SECTIONS[0].id);
+    const transferItemRow = (item) => (<div key={item.id} style={{ marginBottom: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: transferDraft[item.id] > 0 ? "#FFF7ED" : "#FAFAF8" }}>
+        <span style={{ flex: 1, fontSize: 13 }}>{item.name}</span>
+        <input type="number" inputMode="numeric" min="0" placeholder="0" value={transferDraft[item.id] || ""}
+          onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setTransferDraft((p) => ({ ...p, [item.id]: v })); }}
+          style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${transferDraft[item.id] > 0 ? "#FED7AA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+        <span style={{ fontSize: 11, color: "#999", minWidth: 30 }}>{item.unit}</span>
+      </div>
+    </div>);
+
+    return (<div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <BackBtn onClick={() => setScreen("home")} />
+        <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🔁 Transfer to Outlet</div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        <button onClick={() => setTransferTab("send")} style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: transferTab === "send" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: transferTab === "send" ? "#1A1A1A" : "#fff", color: transferTab === "send" ? "#fff" : "#888" }}>📤 Send</button>
+        <button onClick={() => setTransferTab("incoming")} style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 13, fontWeight: 700, border: transferTab === "incoming" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: transferTab === "incoming" ? "#1A1A1A" : "#fff", color: transferTab === "incoming" ? "#fff" : "#888" }}>
+          📥 Incoming{incomingTransfers.length > 0 && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 4, background: transferTab === "incoming" ? "rgba(255,255,255,0.3)" : "#FEF2F2", color: transferTab === "incoming" ? "#fff" : "#DC2626", fontSize: 10, fontWeight: 800 }}>{incomingTransfers.length}</span>}
+        </button>
+      </div>
+
+      {transferTab === "send" ? (<>
+        <DatePicker value={selectedDate} onChange={setSelectedDate} />
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFF7ED", border: "1px solid #FED7AA", fontSize: 12, color: "#9A3412", marginBottom: 14 }}>⚠️ Only for stock physically leaving this outlet right now. Tracked for audit — the destination outlet must confirm what arrives.</div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#999", marginBottom: 6 }}>SEND TO</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {OWN_OUTLETS.filter((o) => o.id !== outlet).map((o) => (
+              <button key={o.id} onClick={() => setTransferDest(o.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: 700, border: transferDest === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: transferDest === o.id ? "#1A1A1A" : "#fff", color: transferDest === o.id ? "#fff" : "#888" }}>{o.name}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
+          {DEMAND_SECTIONS.map((sec) => { const fl = sec.items.filter((i) => transferDraft[i.id] > 0).length; return (
+            <button key={sec.id} onClick={() => setTransferSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (transferSec || DEMAND_SECTIONS[0].id) === sec.id ? 700 : 500, border: (transferSec || DEMAND_SECTIONS[0].id) === sec.id ? "none" : `1px solid ${sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (transferSec || DEMAND_SECTIONS[0].id) === sec.id ? sec.color : "#fff", color: (transferSec || DEMAND_SECTIONS[0].id) === sec.id ? "#fff" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+              <span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
+            </button>); })}
+        </div>
+        <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeTSec.border}`, overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: activeTSec.bg, borderBottom: `1px solid ${activeTSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>{activeTSec.emoji}</span><span style={{ fontSize: 14, fontWeight: 700 }}>{activeTSec.titleHi}</span><span style={{ fontSize: 11, color: "#999" }}>({activeTSec.items.length})</span>
+          </div>
+          <div style={{ padding: "6px 12px 12px" }}>{activeTSec.items.map(transferItemRow)}</div>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+          <input value={transferNote} onChange={(e) => setTransferNote(e.target.value)} placeholder="Reason (running short, emergency, etc.)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+          <button onClick={sendTransfer} disabled={ft === 0 || !transferDest || transferSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: ft > 0 && transferDest && !transferSaving ? "#B45309" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: ft > 0 && transferDest && !transferSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+            {transferSaving ? "⏳ Saving..." : `🔁 Send Transfer (${ft} items)`}
+          </button>
+        </div>
+      </>) : (<>
+        {incomingLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
+        {!incomingLoading && incomingTransfers.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Nothing pending — you're all caught up</div>}
+        {!incomingLoading && incomingTransfers.map((t) => {
+          const fromName = OUTLETS.find((o) => o.id === t.from_outlet_id)?.name || t.from_outlet_id;
+          const itemCount = Object.keys(t.sent_items || {}).length;
+          return (
+            <div key={t.id} onClick={() => { setOpenIncomingTransfer(t); setIncomingReceivedDraft({}); }} style={{ background: "#FFFBEB", borderRadius: 14, border: "1px solid #FDE68A", padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{fromName}</div>
+                <div style={{ fontSize: 12, color: "#999" }}>{t.date} · {itemCount} items{t.note ? ` · "${t.note}"` : ""}</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309" }}>⏳ Verify →</span>
+            </div>
+          );
+        })}
+      </>)}
+    </div>);
+  }
 
   if (screen === "manual" && !demandSlot && pickingMorningDate) {
     return (<div><SavingOverlay />
