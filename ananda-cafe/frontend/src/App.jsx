@@ -4293,6 +4293,16 @@ const BaseKitchen = () => {
   const [showAll, setShowAll] = useState(false);
   const [cycle, setCycle] = useState("all"); // all, morning, evening
   const [stockOutFilter, setStockOutFilter] = useState("bk");
+  // Staff Food/Dress requests — outlets submit these separately (staff_demands table,
+  // not the regular demands table BK_ITEMS/consolidated below reads from), so BK needs
+  // its own fetch to see them at all. Keyed off the same selDate as everything else here.
+  const [staffDemands, setStaffDemands] = useState([]);
+  const [staffMasterItems, setStaffMasterItems] = useState([]);
+  useEffect(() => {
+    Promise.all([api.getStaffDemands({ date: selDate }), api.getStaffDemandItems()])
+      .then(([sd, si]) => { setStaffDemands(sd || []); setStaffMasterItems(si || []); })
+      .catch(() => { setStaffDemands([]); setStaffMasterItems([]); });
+  }, [selDate]);
   const load = useCallback(() => {
     setLoading(true);
     // Load today's orders AND previous day's orders (for night demands)
@@ -4369,6 +4379,20 @@ const BaseKitchen = () => {
   const stockOutItems = stockOutFilter === "bk" ? null : stockOutFilter === "all" ? allDirectItems : (directItems[stockOutFilter] || {});
   const hasRawReq = Object.keys(rawReq).length > 0;
 
+  const staffItemName = (id) => staffMasterItems.find((i) => i.id === id)?.name || id;
+  const staffItemUnit = (id) => staffMasterItems.find((i) => i.id === id)?.unit || "";
+  const foodDemands = staffDemands.filter((d) => d.category === "food");
+  const dressDemands = staffDemands.filter((d) => d.category === "dress");
+  const staffFoodConsolidated = {}; // item id -> { total, by: { outlet_id: qty } }
+  foodDemands.forEach((d) => {
+    (d.items || []).forEach(({ item, qty }) => {
+      if (!staffFoodConsolidated[item]) staffFoodConsolidated[item] = { total: 0, by: {} };
+      staffFoodConsolidated[item].total += Number(qty) || 0;
+      staffFoodConsolidated[item].by[d.outlet_id] = (staffFoodConsolidated[item].by[d.outlet_id] || 0) + (Number(qty) || 0);
+    });
+  });
+  const hasStaffFood = Object.keys(staffFoodConsolidated).length > 0;
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   return (
     <div id="print-kitchen">
@@ -4402,6 +4426,47 @@ const BaseKitchen = () => {
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
         <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"}</td>)}</tr>); })}</tbody></table></div>
       </div>
+
+      {/* Staff Food Requests — separate from the regular demand items above (different
+          table, submitted via Manual Entry's "Staff Food" pill), so BK needs its own
+          section to actually see what's been asked for. */}
+      {hasStaffFood && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", marginBottom: 20 }}>
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid #FDE68A", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>🍛</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: "#B45309" }}>Staff Food Requests</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FFFBEB" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FFFBEB", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
+              <tbody>{Object.entries(staffFoodConsolidated).map(([itemId, d]) => (
+                <tr key={itemId} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{staffItemName(itemId)} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{staffItemUnit(itemId)}</span></td>
+                  <td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>
+                  {OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"}</td>)}
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Staff Dress Requests — free-form (role + size), so shown as a simple list rather
+          than a consolidated quantity table. */}
+      {dressDemands.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #C4B5FD", marginBottom: 20 }}>
+          <div style={{ padding: "14px 18px", borderBottom: "1px solid #C4B5FD", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>👕</span>
+            <span style={{ fontWeight: 700, fontSize: 14, color: "#7C3AED" }}>Staff Dress Requests</span>
+          </div>
+          <div>{dressDemands.flatMap((d) => (d.items || []).map((it, idx) => (
+            <div key={`${d.id}_${idx}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+              <span style={{ fontWeight: 700, color: "#7C3AED", width: 60 }}>{findOutletForDisplay(d.outlet_id)?.short || d.outlet_id}</span>
+              <span style={{ flex: 1 }}>{it.role || "—"} · {it.size || "—"}</span>
+              <span style={{ fontSize: 11, color: "#999" }}>{d.submitted_by}</span>
+            </div>
+          )))}</div>
+        </div>
+      )}
 
     </div>
   );
@@ -8493,7 +8558,7 @@ const OutletMgr = ({ onBack }) => {
       .catch(() => { setDcExisting(null); setDcEditing(true); })
       .finally(() => setDcLoading(false));
   }, [screen, selectedDate, outlet]);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
   // moment the manager picks a date themselves, since selectedDate then stops matching.
@@ -8677,6 +8742,25 @@ const OutletMgr = ({ onBack }) => {
       </select>
     );
   };
+
+  // ── Staff Demand State ──
+  const [staffItems, setStaffItems] = useState([]); // master items from DB
+  const [staffFood, setStaffFood] = useState({}); // { roti: 10, sabji: 2 }
+  const [staffShift, setStaffShift] = useState(() => istHour() < 14 ? "am" : "pm");
+  const [staffDress, setStaffDress] = useState([]); // [{ item: "tshirt", role: "Chef", size: "XL" }]
+  const [staffSaving, setStaffSaving] = useState(false);
+  const [staffItemsLoaded, setStaffItemsLoaded] = useState(false);
+
+  // Load staff demand items from DB once
+  useEffect(() => {
+    if (!staffItemsLoaded) {
+      api.getStaffDemandItems().then(setStaffItems).catch(() => setStaffItems([]));
+      setStaffItemsLoaded(true);
+    }
+  }, [staffItemsLoaded]);
+
+  const staffFoodItems = staffItems.filter((i) => i.category === "food");
+  const staffDressItems = staffItems.filter((i) => i.category === "dress");
 
   const submit = async (type) => {
     if (type === "manual" && !demandSlot) { alert("Please select delivery slot (Morning or Evening)"); return; }
@@ -9375,15 +9459,18 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "manual" && demandSlot) {
     const ft = Object.values(draft).filter((v) => v > 0).length;
-    const totalCount = ft;
-    // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas —
-    // Staff Food/Dress stay Outlet Manager-only since they're not in any role's scope);
-    // everyone else sees everything. Cold Drink & Water is excluded here specifically —
-    // BK doesn't stock or dispatch it, the outlet buys it directly via Dairy/Cold Drink
-    // Purchase — but it still shows in Closing Stock and Wastage, which build their own
-    // section list separately.
+    const staffFoodCount = Object.values(staffFood).filter((v) => v > 0).length;
+    const totalCount = ft + staffFoodCount + staffDress.length;
+    const isStaffFood = expSec === "__staff_food";
+    const isStaffDress = expSec === "__staff_dress";
+    const isRegular = !isStaffFood && !isStaffDress;
+    // Chef/Bainmarry only ever see their own category subset (Dairy/Cleaning/Gas and
+    // Staff Food/Dress stay Outlet Manager-only); everyone else sees everything. Cold
+    // Drink & Water is excluded here specifically — BK doesn't stock or dispatch it, the
+    // outlet buys it directly via Dairy/Cold Drink Purchase — but it still shows in
+    // Closing Stock and Wastage, which build their own section list separately.
     const visibleSections = (roleCategoryScope ? DEMAND_SECTIONS.filter((s) => roleCategoryScope.includes(s.id)) : DEMAND_SECTIONS).filter((s) => s.id !== "cold_drink");
-    const activeSec = visibleSections.find((s) => s.id === expSec) || visibleSections[0];
+    const activeSec = isRegular ? (visibleSections.find((s) => s.id === expSec) || visibleSections[0]) : null;
     if (!expSec) setExpSec(visibleSections[0].id);
 
     // Items to hide from manual demand (redundant or not needed by outlets)
@@ -9411,6 +9498,40 @@ const OutletMgr = ({ onBack }) => {
       finally { setSaving(false); }
     };
 
+    const submitStaffFood = async () => {
+      if (staffFoodCount === 0) return;
+      setStaffSaving(true); setErr(null);
+      try {
+        const foodItems = Object.entries(staffFood).filter(([, q]) => q > 0).map(([item, qty]) => ({ item, qty }));
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: getCurrentUser()?.name || outlet });
+        alert(`✅ Staff food (${staffShift.toUpperCase()}) submitted — ${foodItems.length} items`);
+        setStaffFood({});
+      } catch (e) { setErr(e.message); }
+      finally { setStaffSaving(false); }
+    };
+
+    const submitStaffDress = async () => {
+      if (staffDress.length === 0) return;
+      setStaffSaving(true); setErr(null);
+      try {
+        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: null, category: "dress", items: staffDress, note, submitted_by: getCurrentUser()?.name || outlet });
+        alert(`✅ Dress request submitted — ${staffDress.length} items`);
+        setStaffDress([]);
+      } catch (e) { setErr(e.message); }
+      finally { setStaffSaving(false); }
+    };
+
+    const addDressRow = () => {
+      setStaffDress((p) => [...p, { item: "tshirt", role: "", size: "" }]);
+    };
+    const updateDress = (idx, field, val) => setStaffDress((p) => p.map((r, i) => i === idx ? { ...r, [field]: val } : r));
+    const removeDress = (idx) => setStaffDress((p) => p.filter((_, i) => i !== idx));
+
+    // Get dress item config from DB
+    const tshirtConfig = staffDressItems.find((d) => d.id === "tshirt");
+    const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
+    const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
+
     return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {viewingSubmitted && !isDraftRole ? (<>
@@ -9428,18 +9549,24 @@ const OutletMgr = ({ onBack }) => {
     {isDraftRole && existingRecord?.status === "submitted" && (
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized this slot's demand — showing what was submitted.</div>
     )}
-    {/* Category Pills — Staff Food/Dress now appear here like any other section, since
-        they're real demand_sections rows; still Outlet Manager-only because Chef/Bainmarry's
-        roleCategoryScope doesn't include "staff_food"/"dress". */}
+    {/* Category Pills — regular + staff */}
     <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4, position: "sticky", top: 0, background: "#FAF9F6", zIndex: 10, paddingTop: 4 }}>
       {visibleSections.map((sec) => { const fl = filterManualItems(sec.items).filter((i) => draft[i.id] > 0).length; const isSaved = savedSections[sec.id]; return (
         <button key={sec.id} onClick={() => setExpSec(sec.id)} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: (expSec || visibleSections[0].id) === sec.id ? 700 : 500, border: (expSec || visibleSections[0].id) === sec.id ? "none" : `1px solid ${isSaved ? "#BBF7D0" : sec.border}`, cursor: "pointer", fontFamily: "inherit", background: (expSec || visibleSections[0].id) === sec.id ? sec.color : isSaved ? "#F0FDF4" : "#fff", color: (expSec || visibleSections[0].id) === sec.id ? "#fff" : isSaved ? "#16A34A" : sec.color, whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
           {isSaved && <span style={{ fontSize: 10 }}>✅</span>}<span>{sec.emoji}</span>{sec.titleHi}{fl > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{fl}</span>}
         </button>);
       })}
+      {/* Staff Food/Dress stay Outlet Manager-only, not part of Chef/Bainmarry's scope */}
+      {!isDraftRole && <button onClick={() => setExpSec("__staff_food")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffFood ? 700 : 500, border: isStaffFood ? "none" : "1px solid #FED7AA", cursor: "pointer", fontFamily: "inherit", background: isStaffFood ? "#D97706" : "#fff", color: isStaffFood ? "#fff" : "#D97706", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>🍛</span>Staff Food{staffFoodCount > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffFoodCount}</span>}
+      </button>}
+      {!isDraftRole && <button onClick={() => setExpSec("__staff_dress")} style={{ padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: isStaffDress ? 700 : 500, border: isStaffDress ? "none" : "1px solid #C4B5FD", cursor: "pointer", fontFamily: "inherit", background: isStaffDress ? "#7C3AED" : "#fff", color: isStaffDress ? "#fff" : "#7C3AED", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+        <span>👕</span>Staff Dress{staffDress.length > 0 && <span style={{ padding: "1px 6px", borderRadius: 4, background: "rgba(255,255,255,0.3)", fontSize: 10, fontWeight: 800 }}>{staffDress.length}</span>}
+      </button>}
     </div>
 
-    {activeSec && (<>
+    {/* ── REGULAR DEMAND SECTIONS ── */}
+    {isRegular && activeSec && (<>
       <div style={{ background: "#fff", borderRadius: 14, border: `1px solid ${activeSec.border}`, overflow: "hidden", marginBottom: 12 }}>
         <div style={{ padding: "10px 16px", background: activeSec.bg, borderBottom: `1px solid ${activeSec.border}`, display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 18 }}>{activeSec.emoji}</span>
@@ -9469,6 +9596,98 @@ const OutletMgr = ({ onBack }) => {
         </div>
       </div>
     </>)}
+
+    {/* ── STAFF FOOD SECTION ── */}
+    {isStaffFood && (
+      <div>
+        {/* AM/PM shift pills */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          {["am", "pm"].map((s) => (
+            <button key={s} onClick={() => setStaffShift(s)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: staffShift === s ? "none" : "1px solid #FDE68A", background: staffShift === s ? "#D97706" : "#FFFBEB", color: staffShift === s ? "#fff" : "#B45309", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit", textTransform: "uppercase" }}>
+              {s === "am" ? "☀️ Morning" : "🌙 Evening"}
+            </button>
+          ))}
+        </div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#FFFBEB", borderBottom: "1px solid #FDE68A", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>🍛</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#B45309" }}>Staff Food — {staffShift === "am" ? "Morning" : "Evening"}</span>
+          </div>
+          <div style={{ padding: "10px 14px" }}>
+            {staffFoodItems.map((item) => (
+              <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px", borderRadius: 10, background: staffFood[item.id] > 0 ? "#FFFBEB" : "#FAFAF8", marginBottom: 4 }}>
+                <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>{item.name}</span>
+                <input type="number" inputMode="numeric" min="0" placeholder="0" value={staffFood[item.id] || ""}
+                  onChange={(e) => setStaffFood((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+                  style={{ width: 64, padding: "8px", borderRadius: 8, border: "1px solid #FDE68A", background: "#fff", fontSize: 16, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#B45309" }} />
+                <span style={{ fontSize: 11, color: "#999", width: 30 }}>{item.unit}</span>
+              </div>
+            ))}
+            {staffFoodItems.length === 0 && <div style={{ padding: 20, textAlign: "center", color: "#999", fontSize: 12 }}>No food items configured. Add via Master Data.</div>}
+          </div>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., extra roti for event)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+          <ErrBar />
+          <button onClick={submitStaffFood} disabled={staffFoodCount === 0 || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffFoodCount > 0 && !staffSaving ? "#D97706" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffFoodCount > 0 && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+            {staffSaving ? "⏳ Submitting..." : `🍛 Submit Staff Food — ${staffShift.toUpperCase()} (${staffFoodCount} items)`}
+          </button>
+        </div>
+      </div>
+    )}
+
+    {/* ── STAFF DRESS SECTION ── */}
+    {isStaffDress && (
+      <div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #C4B5FD", overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #C4B5FD", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 18 }}>👕</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#7C3AED" }}>Staff Dress Request</span>
+          </div>
+          <div style={{ padding: "10px 14px" }}>
+            {staffDress.length === 0 && (
+              <div style={{ padding: "20px", textAlign: "center", color: "#999", fontSize: 12 }}>No items added yet. Tap "+ Add T-Shirt" below.</div>
+            )}
+            {staffDress.map((row, idx) => (
+              <div key={idx} style={{ background: "#F5F3FF", borderRadius: 12, padding: "12px 14px", marginBottom: 8, border: "1px solid #DDD6FE" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#7C3AED" }}>👕 T-Shirt #{idx + 1}</span>
+                  <button onClick={() => removeDress(idx)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>✕</button>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Role</div>
+                    <select value={row.role} onChange={(e) => updateDress(idx, "role", e.target.value)}
+                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.role ? "#7C3AED" : "#999", cursor: "pointer" }}>
+                      <option value="">Select Role</option>
+                      {dressRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#888", fontWeight: 600, marginBottom: 4 }}>Size</div>
+                    <select value={row.size} onChange={(e) => updateDress(idx, "size", e.target.value)}
+                      style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #C4B5FD", fontSize: 13, fontFamily: "inherit", fontWeight: 600, background: "#fff", color: row.size ? "#7C3AED" : "#999", cursor: "pointer" }}>
+                      <option value="">Select Size</option>
+                      {dressSizes.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <button onClick={addDressRow} style={{ width: "100%", padding: "12px", borderRadius: 10, border: "2px dashed #C4B5FD", background: "transparent", fontSize: 13, fontWeight: 700, color: "#7C3AED", cursor: "pointer", fontFamily: "inherit" }}>
+              + Add T-Shirt
+            </button>
+          </div>
+        </div>
+        <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
+          <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Any note (e.g., urgent, replacing torn)..." style={{ width: "100%", padding: "12px 14px", borderRadius: 12, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", margin: "0 0 8px", boxSizing: "border-box" }} />
+          <ErrBar />
+          <button onClick={submitStaffDress} disabled={staffDress.length === 0 || staffDress.some((d) => !d.role || !d.size) || staffSaving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "#7C3AED" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: staffDress.length > 0 && !staffDress.some((d) => !d.role || !d.size) && !staffSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+            {staffSaving ? "⏳ Submitting..." : staffDress.some((d) => !d.role || !d.size) ? "👕 Select Role & Size for all" : `👕 Submit Dress Request (${staffDress.length} items)`}
+          </button>
+        </div>
+      </div>
+    )}
     </>)}
   </div>); }
 
