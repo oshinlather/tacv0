@@ -3165,7 +3165,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // outlet's numbers, DemandVsClosingSection just locks the outlet picker to it.
           { key: "demand_vs_closing", label: "📦 Demand vs Closing" },
         ].map((t) => (
-          <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
+          <button key={t.key} onClick={() => {
+            setPnlTab(t.key);
+            // Demand vs Closing defaults to Today, not the page's usual Yesterday default —
+            // it's about what to order right now, not yesterday's closed-out numbers.
+            if (t.key === "demand_vs_closing") { setSelDay(0); setSelMonth(null); }
+          }} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
       </div>
 
