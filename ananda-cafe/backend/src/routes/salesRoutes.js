@@ -1050,7 +1050,7 @@ async function computeRMAudit(date, outletFilter) {
         actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
         actual_breakdown: actualItem ? {
           prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
-          wastage: actualItem.wastage, closing: actualItem.closing,
+          purchased: actualItem.purchased, wastage: actualItem.wastage, closing: actualItem.closing,
         } : null,
         variance, variance_pct: variancePct,
       };
@@ -3920,6 +3920,7 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
       { data: todayWastage },
       { data: todayOrders },
       { data: confirmedTransfers },
+      { data: todayPurchases },
     ] = await Promise.all([
       costingContext ? Promise.resolve(costingContext) : buildCostingContext(),
       // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
@@ -3944,7 +3945,14 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
       // deliberately doesn't show up here at all, so it can't affect either outlet's
       // numbers until the receiver has actually confirmed what arrived.
       supabase.from('outlet_transfers').select('from_outlet_id, to_outlet_id, received_items').eq('date', date).eq('status', 'confirmed'),
+      // 7. Today's Dairy/Cold Drink Purchase — these items are never dispatched from Base
+      // Kitchen (outlets buy them directly), so without this the formula's only inbound
+      // leg is Dispatched, which is always 0 for them — "actual consumed" silently
+      // ignored every litre of milk/paneer/cold drink actually bought that day.
+      supabase.from('purchases').select('outlet_id, items').eq('date', date),
     ]);
+    const nameToItemId = {};
+    Object.entries(demandNameMap).forEach(([id, name]) => { nameToItemId[(name || '').trim().toLowerCase()] = id; });
     const dispatched = (todayOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
 
     // 6. Compute per outlet
@@ -4007,11 +4015,25 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         }
       });
 
+      // Aggregate Dairy/Cold Drink Purchase — a separate inbound leg alongside dispatch,
+      // matched by item name (purchases.items has no item_id) rather than the recipe/rate
+      // matching the rest of this file uses, since the purchase form's dropdown already
+      // guarantees an exact name match against demand_items.
+      const purchasedEntries = {};
+      (todayPurchases || []).filter(p => p.outlet_id === oid).forEach(p => {
+        (p.items || []).filter(i => i.type === 'dairy_purchase' || i.type === 'cold_drink_purchase').forEach(i => {
+          const id = nameToItemId[(i.item_name || '').trim().toLowerCase()];
+          if (!id) return;
+          if (!purchasedEntries[id]) purchasedEntries[id] = [];
+          purchasedEntries[id].push({ qty: Number(i.quantity) || 0, unit: i.unit || null });
+        });
+      });
+
       // All unique item IDs — normalize cs_ prefix to avoid duplicates
       // closing_stocks uses cs_butter, dispatched uses butter — both refer to same item
       const allIdsRaw = [
         ...Object.keys(prevItems), ...Object.keys(todayItems),
-        ...Object.keys(wastageEntries), ...Object.keys(dispatchedEntries),
+        ...Object.keys(wastageEntries), ...Object.keys(dispatchedEntries), ...Object.keys(purchasedEntries),
         ...Object.keys(transferOutEntries), ...Object.keys(transferInEntries),
       ];
       // Normalize: strip cs_ prefix, deduplicate
@@ -4063,6 +4085,7 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         const dispatchedQty = (dispatchedEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
         const transferOutQty = (transferOutEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
         const transferInQty = (transferInEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
+        const purchasedQty = (purchasedEntries[itemId] || []).reduce((s, e) => s + e.qty * convFactorFor(itemId, e.unit, itemUnit), 0);
 
         // Default demand unit's conversion — used only for display labeling (conv_qty /
         // conv_base_unit below), independent of which unit any specific entry actually used.
@@ -4075,7 +4098,9 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         // Transfer in/out slot in exactly like an extra dispatch leg — positive for the
         // receiving outlet, negative for the sending one — so a confirmed transfer moves
         // "used" between the two outlets' books without changing their combined total.
-        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty + transferInQty - transferOutQty;
+        // Purchased is a second inbound leg alongside Dispatched — the only one dairy/cold
+        // drink items ever have, since Base Kitchen never dispatches them.
+        const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty + purchasedQty + transferInQty - transferOutQty;
         const usedQty = Math.max(0, openingQty - closingQty);
         const usedCost = usedQty * unitPrice;
 
@@ -4083,14 +4108,15 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         // unit), show the item's own unit rather than an unrelated conv-table base unit.
         const displayUnit = du === ru || defaultFactor === 1 ? itemUnit : (conv ? conv.baseUnit : itemUnit);
 
-        if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0 || transferInQty > 0 || transferOutQty > 0) {
+        if (openingQty > 0 || closingQty > 0 || usedQty > 0 || dispatchedQty > 0 || purchasedQty > 0 || transferInQty > 0 || transferOutQty > 0) {
           itemDetails.push({
             item_id: itemId, name: itemName, category: itemCategory,
             unit: displayUnit,
             demand_unit: demandUnit,
-            prev_closing: Math.round(prevQty * 1000) / 1000, 
+            prev_closing: Math.round(prevQty * 1000) / 1000,
             wastage: Math.round(wastageQty * 1000) / 1000,
             dispatched: Math.round(dispatchedQty * 1000) / 1000,
+            purchased: Math.round(purchasedQty * 1000) / 1000,
             transfer_in: Math.round(transferInQty * 1000) / 1000,
             transfer_out: Math.round(transferOutQty * 1000) / 1000,
             closing: Math.round(closingQty * 1000) / 1000,
