@@ -11790,8 +11790,9 @@ const DailyAttendanceSection = ({ dateStr }) => {
     finally { setBusyId(null); }
   };
 
-  const rows = employees.filter((e) => deptFilter === "all" || e.department === deptFilter);
   const hoursFor = (id) => Number(attendance[id]?.hours_worked || 0);
+  const rows = employees.filter((e) => deptFilter === "all" || e.department === deptFilter)
+    .sort((a, b) => hoursFor(b.id) - hoursFor(a.id));
   const totalHours = rows.reduce((s, e) => s + hoursFor(e.id), 0);
   const totalOT = rows.reduce((s, e) => s + Math.max(0, hoursFor(e.id) - DAILY_STANDARD_HOURS), 0);
   const presentCount = rows.filter((e) => hoursFor(e.id) > 0).length;
