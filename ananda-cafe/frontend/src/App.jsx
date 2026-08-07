@@ -11996,11 +11996,40 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [catFilter, setCatFilter] = useState("all");
   const [closingYesterday, setClosingYesterday] = useState({});
+  const [closingToday, setClosingToday] = useState({});
   const [demandToday, setDemandToday] = useState({ morning: {}, evening: {} });
   const [lastWeekConsumed, setLastWeekConsumed] = useState({});
   const [lastWeekSales, setLastWeekSales] = useState(null); // { revenue, orders }
   const [todayConsumed, setTodayConsumed] = useState({});
+  const [todaySales, setTodaySales] = useState(null); // { revenue, orders }
   const [loading, setLoading] = useState(true);
+
+  // Closing stock is entered in whatever bulk unit the outlet actually orders in
+  // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
+  // 1 Tin = 15 Kg), same as the consumed-material formula behind the consumption
+  // columns already does, so every column is directly comparable.
+  const closingItemsToMap = (csRow) => {
+    const map = {};
+    Object.entries(csRow?.items || {}).forEach(([k, v]) => {
+      const itemId = k.replace(/^cs_/, "");
+      const item = DEMAND_ITEM_BY_ID[itemId];
+      const fromUnit = csRow.items_units?.[k] || csRow.items_units?.[itemId] || item?.unit;
+      const { qty } = convertToBase(Number(v) || 0, fromUnit, itemId, item?.name);
+      map[itemId] = (map[itemId] || 0) + qty;
+    });
+    return map;
+  };
+
+  // RM Audit already tracks, per ingredient, exactly which dishes sold that day pulled
+  // from it (should_consume_breakdown) — summing qty_sold across that breakdown gives
+  // "how many items sold actually used this" for free. Dividing actual_consumed by that
+  // count gives the REAL yield per item (as opposed to the recipe's theoretical per-dish
+  // figure), which is what actually catches portioning drift/leakage.
+  const consumedWithYield = (it) => {
+    const items = (it.should_consume_breakdown || []).reduce((s, b) => s + (Number(b.qty_sold) || 0), 0);
+    const yieldPerItem = it.actual_consumed != null && items > 0 ? it.actual_consumed / items : null;
+    return { actual: it.actual_consumed, items, yieldPerItem };
+  };
 
   const yesterdayStr = useMemo(() => shiftDateStr(dateStr, -1), [dateStr]);
   const lastWeekStr = useMemo(() => shiftDateStr(dateStr, -7), [dateStr]);
@@ -12010,26 +12039,15 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
     setLoading(true);
     Promise.all([
       api.getClosingStocks({ date: yesterdayStr, outlet_id: selOutlet }),
+      api.getClosingStocks({ date: dateStr, outlet_id: selOutlet }),
       api.getOrders({ date: dateStr, outlet_id: selOutlet }),
       api.getRMAudit(lastWeekStr),
       api.getSales({ date: lastWeekStr, outlet: selOutlet }).catch(() => null),
       api.getRMAudit(dateStr),
-    ]).then(([cs, orders, audit, sales, todayAudit]) => {
-      // Closing/demand are entered in whatever bulk unit the outlet actually orders in
-      // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
-      // 1 Tin = 15 Kg) before summing, same as the consumed-material formula behind "Last
-      // Wk Same Day Consumed" already does, so the four columns are directly comparable
-      // instead of mixing "1 Tin" against "13 Kg".
-      const csRow = (cs || [])[0];
-      const closingMap = {};
-      Object.entries(csRow?.items || {}).forEach(([k, v]) => {
-        const itemId = k.replace(/^cs_/, "");
-        const item = DEMAND_ITEM_BY_ID[itemId];
-        const fromUnit = csRow.items_units?.[k] || csRow.items_units?.[itemId] || item?.unit;
-        const { qty } = convertToBase(Number(v) || 0, fromUnit, itemId, item?.name);
-        closingMap[itemId] = (closingMap[itemId] || 0) + qty;
-      });
-      setClosingYesterday(closingMap);
+      api.getSales({ date: dateStr, outlet: selOutlet }).catch(() => null),
+    ]).then(([cs, csToday, orders, audit, sales, todayAudit, todaySalesRes]) => {
+      setClosingYesterday(closingItemsToMap((cs || [])[0]));
+      setClosingToday(closingItemsToMap((csToday || [])[0]));
 
       const morning = {}; const evening = {};
       (orders || []).filter((o) => o.type === "manual").forEach((o) => {
@@ -12045,17 +12063,21 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
 
       const outletAudit = audit?.outlets?.find((o) => o.outlet_id === selOutlet);
       const consumedMap = {};
-      (outletAudit?.items || []).forEach((it) => { consumedMap[it.item_id] = it.actual_consumed; });
+      (outletAudit?.items || []).forEach((it) => { consumedMap[it.item_id] = consumedWithYield(it); });
       setLastWeekConsumed(consumedMap);
 
       setLastWeekSales(sales ? { revenue: sales.total_revenue, orders: sales.total_orders } : null);
 
       const todayOutletAudit = todayAudit?.outlets?.find((o) => o.outlet_id === selOutlet);
       const todayConsumedMap = {};
-      (todayOutletAudit?.items || []).forEach((it) => { todayConsumedMap[it.item_id] = it.actual_consumed; });
+      (todayOutletAudit?.items || []).forEach((it) => { todayConsumedMap[it.item_id] = consumedWithYield(it); });
       setTodayConsumed(todayConsumedMap);
-    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); setLastWeekSales(null); setTodayConsumed({}); })
-      .finally(() => setLoading(false));
+
+      setTodaySales(todaySalesRes ? { revenue: todaySalesRes.total_revenue, orders: todaySalesRes.total_orders } : null);
+    }).catch(() => {
+      setClosingYesterday({}); setClosingToday({}); setDemandToday({ morning: {}, evening: {} });
+      setLastWeekConsumed({}); setLastWeekSales(null); setTodayConsumed({}); setTodaySales(null);
+    }).finally(() => setLoading(false));
   }, [dateStr, yesterdayStr, lastWeekStr, selOutlet]);
   useEffect(load, [load]);
 
@@ -12068,7 +12090,7 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
   return (<div>
     <div style={{ marginBottom: 16 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} closing · {dateStr} AM/PM demand.</p>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
     </div>
 
     {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
@@ -12100,11 +12122,14 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
               </th>
               <th style={{ ...thS, textAlign: "right" }}>
                 Today Consumption
-                <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>({dateStr})</div>
+                <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
+                  ({dateStr}{todaySales ? ` · ${fmt(todaySales.revenue)} · ${todaySales.orders} orders` : ""})
+                </div>
               </th>
               <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
               <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
               <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
+              <th style={{ ...thS, textAlign: "right" }}>{dateStr} Closing</th>
             </tr></thead>
             <tbody>
               {rows.map((item) => {
@@ -12113,11 +12138,22 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
                 <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
                   {catFilter === "all" && <td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.categoryLabel}</td>}
                   <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{baseUnit}</span></td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id])}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(todayConsumed[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                    <span style={{ fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id]?.actual)}</span>
+                    {lastWeekConsumed[item.id]?.items > 0 && (
+                      <div style={{ fontSize: 9, color: "#999", fontWeight: 500 }}>({lastWeekConsumed[item.id].items} items · {fmtNum(lastWeekConsumed[item.id].yieldPerItem)}/item)</div>
+                    )}
+                  </td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                    <span style={{ fontWeight: 700, color: "#16A34A" }}>{fmtNum(todayConsumed[item.id]?.actual)}</span>
+                    {todayConsumed[item.id]?.items > 0 && (
+                      <div style={{ fontSize: 9, color: "#999", fontWeight: 500 }}>({todayConsumed[item.id].items} items · {fmtNum(todayConsumed[item.id].yieldPerItem)}/item)</div>
+                    )}
+                  </td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtNum(closingYesterday[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.morning[item.id] > 0 ? "#B45309" : "#999" }}>{fmtNum(demandToday.morning[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.evening[item.id] > 0 ? "#2563EB" : "#999" }}>{fmtNum(demandToday.evening[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtNum(closingToday[item.id])}</td>
                 </tr>
                 );
               })}
