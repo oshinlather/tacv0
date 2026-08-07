@@ -8814,8 +8814,15 @@ const OutletMgr = ({ onBack }) => {
     Object.entries(conversions).forEach(([unitType, rows]) => { (rows || []).forEach((row) => { m[row.item_id] = { fromUnit: unitType, baseUnit: row.base_unit }; }); });
     return m;
   }, [conversions]);
-  const getUnitOptions = (itemId, defaultUnit) => {
+  // allowBatch=false forces Batch-unit items (Dosa Batter, Idli Batter) to their Kg
+  // conversion with no picker at all — Closing Stock and Wastage report actual weight on
+  // hand/thrown out, which managers were consistently measuring and typing in Kg anyway,
+  // so leaving "Batch" selectable there just invited a manager to leave the picker on
+  // Batch by mistake and silently inflate that figure ~9x. Demand still offers both,
+  // since BK genuinely dispatches whole batches.
+  const getUnitOptions = (itemId, defaultUnit, allowBatch = true) => {
     const conv = convMap[itemId];
+    if (!allowBatch && defaultUnit === "Batch" && conv?.baseUnit) return [conv.baseUnit];
     if (conv && conv.fromUnit === defaultUnit && conv.baseUnit && conv.baseUnit !== defaultUnit) return [defaultUnit, conv.baseUnit];
     return [defaultUnit];
   };
@@ -8831,9 +8838,17 @@ const OutletMgr = ({ onBack }) => {
   const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Ltr" };
   // Renders either a plain unit label (single unit) or a dropdown (item has an alternate
   // unit via unit_conversions, e.g. Desi Ghee: Tin or Kg)
-  const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState }) => {
-    const options = getUnitOptions(itemId, defaultUnit);
-    if (options.length < 2) return <span style={{ fontSize: 10, color: "#999", width: 28 }}>{defaultUnit}</span>;
+  const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState, allowBatch = true }) => {
+    const options = getUnitOptions(itemId, defaultUnit, allowBatch);
+    const forced = options.length === 1 ? options[0] : null;
+    // Batch forced to Kg with no picker shown — still record it into the same units
+    // state a manual pick would, so the submission tags this item's qty as Kg. Without
+    // this, a manager who never touched a (now-removed) dropdown would have their Kg
+    // figure silently read back as the item's default Batch unit on the backend.
+    useEffect(() => {
+      if (forced && forced !== defaultUnit && unitsState[itemId] !== forced) setUnitsState((p) => ({ ...p, [itemId]: forced }));
+    }, [forced, itemId, defaultUnit]);
+    if (options.length < 2) return <span style={{ fontSize: 10, color: "#999", width: 28 }}>{forced || defaultUnit}</span>;
     return (
       <select value={unitsState[itemId] || initialUnit || defaultUnit} onChange={(e) => setUnitsState((p) => ({ ...p, [itemId]: e.target.value }))}
         style={{ fontSize: 10, color: "#2563EB", width: 48, border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", padding: "2px 1px", fontFamily: "inherit", fontWeight: 600 }}>
@@ -9336,7 +9351,7 @@ const OutletMgr = ({ onBack }) => {
     const wastageQuery = itemSearch.trim().toLowerCase();
     const wastageSearchResults = wastageQuery ? wastageFilterItems(wastageSections.flatMap((s) => s.items)).filter((i) => i.name.toLowerCase().includes(wastageQuery)) : [];
     const wastageItemRow = (item) => (<div key={item.id} style={{ marginBottom: 3 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} allowBatch={false} /></div>
     </div>);
     return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
@@ -9867,7 +9882,7 @@ const OutletMgr = ({ onBack }) => {
       <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < arr.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
         <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-        <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} />
+        <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} allowBatch={false} />
       </div>); };
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
