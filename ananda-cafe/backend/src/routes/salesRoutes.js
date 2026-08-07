@@ -482,7 +482,7 @@ router.get('/audit/packaging', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager');
     if (!user) return;
     const { date } = req.params;
     const outlets = await computeRMAudit(date, scopedOutletFilter(user, req.query.outlet));
@@ -2934,7 +2934,7 @@ router.get('/orders/:id/challan', async (req, res) => {
 // Backend had /sales/:date but frontend expects /sales?date=...&outlet=...
 router.get('/sales', async (req, res) => {
   try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager');
     if (!user) return;
     const { date, from, to } = req.query;
     const outlet = scopedOutletFilter(user, req.query.outlet);

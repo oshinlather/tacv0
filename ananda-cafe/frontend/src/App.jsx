@@ -11992,7 +11992,14 @@ const shiftDateStr = (dateStr, days) => {
 };
 // id -> { id, name, unit, ... } across every demand item, for unit-conversion lookups
 const DEMAND_ITEM_BY_ID = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => [i.id, i])));
-const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
+// dateStr is optional — when this renders inside DailyPnL's pill system, the parent
+// always passes it and controls the day. Rendered standalone (AVP/Head Chef/BK Manager
+// scoped dashboards, which don't have a P&L page to nest inside), it manages its own
+// day picker instead, same pattern CogsCompare already uses for the same reason.
+const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
+  const standalone = propDateStr === undefined;
+  const [intSelDay, setIntSelDay] = useState(0); // 0 = Today, matching this pill's usual default
+  const dateStr = standalone ? istDateAgo(intSelDay) : propDateStr;
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [catFilter, setCatFilter] = useState("all");
   const [closingYesterday, setClosingYesterday] = useState({});
@@ -12093,6 +12100,15 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
     </div>
 
+    {standalone && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
+          return <button key={i} onClick={() => setIntSelDay(i)} style={pillStyle(intSelDay === i)}>{label}</button>;
+        })}
+      </div>
+    )}
+
     {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
       {OUTLETS.map((o) => (
         <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
@@ -12112,24 +12128,24 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              {catFilter === "all" && <th style={thS}>Category</th>}
-              <th style={thS}>Item</th>
-              <th style={{ ...thS, textAlign: "right" }}>
+              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Category</th>}
+              <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Item</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>
                 Last Wk Same Day Consumed
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right" }}>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>
                 Today Consumption
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({dateStr}{todaySales ? ` · ${fmt(todaySales.revenue)} · ${todaySales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
-              <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
-              <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
-              <th style={{ ...thS, textAlign: "right" }}>{dateStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>{yesterdayStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Today AM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Today PM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>{dateStr} Closing</th>
             </tr></thead>
             <tbody>
               {rows.map((item) => {
@@ -13860,6 +13876,7 @@ const SCOPED_ROLE_TABS = {
     { id: "pp_recipes", label: "📖 Dish Recipes" },
     { id: "employees", label: "👤 Employee Master" },
     { id: "payroll", label: "💰 Monthly Payroll" },
+    { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
   head_chef: [
     { id: "cogs_compare", label: "📊 COGS Compare" },
@@ -13870,11 +13887,13 @@ const SCOPED_ROLE_TABS = {
     { id: "pp_recipes", label: "📖 Dish Recipes" },
     { id: "employees", label: "👤 Employee Master" },
     { id: "payroll", label: "💰 Monthly Payroll" },
+    { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
     { id: "team", label: "👥 Team" },
+    { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
 };
 const SCOPED_ROLE_TITLES = { avp: "🧭 AVP Dashboard", head_chef: "🧑‍🍳 Head Chef Dashboard", bk_manager: "🏭 BK Manager Dashboard" };
@@ -13937,7 +13956,7 @@ const ScopedDashboard = () => {
         {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
-    <div style={{ maxWidth: tab === "payroll" || tab === "cogs_compare" ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
+    <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
       {["avp", "head_chef"].includes(currentUser?.role) && <MissingRecipesSummary />}
       {tab === "store" && storeView === "bk" && <BaseKitchen />}
       {tab === "store" && storeView === "dispatch" && <Dispatch />}
@@ -13962,6 +13981,7 @@ const ScopedDashboard = () => {
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "team" && <TeamPanel />}
+      {tab === "demand_vs_closing" && <DemandVsClosingSection />}
     </div>
   </div>);
 };
