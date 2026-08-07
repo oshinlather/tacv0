@@ -4344,6 +4344,19 @@ const BaseKitchen = () => {
       .then(([sd, si]) => { setStaffDemands(sd || []); setStaffMasterItems(si || []); })
       .catch(() => { setStaffDemands([]); setStaffMasterItems([]); });
   }, [selDate]);
+  // Each outlet's own closing stock for this same date, shown alongside demand in the
+  // Consolidated Demand table below — lets BK see at a glance whether an outlet already
+  // has stock on hand before dispatching more of it. Draft (not-yet-finalized) closing
+  // stock isn't counted, same "not reliable yet" rule every other closing-stock read in
+  // this app already follows.
+  const [closingStocksByOutlet, setClosingStocksByOutlet] = useState({});
+  useEffect(() => {
+    api.getClosingStocks({ date: selDate }).then((rows) => {
+      const byOutlet = {};
+      (rows || []).filter((r) => r.status === "submitted").forEach((r) => { byOutlet[r.outlet_id] = r.items || {}; });
+      setClosingStocksByOutlet(byOutlet);
+    }).catch(() => setClosingStocksByOutlet({}));
+  }, [selDate]);
   const load = useCallback(() => {
     setLoading(true);
     // Load today's orders AND previous day's orders (for night demands)
@@ -4465,7 +4478,7 @@ const BaseKitchen = () => {
           <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
-        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"}</td>)}</tr>); })}</tbody></table></div>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => { const csItems = closingStocksByOutlet[o.id]; const rawClosing = csItems?.[`cs_${bk.id}`] ?? csItems?.[bk.id]; const closingLabel = rawClosing != null && rawClosing !== "" ? Math.round(Number(rawClosing) * 100) / 100 : "NA"; return (<td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({closingLabel})</span></td>); })}</tr>); })}</tbody></table></div>
       </div>
 
       {/* Staff Food Requests — separate from the regular demand items above (different
