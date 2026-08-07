@@ -11975,6 +11975,8 @@ const shiftDateStr = (dateStr, days) => {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
+// id -> { id, name, unit, ... } across every demand item, for unit-conversion lookups
+const DEMAND_ITEM_BY_ID = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => [i.id, i])));
 const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [catFilter, setCatFilter] = useState("all");
@@ -11996,15 +11998,31 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
       api.getRMAudit(lastWeekStr),
       api.getSales({ date: lastWeekStr, outlet: selOutlet }).catch(() => null),
     ]).then(([cs, orders, audit, sales]) => {
+      // Closing/demand are entered in whatever bulk unit the outlet actually orders in
+      // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
+      // 1 Tin = 15 Kg) before summing, same as the consumed-material formula behind "Last
+      // Wk Same Day Consumed" already does, so the four columns are directly comparable
+      // instead of mixing "1 Tin" against "13 Kg".
       const csRow = (cs || [])[0];
       const closingMap = {};
-      Object.entries(csRow?.items || {}).forEach(([k, v]) => { closingMap[k.replace(/^cs_/, "")] = Number(v) || 0; });
+      Object.entries(csRow?.items || {}).forEach(([k, v]) => {
+        const itemId = k.replace(/^cs_/, "");
+        const item = DEMAND_ITEM_BY_ID[itemId];
+        const fromUnit = csRow.items_units?.[k] || csRow.items_units?.[itemId] || item?.unit;
+        const { qty } = convertToBase(Number(v) || 0, fromUnit, itemId, item?.name);
+        closingMap[itemId] = (closingMap[itemId] || 0) + qty;
+      });
       setClosingYesterday(closingMap);
 
       const morning = {}; const evening = {};
       (orders || []).filter((o) => o.type === "manual").forEach((o) => {
         const bucket = o.demand_slot === "evening" ? evening : morning;
-        Object.entries(o.items || {}).forEach(([id, qty]) => { bucket[id] = (bucket[id] || 0) + (Number(qty) || 0); });
+        Object.entries(o.items || {}).forEach(([id, qty]) => {
+          const item = DEMAND_ITEM_BY_ID[id];
+          const fromUnit = o.items_units?.[id] || item?.unit;
+          const { qty: converted } = convertToBase(Number(qty) || 0, fromUnit, id, item?.name);
+          bucket[id] = (bucket[id] || 0) + converted;
+        });
       });
       setDemandToday({ morning, evening });
 
@@ -12063,16 +12081,19 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
               </th>
             </tr></thead>
             <tbody>
-              {rows.map((item) => (
+              {rows.map((item) => {
+                const baseUnit = convertToBase(1, item.unit, item.id, item.name).unit || item.unit;
+                return (
                 <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                  <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{item.unit}</span></td>
+                  <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{baseUnit}</span></td>
                   {catFilter === "all" && <td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.categoryLabel}</td>}
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtNum(closingYesterday[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.morning[item.id] > 0 ? "#B45309" : "#999" }}>{fmtNum(demandToday.morning[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.evening[item.id] > 0 ? "#2563EB" : "#999" }}>{fmtNum(demandToday.evening[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id])}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
