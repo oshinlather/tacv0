@@ -4344,14 +4344,21 @@ const BaseKitchen = () => {
       .then(([sd, si]) => { setStaffDemands(sd || []); setStaffMasterItems(si || []); })
       .catch(() => { setStaffDemands([]); setStaffMasterItems([]); });
   }, [selDate]);
-  // Each outlet's own closing stock for this same date, shown alongside demand in the
-  // Consolidated Demand table below — lets BK see at a glance whether an outlet already
-  // has stock on hand before dispatching more of it. Draft (not-yet-finalized) closing
-  // stock isn't counted, same "not reliable yet" rule every other closing-stock read in
-  // this app already follows.
+  // Each outlet's own closing stock from the day BEFORE selDate — i.e. what's actually
+  // sitting there right now, before today's demand gets fulfilled — shown alongside
+  // demand in the Consolidated Demand table below so BK can see at a glance whether an
+  // outlet already has stock on hand before dispatching more of it. selDate's OWN closing
+  // stock doesn't exist yet at demand time (it's only submitted at the end of that same
+  // day), which is why this reads the prior day instead. Draft (not-yet-finalized)
+  // closing stock isn't counted, same "not reliable yet" rule every other closing-stock
+  // read in this app already follows.
   const [closingStocksByOutlet, setClosingStocksByOutlet] = useState({});
   useEffect(() => {
-    api.getClosingStocks({ date: selDate }).then((rows) => {
+    const [y, m, d] = selDate.split("-").map(Number);
+    const prevDate = new Date(Date.UTC(y, m - 1, d));
+    prevDate.setUTCDate(prevDate.getUTCDate() - 1);
+    const prevDateStr = prevDate.toISOString().split("T")[0];
+    api.getClosingStocks({ date: prevDateStr }).then((rows) => {
       const byOutlet = {};
       (rows || []).filter((r) => r.status === "submitted").forEach((r) => { byOutlet[r.outlet_id] = r.items || {}; });
       setClosingStocksByOutlet(byOutlet);
