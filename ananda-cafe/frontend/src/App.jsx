@@ -7920,9 +7920,15 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
     fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth);
   }, [selDay, selMonth, monthDates, fetchDates]);
 
-  const outletsWithData = useMemo(() => {
-    if (!monthData) return [];
-    return OUTLETS.filter((o) => (monthData.totals[o.id]?.effective_sale || 0) > 0);
+  // Every outlet always gets a column, in the same fixed order, even one sitting at ₹0
+  // effective sale (no PetPooja upload or manual entry yet that day) — its cells just
+  // show "—" via pctOf below. Outlets used to drop out of the table entirely on a day
+  // with no data, which silently shifted every other outlet one slot to the left instead
+  // of surfacing "this outlet is missing data today" the way a blank column does.
+  const outletsWithData = OUTLETS;
+  const hasAnyData = useMemo(() => {
+    if (!monthData) return false;
+    return OUTLETS.some((o) => (monthData.totals[o.id]?.effective_sale || 0) > 0);
   }, [monthData]);
 
   const pctOf = (outletId, cost) => {
@@ -8048,11 +8054,11 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
 
       {cogsView === "table" && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
 
-      {cogsView === "table" && !loading && outletsWithData.length === 0 && (
+      {cogsView === "table" && !loading && !hasAnyData && (
         <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {periodLabel}</div>
       )}
 
-      {cogsView === "table" && !loading && outletsWithData.length > 0 && (
+      {cogsView === "table" && !loading && hasAnyData && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
           <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", display: "flex", alignItems: "center", gap: 10 }}>
             {drillCat ? (<>
