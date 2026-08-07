@@ -2811,9 +2811,18 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
               const su = stock.outlets.find((s) => s.outlet_id === p.outlet_id);
               if (su) {
                 p.variable_cost = su.total_used_cost;
-                p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
-                p.net_profit = (p.effective_sale || 0) - p.total_expense;
                 p.stock_items = su.items; // per-item cost, carried through for the header/category-wise roll-up below
+                // Cold Drink & Water — same lump-actual-amount treatment as the daily fetch
+                // below (purchased directly, no rate-card price to compute it any other way).
+                if (p.cold_drink_purchase_total > 0) {
+                  p.stock_items = [...p.stock_items, {
+                    item_id: "cold_drink_purchase", name: "Cold Drink & Water", category: "Cold Drink",
+                    unit: "", used: null, used_cost: p.cold_drink_purchase_total, rate: null, has_rate_card: false,
+                  }];
+                  p.variable_cost += p.cold_drink_purchase_total;
+                }
+                p.total_expense = p.variable_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+                p.net_profit = (p.effective_sale || 0) - p.total_expense;
               }
             });
           }
@@ -2953,6 +2962,19 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
               const variancePct = sc.total > 0 ? Math.round((variance / sc.total) * 1000) / 10 : null;
               return { ...it, should_consume: Math.round(sc.total * 1000) / 1000, sc_variance: variance, sc_variance_pct: variancePct, sc_breakdown: sc.breakdown };
             });
+            // Cold Drink & Water is purchased directly, never dispatched from Base Kitchen
+            // (no rate-card price, no closing-stock row), so it can't come through the
+            // stock-usage endpoint above like every other category — it's carried as a
+            // lump actual-amount-paid figure instead, folded in here as its own category
+            // so it shows up in Material Cost "along with all the categories" rather than
+            // sitting invisibly inside the generic Purchases bucket.
+            if (p.cold_drink_purchase_total > 0) {
+              p.stock_items = [...p.stock_items, {
+                item_id: "cold_drink_purchase", name: "Cold Drink & Water", category: "Cold Drink",
+                unit: "", used: null, used_cost: p.cold_drink_purchase_total, rate: null, has_rate_card: false,
+              }];
+              p.variable_cost = (p.variable_cost || 0) + p.cold_drink_purchase_total;
+            }
             // Headline should-be-vs-actual: Ideal Material Cost (every dish sold today ×
             // its recipe, priced at rate card) against the FULL actual Material Cost (every
             // real punched-in gram, same variable_cost the rest of P&L already shows) — an
@@ -2964,7 +2986,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             p.should_consume_actual_cost = p.variable_cost;
             p.should_consume_variance = p.should_consume_cost != null ? p.should_consume_actual_cost - p.should_consume_cost : null;
             p.should_consume_variance_pct = p.should_consume_cost > 0 ? Math.round((p.should_consume_variance / p.should_consume_cost) * 1000) / 10 : null;
-            p.total_expense = su.total_used_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
+            p.total_expense = p.variable_cost + (p.daily_fixed_cost || 0) + (p.bk_share || 0) + (p.daily_purchases || 0);
             p.net_profit = (p.effective_sale || 0) - p.total_expense;
             p.margin = p.effective_sale > 0 ? Math.round(p.net_profit / p.effective_sale * 1000) / 10 : 0;
           }
@@ -3105,13 +3127,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
         {[
           { key: "pnl", label: "💰 P&L" },
-          // Dairy Audit and Cold Drink Audit live inside COGS Compare now (as sub-tabs,
-          // since they're the same kind of per-outlet leakage detail), not as separate
-          // top-level pills. COGS Compare's own cross-outlet table is hidden for a locked
-          // franchise view (no way to scope it to just one outlet without leaking every
-          // other outlet's cost %), but the pill itself stays — the two audits underneath
-          // are per-outlet and safe to show there.
-          { key: "cogs", label: "📊 COGS Compare" },
+          // COGS Compare (Category & Item table, plus its Dairy/Cold Drink Audit
+          // sub-tabs) is hidden entirely for a locked franchise view — the cross-outlet
+          // table has no way to scope to just one outlet, and Cold Drink cost is now
+          // visible to franchise anyway via P&L's own Material Cost breakdown below.
+          ...(lockedOutlet ? [] : [{ key: "cogs", label: "📊 COGS Compare" }]),
           { key: "compare", label: "📊 4-Week Comparison" },
           // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
           // don't punch through this system (they manage their own cash/stock), so this

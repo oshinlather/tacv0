@@ -3528,16 +3528,46 @@ router.get('/pnl/live/:date', async (req, res) => {
       const outletPurchases = (purchases || []).filter(p => p.outlet_id === oid);
       const dailyPurchaseTotal = outletPurchases.reduce((sum, p) => sum + Number(p.total_amount || 0), 0);
       let vendorPayments = 0, newPurchases = 0;
+      // Cold Drink & Water is purchased directly (never dispatched from Base Kitchen, no
+      // rate-card price to multiply a qty by), so there's no way to cost it the same way
+      // as every other Material Cost category — the actual amount paid today IS the cost.
+      // Pulled out of the generic Purchases bucket into its own Variable Cost category
+      // below instead, so it shows up "along with all the categories" there.
+      const coldDrinkItemTotals = {}; // item_name -> { qty, amount, unit }
       outletPurchases.forEach(p => {
         (p.items || []).forEach(i => {
           const amt = Number(i.amount) || 0;
-          if (i.type === 'vendor_payment') vendorPayments += amt; else newPurchases += amt;
+          if (i.type === 'vendor_payment') { vendorPayments += amt; return; }
+          if (i.type === 'cold_drink_purchase') {
+            const key = i.item_name || 'Cold Drink';
+            if (!coldDrinkItemTotals[key]) coldDrinkItemTotals[key] = { qty: 0, amount: 0, unit: i.unit || 'Pcs' };
+            coldDrinkItemTotals[key].qty += Number(i.quantity) || 0;
+            coldDrinkItemTotals[key].amount += amt;
+            return;
+          }
+          newPurchases += amt;
         });
       });
+      const coldDrinkPurchaseTotal = Object.values(coldDrinkItemTotals).reduce((s, v) => s + v.amount, 0);
+      if (coldDrinkPurchaseTotal > 0) {
+        totalVariableCost += coldDrinkPurchaseTotal;
+        variableByCategory['Cold Drink'] = (variableByCategory['Cold Drink'] || 0) + coldDrinkPurchaseTotal;
+        Object.entries(coldDrinkItemTotals).forEach(([name, v]) => {
+          itemBreakdown.push({
+            item_id: `cold_drink_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+            name, category: 'Cold Drink', qty: v.qty, unit: v.unit,
+            rate: v.qty > 0 ? Math.round(v.amount / v.qty * 100) / 100 : null,
+            cost: Math.round(v.amount * 100) / 100,
+          });
+        });
+      }
       // Purchases recorded before per-item breakdown existed (empty items array) still count
       // toward the total but can't be split — fold them into new_purchase so nothing goes missing.
-      const unsplit = dailyPurchaseTotal - (vendorPayments + newPurchases);
+      const unsplit = dailyPurchaseTotal - (vendorPayments + newPurchases + coldDrinkPurchaseTotal);
       if (unsplit > 0.5) newPurchases += unsplit;
+      // Now excludes Cold Drink's amount, which moved into Variable Cost above — without
+      // this, the same rupees would be counted twice in total_expense.
+      const purchasesExclColdDrink = Math.round((dailyPurchaseTotal - coldDrinkPurchaseTotal) * 100) / 100;
 
       // ── FIXED COSTS (daily = monthly / days in month) ──
       const outletFixed = (fixedCosts || []).filter(f => f.outlet_id === oid);
@@ -3556,7 +3586,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       const bkSharePerOutlet = Math.round(bkDailyFixed / outletIds.length);
 
       // ── TOTALS ──
-      const totalExpense = totalVariableCost + dailyFixedCost + bkSharePerOutlet + dailyPurchaseTotal;
+      const totalExpense = totalVariableCost + dailyFixedCost + bkSharePerOutlet + purchasesExclColdDrink;
       const netProfit = effectiveSale - totalExpense;
       const margin = effectiveSale > 0 ? (netProfit / effectiveSale * 100) : 0;
 
@@ -3576,13 +3606,14 @@ router.get('/pnl/live/:date', async (req, res) => {
         variable_cost: Math.round(totalVariableCost),
         variable_by_category: variableByCategory,
         item_breakdown: itemBreakdown,
+        cold_drink_purchase_total: Math.round(coldDrinkPurchaseTotal),
         // Fixed cost
         daily_fixed_cost: dailyFixedCost,
         bk_share: bkSharePerOutlet,
         fixed_breakdown: fixedBreakdown,
         monthly_fixed: monthlyFixed,
-        // Purchases
-        daily_purchases: dailyPurchaseTotal,
+        // Purchases — excludes Cold Drink, which is now counted in Variable Cost above.
+        daily_purchases: purchasesExclColdDrink,
         vendor_payments: Math.round(vendorPayments),
         new_purchases: Math.round(newPurchases),
         // Summary
