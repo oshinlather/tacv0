@@ -12011,6 +12011,27 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
   const [todaySales, setTodaySales] = useState(null); // { revenue, orders }
   const [loading, setLoading] = useState(true);
 
+  // Excel-style frozen panes: outlet pills, category pills, and the table header all
+  // stack as sticky bars below the page's own fixed title/tab bars (102px — same as
+  // every other sticky table in this app). Measured via ref rather than a hardcoded
+  // pixel guess, since these rows' heights aren't fixed (outlet pills disappear
+  // entirely for a locked/franchise view, category pills can wrap on a narrow screen).
+  const PAGE_CHROME_TOP = 102;
+  const outletBarRef = useRef(null);
+  const catBarRef = useRef(null);
+  const [outletBarH, setOutletBarH] = useState(0);
+  const [catBarH, setCatBarH] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      setOutletBarH(outletBarRef.current?.offsetHeight || 0);
+      setCatBarH(catBarRef.current?.offsetHeight || 0);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [lockedOutlet]);
+  const stickyBg = "#FAFAF8"; // matches PAGE's background — sticky bars need an opaque fill or scrolled rows show through
+
   // Closing stock is entered in whatever bulk unit the outlet actually orders in
   // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
   // 1 Tin = 15 Kg), same as the consumed-material formula behind the consumption
@@ -12109,12 +12130,14 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
       </div>
     )}
 
-    {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
-      {OUTLETS.map((o) => (
-        <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
-      ))}
-    </div>}
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+    {!lockedOutlet && (
+      <div ref={outletBarRef} style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: PAGE_CHROME_TOP, zIndex: 8, background: stickyBg }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
+        ))}
+      </div>
+    )}
+    <div ref={catBarRef} style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, position: "sticky", top: PAGE_CHROME_TOP + outletBarH, zIndex: 7, background: stickyBg }}>
       <button onClick={() => setCatFilter("all")} style={pillStyle(catFilter === "all")}>All</button>
       {DEMAND_SECTIONS.map((sec) => (
         <button key={sec.id} onClick={() => setCatFilter(sec.id)} style={pillStyle(catFilter === sec.id)}>{sec.emoji} {sec.titleHi}</button>
@@ -12126,26 +12149,26 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Category</th>}
-              <th style={{ ...thS, position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Item</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>
+              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Category</th>}
+              <th style={{ ...thS, position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Item</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>
                 Last Wk Same Day Consumed
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>
                 Today Consumption
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({dateStr}{todaySales ? ` · ${fmt(todaySales.revenue)} · ${todaySales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>{yesterdayStr} Closing</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Today AM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>Today PM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5 }}>{dateStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>{yesterdayStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Today AM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Today PM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>{dateStr} Closing</th>
             </tr></thead>
             <tbody>
               {rows.map((item) => {
