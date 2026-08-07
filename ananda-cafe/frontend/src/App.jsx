@@ -11958,9 +11958,15 @@ const DailyAttendanceSection = ({ dateStr }) => {
 // weekday last week — so a manager deciding today's quantities has the same numbers
 // in front of them instead of having to check three different screens.
 const shiftDateStr = (dateStr, days) => {
+  // Stay entirely in local-time getters/setters — mixing them with toISOString()
+  // (always UTC) silently shifts the result back a day for any positive UTC
+  // offset (IST included), since local midnight is still "yesterday" in UTC.
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 };
 const DemandVsClosingSection = ({ dateStr }) => {
   const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
@@ -11968,6 +11974,7 @@ const DemandVsClosingSection = ({ dateStr }) => {
   const [closingYesterday, setClosingYesterday] = useState({});
   const [demandToday, setDemandToday] = useState({ morning: {}, evening: {} });
   const [lastWeekConsumed, setLastWeekConsumed] = useState({});
+  const [lastWeekSales, setLastWeekSales] = useState(null); // { revenue, orders }
   const [loading, setLoading] = useState(true);
 
   const yesterdayStr = useMemo(() => shiftDateStr(dateStr, -1), [dateStr]);
@@ -11980,7 +11987,8 @@ const DemandVsClosingSection = ({ dateStr }) => {
       api.getClosingStocks({ date: yesterdayStr, outlet_id: selOutlet }),
       api.getOrders({ date: dateStr, outlet_id: selOutlet }),
       api.getRMAudit(lastWeekStr),
-    ]).then(([cs, orders, audit]) => {
+      api.getSales({ date: lastWeekStr, outlet: selOutlet }).catch(() => null),
+    ]).then(([cs, orders, audit, sales]) => {
       const csRow = (cs || [])[0];
       const closingMap = {};
       Object.entries(csRow?.items || {}).forEach(([k, v]) => { closingMap[k.replace(/^cs_/, "")] = Number(v) || 0; });
@@ -11997,7 +12005,9 @@ const DemandVsClosingSection = ({ dateStr }) => {
       const consumedMap = {};
       (outletAudit?.items || []).forEach((it) => { consumedMap[it.item_id] = it.actual_consumed; });
       setLastWeekConsumed(consumedMap);
-    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); })
+
+      setLastWeekSales(sales ? { revenue: sales.total_revenue, orders: sales.total_orders } : null);
+    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); setLastWeekSales(null); })
       .finally(() => setLoading(false));
   }, [dateStr, yesterdayStr, lastWeekStr, selOutlet]);
   useEffect(load, [load]);
@@ -12038,7 +12048,12 @@ const DemandVsClosingSection = ({ dateStr }) => {
               <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
               <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
               <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
-              <th style={{ ...thS, textAlign: "right" }}>Last Wk Same Day Consumed</th>
+              <th style={{ ...thS, textAlign: "right" }}>
+                Last Wk Same Day Consumed
+                <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
+                  ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
+                </div>
+              </th>
             </tr></thead>
             <tbody>
               {rows.map((item) => (
