@@ -11999,6 +11999,7 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
   const [demandToday, setDemandToday] = useState({ morning: {}, evening: {} });
   const [lastWeekConsumed, setLastWeekConsumed] = useState({});
   const [lastWeekSales, setLastWeekSales] = useState(null); // { revenue, orders }
+  const [todayConsumed, setTodayConsumed] = useState({});
   const [loading, setLoading] = useState(true);
 
   const yesterdayStr = useMemo(() => shiftDateStr(dateStr, -1), [dateStr]);
@@ -12012,7 +12013,8 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
       api.getOrders({ date: dateStr, outlet_id: selOutlet }),
       api.getRMAudit(lastWeekStr),
       api.getSales({ date: lastWeekStr, outlet: selOutlet }).catch(() => null),
-    ]).then(([cs, orders, audit, sales]) => {
+      api.getRMAudit(dateStr),
+    ]).then(([cs, orders, audit, sales, todayAudit]) => {
       // Closing/demand are entered in whatever bulk unit the outlet actually orders in
       // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
       // 1 Tin = 15 Kg) before summing, same as the consumed-material formula behind "Last
@@ -12047,7 +12049,12 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
       setLastWeekConsumed(consumedMap);
 
       setLastWeekSales(sales ? { revenue: sales.total_revenue, orders: sales.total_orders } : null);
-    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); setLastWeekSales(null); })
+
+      const todayOutletAudit = todayAudit?.outlets?.find((o) => o.outlet_id === selOutlet);
+      const todayConsumedMap = {};
+      (todayOutletAudit?.items || []).forEach((it) => { todayConsumedMap[it.item_id] = it.actual_consumed; });
+      setTodayConsumed(todayConsumedMap);
+    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); setLastWeekSales(null); setTodayConsumed({}); })
       .finally(() => setLoading(false));
   }, [dateStr, yesterdayStr, lastWeekStr, selOutlet]);
   useEffect(load, [load]);
@@ -12061,7 +12068,7 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
   return (<div>
     <div style={{ marginBottom: 16 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{yesterdayStr} closing · {dateStr} AM/PM demand · {lastWeekStr} (same weekday last week) actual consumption.</p>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} closing · {dateStr} AM/PM demand.</p>
     </div>
 
     {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
@@ -12083,29 +12090,34 @@ const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              <th style={thS}>Item</th>
               {catFilter === "all" && <th style={thS}>Category</th>}
-              <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
-              <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
-              <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
+              <th style={thS}>Item</th>
               <th style={{ ...thS, textAlign: "right" }}>
                 Last Wk Same Day Consumed
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
                 </div>
               </th>
+              <th style={{ ...thS, textAlign: "right" }}>
+                Today Consumption
+                <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>({dateStr})</div>
+              </th>
+              <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
+              <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
             </tr></thead>
             <tbody>
               {rows.map((item) => {
                 const baseUnit = convertToBase(1, item.unit, item.id, item.name).unit || item.unit;
                 return (
                 <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                  <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{baseUnit}</span></td>
                   {catFilter === "all" && <td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.categoryLabel}</td>}
+                  <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{baseUnit}</span></td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(todayConsumed[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtNum(closingYesterday[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.morning[item.id] > 0 ? "#B45309" : "#999" }}>{fmtNum(demandToday.morning[item.id])}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.evening[item.id] > 0 ? "#2563EB" : "#999" }}>{fmtNum(demandToday.evening[item.id])}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id])}</td>
                 </tr>
                 );
               })}
