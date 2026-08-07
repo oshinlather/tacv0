@@ -8467,6 +8467,32 @@ const OutletMgr = ({ onBack }) => {
   // drink directly, always).
   const [dcCategory, setDcCategory] = useState("dairy");
   const [dcQty, setDcQty] = useState({}); const [dcAmount, setDcAmount] = useState({}); const [dcSaving, setDcSaving] = useState(false);
+  // The purchases row already saved for this outlet+date (if any) — without this, the
+  // form always rendered blank on reopen even after a successful save, which is why it
+  // looked like nothing was being saved at all. Also lets a second save UPDATE that same
+  // row (PATCH) instead of creating a duplicate purchases record every time.
+  const [dcExisting, setDcExisting] = useState(null);
+  const [dcEditing, setDcEditing] = useState(false);
+  const [dcLoading, setDcLoading] = useState(false);
+  useEffect(() => {
+    if (screen !== "dairy_cold_drink" || !outlet) return;
+    setDcLoading(true);
+    api.getPurchases({ outlet_id: outlet, date: selectedDate })
+      .then((rows) => {
+        const existing = (rows || []).find((p) => (p.items || []).some((i) => ["dairy_purchase", "cold_drink_purchase"].includes(i.type))) || null;
+        setDcExisting(existing);
+        setDcEditing(!existing);
+        const allDcItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
+        const q = {}, a = {};
+        (existing?.items || []).forEach((i) => {
+          const item = allDcItems.find((it) => it.name === i.item_name);
+          if (item) { q[item.id] = i.quantity; a[item.id] = i.amount; }
+        });
+        setDcQty(q); setDcAmount(a);
+      })
+      .catch(() => { setDcExisting(null); setDcEditing(true); })
+      .finally(() => setDcLoading(false));
+  }, [screen, selectedDate, outlet]);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
@@ -8477,7 +8503,7 @@ const OutletMgr = ({ onBack }) => {
       🌙 It's past midnight — defaulted to <b>yesterday's</b> date since you're likely closing out yesterday's business. Tap a date above if that's wrong.
     </div>
   ) : null;
-  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); };
+  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); setDcExisting(null); setDcEditing(false); };
   const submitDcPurchase = async () => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
     const filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0);
@@ -8485,18 +8511,29 @@ const OutletMgr = ({ onBack }) => {
     setDcSaving(true); setErr(null);
     try {
       const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
-      // payment_mode: "upi", not "cash" — the owner pays these directly from the company
-      // account, the outlet manager never takes it out of their cash-in-hand. Daily Sales'
-      // Cash Expense total only ever pulls payment_mode="cash" purchases (see loadSalesData
-      // below), so tagging it this way keeps it out of that deduction — it still counts as
-      // a real cost in P&L (which sums all purchases regardless of mode), just not against
-      // what the manager owes to deposit. Not "company_account" — the `purchases` table has
-      // a DB check constraint allowing only 'cash'/'upi'/'credit'; "credit" was ruled out
-      // since it displays elsewhere as "Udhar" (implies an unpaid vendor debt, which this
-      // isn't — it's paid in full immediately, just not out of the outlet's cash).
-      await api.createPurchase({ items: apiItems, payment_mode: "upi", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
-      alert(`✅ Purchase saved — ${filled.length} items`);
-      resetDcPurchase(); setScreen("home");
+      let result;
+      if (dcExisting) {
+        // Same day, already saved once — update that row instead of inserting a second
+        // one, so re-opening this screen later doesn't find duplicate purchases records
+        // (which would double-count today's dairy/cold-drink cost in P&L and the Cold
+        // Drink Audit's "today purchase" figure).
+        result = await api.updatePurchaseRecord(dcExisting.id, { items: apiItems });
+      } else {
+        // payment_mode: "upi", not "cash" — the owner pays these directly from the company
+        // account, the outlet manager never takes it out of their cash-in-hand. Daily Sales'
+        // Cash Expense total only ever pulls payment_mode="cash" purchases (see loadSalesData
+        // below), so tagging it this way keeps it out of that deduction — it still counts as
+        // a real cost in P&L (which sums all purchases regardless of mode), just not against
+        // what the manager owes to deposit. Not "company_account" — the `purchases` table has
+        // a DB check constraint allowing only 'cash'/'upi'/'credit'; "credit" was ruled out
+        // since it displays elsewhere as "Udhar" (implies an unpaid vendor debt, which this
+        // isn't — it's paid in full immediately, just not out of the outlet's cash).
+        result = await api.createPurchase({ items: apiItems, payment_mode: "upi", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
+      }
+      alert(`✅ Purchase ${dcExisting ? "updated" : "saved"} — ${filled.length} items`);
+      // Stay on this screen showing what was just saved (instead of jumping back to
+      // home) — the whole point of this fix is to make the save visibly stick.
+      setDcExisting(result); setDcEditing(false);
     } catch (e) { setErr(e.message); alert(`❌ Failed to save: ${e.message}`); }
     finally { setDcSaving(false); }
   };
@@ -9445,6 +9482,23 @@ const OutletMgr = ({ onBack }) => {
       <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>📋 For inventory & audit records only — this isn't a cash expense you're paying for, so it won't be deducted from your cash to deposit.</div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
 
+      {dcLoading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+
+      {!dcLoading && dcExisting && !dcEditing ? (<>
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>
+          ✅ Already saved for {selectedDate} — {(dcExisting.items || []).length} items, {fmt(dcExisting.total_amount || 0)}. Tap Edit to change.
+        </div>
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+          {(dcExisting.items || []).map((i, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: idx < dcExisting.items.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{i.item_name}</span>
+              <span style={{ fontSize: 12, color: "#888" }}>{i.quantity} {i.unit}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", minWidth: 60, textAlign: "right" }}>{fmt(i.amount)}</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={() => setDcEditing(true)} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+      </>) : !dcLoading && (<>
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
         {DC_PURCHASE_CATEGORIES.map((c) => (
           <button key={c.id} onClick={() => setDcCategory(c.id)} style={{ flex: 1, padding: 10, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: dcCategory === c.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: dcCategory === c.id ? "#EFF6FF" : "#fff", color: dcCategory === c.id ? "#2563EB" : "#888" }}>{c.label}</button>
@@ -9473,9 +9527,10 @@ const OutletMgr = ({ onBack }) => {
       <ErrBar />
       <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
         <button onClick={submitDcPurchase} disabled={dcFilledCount === 0 || dcSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: dcFilledCount > 0 && !dcSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: dcFilledCount > 0 && !dcSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-          {dcSaving ? "⏳ Saving..." : `💾 Save Purchase (${dcFilledCount} items)`}
+          {dcSaving ? "⏳ Saving..." : dcExisting ? `💾 Update Purchase (${dcFilledCount} items)` : `💾 Save Purchase (${dcFilledCount} items)`}
         </button>
       </div>
+      </>)}
     </div>);
   }
 
