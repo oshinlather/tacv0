@@ -3161,6 +3161,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // pill is meaningless on a locked franchise view and hidden there too.
           ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
           ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
+          ...(lockedOutlet ? [] : [{ key: "demand_vs_closing", label: "📦 Demand vs Closing" }]),
         ].map((t) => (
           <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
@@ -3875,6 +3876,13 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
       {pnlTab === "attendance" && !lockedOutlet && (
         selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} />
+      )}
+      {pnlTab === "demand_vs_closing" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Demand vs Closing.
+          </div>
+        ) : <DemandVsClosingSection dateStr={dateStr} />
       )}
     </div>
   );
@@ -11936,6 +11944,113 @@ const DailyAttendanceSection = ({ dateStr }) => {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+  </div>);
+};
+
+// ─── Demand vs Closing — P&L "Demand vs Closing" pill. Every demand item, filterable
+// by category, one outlet at a time: what was left on the shelf the day before,
+// what's been demanded today (AM/PM), and what actually got consumed on this same
+// weekday last week — so a manager deciding today's quantities has the same numbers
+// in front of them instead of having to check three different screens.
+const shiftDateStr = (dateStr, days) => {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
+};
+const DemandVsClosingSection = ({ dateStr }) => {
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [catFilter, setCatFilter] = useState("all");
+  const [closingYesterday, setClosingYesterday] = useState({});
+  const [demandToday, setDemandToday] = useState({ morning: {}, evening: {} });
+  const [lastWeekConsumed, setLastWeekConsumed] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  const yesterdayStr = useMemo(() => shiftDateStr(dateStr, -1), [dateStr]);
+  const lastWeekStr = useMemo(() => shiftDateStr(dateStr, -7), [dateStr]);
+
+  const load = useCallback(() => {
+    if (!selOutlet) return;
+    setLoading(true);
+    Promise.all([
+      api.getClosingStocks({ date: yesterdayStr, outlet_id: selOutlet }),
+      api.getOrders({ date: dateStr, outlet_id: selOutlet }),
+      api.getRMAudit(lastWeekStr),
+    ]).then(([cs, orders, audit]) => {
+      const csRow = (cs || [])[0];
+      const closingMap = {};
+      Object.entries(csRow?.items || {}).forEach(([k, v]) => { closingMap[k.replace(/^cs_/, "")] = Number(v) || 0; });
+      setClosingYesterday(closingMap);
+
+      const morning = {}; const evening = {};
+      (orders || []).filter((o) => o.type === "manual").forEach((o) => {
+        const bucket = o.demand_slot === "evening" ? evening : morning;
+        Object.entries(o.items || {}).forEach(([id, qty]) => { bucket[id] = (bucket[id] || 0) + (Number(qty) || 0); });
+      });
+      setDemandToday({ morning, evening });
+
+      const outletAudit = audit?.outlets?.find((o) => o.outlet_id === selOutlet);
+      const consumedMap = {};
+      (outletAudit?.items || []).forEach((it) => { consumedMap[it.item_id] = it.actual_consumed; });
+      setLastWeekConsumed(consumedMap);
+    }).catch(() => { setClosingYesterday({}); setDemandToday({ morning: {}, evening: {} }); setLastWeekConsumed({}); })
+      .finally(() => setLoading(false));
+  }, [dateStr, yesterdayStr, lastWeekStr, selOutlet]);
+  useEffect(load, [load]);
+
+  const visibleSections = catFilter === "all" ? DEMAND_SECTIONS : DEMAND_SECTIONS.filter((s) => s.id === catFilter);
+  const rows = visibleSections.flatMap((sec) => sec.items.map((item) => ({ ...item, categoryLabel: sec.titleHi })));
+  const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
+
+  const fmtNum = (v) => v == null ? "—" : Math.round(Number(v) * 100) / 100;
+
+  return (<div>
+    <div style={{ marginBottom: 16 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{yesterdayStr} closing · {dateStr} AM/PM demand · {lastWeekStr} (same weekday last week) actual consumption.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+      {OUTLETS.map((o) => (
+        <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
+      ))}
+    </div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      <button onClick={() => setCatFilter("all")} style={pillStyle(catFilter === "all")}>All</button>
+      {DEMAND_SECTIONS.map((sec) => (
+        <button key={sec.id} onClick={() => setCatFilter(sec.id)} style={pillStyle(catFilter === sec.id)}>{sec.emoji} {sec.titleHi}</button>
+      ))}
+    </div>
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
+      <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No items in this category</div>
+    ) : (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Item</th>
+              {catFilter === "all" && <th style={thS}>Category</th>}
+              <th style={{ ...thS, textAlign: "right" }}>{yesterdayStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right" }}>Today AM Demand</th>
+              <th style={{ ...thS, textAlign: "right" }}>Today PM Demand</th>
+              <th style={{ ...thS, textAlign: "right" }}>Last Wk Same Day Consumed</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((item) => (
+                <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={tdS}>{item.name} <span style={{ fontSize: 9, color: "#999" }}>{item.unit}</span></td>
+                  {catFilter === "all" && <td style={{ ...tdS, color: "#888", fontSize: 11 }}>{item.categoryLabel}</td>}
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtNum(closingYesterday[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.morning[item.id] > 0 ? "#B45309" : "#999" }}>{fmtNum(demandToday.morning[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: demandToday.evening[item.id] > 0 ? "#2563EB" : "#999" }}>{fmtNum(demandToday.evening[item.id])}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmtNum(lastWeekConsumed[item.id])}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
