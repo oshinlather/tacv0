@@ -61,6 +61,7 @@ const api = {
   createTransfer: (data) => post("/api/transfers", data),
   confirmTransfer: (id, data) => patch(`/api/transfers/${id}/confirm`, data),
   cancelTransfer: (id) => patch(`/api/transfers/${id}/cancel`, {}),
+  getOutletMenuItems: (outlet) => get(`/api/sales/menu-items/${outlet}`),
 
   // ── P&L ──
   getPnl: (params) => get("/api/pnl", params),

@@ -2761,6 +2761,22 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
     return new Set(allDishes.filter((r) => (r.recipe_ingredients || []).some((ri) => (ri.raw_material || "").trim().toLowerCase() === key)).map((r) => r.id));
   };
   const [addDishSaving, setAddDishSaving] = useState(false);
+  // Every item actually billed at this outlet in the last 180 days (PetPooja's own names),
+  // so "Pick dish..." below can offer a real, currently-selling menu item even if nobody's
+  // created a recipe for it yet — not just the subset that already happens to have one.
+  const [menuItems, setMenuItems] = useState([]);
+  useEffect(() => {
+    if (selOutlet) api.getOutletMenuItems(selOutlet).then((r) => setMenuItems(r || [])).catch(() => setMenuItems([]));
+    else setMenuItems([]);
+  }, [selOutlet]);
+  const buildDishOptions = (ingredientName) => {
+    const linkedIds = dishesAlreadyLinked(ingredientName);
+    const real = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).map((r) => ({ id: r.id, item_name: r.item_name }));
+    const realNames = new Set(allDishes.map((r) => r.item_name.trim().toLowerCase()));
+    const virtual = menuItems.filter((m) => !realNames.has(m.item_name.trim().toLowerCase()))
+      .map((m) => ({ id: `new:${m.item_name}`, item_name: `${m.item_name} (＋ new recipe)`, _category: m.category_name }));
+    return [...real, ...virtual].sort((a, b) => a.item_name.localeCompare(b.item_name));
+  };
 
   // Master-data edit: change Rate Card price or unit-conversion qty (owner-only, applies to ALL outlets)
   const [editMaster, setEditMaster] = useState(null); // { _idx, item_id, name, kind: 'price'|'conv', value, unit, demandUnit, currentValue }
@@ -3075,7 +3091,14 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
     if (!newDishQty || Number(newDishQty) <= 0) { alert("Enter a qty"); return; }
     setAddDishSaving(true);
     try {
-      await api.addRecipeIngredient(newDishId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
+      let recipeId = newDishId;
+      if (newDishId.startsWith("new:")) {
+        const dishName = newDishId.slice(4);
+        const category = menuItems.find((m) => m.item_name === dishName)?.category_name || "Item";
+        const created = await api.createRecipe({ item_name: dishName, category, item_type: "Item" });
+        recipeId = created.id;
+      }
+      await api.addRecipeIngredient(recipeId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
       setNewDishId(""); setNewDishQty("");
       await fetchPnl();
     } catch (e) {
@@ -3542,8 +3565,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                     = {item.should_consume} {displayUnit}
                                   </div>
                                   {scEditing && (() => {
-                                    const linkedIds = dishesAlreadyLinked(item.name);
-                                    const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+                                    const dishOptions = buildDishOptions(item.name);
                                     const rowUnit = item.sc_breakdown.find((b) => b.recipe_ingredient_unit)?.recipe_ingredient_unit || "GM";
                                     return (<>
                                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px dashed #E0E0DC" }}>
@@ -3583,8 +3605,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                           {isStockBased && item.should_consume == null && (
                             <div style={{ padding: "0 16px 6px 32px" }}>
                               {!lockedOutlet && editingScItem === item.item_id ? (() => {
-                                const linkedIds = dishesAlreadyLinked(item.name);
-                                const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+                                const dishOptions = buildDishOptions(item.name);
                                 return (
                                   <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 8 }}>
                                     <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍽️ No dish uses {item.name} yet — link one:</div>
@@ -7598,10 +7619,28 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
   const [newDishUnit, setNewDishUnit] = useState(item.unit === "Pcs" ? "Pcs" : "GM");
   const [addDishSaving, setAddDishSaving] = useState(false);
   const [scOpen, setScOpen] = useState(false); // should-consume dish breakdown starts folded
+  // Every item actually billed at this outlet in the last 180 days (PetPooja's own names),
+  // so "Pick dish..." below can offer a real, currently-selling menu item even if nobody's
+  // created a recipe for it yet — not just the subset that already happens to have one.
+  const [menuItems, setMenuItems] = useState([]);
+  useEffect(() => { api.getOutletMenuItems(outletId).then((r) => setMenuItems(r || [])).catch(() => setMenuItems([])); }, [outletId]);
 
   const dishesAlreadyLinked = (ingredientName) => {
     const key = (ingredientName || "").trim().toLowerCase();
     return new Set(allDishes.filter((r) => (r.recipe_ingredients || []).some((ri) => (ri.raw_material || "").trim().toLowerCase() === key)).map((r) => r.id));
+  };
+
+  // Merges real dish recipes with billed-but-not-yet-recipe'd menu items into one picker.
+  // Virtual (no recipe yet) entries get a "new:" id — addDishToIngredient below creates the
+  // recipe on the fly the moment one of these is actually picked and saved, using PetPooja's
+  // own category for it so the whole thing is one click instead of a detour to Dish Recipes.
+  const buildDishOptions = (ingredientName) => {
+    const linkedIds = dishesAlreadyLinked(ingredientName);
+    const real = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).map((r) => ({ id: r.id, item_name: r.item_name }));
+    const realNames = new Set(allDishes.map((r) => r.item_name.trim().toLowerCase()));
+    const virtual = menuItems.filter((m) => !realNames.has(m.item_name.trim().toLowerCase()))
+      .map((m) => ({ id: `new:${m.item_name}`, item_name: `${m.item_name} (＋ new recipe)`, _category: m.category_name }));
+    return [...real, ...virtual].sort((a, b) => a.item_name.localeCompare(b.item_name));
   };
 
   const saveQtyEdit = async () => {
@@ -7658,7 +7697,14 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
     if (!newDishQty || Number(newDishQty) <= 0) { alert("Enter a qty"); return; }
     setAddDishSaving(true);
     try {
-      await api.addRecipeIngredient(newDishId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
+      let recipeId = newDishId;
+      if (newDishId.startsWith("new:")) {
+        const dishName = newDishId.slice(4);
+        const category = menuItems.find((m) => m.item_name === dishName)?.category_name || "Item";
+        const created = await api.createRecipe({ item_name: dishName, category, item_type: "Item" });
+        recipeId = created.id;
+      }
+      await api.addRecipeIngredient(recipeId, { raw_material: item.name, qty: Number(newDishQty), unit: unit || "GM" });
       setNewDishId(""); setNewDishQty("");
       await onSaved();
     } catch (e) { alert("Failed to save: " + e.message); }
@@ -7802,8 +7848,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
             = {item.should_consume} {displayUnit}
           </div>
           {scEditing && (() => {
-            const linkedIds = dishesAlreadyLinked(item.name);
-            const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+            const dishOptions = buildDishOptions(item.name);
             const rowUnit = item.sc_breakdown.find((b) => b.recipe_ingredient_unit)?.recipe_ingredient_unit || "GM";
             return (<>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 10, paddingTop: 8, borderTop: "1px dashed #E0E0DC" }}>
@@ -7832,8 +7877,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
       {item.should_consume == null && (
         <div style={{ marginTop: 4 }}>
           {!lockedOutlet && scEditing ? (() => {
-            const linkedIds = dishesAlreadyLinked(item.name);
-            const dishOptions = allDishes.filter((r) => r.status !== "Inactive" && !linkedIds.has(r.id)).sort((a, b) => a.item_name.localeCompare(b.item_name));
+            const dishOptions = buildDishOptions(item.name);
             return (
               <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 8 }}>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍽️ No dish uses {item.name} yet — link one:</div>

@@ -50,6 +50,33 @@ async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
   return rows;
 }
 
+// ── GET /api/sales/menu-items/:outlet — Every distinct item name actually billed at this
+// outlet in the last 180 days (PetPooja's own names, not the recipe system's). Powers the
+// "Pick dish..." picker used to link a raw-material/ingredient to a dish's recipe — without
+// this, that picker only ever offered dishes that already happen to have a `recipes` row,
+// so a real, currently-selling menu item nobody has recipe-mapped yet was simply
+// unreachable there. 180 days keeps the query bounded and drops long-discontinued items
+// without needing a real "is this dish still on the menu" flag anywhere.
+router.get('/sales/menu-items/:outlet', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!ensureOutletAccess(user, req.params.outlet, res)) return;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 180);
+    const rows = await fetchAllDailySales({
+      from: cutoff.toISOString().split('T')[0], to: todayIST(),
+      outlet_code: req.params.outlet, select: 'item_name, category_name',
+    });
+    const seen = new Map();
+    rows.forEach((r) => { if (r.item_name && !seen.has(r.item_name)) seen.set(r.item_name, r.category_name || ''); });
+    const items = [...seen.entries()]
+      .map(([item_name, category_name]) => ({ item_name, category_name }))
+      .sort((a, b) => a.item_name.localeCompare(b.item_name));
+    res.json(items);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ────────────────────────────────────────────────────────────
 // 3A. POST /api/sales/upload — Upload PetPooja CSV
 // ────────────────────────────────────────────────────────────
