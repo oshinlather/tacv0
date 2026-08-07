@@ -3475,7 +3475,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                           </div>
                           {isStockBased && (item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
                             <div style={{ padding: "0 16px 4px 32px", fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'" }}>
-                              ({item.prev_closing || 0} + {item.dispatched || 0}{item.purchased > 0 && <span style={{ color: "#16A34A" }}> + {item.purchased} purchased</span>}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {displayQty} {displayUnit}
+                              ({item.prev_closing || 0} + {item.dispatched || 0}{item.purchased > 0 && <span style={{ color: "#16A34A" }}> + {item.purchased}</span>}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {displayQty} {displayUnit}
                             </div>
                           )}
                           {/* RM Audit's theoretical (recipe × sales) consumption, folded in here so
@@ -7678,7 +7678,7 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
       </div>
       {(item.prev_closing > 0 || item.dispatched > 0 || item.closing > 0 || item.wastage > 0) && (
         <div style={{ fontSize: 9, color: "#999", fontFamily: "'JetBrains Mono'", marginBottom: 2 }}>
-          ({item.prev_closing || 0} + {item.dispatched || 0}{item.purchased > 0 && <span style={{ color: "#16A34A" }}> + {item.purchased} purchased</span>}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {item.used} {displayUnit}
+          ({item.prev_closing || 0} + {item.dispatched || 0}{item.purchased > 0 && <span style={{ color: "#16A34A" }}> + {item.purchased}</span>}{item.transfer_in > 0 && <span style={{ color: "#16A34A" }}> + {item.transfer_in} in</span>}) − {item.wastage || 0}{item.transfer_out > 0 && <span style={{ color: "#DC2626" }}> − {item.transfer_out} out</span>} − {item.closing || 0} = {item.used} {displayUnit}
         </div>
       )}
       {item.should_consume != null && (
@@ -11217,7 +11217,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
                         <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                           <td colSpan={5} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
                             {ab
-                              ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}{Number(ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(ab.purchased).toFixed(2)} purchased</span>}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
+                              ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}{Number(ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(ab.purchased).toFixed(2)}</span>}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
                               : "no closing stock submitted — actual consumption can't be computed"}
                           </td>
                         </tr>
@@ -11712,7 +11712,7 @@ const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
                   <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td colSpan={5} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
                       {ab
-                        ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}{Number(ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(ab.purchased).toFixed(2)} purchased</span>}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
+                        ? <>({Number(ab.prev_closing).toFixed(2)} + {Number(ab.dispatched).toFixed(2)}{Number(ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(ab.purchased).toFixed(2)}</span>}) − {Number(ab.wastage).toFixed(2)} − {Number(ab.closing).toFixed(2)} = {Number(item.actual_consumed).toFixed(2)} {item.unit}</>
                         : "no closing stock submitted — actual consumption can't be computed"}
                     </td>
                   </tr>
