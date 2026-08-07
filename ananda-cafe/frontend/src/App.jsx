@@ -3161,7 +3161,9 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // pill is meaningless on a locked franchise view and hidden there too.
           ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
           ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
-          ...(lockedOutlet ? [] : [{ key: "demand_vs_closing", label: "📦 Demand vs Closing" }]),
+          // Demand vs Closing is useful to a franchise partner too — it's their own
+          // outlet's numbers, DemandVsClosingSection just locks the outlet picker to it.
+          { key: "demand_vs_closing", label: "📦 Demand vs Closing" },
         ].map((t) => (
           <button key={t.key} onClick={() => setPnlTab(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
@@ -3877,12 +3879,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       {pnlTab === "attendance" && !lockedOutlet && (
         selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} />
       )}
-      {pnlTab === "demand_vs_closing" && !lockedOutlet && (
+      {pnlTab === "demand_vs_closing" && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
             Pick a single day (not month view) above for Demand vs Closing.
           </div>
-        ) : <DemandVsClosingSection dateStr={dateStr} />
+        ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
       )}
     </div>
   );
@@ -11968,8 +11970,8 @@ const shiftDateStr = (dateStr, days) => {
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
-const DemandVsClosingSection = ({ dateStr }) => {
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+const DemandVsClosingSection = ({ dateStr, lockedOutlet }) => {
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [catFilter, setCatFilter] = useState("all");
   const [closingYesterday, setClosingYesterday] = useState({});
   const [demandToday, setDemandToday] = useState({ morning: {}, evening: {} });
@@ -12024,11 +12026,11 @@ const DemandVsClosingSection = ({ dateStr }) => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{yesterdayStr} closing · {dateStr} AM/PM demand · {lastWeekStr} (same weekday last week) actual consumption.</p>
     </div>
 
-    <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
+    {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
       {OUTLETS.map((o) => (
         <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
       ))}
-    </div>
+    </div>}
     <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
       <button onClick={() => setCatFilter("all")} style={pillStyle(catFilter === "all")}>All</button>
       {DEMAND_SECTIONS.map((sec) => (
