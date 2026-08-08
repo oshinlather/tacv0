@@ -12082,6 +12082,7 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [catFilter, setCatFilter] = useState("all");
+  const [varianceFilter, setVarianceFilter] = useState("all"); // all | demand_dispatch | dispatch_verified
 
   useEffect(() => {
     setLoading(true);
@@ -12122,22 +12123,45 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
   const allRows = outletIds.flatMap((oid) =>
     Object.entries(grouped[oid] || {})
       .filter(([, r]) => r.demanded > 0 || r.dispatched > 0)
-      .map(([itemId, r]) => ({ outletId: oid, itemId, ...r }))
+      .map(([itemId, r]) => {
+        const demanded = Math.round(r.demanded * 100) / 100;
+        const dispatched = Math.round(r.dispatched * 100) / 100;
+        const verified = Math.round(r.verified * 100) / 100;
+        // Orange: BK didn't dispatch what was demanded (short OR over-dispatched).
+        // Yellow: the outlet HAS confirmed receipt, but what they logged as received
+        // differs from what was dispatched — a real discrepancy, distinct from simply
+        // not having verified yet (anyUnverified), which stays the neutral NA/amber text
+        // treatment the Verified column already had rather than a row highlight, since
+        // "not yet verified" isn't itself a mismatch.
+        const demandDispatchMismatch = demanded !== dispatched;
+        const dispatchVerifiedMismatch = !r.anyUnverified && dispatched > 0 && verified !== dispatched;
+        return { outletId: oid, itemId, ...r, demanded, dispatched, verified, demandDispatchMismatch, dispatchVerifiedMismatch };
+      })
   ).sort((a, b) => (a.outletId === b.outletId ? 0 : a.outletId < b.outletId ? -1 : 1) || (DEMAND_ITEM_BY_ID[a.itemId]?.name || a.itemId).localeCompare(DEMAND_ITEM_BY_ID[b.itemId]?.name || b.itemId));
-  const rows = catFilter === "all" ? allRows : allRows.filter((r) => DEMAND_ITEM_SECTION[r.itemId]?.id === catFilter);
+  const catRows = catFilter === "all" ? allRows : allRows.filter((r) => DEMAND_ITEM_SECTION[r.itemId]?.id === catFilter);
+  const rows = varianceFilter === "all" ? catRows
+    : varianceFilter === "demand_dispatch" ? catRows.filter((r) => r.demandDispatchMismatch)
+    : catRows.filter((r) => r.dispatchVerifiedMismatch);
 
   const outletName = selOutlet ? (OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet) : "any outlet";
   const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
+  const variancePillStyle = (active, activeBg, activeColor) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? activeBg : "#fff", color: active ? activeColor : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
   return (
     <div>
       <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Every item demanded on {dateStr}, checked against what BK actually dispatched and whether the outlet has confirmed receipt.</p>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4 }}>
         <button onClick={() => setCatFilter("all")} style={pillStyle(catFilter === "all")}>All</button>
         {DEMAND_SECTIONS.map((sec) => (
           <button key={sec.id} onClick={() => setCatFilter(sec.id)} style={pillStyle(catFilter === sec.id)}>{sec.emoji} {sec.titleHi}</button>
         ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setVarianceFilter("all")} style={pillStyle(varianceFilter === "all")}>All rows</button>
+        <button onClick={() => setVarianceFilter("demand_dispatch")} style={variancePillStyle(varianceFilter === "demand_dispatch", "#FED7AA", "#9A3412")}>🟠 Demand ≠ Dispatch</button>
+        <button onClick={() => setVarianceFilter("dispatch_verified")} style={variancePillStyle(varianceFilter === "dispatch_verified", "#FEF08A", "#854D0E")}>🟡 Dispatch ≠ Verified</button>
       </div>
 
       {loading ? (
@@ -12159,14 +12183,17 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
                 {rows.map((r) => {
                   const item = DEMAND_ITEM_BY_ID[r.itemId];
                   const short = r.dispatched < r.demanded;
+                  // Orange takes priority over yellow when a row somehow has both — a
+                  // demand/dispatch gap is the more consequential of the two variances.
+                  const rowBg = r.demandDispatchMismatch ? "#FFF7ED" : r.dispatchVerifiedMismatch ? "#FEFCE8" : undefined;
                   return (
-                    <tr key={`${r.outletId}_${r.itemId}`} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <tr key={`${r.outletId}_${r.itemId}`} style={{ borderBottom: "1px solid #F0F0EC", background: rowBg }}>
                       {!selOutlet && <td style={{ ...tdS, fontWeight: 600 }}>{OUTLETS.find((o) => o.id === r.outletId)?.short || r.outletId}</td>}
                       <td style={tdS}>{item?.name || r.itemId} <span style={{ fontSize: 10, color: "#999" }}>{item?.unit}</span></td>
-                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{Math.round(r.demanded * 100) / 100}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: short ? "#DC2626" : "#1A1A1A" }}>{Math.round(r.dispatched * 100) / 100}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.demanded}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: short ? "#DC2626" : "#1A1A1A" }}>{r.dispatched}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.dispatched === 0 ? "#CCC" : r.anyUnverified ? "#B45309" : "#16A34A" }}>
-                        {r.dispatched === 0 ? "—" : r.anyUnverified ? "NA" : Math.round(r.verified * 100) / 100}
+                        {r.dispatched === 0 ? "—" : r.anyUnverified ? "NA" : r.verified}
                       </td>
                     </tr>
                   );
