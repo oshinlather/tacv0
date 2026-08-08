@@ -11954,7 +11954,7 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const ScoreCard = ({ tabKey, icon, label, score, sub, comingSoon }) => {
     const active = activeTab === tabKey;
     return (
-      <button onClick={() => setActiveTab(tabKey)} style={{ flex: "1 1 150px", background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 14px", border: `1.5px solid ${active ? "#FDE68A" : (comingSoon ? "#E8E8E4" : scoreBorder(score))}`, textAlign: "center", cursor: "pointer", fontFamily: "inherit", boxShadow: active ? "0 0 0 3px rgba(253,230,138,0.35)" : "none" }}>
+      <button onClick={() => setActiveTab(tabKey)} style={{ background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 10px", border: `1.5px solid ${active ? "#FDE68A" : (comingSoon ? "#E8E8E4" : scoreBorder(score))}`, textAlign: "center", cursor: "pointer", fontFamily: "inherit", boxShadow: active ? "0 0 0 3px rgba(253,230,138,0.35)" : "none" }}>
         <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
         <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
         {comingSoon ? (
@@ -11976,7 +11976,7 @@ const OutletPerformanceDashboard = ({ outlet }) => {
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       ) : (
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
           <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" comingSoon />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
             sub={idealPct != null && actualPct != null ? `Actual ${actualPct.toFixed(1)}% vs Ideal ${idealPct.toFixed(1)}% of sale` : "No sales/recipe data for this date"} />
@@ -12827,7 +12827,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
   // rather than raw %, so a high-volume over-consumption outranks a tiny spice whose
   // near-zero should-consume produces a meaningless five-figure %. Only over-consumption
   // (money leaking out) is flagged; using less than the recipe says isn't a leak.
-  const cogsRows = useMemo(() => {
+  const cogsAll = useMemo(() => {
     if (!audit?.outlets) return [];
     const rows = [];
     audit.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
@@ -12844,8 +12844,10 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
         });
       });
     });
-    return rows.sort((a, b) => b.leakCost - a.leakCost).slice(0, cogsCount);
-  }, [audit, selOutlet, cogsCount]);
+    return rows.sort((a, b) => b.leakCost - a.leakCost);
+  }, [audit, selOutlet]);
+  const cogsTotalLeak = useMemo(() => cogsAll.reduce((s, r) => s + r.leakCost, 0), [cogsAll]);
+  const cogsRows = cogsCount === "all" ? cogsAll : cogsAll.slice(0, cogsCount);
 
   // ── Challan mismatches — same rules as ChallansSection (demand≠dispatch, or
   //    a verified receipt that differs from what was dispatched) ──
@@ -12896,9 +12898,13 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       <FlagCard icon="📊" title="COGS Leakage"
         subtitle={`Biggest ₹ leaks — should-consume vs actual (${selOutlet ? oShort(selOutlet) : "all outlets"}, ${dateStr})`}
         extra={
-          <select value={cogsCount} onChange={(e) => setCogsCount(Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
-            {[5, 10, 15, 20].map((n) => <option key={n} value={n}>Top {n}</option>)}
-          </select>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#DC2626", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap" }}>Total leak {fmt(Math.round(cogsTotalLeak))}</span>
+            <select value={cogsCount} onChange={(e) => setCogsCount(e.target.value === "all" ? "all" : Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+              {[5, 10, 15, 20].map((n) => <option key={n} value={n}>Top {n}</option>)}
+              <option value="all">All ({cogsAll.length})</option>
+            </select>
+          </div>
         }>
         {cogsRows.length === 0 ? goodMsg("No over-consumption leak to show (needs submitted closing stock + mapped recipes).") : (
           <div style={{ overflowX: "auto" }}>
@@ -12918,21 +12924,18 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
                   const isOpen = expandedCogs === key;
                   const hasBreakdown = (r.breakdown || []).length > 0;
                   return (<Fragment key={key}>
-                    <tr onClick={() => hasBreakdown && setExpandedCogs(isOpen ? null : key)} style={{ borderBottom: "none", cursor: hasBreakdown ? "pointer" : "default" }}>
-                      {!selOutlet && <td style={{ ...td, fontWeight: 600, paddingBottom: 2 }}>{oShort(r.outletId)}</td>}
-                      <td style={{ ...td, paddingBottom: 2 }}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span> {hasBreakdown && <span style={{ color: "#2563EB", fontSize: 11, fontWeight: 800 }}>{isOpen ? "▲" : "▼"}</span>}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700, paddingBottom: 2 }}>{r.should.toFixed(2)}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", paddingBottom: 2 }}>{r.actual.toFixed(2)}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626", paddingBottom: 2 }}>{fmt(Math.round(r.leakCost))}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626", paddingBottom: 2 }}>{r.variancePct != null ? `+${r.variancePct}%` : "—"}</td>
-                    </tr>
-                    {/* Actual-consumed math, always visible — same convention as the RM Audit table */}
-                    <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
-                      <td colSpan={cols} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
-                        {r.ab
-                          ? <>({Number(r.ab.prev_closing).toFixed(2)} + {Number(r.ab.dispatched).toFixed(2)}{Number(r.ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(r.ab.purchased).toFixed(2)}</span>}) − {Number(r.ab.wastage).toFixed(2)} − {Number(r.ab.closing).toFixed(2)} = {r.actual.toFixed(2)} {r.unit}</>
-                          : "no closing stock submitted — actual consumption can't be computed"}
+                    <tr onClick={() => hasBreakdown && setExpandedCogs(isOpen ? null : key)} style={{ borderBottom: "1px solid #F0F0EC", cursor: hasBreakdown ? "pointer" : "default" }}>
+                      {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
+                      {/* Item name + blue expand arrow, with the actual-consumed calc inlined
+                          to the right in the otherwise-empty space (no separate calc row). */}
+                      <td style={td}>
+                        <span style={{ fontWeight: 500 }}>{r.name}</span> <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span> {hasBreakdown && <span style={{ color: "#2563EB", fontSize: 11, fontWeight: 800 }}>{isOpen ? "▲" : "▼"}</span>}
+                        {r.ab && <span style={{ fontSize: 10.5, color: "#999", fontFamily: "'JetBrains Mono', monospace", marginLeft: 10 }}>({Number(r.ab.prev_closing).toFixed(2)} + {Number(r.ab.dispatched).toFixed(2)}{Number(r.ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(r.ab.purchased).toFixed(2)}</span>}) − {Number(r.ab.wastage).toFixed(2)} − {Number(r.ab.closing).toFixed(2)} = {r.actual.toFixed(2)} {r.unit}</span>}
                       </td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700 }}>{r.should.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.actual.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{fmt(Math.round(r.leakCost))}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626" }}>{r.variancePct != null ? `+${r.variancePct}%` : "—"}</td>
                     </tr>
                     {isOpen && (
                       <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
