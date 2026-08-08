@@ -3178,8 +3178,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           <button key={t.key} onClick={() => {
             setPnlTab(t.key);
             // Demand vs Closing defaults to Today, not the page's usual Yesterday default —
-            // it's about what to order right now, not yesterday's closed-out numbers.
+            // it's about what to order right now, not yesterday's closed-out numbers. Every
+            // other tab defaults back to Yesterday, so leaving Demand vs Closing for any of
+            // them resets the day too — otherwise Today would silently carry over onto P&L/
+            // COGS Compare/etc, which is only ever correct here by coincidence.
             if (t.key === "demand_vs_closing") { setSelDay(0); setSelMonth(null); }
+            else if (pnlTab === "demand_vs_closing") { setSelDay(1); }
           }} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
       </div>
