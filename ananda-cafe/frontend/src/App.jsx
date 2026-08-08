@@ -8384,15 +8384,20 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
           ...(lockedOutlet ? [] : [{ key: "table", label: "📊 Category & Item" }]),
           { key: "dairy", label: "🥛 Dairy Audit" },
           { key: "cold_drink", label: "🥤 Cold Drink Audit" },
+          { key: "report", label: "📈 COGS Report" },
         ].map((t) => (
           <button key={t.key} onClick={() => setCogsView(t.key)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: cogsView === t.key ? 700 : 500, border: cogsView === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: cogsView === t.key ? "#1A1A1A" : "#fff", color: cogsView === t.key ? "#fff" : "#888", whiteSpace: "nowrap" }}>{t.label}</button>
         ))}
       </div>
 
-      {/* Date dropdown — omitted when syncDate is passed, since the parent already shows one */}
-      {!syncDate && (
+      {/* Date dropdown — omitted when syncDate is passed (parent already shows one), or on
+          the Report tab, which has its own 7-day/month/custom range picker instead of a
+          single day/month. */}
+      {!syncDate && cogsView !== "report" && (
         <DateRangeDropdown selDay={selDay} setSelDay={setIntSelDay} selMonth={selMonth} setSelMonth={setIntSelMonth} monthOptions={monthOptions} days={7} onChange={() => setDrillCat(null)} />
       )}
+
+      {cogsView === "report" && <CogsReportSection lockedOutlet={lockedOutlet} />}
 
       {cogsView === "dairy" && (
         selMonth ? (
@@ -8615,10 +8620,11 @@ const CogsReportSection = ({ lockedOutlet }) => {
           <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(totalShouldBe)}</div>
         </div>
         <div style={{ background: isOver ? "#FEF2F2" : "#F0FDF4", borderRadius: 12, border: `1px solid ${isOver ? "#FECACA" : "#BBF7D0"}`, padding: 16, textAlign: "center" }}>
-          <div style={{ fontSize: 10, color: isOver ? "#991B1B" : "#166534", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Variance</div>
+          <div style={{ fontSize: 10, color: isOver ? "#991B1B" : "#166534", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Loss to Inefficiency</div>
           <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: isOver ? "#DC2626" : "#16A34A" }}>
             {isOver ? "+" : ""}{fmt(variance)}{variancePct != null && ` (${isOver ? "+" : ""}${variancePct.toFixed(1)}%)`}
           </div>
+          <div style={{ fontSize: 9, color: "#999", marginTop: 4 }}>{isOver ? "consumed more than the recipe called for" : "consumed within/under the recipe standard"}</div>
         </div>
       </div>
 
@@ -8629,7 +8635,7 @@ const CogsReportSection = ({ lockedOutlet }) => {
               <th style={thS}>Date</th>
               <th style={{ ...thS, textAlign: "right" }}>Actual COGS</th>
               <th style={{ ...thS, textAlign: "right" }}>Should-Be COGS</th>
-              <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+              <th style={{ ...thS, textAlign: "right" }}>Loss to Inefficiency</th>
             </tr></thead>
             <tbody>
               {dayRows.length === 0 && (
