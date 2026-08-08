@@ -12073,9 +12073,15 @@ const DEMAND_ITEM_BY_ID = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => se
 // fields are recorded in the item's own default unit except for the rare Batch/Kg
 // override, which this intentionally doesn't chase since neither of the screens this is
 // meant to consolidate does either.
+// item_id -> { id: section_id, emoji, titleHi } — DEMAND_SECTIONS' items don't carry
+// their own section back-reference, so this is built once from the same source
+// DEMAND_ITEM_BY_ID already flattens, for the category pill filter below.
+const DEMAND_ITEM_SECTION = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => [i.id, sec])));
+
 const ChallansSection = ({ dateStr, selOutlet }) => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [catFilter, setCatFilter] = useState("all");
 
   useEffect(() => {
     setLoading(true);
@@ -12113,17 +12119,26 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
   }, [orders]);
 
   const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id).filter((id) => grouped[id]);
-  const rows = outletIds.flatMap((oid) =>
+  const allRows = outletIds.flatMap((oid) =>
     Object.entries(grouped[oid] || {})
       .filter(([, r]) => r.demanded > 0 || r.dispatched > 0)
       .map(([itemId, r]) => ({ outletId: oid, itemId, ...r }))
   ).sort((a, b) => (a.outletId === b.outletId ? 0 : a.outletId < b.outletId ? -1 : 1) || (DEMAND_ITEM_BY_ID[a.itemId]?.name || a.itemId).localeCompare(DEMAND_ITEM_BY_ID[b.itemId]?.name || b.itemId));
+  const rows = catFilter === "all" ? allRows : allRows.filter((r) => DEMAND_ITEM_SECTION[r.itemId]?.id === catFilter);
 
   const outletName = selOutlet ? (OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet) : "any outlet";
+  const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
   return (
     <div>
       <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Every item demanded on {dateStr}, checked against what BK actually dispatched and whether the outlet has confirmed receipt.</p>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        <button onClick={() => setCatFilter("all")} style={pillStyle(catFilter === "all")}>All</button>
+        {DEMAND_SECTIONS.map((sec) => (
+          <button key={sec.id} onClick={() => setCatFilter(sec.id)} style={pillStyle(catFilter === sec.id)}>{sec.emoji} {sec.titleHi}</button>
+        ))}
+      </div>
 
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
