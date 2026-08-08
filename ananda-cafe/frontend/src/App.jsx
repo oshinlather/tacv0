@@ -3191,6 +3191,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
         {[
           { key: "pnl", label: "💰 P&L" },
+          // Flags is the owner's daily problem list (COGS leakage, challan/punch/demand
+          // gaps) over the company outlets — hidden on a locked franchise view like the
+          // other owner-nudge tabs below.
+          ...(lockedOutlet ? [] : [{ key: "flags", label: "🚩 Flags" }]),
           // COGS Compare (Category & Item table, plus its Dairy/Cold Drink Audit
           // sub-tabs) is hidden entirely for a locked franchise view — the cross-outlet
           // table has no way to scope to just one outlet, and Cold Drink cost is now
@@ -12579,6 +12583,215 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  FLAGS — one at-a-glance panel of the day's problems worth chasing: COGS
+//  leakage (top-N items by leakage %), challan mismatches (demand≠dispatch /
+//  dispatch≠verified), missing punches, and outlets that never submitted their
+//  demand. All read-only, assembled from data already served by /audit,
+//  /orders and /punch-status — no new backend. Respects the P&L page's outlet
+//  filter; Punch/Demand are limited to company-owned outlets since franchises
+//  don't punch through this system.
+// ═══════════════════════════════════════════════════════════════════════════
+const FlagCard = ({ icon, title, subtitle, count, extra, children }) => (
+  <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+    <div style={{ padding: "12px 16px", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 800 }}>
+          {icon} {title}
+          {count != null && <span style={{ marginLeft: 8, padding: "1px 9px", borderRadius: 10, fontSize: 11, fontWeight: 800, background: count > 0 ? "#FEF2F2" : "#F0FDF4", color: count > 0 ? "#DC2626" : "#16A34A" }}>{count}</span>}
+        </div>
+        {subtitle && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{subtitle}</div>}
+      </div>
+      {extra}
+    </div>
+    <div style={{ padding: "12px 16px" }}>{children}</div>
+  </div>
+);
+
+const FlagsSection = ({ dateStr, selOutlet }) => {
+  const [audit, setAudit] = useState(null);
+  const [orders, setOrders] = useState([]);
+  const [punch, setPunch] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [cogsCount, setCogsCount] = useState(5);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.getRMAudit(dateStr).catch(() => null),
+      api.getOrders({ date: dateStr }).catch(() => []),
+      api.getPunchStatus(dateStr).catch(() => null),
+    ]).then(([a, o, p]) => { setAudit(a); setOrders(o || []); setPunch(p); }).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const inScope = (oid) => !selOutlet || oid === selOutlet;
+  const oShort = (id) => OUTLETS.find((o) => o.id === id)?.short || id;
+  const itemName = (id) => DEMAND_ITEM_BY_ID[id]?.name || id;
+
+  // ── COGS leakage: (outlet, item) rows sorted by leakage % desc, top N ──
+  const cogsRows = useMemo(() => {
+    if (!audit?.outlets) return [];
+    const rows = [];
+    audit.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
+      (o.items || []).forEach((it) => {
+        // Need real actual consumption (closing stock submitted) and a non-zero
+        // should-consume for the % to mean anything.
+        if (it.actual_consumed == null || it.variance_pct == null) return;
+        if (!(Number(it.should_consume) > 0)) return;
+        rows.push({ outletId: o.outlet_id, name: it.raw_material, unit: it.unit, should: Number(it.should_consume), actual: Number(it.actual_consumed), variance: Number(it.variance), variancePct: Number(it.variance_pct) });
+      });
+    });
+    return rows.sort((a, b) => b.variancePct - a.variancePct).slice(0, cogsCount);
+  }, [audit, selOutlet, cogsCount]);
+
+  // ── Challan mismatches — same rules as ChallansSection (demand≠dispatch, or
+  //    a verified receipt that differs from what was dispatched) ──
+  const challanRows = useMemo(() => {
+    const manual = orders.filter((o) => o.type === "manual" && o.items && inScope(o.outlet_id));
+    const g = {};
+    manual.forEach((o) => {
+      const items = o.items || {};
+      const dispatchItems = o.status === "fulfilled" ? (o.dispatch_items || items) : {};
+      const receivedItems = o.received_items || {};
+      const bucket = g[o.outlet_id] || (g[o.outlet_id] = {});
+      new Set([...Object.keys(items), ...Object.keys(dispatchItems)]).forEach((id) => {
+        const row = bucket[id] || (bucket[id] = { demanded: 0, dispatched: 0, verified: 0, anyUnverified: false });
+        row.demanded += Number(items[id]) || 0;
+        const disp = Number(dispatchItems[id]) || 0;
+        row.dispatched += disp;
+        if (disp > 0) { if (o.received_at) row.verified += Number(receivedItems[id] ?? disp) || 0; else row.anyUnverified = true; }
+      });
+    });
+    const out = [];
+    Object.entries(g).forEach(([oid, items]) => {
+      Object.entries(items).forEach(([itemId, r]) => {
+        const demanded = Math.round(r.demanded * 100) / 100, dispatched = Math.round(r.dispatched * 100) / 100, verified = Math.round(r.verified * 100) / 100;
+        const demandDispatch = demanded !== dispatched;
+        const dispatchVerified = !r.anyUnverified && dispatched > 0 && verified !== dispatched;
+        if (demandDispatch || dispatchVerified) out.push({ outletId: oid, itemId, demanded, dispatched, verified, demandDispatch, dispatchVerified });
+      });
+    });
+    return out.sort((a, b) => Math.abs(b.dispatched - b.demanded) - Math.abs(a.dispatched - a.demanded));
+  }, [orders, selOutlet]);
+
+  // ── Punch / Demand — company-owned outlets only (franchises don't punch here) ──
+  const ownPunch = (punch?.outlets || []).filter((o) => inScope(o.outlet_id) && OWN_OUTLETS.some((x) => x.id === o.outlet_id));
+  const punchRows = ownPunch
+    .map((o) => ({ outletId: o.outlet_id, missing: (o.missing || []).filter((m) => m !== "demand"), closingCats: Object.entries(o.closing_categories || {}).filter(([, v]) => !v).map(([k]) => k) }))
+    .filter((o) => o.missing.length > 0 || o.closingCats.length > 0);
+  const demandMissing = ownPunch.filter((o) => (o.missing || []).includes("demand")).map((o) => o.outlet_id);
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading flags...</div>;
+
+  const goodMsg = (txt) => <div style={{ fontSize: 12.5, color: "#16A34A", fontWeight: 600 }}>✅ {txt}</div>;
+  const th = { ...thS, paddingTop: 6, paddingBottom: 6 };
+  const td = { ...tdS, paddingTop: 6, paddingBottom: 6 };
+
+  return (
+    <div>
+      {/* ── 1. COGS leakage ── */}
+      <FlagCard icon="📊" title="COGS Leakage"
+        subtitle={`Highest leakage % — should-consume vs actual (${selOutlet ? oShort(selOutlet) : "all outlets"}, ${dateStr})`}
+        extra={
+          <select value={cogsCount} onChange={(e) => setCogsCount(Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            {[5, 10, 15, 20].map((n) => <option key={n} value={n}>Top {n}</option>)}
+          </select>
+        }>
+        {cogsRows.length === 0 ? goodMsg("No leakage to show (needs submitted closing stock + mapped recipes).") : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                {!selOutlet && <th style={th}>Outlet</th>}
+                <th style={th}>Item</th>
+                <th style={{ ...th, textAlign: "right" }}>Should</th>
+                <th style={{ ...th, textAlign: "right" }}>Actual</th>
+                <th style={{ ...th, textAlign: "right" }}>Leakage %</th>
+              </tr></thead>
+              <tbody>
+                {cogsRows.map((r, i) => {
+                  const over = r.variance > 0;
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
+                      <td style={td}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span></td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700 }}>{r.should.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.actual.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: over ? "#DC2626" : "#16A34A" }}>{over ? "+" : ""}{r.variancePct}%</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </FlagCard>
+
+      {/* ── 2. Challan mismatches ── */}
+      <FlagCard icon="🧾" title="Challan Mismatches" count={challanRows.length}
+        subtitle="Demand ≠ Dispatch (🟠) or Dispatch ≠ Verified receipt (🟡)">
+        {challanRows.length === 0 ? goodMsg("Every challan matches — demand, dispatch and verified receipts all agree.") : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                {!selOutlet && <th style={th}>Outlet</th>}
+                <th style={th}>Item</th>
+                <th style={{ ...th, textAlign: "right" }}>Demanded</th>
+                <th style={{ ...th, textAlign: "right" }}>Dispatched</th>
+                <th style={{ ...th, textAlign: "right" }}>Verified</th>
+              </tr></thead>
+              <tbody>
+                {challanRows.map((r, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #F0F0EC", background: r.demandDispatch ? "#FFF7ED" : "#FEFCE8" }}>
+                    {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
+                    <td style={td}>{itemName(r.itemId)} <span style={{ fontSize: 10, color: "#999" }}>{DEMAND_ITEM_BY_ID[r.itemId]?.unit}</span></td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.demanded}</td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.dispatched < r.demanded ? "#DC2626" : "#1A1A1A" }}>{r.dispatched}</td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.dispatchVerified ? "#854D0E" : "#16A34A" }}>{r.verified}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </FlagCard>
+
+      {/* ── 3. Missing punches (excl. demand, which has its own flag) ── */}
+      <FlagCard icon="🔔" title="Missing Punches" count={punchRows.length}
+        subtitle="Company outlets with unpunched entries (sales, closing, wastage, purchase, verify)">
+        {punchRows.length === 0 ? goodMsg("All company outlets have punched everything for the day.") : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {punchRows.map((o) => (
+              <div key={o.outletId} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, minWidth: 44 }}>{oShort(o.outletId)}</span>
+                {o.missing.map((m) => {
+                  const t = PUNCH_TYPES.find((p) => p.key === m);
+                  return <span key={m} style={{ padding: "3px 9px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>{t ? `${t.icon} ${t.label}` : m}</span>;
+                })}
+                {o.closingCats.map((c) => {
+                  const t = CLOSING_CATEGORY_META.find((p) => p.key === c);
+                  return <span key={c} style={{ padding: "3px 9px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A" }}>📊 {t ? t.label : c} closing</span>;
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+      </FlagCard>
+
+      {/* ── 4. Demand not submitted ── */}
+      <FlagCard icon="✏️" title="Demand Not Submitted" count={demandMissing.length}
+        subtitle="Company outlets that haven't sent their demand for the day">
+        {demandMissing.length === 0 ? goodMsg("Every company outlet has submitted its demand.") : (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {demandMissing.map((oid) => (
+              <span key={oid} style={{ padding: "5px 12px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>{OUTLETS.find((o) => o.id === oid)?.name || oid}</span>
+            ))}
+          </div>
+        )}
+      </FlagCard>
     </div>
   );
 };
