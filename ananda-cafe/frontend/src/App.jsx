@@ -11951,20 +11951,23 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const scoreBg = (score) => score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
   const scoreBorder = (score) => score == null ? "#E8E8E4" : score >= COGS_SCORE_THRESHOLDS.good ? "#BBF7D0" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FDE68A" : "#FECACA";
 
-  const ScoreCard = ({ icon, label, score, sub, comingSoon }) => (
-    <div style={{ flex: "1 1 150px", background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 14px", border: `1px solid ${comingSoon ? "#E8E8E4" : scoreBorder(score)}`, textAlign: "center" }}>
-      <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
-      <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
-      {comingSoon ? (
-        <div style={{ fontSize: 12, color: "#BBB", fontWeight: 600 }}>Coming soon</div>
-      ) : (
-        <>
-          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: scoreColor(score) }}>{score != null ? score : "—"}</div>
-          {sub && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{sub}</div>}
-        </>
-      )}
-    </div>
-  );
+  const ScoreCard = ({ tabKey, icon, label, score, sub, comingSoon }) => {
+    const active = activeTab === tabKey;
+    return (
+      <button onClick={() => setActiveTab(tabKey)} style={{ flex: "1 1 150px", background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 14px", border: `1.5px solid ${active ? "#FDE68A" : (comingSoon ? "#E8E8E4" : scoreBorder(score))}`, textAlign: "center", cursor: "pointer", fontFamily: "inherit", boxShadow: active ? "0 0 0 3px rgba(253,230,138,0.35)" : "none" }}>
+        <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+        <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
+        {comingSoon ? (
+          <div style={{ fontSize: 12, color: "#BBB", fontWeight: 600 }}>Coming soon</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: scoreColor(score) }}>{score != null ? score : "—"}</div>
+            {sub && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{sub}</div>}
+          </>
+        )}
+      </button>
+    );
+  };
 
   return (
     <div>
@@ -11974,25 +11977,25 @@ const OutletPerformanceDashboard = ({ outlet }) => {
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       ) : (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-          <ScoreCard icon="✏️" label="Punch Score" comingSoon />
-          <ScoreCard icon="💰" label="COGS Score" score={cogsScore}
+          <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" comingSoon />
+          <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
             sub={idealPct != null && actualPct != null ? `Actual ${actualPct.toFixed(1)}% vs Ideal ${idealPct.toFixed(1)}% of sale` : "No sales/recipe data for this date"} />
-          <ScoreCard icon="⏰" label="Discipline (Duty Hours)" comingSoon />
-          <ScoreCard icon="⭐" label="Review Score" comingSoon />
+          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline (Duty Hours)" comingSoon />
+          <ScoreCard tabKey="review" icon="⭐" label="Review Score" comingSoon />
         </div>
       )}
 
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <button onClick={() => setShowAudit(!showAudit)} style={{ width: "100%", padding: "14px 16px", border: "none", background: "transparent", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", fontFamily: "inherit" }}>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>🔍 Full Raw Material Audit — see exactly what's driving your COGS score</span>
-          <span style={{ fontSize: 12, color: "#2563EB", fontWeight: 700 }}>{showAudit ? "▲ hide" : "▼ deep dive"}</span>
-        </button>
-        {showAudit && (
-          <div style={{ padding: "0 16px 16px" }}>
-            <RMAuditPanel lockedOutlet={outlet} />
-          </div>
-        )}
-      </div>
+      {activeTab === "cogs" && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>🔍 Full Raw Material Audit — see exactly what's driving your COGS score</div>
+          <RMAuditPanel lockedOutlet={outlet} />
+        </div>
+      )}
+      {activeTab !== "cogs" && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999", fontSize: 13 }}>
+          Coming soon.
+        </div>
+      )}
     </div>
   );
 };
@@ -12000,15 +12003,40 @@ const OutletPerformanceDashboard = ({ outlet }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
+// The 6 categories the outlet Performance Dashboard's COGS drill-down actually cares
+// about (a coarser cut than the full 8-category DEMAND_SECTIONS list) — anything whose
+// resolved category isn't one of these (Masala, Cleaning, Gas, or an item with no
+// DEMAND_SECTIONS match at all) buckets into "others" rather than getting its own pill.
+const RM_AUDIT_CATEGORIES = [
+  { id: "food", label: "🍲 Food" },
+  { id: "vegetable", label: "🥬 Vegetable" },
+  { id: "grocery", label: "🛒 Grocery" },
+  { id: "dairy", label: "🥛 Dairy" },
+  { id: "packaging", label: "📦 Packaging" },
+  { id: "cold_drink", label: "🥤 Cold Drink" },
+];
+const RM_AUDIT_CAT_IDS = new Set(RM_AUDIT_CATEGORIES.map((c) => c.id));
+// Leakage in ₹ — actual cost minus ideal cost, the same two numbers the outlet
+// Performance Dashboard's COGS Score is built from, just per-item instead of summed —
+// this is what actually drives that score, so it's the natural thing to filter/sort by.
+const leakageAmount = (item) => (item.should_consume_cost != null && item.actual_consumed_cost != null) ? Math.round((item.actual_consumed_cost - item.should_consume_cost) * 100) / 100 : null;
+const itemCategoryId = (item) => {
+  const sec = DEMAND_ITEM_SECTION[item.item_id]?.id;
+  return sec && RM_AUDIT_CAT_IDS.has(sec) ? sec : "others";
+};
+
 const RMAuditPanel = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
-  // Default order is the backend's |variance| desc (biggest absolute gap first); the owner
-  // can flip to leakage % to surface the worst-proportioned items regardless of volume.
-  const [sortBy, setSortBy] = useState("default"); // default | leakage_desc | leakage_asc
+  const [catFilter, setCatFilter] = useState("all");
+  // Defaults to leakage ₹ descending — the real cost impact driving the COGS score,
+  // not just the raw qty gap (which mixes Kg/Pcs/Ltr across items and isn't directly
+  // comparable). Still offered both directions since "who's under-consuming" (data
+  // problems: overstated closing, a missed wastage entry) is its own useful view.
+  const [sortBy, setSortBy] = useState("amount_desc"); // amount_desc | amount_asc
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
@@ -12021,14 +12049,23 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
 
   const outletData = audit?.outlets?.[0] || null;
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const catCounts = useMemo(() => {
+    const c = {};
+    (outletData?.items || []).forEach((it) => { const id = itemCategoryId(it); c[id] = (c[id] || 0) + 1; });
+    return c;
+  }, [outletData]);
+  const filteredItems = useMemo(() => {
+    const items = outletData?.items || [];
+    return catFilter === "all" ? items : items.filter((it) => itemCategoryId(it) === catFilter);
+  }, [outletData, catFilter]);
+  const totalLeakageAmount = useMemo(() => filteredItems.reduce((s, it) => s + (leakageAmount(it) || 0), 0), [filteredItems]);
   const sortedItems = useMemo(() => {
-    const items = [...(outletData?.items || [])];
-    // Items with no actual consumption (null variance_pct) always sink to the bottom so
-    // real leakage stays at the top whichever direction is picked.
-    if (sortBy === "leakage_desc") return items.sort((a, b) => (b.variance_pct ?? -Infinity) - (a.variance_pct ?? -Infinity));
-    if (sortBy === "leakage_asc") return items.sort((a, b) => (a.variance_pct ?? Infinity) - (b.variance_pct ?? Infinity));
-    return items; // backend order: |variance| desc
-  }, [outletData, sortBy]);
+    const items = [...filteredItems];
+    // Items with no actual consumption (null leakage) always sink to the bottom so real
+    // leakage stays at the top whichever direction is picked.
+    if (sortBy === "amount_asc") return items.sort((a, b) => (leakageAmount(a) ?? Infinity) - (leakageAmount(b) ?? Infinity));
+    return items.sort((a, b) => (leakageAmount(b) ?? -Infinity) - (leakageAmount(a) ?? -Infinity));
+  }, [filteredItems, sortBy]);
 
   return (
     <div>
@@ -12047,30 +12084,57 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
 
       {!loading && outletData && (
         <>
-          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+            <div style={{ background: "#fff", borderRadius: 12, padding: "12px 10px", border: "1px solid #E8E8E4", textAlign: "center" }}>
               <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Dishes Sold</div>
               <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{outletData.dishes_sold}</div>
             </div>
-            <div style={{ flex: "1 1 140px", background: "#fff", borderRadius: 12, padding: "12px 16px", border: "1px solid #E8E8E4", textAlign: "center" }}>
+            <div style={{ background: "#fff", borderRadius: 12, padding: "12px 10px", border: "1px solid #E8E8E4", textAlign: "center" }}>
               <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Matched to Recipe</div>
               <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: outletData.dishes_matched === outletData.dishes_sold ? "#16A34A" : "#B45309" }}>{outletData.dishes_matched} / {outletData.dishes_sold}</div>
               <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>dish types</div>
             </div>
-            {outletData.sales_coverage_pct != null && (() => {
+            {(() => {
               const cov = outletData.sales_coverage_pct;
-              const covColor = cov >= 80 ? "#16A34A" : cov >= 50 ? "#B45309" : "#DC2626";
-              const covBg = cov >= 80 ? "#F0FDF4" : cov >= 50 ? "#FFFBEB" : "#FEF2F2";
-              const covBorder = cov >= 80 ? "#BBF7D0" : cov >= 50 ? "#FDE68A" : "#FECACA";
+              const hasCov = cov != null;
+              const covColor = !hasCov ? "#999" : cov >= 80 ? "#16A34A" : cov >= 50 ? "#B45309" : "#DC2626";
+              const covBg = !hasCov ? "#FAFAF8" : cov >= 80 ? "#F0FDF4" : cov >= 50 ? "#FFFBEB" : "#FEF2F2";
+              const covBorder = !hasCov ? "#E8E8E4" : cov >= 80 ? "#BBF7D0" : cov >= 50 ? "#FDE68A" : "#FECACA";
               return (
-                <div style={{ flex: "1 1 140px", background: covBg, borderRadius: 12, padding: "12px 16px", border: `1px solid ${covBorder}`, textAlign: "center" }}>
+                <div style={{ background: covBg, borderRadius: 12, padding: "12px 10px", border: `1px solid ${covBorder}`, textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Sales Volume Covered</div>
-                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: covColor }}>{cov}%</div>
-                  <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{outletData.sales_qty_matched} / {outletData.sales_qty_total} units sold</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: covColor }}>{hasCov ? `${cov}%` : "—"}</div>
+                  <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{hasCov ? `${outletData.sales_qty_matched} / ${outletData.sales_qty_total} units sold` : "no sales data"}</div>
+                </div>
+              );
+            })()}
+            {(() => {
+              const hasLeakage = filteredItems.some((it) => leakageAmount(it) != null);
+              const over = totalLeakageAmount > 0;
+              const leakColor = !hasLeakage ? "#999" : over ? "#DC2626" : totalLeakageAmount < 0 ? "#16A34A" : "#1A1A1A";
+              const leakBg = !hasLeakage ? "#FAFAF8" : over ? "#FEF2F2" : "#F0FDF4";
+              const leakBorder = !hasLeakage ? "#E8E8E4" : over ? "#FECACA" : "#BBF7D0";
+              return (
+                <div style={{ background: leakBg, borderRadius: 12, padding: "12px 10px", border: `1px solid ${leakBorder}`, textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Leakage</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: leakColor }}>{hasLeakage ? `${over ? "+" : ""}${fmt(totalLeakageAmount)}` : "—"}</div>
+                  <div style={{ fontSize: 9, color: "#BBB", marginTop: 2 }}>{catFilter === "all" ? "all items" : RM_AUDIT_CATEGORIES.find((c) => c.id === catFilter)?.label || "others"}</div>
                 </div>
               );
             })()}
           </div>
+
+          {outletData.items.length > 0 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+              <button onClick={() => setCatFilter("all")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === "all" ? 700 : 500, border: catFilter === "all" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "all" ? "#1A1A1A" : "#fff", color: catFilter === "all" ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({outletData.items.length})</button>
+              {RM_AUDIT_CATEGORIES.map((c) => catCounts[c.id] > 0 && (
+                <button key={c.id} onClick={() => setCatFilter(c.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === c.id ? 700 : 500, border: catFilter === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === c.id ? "#1A1A1A" : "#fff", color: catFilter === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label} ({catCounts[c.id]})</button>
+              ))}
+              {catCounts.others > 0 && (
+                <button onClick={() => setCatFilter("others")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === "others" ? 700 : 500, border: catFilter === "others" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "others" ? "#1A1A1A" : "#fff", color: catFilter === "others" ? "#fff" : "#888", whiteSpace: "nowrap" }}>Others ({catCounts.others})</button>
+              )}
+            </div>
+          )}
 
           {outletData.sales_coverage_pct != null && outletData.sales_coverage_pct < 100 && (
             <div style={{ padding: "10px 14px", borderRadius: 10, background: outletData.sales_coverage_pct < 50 ? "#FEF2F2" : "#FFFBEB", border: `1px solid ${outletData.sales_coverage_pct < 50 ? "#FECACA" : "#FDE68A"}`, fontSize: 12, color: outletData.sales_coverage_pct < 50 ? "#991B1B" : "#92400E", marginBottom: 16 }}>
@@ -12082,17 +12146,20 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
             <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales data uploaded for {outletName} on {dateStr}</div>
           )}
 
-          {outletData.items.length > 0 && (
+          {outletData.items.length > 0 && filteredItems.length === 0 && (
+            <div style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No {RM_AUDIT_CATEGORIES.find((c) => c.id === catFilter)?.label || "Others"} items for {outletName} on {dateStr}</div>
+          )}
+
+          {filteredItems.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
               <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
-                <option value="default">Sort: Biggest gap</option>
-                <option value="leakage_desc">Sort: Leakage % (high → low)</option>
-                <option value="leakage_asc">Sort: Leakage % (low → high)</option>
+                <option value="amount_desc">Sort: Leakage ₹ (high → low)</option>
+                <option value="amount_asc">Sort: Leakage ₹ (low → high)</option>
               </select>
             </div>
           )}
 
-          {outletData.items.length > 0 && (
+          {filteredItems.length > 0 && (
             // No overflow:hidden/overflowX:auto wrapper here (unlike other tables in this
             // file) — either one establishes a new containing block for any sticky
             // descendant, which silently breaks the header's position:sticky. Corners are
@@ -12113,6 +12180,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
                       const isOpen = expandedItem === item.raw_material;
                       const ab = item.actual_breakdown;
                       const hasSoldBreakdown = (item.should_consume_breakdown || []).length > 0;
+                      const amount = leakageAmount(item);
                       return (<Fragment key={i}>
                         <tr onClick={() => hasSoldBreakdown && setExpandedItem(isOpen ? null : item.raw_material)} style={{ borderBottom: "none", cursor: hasSoldBreakdown ? "pointer" : "default" }}>
                           <td style={{ ...tdS, fontWeight: 600, paddingBottom: 2 }}>{item.raw_material} {hasSoldBreakdown && <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>}</td>
@@ -12121,6 +12189,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", paddingBottom: 2 }}>{hasActual ? Number(item.actual_consumed).toFixed(2) : "—"}</td>
                           <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasActual ? "#999" : isOver ? "#DC2626" : "#16A34A", paddingBottom: 2 }}>
                             {hasActual ? `${isOver ? "+" : ""}${Number(item.variance).toFixed(2)}${item.variance_pct != null ? ` (${isOver ? "+" : ""}${item.variance_pct}%)` : ""}` : "no closing stock data"}
+                            {amount != null && <div style={{ fontSize: 10, fontWeight: 700, color: amount > 0 ? "#DC2626" : amount < 0 ? "#16A34A" : "#999" }}>{amount > 0 ? "+" : ""}{fmt(amount)}</div>}
                           </td>
                         </tr>
                         {/* Actual-consumed math, always visible — same convention as P&L's "(50 + 250) − 0 − 40 = 260 Kg" line */}
@@ -12738,6 +12807,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
   const [punch, setPunch] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cogsCount, setCogsCount] = useState(5);
+  const [expandedCogs, setExpandedCogs] = useState(null); // "outletId|name" whose dishes breakdown is open
 
   useEffect(() => {
     setLoading(true);
@@ -12770,6 +12840,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
           should: Number(it.should_consume), actual: Number(it.actual_consumed),
           variance: Number(it.variance), leakCost,
           variancePct: (it.variance_pct != null && isFinite(it.variance_pct)) ? Number(it.variance_pct) : null,
+          ab: it.actual_breakdown, breakdown: it.should_consume_breakdown || [],
         });
       });
     });
@@ -12841,16 +12912,45 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
                 <th style={{ ...th, textAlign: "right" }}>Leakage %</th>
               </tr></thead>
               <tbody>
-                {cogsRows.map((r, i) => (
-                  <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
-                    <td style={td}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span></td>
-                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700 }}>{r.should.toFixed(2)}</td>
-                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.actual.toFixed(2)}</td>
-                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{fmt(Math.round(r.leakCost))}</td>
-                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626" }}>{r.variancePct != null ? `+${r.variancePct}%` : "—"}</td>
-                  </tr>
-                ))}
+                {cogsRows.map((r, i) => {
+                  const cols = (selOutlet ? 0 : 1) + 5;
+                  const key = `${r.outletId}|${r.name}`;
+                  const isOpen = expandedCogs === key;
+                  const hasBreakdown = (r.breakdown || []).length > 0;
+                  return (<Fragment key={key}>
+                    <tr onClick={() => hasBreakdown && setExpandedCogs(isOpen ? null : key)} style={{ borderBottom: "none", cursor: hasBreakdown ? "pointer" : "default" }}>
+                      {!selOutlet && <td style={{ ...td, fontWeight: 600, paddingBottom: 2 }}>{oShort(r.outletId)}</td>}
+                      <td style={{ ...td, paddingBottom: 2 }}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span> {hasBreakdown && <span style={{ color: "#2563EB", fontSize: 11, fontWeight: 800 }}>{isOpen ? "▲" : "▼"}</span>}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700, paddingBottom: 2 }}>{r.should.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", paddingBottom: 2 }}>{r.actual.toFixed(2)}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626", paddingBottom: 2 }}>{fmt(Math.round(r.leakCost))}</td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626", paddingBottom: 2 }}>{r.variancePct != null ? `+${r.variancePct}%` : "—"}</td>
+                    </tr>
+                    {/* Actual-consumed math, always visible — same convention as the RM Audit table */}
+                    <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td colSpan={cols} style={{ padding: "0 16px 6px", fontSize: 10, color: "#999", fontFamily: "'JetBrains Mono', monospace" }}>
+                        {r.ab
+                          ? <>({Number(r.ab.prev_closing).toFixed(2)} + {Number(r.ab.dispatched).toFixed(2)}{Number(r.ab.purchased) > 0 && <span style={{ color: "#16A34A" }}> + {Number(r.ab.purchased).toFixed(2)}</span>}) − {Number(r.ab.wastage).toFixed(2)} − {Number(r.ab.closing).toFixed(2)} = {r.actual.toFixed(2)} {r.unit}</>
+                          : "no closing stock submitted — actual consumption can't be computed"}
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td colSpan={cols} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
+                          {r.breakdown.map((b, j) => (
+                            <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
+                              {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+                            </div>
+                          ))}
+                          <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+                            = {r.should.toFixed(2)} {r.unit}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>);
+                })}
               </tbody>
             </table>
           </div>
