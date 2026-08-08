@@ -3171,8 +3171,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // pill is meaningless on a locked franchise view and hidden there too.
           ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
           ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
-          // Demand vs Closing is useful to a franchise partner too — it's their own
-          // outlet's numbers, DemandVsClosingSection just locks the outlet picker to it.
+          // Challans and Demand vs Closing are both useful to a franchise partner too —
+          // it's their own outlet's numbers either way, the shared outlet pill just
+          // narrows to it (locked, so there's nothing else to pick).
+          { key: "challans", label: "🧾 Challans" },
           { key: "demand_vs_closing", label: "📦 Demand vs Closing" },
         ].map((t) => (
           <button key={t.key} onClick={() => {
@@ -3887,6 +3889,13 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
       {pnlTab === "attendance" && !lockedOutlet && (
         selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
+      )}
+      {pnlTab === "challans" && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Challans.
+          </div>
+        ) : <ChallansSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
       {pnlTab === "demand_vs_closing" && (
         selMonth ? (
@@ -12051,6 +12060,111 @@ const shiftDateStr = (dateStr, days) => {
 };
 // id -> { id, name, unit, ... } across every demand item, for unit-conversion lookups
 const DEMAND_ITEM_BY_ID = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => sec.items.map((i) => [i.id, i])));
+
+// ── Challans — every item demanded on the selected date, checked against what BK
+// actually dispatched and whether the outlet has confirmed receipt (the same
+// demand -> dispatch -> receive loop the outlet-side "Dispatched Challans" screen and
+// Missing Punches' "Verify Dispatch Challan" both already track, just rolled up into one
+// table instead of opening each day's challan one at a time). Shares Daily P&L's own
+// date dropdown and outlet pill — "All Outlets" lists every outlet's items with its own
+// Outlet column; picking one outlet narrows to just its items and drops that column.
+// Quantities are read directly off items/dispatch_items/received_items with no per-record
+// unit conversion, same convention the outlet-side receive screen already uses — those
+// fields are recorded in the item's own default unit except for the rare Batch/Kg
+// override, which this intentionally doesn't chase since neither of the screens this is
+// meant to consolidate does either.
+const ChallansSection = ({ dateStr, selOutlet }) => {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getOrders({ date: dateStr, outlet_id: selOutlet || undefined })
+      .then((rows) => setOrders((rows || []).filter((o) => o.type === "manual" && o.items)))
+      .catch(() => setOrders([]))
+      .finally(() => setLoading(false));
+  }, [dateStr, selOutlet]);
+
+  // outlet_id -> item_id -> { demanded, dispatched, verified, anyUnverified }
+  const grouped = useMemo(() => {
+    const g = {};
+    orders.forEach((o) => {
+      const bucket = g[o.outlet_id] || (g[o.outlet_id] = {});
+      const items = o.items || {};
+      // Only a 'fulfilled' order has actually been dispatched — dispatch_items falls
+      // back to the demanded qty for an older record that predates that field being
+      // recorded separately, same fallback the outlet-side receive screen already uses.
+      const dispatchItems = o.status === "fulfilled" ? (o.dispatch_items || items) : {};
+      const receivedItems = o.received_items || {};
+      const allIds = new Set([...Object.keys(items), ...Object.keys(dispatchItems)]);
+      allIds.forEach((id) => {
+        const row = bucket[id] || (bucket[id] = { demanded: 0, dispatched: 0, verified: 0, anyUnverified: false });
+        const dem = Number(items[id]) || 0;
+        const disp = Number(dispatchItems[id]) || 0;
+        row.demanded += dem;
+        row.dispatched += disp;
+        if (disp > 0) {
+          if (o.received_at) row.verified += Number(receivedItems[id] ?? disp) || 0;
+          else row.anyUnverified = true; // dispatched but the outlet hasn't confirmed receipt yet
+        }
+      });
+    });
+    return g;
+  }, [orders]);
+
+  const outletIds = selOutlet ? [selOutlet] : OUTLETS.map((o) => o.id).filter((id) => grouped[id]);
+  const rows = outletIds.flatMap((oid) =>
+    Object.entries(grouped[oid] || {})
+      .filter(([, r]) => r.demanded > 0 || r.dispatched > 0)
+      .map(([itemId, r]) => ({ outletId: oid, itemId, ...r }))
+  ).sort((a, b) => (a.outletId === b.outletId ? 0 : a.outletId < b.outletId ? -1 : 1) || (DEMAND_ITEM_BY_ID[a.itemId]?.name || a.itemId).localeCompare(DEMAND_ITEM_BY_ID[b.itemId]?.name || b.itemId));
+
+  const outletName = selOutlet ? (OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet) : "any outlet";
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Every item demanded on {dateStr}, checked against what BK actually dispatched and whether the outlet has confirmed receipt.</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+      ) : rows.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No demand for {outletName} on {dateStr}</div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                {!selOutlet && <th style={thS}>Outlet</th>}
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Demanded</th>
+                <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
+                <th style={{ ...thS, textAlign: "right" }}>Verified</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => {
+                  const item = DEMAND_ITEM_BY_ID[r.itemId];
+                  const short = r.dispatched < r.demanded;
+                  return (
+                    <tr key={`${r.outletId}_${r.itemId}`} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      {!selOutlet && <td style={{ ...tdS, fontWeight: 600 }}>{OUTLETS.find((o) => o.id === r.outletId)?.short || r.outletId}</td>}
+                      <td style={tdS}>{item?.name || r.itemId} <span style={{ fontSize: 10, color: "#999" }}>{item?.unit}</span></td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{Math.round(r.demanded * 100) / 100}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: short ? "#DC2626" : "#1A1A1A" }}>{Math.round(r.dispatched * 100) / 100}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.dispatched === 0 ? "#CCC" : r.anyUnverified ? "#B45309" : "#16A34A" }}>
+                        {r.dispatched === 0 ? "—" : r.anyUnverified ? "NA" : Math.round(r.verified * 100) / 100}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // dateStr is optional — when this renders inside DailyPnL's pill system, the parent
 // always passes it and controls the day. Rendered standalone (AVP/Head Chef/BK Manager
 // scoped dashboards, which don't have a P&L page to nest inside), it manages its own
