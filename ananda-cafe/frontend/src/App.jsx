@@ -7166,6 +7166,12 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
   const royaltyAmount = revenue * royaltyPct / 100;
   const totalPayable = billingSubtotal + royaltyAmount;
 
+  // Franchise rate = material rate + markup, per line. franchiseRateFor(i) is what the
+  // franchise is charged per unit; summed as franchiseAmountTotal (= material + markup),
+  // shown in the table header and beside the outlet name.
+  const franchiseRateFor = (i) => Math.round(i.billedRate * (1 + markupPct / 100) * 100) / 100;
+  const franchiseAmountTotal = totalAmount * (1 + markupPct / 100);
+
   // Every date in the month up to today (dates with no demand still show as a column)
   const days = useMemo(() => {
     const [y, mo] = selMonth.split("-").map(Number);
@@ -7211,14 +7217,14 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
       exportCSV(headers, rows, `franchise_billing_daywise_${selOutlet}_${selMonth}.csv`);
       return;
     }
-    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", "Rate Unit", "Amount"];
-    const rows = items.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, i.rateUnit, Math.round(i.amount * 100) / 100]);
-    rows.push(["", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
-    rows.push(["", "", "", "", "", `Royalty (${royaltyPct}% of revenue ₹${Math.round(revenue)})`, Math.round(royaltyAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
+    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Rate Unit", "Amount"];
+    const rows = items.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), i.rateUnit, Math.round(i.amount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
+    rows.push(["", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue ₹${Math.round(revenue)})`, Math.round(royaltyAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
     exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
   };
 
@@ -7248,9 +7254,15 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
         {!loading && correctionsLoaded && (<>
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", flexWrap: "wrap", gap: 8 }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
-                <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>
+                  {fmt(franchiseAmountTotal)}
+                  {markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
+                </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 4 }}>
@@ -7328,7 +7340,8 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
                     <th style={{ ...thS, textAlign: "right" }}>Demanded</th>
                     <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
                     <th style={{ ...thS, textAlign: "right" }}>Rate</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Amount</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Franchise Rate{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(franchiseAmountTotal)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>Amount<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(totalAmount)})</div></th>
                   </tr></thead>
                   <tbody>
                     {visibleItems.map((i) => {
@@ -7364,6 +7377,7 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
                               <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.rateEdited ? 700 : 400, color: i.rateEdited ? "#2563EB" : "#888" }}>₹{i.billedRate}/{i.rateUnit}</span>
                             )}
                           </td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A" }}>₹{franchiseRateFor(i)}/{i.rateUnit}</td>
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(i.amount)}</td>
                         </tr>
                       );
@@ -7371,9 +7385,12 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
                   </tbody>
                 </table>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 16px", borderTop: "2px solid #1A1A1A", background: "#F8F8F5" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderTop: "2px solid #1A1A1A", background: "#F8F8F5", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 14, fontWeight: 800 }}>Total</span>
-                <span style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalAmount)}</span>
+                <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+                  <span style={{ fontSize: 12, color: "#888" }}>Franchise Rate <b style={{ fontFamily: "'JetBrains Mono'", color: "#B45309", fontSize: 15 }}>{fmt(franchiseAmountTotal)}</b></span>
+                  <span style={{ fontSize: 12, color: "#888" }}>Amount <b style={{ fontFamily: "'JetBrains Mono'", color: "#1A1A1A", fontSize: 16 }}>{fmt(totalAmount)}</b></span>
+                </div>
               </div>
             </>)}
           </div>
