@@ -8537,6 +8537,77 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
           </div>
         </div>
       )}
+
+      {/* Leakage % — every item from every category pooled into one flat list, worst
+          cross-outlet spread first (same table/detail-box pattern as the drilled-in
+          Category & Item view, just not filtered to one category). */}
+      {cogsView === "leakage" && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
+      {cogsView === "leakage" && !loading && !hasAnyData && (
+        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No sales data for {periodLabel}</div>
+      )}
+      {cogsView === "leakage" && !loading && hasAnyData && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ padding: "10px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4" }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>📉 Leakage % · {periodLabel} · every category, worst spread first</div>
+          </div>
+          <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "70vh" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ ...thS, position: "sticky", left: 0, top: 0, background: "#FAFAF8", zIndex: 4, minWidth: 170 }}>
+                  Item
+                  {!(sortIdx === 0 && sortDir === "desc") && (
+                    <span onClick={() => { setSortIdx(0); setSortDir("desc"); }} title="Reset to default sort" style={{ marginLeft: 6, fontSize: 10, color: "#2563EB", cursor: "pointer", fontWeight: 700 }}>↺ reset</span>
+                  )}
+                </th>
+                {outletsWithData.map((o, i) => (
+                  <th key={o.id} onClick={() => toggleSort(i)} title={`Sort by ${o.short}`} style={{ ...thS, position: "sticky", top: 0, background: "#FAFAF8", zIndex: 3, textAlign: "center", whiteSpace: "nowrap", cursor: "pointer", userSelect: "none", color: sortIdx === i ? "#1A1A1A" : thS.color }}>
+                    {o.short} <span style={{ fontSize: 9, color: sortIdx === i ? "#2563EB" : "#BBB" }}>{sortIdx === i ? (sortDir === "desc" ? "▼" : "▲") : "↕"}</span>
+                  </th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {sortedAllItemRows.map((r) => {
+                  const outletsWithItem = !selMonth ? outletsWithData.filter((o) => dayEnrichedItems[o.id]?.[r.id]) : [];
+                  return (
+                    <Fragment key={r.id}>
+                      <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>
+                          {r.catEmoji} {r.name} <span style={{ color: "#BBB", fontSize: 9 }}>({r.unit})</span>
+                        </td>
+                        {outletsWithData.map((o, i) => {
+                          const v = r.pcts[i];
+                          return (
+                            <td key={i} style={{ ...tdS, textAlign: outletsWithItem.length > 0 ? "center" : "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: cellColor(v, r.pcts) }}>
+                              {v != null ? `${v.toFixed(2)}%` : "—"}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                      {outletsWithItem.length > 0 && (
+                        <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                          <td style={{ position: "sticky", left: 0, background: "#FAFAF8" }} />
+                          {outletsWithData.map((o, i) => {
+                            const oItem = dayEnrichedItems[o.id]?.[r.id];
+                            return (
+                              <td key={i} style={{ padding: "8px 5px", background: "#FAFAF8", verticalAlign: "top", minWidth: 250 }}>
+                                {oItem && <CogsItemDetailBox item={oItem} outletId={o.id} dateStr={istDateAgo(selDay)} lockedOutlet={lockedOutlet} allDishes={allDishes}
+                                  onSaved={() => fetchDates(selMonth ? monthDates : [istDateAgo(selDay)], !selMonth)} />}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {sortedAllItemRows.length === 0 && (
+                  <tr><td colSpan={outletsWithData.length + 1} style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No consumption recorded for this period</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -11851,7 +11922,9 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const [audit, setAudit] = useState(null);
   const [pnl, setPnl] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showAudit, setShowAudit] = useState(false);
+  // Score cards double as tabs — clicking one shows that pillar's own detail below,
+  // COGS Score selected by default since it's the only pillar actually wired up so far.
+  const [activeTab, setActiveTab] = useState("cogs");
 
   useEffect(() => {
     if (!outlet) return;
@@ -12679,20 +12752,28 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
   const oShort = (id) => OUTLETS.find((o) => o.id === id)?.short || id;
   const itemName = (id) => DEMAND_ITEM_BY_ID[id]?.name || id;
 
-  // ── COGS leakage: (outlet, item) rows sorted by leakage % desc, top N ──
+  // ── COGS leakage: (outlet, item) rows ranked by ₹ cost of the leak, top N ──
+  // Ranked by rupee impact (variance × rate = actual_consumed_cost − should_consume_cost)
+  // rather than raw %, so a high-volume over-consumption outranks a tiny spice whose
+  // near-zero should-consume produces a meaningless five-figure %. Only over-consumption
+  // (money leaking out) is flagged; using less than the recipe says isn't a leak.
   const cogsRows = useMemo(() => {
     if (!audit?.outlets) return [];
     const rows = [];
     audit.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
       (o.items || []).forEach((it) => {
-        // Need real actual consumption (closing stock submitted) and a non-zero
-        // should-consume for the % to mean anything.
-        if (it.actual_consumed == null || it.variance_pct == null) return;
-        if (!(Number(it.should_consume) > 0)) return;
-        rows.push({ outletId: o.outlet_id, name: it.raw_material, unit: it.unit, should: Number(it.should_consume), actual: Number(it.actual_consumed), variance: Number(it.variance), variancePct: Number(it.variance_pct) });
+        if (it.actual_consumed == null) return; // needs submitted closing stock
+        const leakCost = Number(it.actual_consumed_cost || 0) - Number(it.should_consume_cost || 0);
+        if (!(leakCost > 0)) return;
+        rows.push({
+          outletId: o.outlet_id, name: it.raw_material, unit: it.unit,
+          should: Number(it.should_consume), actual: Number(it.actual_consumed),
+          variance: Number(it.variance), leakCost,
+          variancePct: (it.variance_pct != null && isFinite(it.variance_pct)) ? Number(it.variance_pct) : null,
+        });
       });
     });
-    return rows.sort((a, b) => b.variancePct - a.variancePct).slice(0, cogsCount);
+    return rows.sort((a, b) => b.leakCost - a.leakCost).slice(0, cogsCount);
   }, [audit, selOutlet, cogsCount]);
 
   // ── Challan mismatches — same rules as ChallansSection (demand≠dispatch, or
@@ -12742,13 +12823,13 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
     <div>
       {/* ── 1. COGS leakage ── */}
       <FlagCard icon="📊" title="COGS Leakage"
-        subtitle={`Highest leakage % — should-consume vs actual (${selOutlet ? oShort(selOutlet) : "all outlets"}, ${dateStr})`}
+        subtitle={`Biggest ₹ leaks — should-consume vs actual (${selOutlet ? oShort(selOutlet) : "all outlets"}, ${dateStr})`}
         extra={
           <select value={cogsCount} onChange={(e) => setCogsCount(Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
             {[5, 10, 15, 20].map((n) => <option key={n} value={n}>Top {n}</option>)}
           </select>
         }>
-        {cogsRows.length === 0 ? goodMsg("No leakage to show (needs submitted closing stock + mapped recipes).") : (
+        {cogsRows.length === 0 ? goodMsg("No over-consumption leak to show (needs submitted closing stock + mapped recipes).") : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
@@ -12756,21 +12837,20 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
                 <th style={th}>Item</th>
                 <th style={{ ...th, textAlign: "right" }}>Should</th>
                 <th style={{ ...th, textAlign: "right" }}>Actual</th>
+                <th style={{ ...th, textAlign: "right" }}>Leak ₹</th>
                 <th style={{ ...th, textAlign: "right" }}>Leakage %</th>
               </tr></thead>
               <tbody>
-                {cogsRows.map((r, i) => {
-                  const over = r.variance > 0;
-                  return (
-                    <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                      {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
-                      <td style={td}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span></td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700 }}>{r.should.toFixed(2)}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.actual.toFixed(2)}</td>
-                      <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: over ? "#DC2626" : "#16A34A" }}>{over ? "+" : ""}{r.variancePct}%</td>
-                    </tr>
-                  );
-                })}
+                {cogsRows.map((r, i) => (
+                  <tr key={i} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    {!selOutlet && <td style={{ ...td, fontWeight: 600 }}>{oShort(r.outletId)}</td>}
+                    <td style={td}>{r.name} <span style={{ fontSize: 10, color: "#999" }}>{r.unit}</span></td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 700 }}>{r.should.toFixed(2)}</td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.actual.toFixed(2)}</td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{fmt(Math.round(r.leakCost))}</td>
+                    <td style={{ ...td, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#DC2626" }}>{r.variancePct != null ? `+${r.variancePct}%` : "—"}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
