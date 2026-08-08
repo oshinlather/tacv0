@@ -482,7 +482,11 @@ router.get('/audit/packaging', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/:date', async (req, res) => {
 try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager');
+    // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score drill-down
+    // — scopedOutletFilter below already forces them (same as franchise) to their own
+    // outlet_id regardless of what ?outlet= is requested, so this can't leak another
+    // outlet's numbers.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager', 'outlet_mgr');
     if (!user) return;
     const { date } = req.params;
     const outlets = await computeRMAudit(date, scopedOutletFilter(user, req.query.outlet));
@@ -1075,6 +1079,7 @@ async function computeRMAudit(date, outletFilter) {
         rate,
         should_consume_cost: rate != null ? Math.round(shouldConsume * rate * 100) / 100 : null,
         actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
+        actual_consumed_cost: actualQty != null && rate != null ? Math.round(actualQty * rate * 100) / 100 : null,
         actual_breakdown: actualItem ? {
           prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
           purchased: actualItem.purchased, wastage: actualItem.wastage, closing: actualItem.closing,
@@ -1117,6 +1122,11 @@ async function computeRMAudit(date, outletFilter) {
     // excluded, same gap the never_mapped_items/unmapped_ingredients reports above surface
     // for fixing.
     const idealMaterialCost = items.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
+    // Actual side of the same comparison — what these items' ACTUAL consumption cost,
+    // priced the same way (rate card / BK recipe cost) ideal_material_cost already is.
+    // Used by the outlet Performance Dashboard's COGS Score: how close actual landed to
+    // ideal, both expressed as a share of that day's effective sale.
+    const actualMaterialCost = items.reduce((s, it) => s + (it.actual_consumed_cost || 0), 0);
 
     results.push({
       outlet_id: oid, date,
@@ -1125,6 +1135,7 @@ async function computeRMAudit(date, outletFilter) {
       unmapped_ingredients: [...unmappedIngredients],
       never_mapped_items: neverMappedItems,
       ideal_material_cost: Math.round(idealMaterialCost * 100) / 100,
+      actual_material_cost: Math.round(actualMaterialCost * 100) / 100,
       dishes_sold: Object.keys(salesByDish).length,
       dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
       sales_qty_total: qtySoldTotal,
@@ -3276,10 +3287,13 @@ router.delete('/fixed-cost-heads', async (req, res) => {
 // ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
 router.get('/pnl/live/:date', async (req, res) => {
   try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise');
+    // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score (needs
+    // effective_sale to turn ideal/actual material cost into a % of sale) — forced to
+    // their own outlet below, same as franchise already is.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr');
     if (!user) return;
     const { date } = req.params;
-    const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise
+    const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise/outlet_mgr
 
     // None of these nine queries depend on each other's results — fired concurrently
     // instead of one-at-a-time, so this endpoint's total latency is bounded by the

@@ -152,6 +152,7 @@ const api = {
   getBkClosingStockRange: (from) => get("/api/inventory/closing-stock", { from }),
   getBkInventoryAudit: (date) => get(`/api/inventory/audit/${date}`),
   getBkAuditFull: (date) => get(`/api/inventory/audit-full/${date}`),
+  getStoreAudit: (date) => get(`/api/inventory/store-audit/${date}`),
   getInventoryLedger: (from, to) => get("/api/inventory/ledger", { from, to }),
 
   // ── Master Data ──

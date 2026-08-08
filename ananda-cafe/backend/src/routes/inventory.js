@@ -468,6 +468,118 @@ router.get("/audit-full/:date", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/inventory/store-audit/:date — "BK Store Audit", first-principles version:
+// Store is the single source both Base Kitchen (raw materials, to cook) and outlets
+// (everything except food prepared in BK, which they get from BK not Store) draw from.
+// So, per item:
+//   Should-Be Closing = Prior Actual Closing + Purchases − BK Demand − Outlet Demand
+// (Outlet Demand excludes anything filed under the "food" DEMAND_SECTIONS category,
+// since outlets don't draw those directly from Store.) Compared against what was
+// actually logged for the target date. Deliberately demand-driven rather than reading
+// the separate Inventory "Stock Out" log the way audit-full's dispatch check does —
+// that log is essentially never used for BK-prepared items (see audit-full's Food
+// category rows), which would make a stock-out-based "should be" wrong for exactly the
+// items that matter most here. "Prior Actual Closing" is the most recent PRIOR date
+// with a submitted bk_closing_stock count, not necessarily yesterday — if a count was
+// missed, this walks demand/purchases across the whole gap instead of silently reusing
+// yesterday's (unsubmitted, so meaningless) number.
+router.get("/store-audit/:date", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { date } = req.params;
+  try {
+    const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
+    const { data: demandItems } = await supabase.from("demand_items").select("id, section_id");
+    const { data: stocks } = await supabase.from("inventory_stock").select("item_id, current_qty");
+    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").lte("date", date).order("date", { ascending: false }).limit(60);
+
+    const foodDemandIds = new Set((demandItems || []).filter((d) => d.section_id === "food").map((d) => d.id));
+    const isFoodItem = (item) => item.demand_item_id && foodDemandIds.has(item.demand_item_id);
+
+    const todayStr = istDate(new Date().toISOString());
+    const isToday = date === todayStr;
+    const currentQtyByItem = {};
+    (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
+
+    const todayClosing = (closings || []).find((c) => c.date === date)?.items;
+    const prevRow = (closings || []).find((c) => c.date < date); // most recent PRIOR submission, not necessarily date-1
+    const prevDate = prevRow?.date || null;
+    const prevClosing = prevRow?.items || null;
+
+    const actualClosingByItem = {};
+    (items || []).forEach((item) => {
+      if (todayClosing && todayClosing[item.id] !== undefined) actualClosingByItem[item.id] = { qty: Number(todayClosing[item.id]), isLive: false };
+      else if (isToday) actualClosingByItem[item.id] = { qty: currentQtyByItem[item.id] || 0, isLive: true };
+    });
+
+    let purchasesByItem = {}, bkDemandByItem = {}, outletDemandByItem = {}, outletBreakdownByItem = {};
+    if (prevDate) {
+      const rangeStart = `${prevDate}T00:00:00Z`; // exclusive
+      const rangeEnd = `${nextDay(date)}T00:00:00Z`; // exclusive upper bound (through end of `date`)
+
+      const { data: movements } = await supabase.from("inventory_movements")
+        .select("item_id, type, quantity, created_at").eq("type", "stock_in")
+        .gt("created_at", rangeStart).lt("created_at", rangeEnd);
+      (movements || []).forEach((m) => { purchasesByItem[m.item_id] = (purchasesByItem[m.item_id] || 0) + (Number(m.quantity) || 0); });
+
+      const { data: demandRows } = await supabase.from("demands")
+        .select("outlet_id, dispatch_items").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
+        .gt("dispatched_at", rangeStart).lt("dispatched_at", rangeEnd);
+
+      const demandItemIdToInvId = {};
+      (items || []).forEach((i) => { if (i.demand_item_id) demandItemIdToInvId[i.demand_item_id] = i.id; });
+      const invById = {}; (items || []).forEach((i) => { invById[i.id] = i; });
+
+      (demandRows || []).forEach((row) => {
+        Object.entries(row.dispatch_items || {}).forEach(([demandId, qty]) => {
+          const invId = demandItemIdToInvId[demandId];
+          const q = Number(qty) || 0;
+          if (!invId || q <= 0) return;
+          if (row.outlet_id === "bk") {
+            bkDemandByItem[invId] = (bkDemandByItem[invId] || 0) + q;
+          } else if (!isFoodItem(invById[invId])) {
+            outletDemandByItem[invId] = (outletDemandByItem[invId] || 0) + q;
+            (outletBreakdownByItem[invId] = outletBreakdownByItem[invId] || {});
+            outletBreakdownByItem[invId][row.outlet_id] = (outletBreakdownByItem[invId][row.outlet_id] || 0) + q;
+          }
+        });
+      });
+    }
+
+    const round = (n) => Math.round(n * 1000) / 1000;
+    const byCategory = {};
+    (items || []).forEach((item) => {
+      if (!prevDate || prevClosing[item.id] === undefined) return; // no prior anchor to audit from
+      const prevQty = Number(prevClosing[item.id]);
+      const purchases = purchasesByItem[item.id] || 0;
+      const bkDemand = bkDemandByItem[item.id] || 0;
+      const outletDemand = outletDemandByItem[item.id] || 0;
+      const shouldBe = prevQty + purchases - bkDemand - outletDemand;
+      const actual = actualClosingByItem[item.id];
+
+      const hasActivity = purchases > 0 || bkDemand > 0 || outletDemand > 0;
+      const variance = actual ? round(actual.qty - shouldBe) : null;
+      if (!hasActivity && (variance === null || variance === 0)) return;
+
+      const cat = item.category || "Other";
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push({
+        item_id: item.id, name: item.name, unit: item.unit,
+        prev_closing: round(prevQty), purchases: round(purchases), bk_demand: round(bkDemand), outlet_demand: round(outletDemand),
+        outlet_breakdown: outletBreakdownByItem[item.id] ? Object.fromEntries(Object.entries(outletBreakdownByItem[item.id]).map(([k, v]) => [k, round(v)])) : null,
+        should_be_closing: round(shouldBe),
+        actual_closing: actual ? round(actual.qty) : null, actual_is_live: actual ? actual.isLive : false,
+        variance,
+      });
+    });
+
+    const categories = Object.entries(byCategory).map(([category, catItems]) => ({
+      category, items: catItems.sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0)),
+    }));
+
+    res.json({ date, prev_date: prevDate, is_today: isToday, actual_submitted: !!(todayClosing && Object.keys(todayClosing).length), categories });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Summary — owner only (financial data across entire store)
 router.get("/summary", async (req, res) => {
   if (!await gate(req, res)) return;

@@ -3207,6 +3207,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // narrows to it (locked, so there's nothing else to pick).
           { key: "challans", label: "🧾 Challans" },
           { key: "demand_vs_closing", label: "📦 Demand vs Closing" },
+          // Store Audit is BK/Store's own internal inventory reconciliation, not scoped
+          // to any one outlet's numbers — meaningless on a locked franchise view, which
+          // has its own separate supply chain outside this Store/BK system entirely.
+          ...(lockedOutlet ? [] : [{ key: "storeaudit", label: "🏪 BK Store Audit" }]),
         ].map((t) => (
           <button key={t.key} onClick={() => {
             setPnlTab(t.key);
@@ -3934,6 +3938,13 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             Pick a single day (not month view) above for Demand vs Closing.
           </div>
         ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
+      )}
+      {pnlTab === "storeaudit" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for BK Store Audit.
+          </div>
+        ) : <BKStoreAudit dateStr={dateStr} />
       )}
     </div>
   );
@@ -4823,9 +4834,9 @@ const Dispatch = () => {
 
     // Staff Food requested for this same outlet+date — matched by shift when the order
     // has one (a morning demand's challan shouldn't pull in an evening-only staff food
-    // request), otherwise folds every shift together. staff_demands.shift uses 'am'/'pm',
-    // demands.demand_slot uses 'morning'/'evening' — different vocabularies for the same
-    // morning/evening concept, so map before comparing.
+    // request), otherwise folds every shift together.
+    // staff_demands.shift uses 'am'/'pm', demands.demand_slot uses 'morning'/'evening' —
+    // different vocabularies for the same morning/evening concept, so map before comparing.
     const orderShift = order.demand_slot === "morning" ? "am" : order.demand_slot === "evening" ? "pm" : null;
     const staffFoodForOrder = challanStaffFood.filter((d) => !orderShift || d.shift === orderShift);
     const staffFoodConsolidated = {}; // item_id -> qty
@@ -8495,6 +8506,155 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   );
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  COGS REPORT — COGS Compare sub-tab. Just two numbers over a date range (7 days,
+//  a month, or a custom range): Actual COGS (actual_consumed × rate) vs Should-Be
+//  COGS (should_consume_cost — recipe × that day's sales), both already computed
+//  per item per day by RM Audit. Same priced-on-both-sides basis as the rest of the
+//  app's leakage tooling, just aggregated across days instead of shown one at a time.
+// ═════════════════════════════════════════════════════════════════════════════
+const CogsReportSection = ({ lockedOutlet }) => {
+  const [rangeMode, setRangeMode] = useState("7days"); // '7days' | 'month' | 'custom'
+  const [reportMonth, setReportMonth] = useState(() => today().slice(0, 7));
+  const [customFrom, setCustomFrom] = useState(() => istDateAgo(6));
+  const [customTo, setCustomTo] = useState(() => today());
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || null); // null = All Outlets
+  const [loading, setLoading] = useState(true);
+  const [dayRows, setDayRows] = useState([]); // [{ date, actual, shouldBe }]
+  const pillStyle = (active) => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap" });
+
+  const dates = useMemo(() => {
+    if (rangeMode === "7days") return Array.from({ length: 7 }, (_, i) => istDateAgo(6 - i));
+    if (rangeMode === "month") {
+      const [y, mo] = reportMonth.split("-").map(Number);
+      const daysInMo = new Date(y, mo, 0).getDate();
+      const todayStr = today();
+      const result = [];
+      for (let day = 1; day <= daysInMo; day++) {
+        const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        if (ds > todayStr) break;
+        result.push(ds);
+      }
+      return result;
+    }
+    // custom
+    if (!customFrom || !customTo || customFrom > customTo) return [];
+    const result = [];
+    let d = customFrom;
+    for (let guard = 0; d <= customTo && guard < 366; guard++) { result.push(d); d = shiftDateStr(d, 1); }
+    return result;
+  }, [rangeMode, reportMonth, customFrom, customTo]);
+
+  const load = useCallback(() => {
+    if (dates.length === 0) { setDayRows([]); setLoading(false); return; }
+    setLoading(true);
+    Promise.all(dates.map((ds) => api.getRMAudit(ds, selOutlet || undefined).catch(() => null)))
+      .then((results) => {
+        const rows = dates.map((ds, i) => {
+          const audit = results[i];
+          let actual = 0, shouldBe = 0;
+          (audit?.outlets || []).forEach((o) => {
+            (o.items || []).forEach((it) => {
+              if (it.should_consume_cost != null) shouldBe += it.should_consume_cost;
+              if (it.actual_consumed != null && it.rate != null) actual += it.actual_consumed * it.rate;
+            });
+          });
+          return { date: ds, actual, shouldBe };
+        });
+        setDayRows(rows);
+      })
+      .finally(() => setLoading(false));
+  }, [dates, selOutlet]);
+  useEffect(load, [load]);
+
+  const totalActual = dayRows.reduce((s, r) => s + r.actual, 0);
+  const totalShouldBe = dayRows.reduce((s, r) => s + r.shouldBe, 0);
+  const variance = totalActual - totalShouldBe;
+  const variancePct = totalShouldBe > 0 ? (variance / totalShouldBe) * 100 : null;
+  const isOver = variance > 0;
+
+  const rangeLabel = rangeMode === "7days" ? "Last 7 days" : rangeMode === "month" ? reportMonth : `${customFrom} to ${customTo}`;
+
+  return (<div>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Actual COGS (actual consumption × rate) vs Should-Be COGS (recipe × that day's sales) — both priced the same way, just summed over the period instead of one day at a time.</p>
+
+    <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+      <button onClick={() => setRangeMode("7days")} style={pillStyle(rangeMode === "7days")}>7 Days</button>
+      <button onClick={() => setRangeMode("month")} style={pillStyle(rangeMode === "month")}>📅 Month</button>
+      <button onClick={() => setRangeMode("custom")} style={pillStyle(rangeMode === "custom")}>🗓️ Custom</button>
+      {rangeMode === "month" && (
+        <input type="month" value={reportMonth} max={today().slice(0, 7)} onChange={(e) => setReportMonth(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+      )}
+      {rangeMode === "custom" && (<>
+        <input type="date" value={customFrom} max={customTo} onChange={(e) => setCustomFrom(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+        <span style={{ alignSelf: "center", color: "#999", fontSize: 12 }}>to</span>
+        <input type="date" value={customTo} min={customFrom} max={today()} onChange={(e) => setCustomTo(e.target.value)}
+          style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+      </>)}
+    </div>
+
+    {!lockedOutlet && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={pillStyle(!selOutlet)}>All Outlets</button>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
+        ))}
+      </div>
+    )}
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {rangeLabel}...</div> : (<>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 20 }}>
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Actual COGS</div>
+          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{fmt(totalActual)}</div>
+        </div>
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Should-Be COGS</div>
+          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(totalShouldBe)}</div>
+        </div>
+        <div style={{ background: isOver ? "#FEF2F2" : "#F0FDF4", borderRadius: 12, border: `1px solid ${isOver ? "#FECACA" : "#BBF7D0"}`, padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 10, color: isOver ? "#991B1B" : "#166534", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Variance</div>
+          <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: isOver ? "#DC2626" : "#16A34A" }}>
+            {isOver ? "+" : ""}{fmt(variance)}{variancePct != null && ` (${isOver ? "+" : ""}${variancePct.toFixed(1)}%)`}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={thS}>Date</th>
+              <th style={{ ...thS, textAlign: "right" }}>Actual COGS</th>
+              <th style={{ ...thS, textAlign: "right" }}>Should-Be COGS</th>
+              <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+            </tr></thead>
+            <tbody>
+              {dayRows.length === 0 && (
+                <tr><td colSpan={4} style={{ padding: 30, textAlign: "center", color: "#999", fontSize: 12 }}>No data for this range</td></tr>
+              )}
+              {dayRows.map((r) => {
+                const v = r.actual - r.shouldBe;
+                const vOver = v > 0;
+                return (
+                  <tr key={r.date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={tdS}>{r.date}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.actual)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt(r.shouldBe)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: vOver ? "#DC2626" : "#16A34A" }}>{vOver ? "+" : ""}{fmt(v)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>)}
+  </div>);
+};
+
 const MoveSubmissionDate = () => {
   const [outlet, setOutlet] = useState(OUTLETS[0]?.id || null);
   const [fromDate, setFromDate] = useState(today());
@@ -9276,12 +9436,19 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
   // ── TEAM — onboard staff for this outlet, give an advance ──
   if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} />;
+
+  // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
+  // score placeholders), with the full RM Audit drill-down locked to this outlet.
+  if (screen === "performance") return (<div><SavingOverlay />
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ fontSize: 15, fontWeight: 800 }}>🏆 Performance Dashboard</div></div>
+    <OutletPerformanceDashboard outlet={outlet} />
+  </div>);
 
   // ── DISPATCHED CHALLANS (outlet-side) — view + confirm receipt ──
   if (screen === "dispatched") {
@@ -11625,6 +11792,103 @@ const NeverMappedReport = ({ items }) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  OUTLET PERFORMANCE DASHBOARD — the outlet manager's own scorecard
+// ═════════════════════════════════════════════════════════════════════════════
+// The app's core goal is getting every outlet's actual COGS as close as possible to
+// what the recipe says it SHOULD be (less leakage = more optimized operations) — this
+// is the outlet-facing view of that, so a manager can see their own standing without
+// waiting for the owner to point it out. COGS Score is real (RM Audit's ideal vs actual
+// material cost, same figures P&L/COGS Compare already use, just turned into a single
+// score); Punch/Discipline/Review are listed as the other pillars of "performance" but
+// not wired yet — Punch would come from Missing Punches' per-outlet punch-status,
+// Discipline from Attendance's hours-worked-vs-shift data, Review from the Reviews
+// module's per-outlet rating. Deliberately locked to one outlet (no picker) — this is
+// the screen an outlet manager reaches from their own home screen, not an owner tool.
+const COGS_SCORE_THRESHOLDS = { good: 85, ok: 60 };
+const OutletPerformanceDashboard = ({ outlet }) => {
+  // Fixed at Yesterday, same reasoning RM Audit itself defaults to it — today's closing
+  // stock is usually still incomplete, which would make "actual" cost look artificially
+  // low (or the leakage look artificially huge) for reasons that have nothing to do with
+  // real performance. No date picker here to avoid yet another redundant control right
+  // above the RM Audit drill-down's own one.
+  const dateStr = istDateAgo(1);
+  const [audit, setAudit] = useState(null);
+  const [pnl, setPnl] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [showAudit, setShowAudit] = useState(false);
+
+  useEffect(() => {
+    if (!outlet) return;
+    setLoading(true);
+    Promise.all([
+      api.getRMAudit(dateStr, outlet).catch(() => null),
+      api.getLivePnl(dateStr, outlet).catch(() => null),
+    ]).then(([a, p]) => { setAudit(a); setPnl(p); }).finally(() => setLoading(false));
+  }, [dateStr, outlet]);
+
+  const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
+  const pnlRow = pnl?.pnl?.find((p) => p.outlet_id === outlet) || null;
+  const effectiveSale = pnlRow?.effective_sale || 0;
+  const idealCost = outletData?.ideal_material_cost ?? null;
+  const actualCost = outletData?.actual_material_cost ?? null;
+  const idealPct = effectiveSale > 0 && idealCost != null ? (idealCost / effectiveSale * 100) : null;
+  const actualPct = effectiveSale > 0 && actualCost != null ? (actualCost / effectiveSale * 100) : null;
+  // Symmetric — penalizes over-consumption (leakage, theft, over-portioning) AND
+  // under-consumption (usually a data problem: overstated closing stock, a missed
+  // wastage entry) equally, since both mean actual drifted away from what the recipe
+  // says should have happened. 100 = actual landed exactly on the recipe's number.
+  const cogsScore = idealCost > 0 && actualCost > 0 ? Math.round(100 * Math.min(actualCost, idealCost) / Math.max(actualCost, idealCost)) : null;
+  const scoreColor = (score) => score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
+  const scoreBg = (score) => score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
+  const scoreBorder = (score) => score == null ? "#E8E8E4" : score >= COGS_SCORE_THRESHOLDS.good ? "#BBF7D0" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FDE68A" : "#FECACA";
+
+  const ScoreCard = ({ icon, label, score, sub, comingSoon }) => (
+    <div style={{ flex: "1 1 150px", background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 14px", border: `1px solid ${comingSoon ? "#E8E8E4" : scoreBorder(score)}`, textAlign: "center" }}>
+      <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+      <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
+      {comingSoon ? (
+        <div style={{ fontSize: 12, color: "#BBB", fontWeight: 600 }}>Coming soon</div>
+      ) : (
+        <>
+          <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: scoreColor(score) }}>{score != null ? score : "—"}</div>
+          {sub && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{sub}</div>}
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>How close this outlet's actual numbers are to what they should be — based on {dateStr} (yesterday).</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+      ) : (
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
+          <ScoreCard icon="✏️" label="Punch Score" comingSoon />
+          <ScoreCard icon="💰" label="COGS Score" score={cogsScore}
+            sub={idealPct != null && actualPct != null ? `Actual ${actualPct.toFixed(1)}% vs Ideal ${idealPct.toFixed(1)}% of sale` : "No sales/recipe data for this date"} />
+          <ScoreCard icon="⏰" label="Discipline (Duty Hours)" comingSoon />
+          <ScoreCard icon="⭐" label="Review Score" comingSoon />
+        </div>
+      )}
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <button onClick={() => setShowAudit(!showAudit)} style={{ width: "100%", padding: "14px 16px", border: "none", background: "transparent", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", fontFamily: "inherit" }}>
+          <span style={{ fontSize: 14, fontWeight: 700 }}>🔍 Full Raw Material Audit — see exactly what's driving your COGS score</span>
+          <span style={{ fontSize: 12, color: "#2563EB", fontWeight: 700 }}>{showAudit ? "▲ hide" : "▼ deep dive"}</span>
+        </button>
+        {showAudit && (
+          <div style={{ padding: "0 16px 16px" }}>
+            <RMAuditPanel lockedOutlet={outlet} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
 const RMAuditPanel = ({ lockedOutlet } = {}) => {
@@ -13487,6 +13751,104 @@ const BKAudit = () => {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      ))}
+    </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  BK STORE AUDIT — first-principles version of the reconciliation above. Store is the
+//  single source both Base Kitchen (raw materials, to cook) and outlets (everything
+//  except food prepared in BK) draw from, so per item:
+//    Should-Be Closing = Prior Actual Closing + Purchases − BK Demand − Outlet Demand
+//  compared against what was actually logged. Deliberately demand-driven (not reading
+//  the separately-logged, rarely-used Inventory "Stock Out" screen the way BKAudit's
+//  dispatch check does) — backed by GET /api/inventory/store-audit/:date.
+// ═════════════════════════════════════════════════════════════════════════════
+const BKStoreAudit = ({ dateStr }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setExpandedId(null);
+    api.getStoreAudit(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [dateStr]);
+
+  const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
+  const varColor = (n) => n == null ? "#999" : n === 0 ? "#16A34A" : n > 0 ? "#2563EB" : "#DC2626";
+  const totalFlagged = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
+  const dayBefore = useMemo(() => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }, [dateStr]);
+
+  return (<div>
+    <div style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏪 BK Store Audit</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Prior Closing + Purchases − BK Demand − Outlet Demand (excl. food prepared in BK) = Should-Be Closing, vs what was actually logged.</p>
+    </div>
+
+    {loading ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading audit...</div>
+    ) : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {dateStr}</div>
+    ) : !data.prev_date ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No prior BK Closing Stock submission exists to audit from yet.</div>
+    ) : (<>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
+        ℹ️ Anchored to the most recent submitted count, {data.prev_date}{data.prev_date !== dayBefore ? " (earlier than the day before — that day's count was missed, so this walks the whole gap)" : ""}.
+        {!data.actual_submitted && !data.is_today && " No count was submitted for " + dateStr + " itself — variance can't be computed, only Should-Be Closing is shown."}
+        {data.is_today && !data.actual_submitted && " Today's Actual Closing uses the live system balance until a count is submitted."}
+      </div>
+      {totalFlagged === 0 ? (
+        <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing to flag for {dateStr}</div></div>
+      ) : data.categories.map((cat) => (
+        <div key={cat.category} style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({cat.items.length} flagged)</span></div>
+          <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={thS}>Item</th>
+                  <th style={{ ...thS, textAlign: "right" }}>Prior Closing</th>
+                  <th style={{ ...thS, textAlign: "right" }}>+ Purchases</th>
+                  <th style={{ ...thS, textAlign: "right" }}>− BK Demand</th>
+                  <th style={{ ...thS, textAlign: "right" }}>− Outlet Demand</th>
+                  <th style={{ ...thS, textAlign: "right" }}>= Should-Be</th>
+                  <th style={{ ...thS, textAlign: "right" }}>Actual</th>
+                  <th style={{ ...thS, textAlign: "right" }}>Δ</th>
+                </tr></thead>
+                <tbody>
+                  {cat.items.map((i) => (<Fragment key={i.item_id}>
+                    <tr style={{ borderBottom: "1px solid #F0F0EC", background: expandedId === i.item_id ? "#FAFAF8" : "transparent" }}>
+                      <td style={tdS}><div style={{ fontWeight: 600 }}>{i.name}</div><div style={{ fontSize: 9, color: "#999" }}>{i.unit}</div></td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmtQty(i.prev_closing)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.purchases > 0 ? "#16A34A" : "#BBB" }}>{i.purchases > 0 ? "+" : ""}{fmtQty(i.purchases)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.bk_demand > 0 ? "#B45309" : "#BBB" }}>{i.bk_demand > 0 ? "−" : ""}{fmtQty(i.bk_demand)}</td>
+                      <td style={{ ...tdS, textAlign: "right" }}>
+                        <span style={{ fontFamily: "'JetBrains Mono'", color: i.outlet_demand > 0 ? "#B45309" : "#BBB", cursor: i.outlet_breakdown ? "pointer" : "default", borderBottom: i.outlet_breakdown ? "1px dotted #B45309" : "none" }}
+                          onClick={() => i.outlet_breakdown && setExpandedId(expandedId === i.item_id ? null : i.item_id)}>
+                          {i.outlet_demand > 0 ? "−" : ""}{fmtQty(i.outlet_demand)}
+                        </span>
+                      </td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmtQty(i.should_be_closing)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmtQty(i.actual_closing)}{i.actual_is_live && <div style={{ fontSize: 8, color: "#2563EB", fontWeight: 400 }}>(live)</div>}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: varColor(i.variance) }}>{i.variance == null ? "—" : `${i.variance > 0 ? "+" : ""}${fmtQty(i.variance)}`}</td>
+                    </tr>
+                    {expandedId === i.item_id && i.outlet_breakdown && (
+                      <tr style={{ background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <td colSpan={8} style={{ padding: "8px 14px 10px 30px", fontSize: 11, color: "#888" }}>
+                          {Object.entries(i.outlet_breakdown).map(([oid, qty]) => (
+                            <span key={oid} style={{ marginRight: 16 }}>{OUTLETS.find((o) => o.id === oid)?.short || oid}: <strong style={{ color: "#555" }}>{fmtQty(qty)}</strong></span>
+                          ))}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ))}
