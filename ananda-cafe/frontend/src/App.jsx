@@ -4616,6 +4616,21 @@ const Dispatch = () => {
   const [challanOrder, setChallanOrder] = useState(null);
   const [challanCat, setChallanCat] = useState(null); // category pill filter on the Dispatch Challan view — null = All
   useEffect(() => { setChallanCat(null); }, [challanOrder]);
+  // Staff Food — outlets submit this separately (staff_demands table, no dispatch/receive
+  // tracking of its own), so it never showed up on the actual Dispatch Challan a store
+  // manager checks off and prints — easy to physically forget when packing. Shown as its
+  // own section here (not merged into the regular Demanded/Dispatched table, since staff
+  // food has no dispatched-qty concept to compare against) rather than silently omitted.
+  const [challanStaffFood, setChallanStaffFood] = useState([]);
+  const [challanStaffMasterItems, setChallanStaffMasterItems] = useState([]);
+  useEffect(() => {
+    if (!challanOrder) { setChallanStaffFood([]); return; }
+    Promise.all([
+      api.getStaffDemands({ outlet_id: challanOrder.outlet_id, date: challanOrder.date, category: "food" }),
+      api.getStaffDemandItems(),
+    ]).then(([sd, si]) => { setChallanStaffFood(sd || []); setChallanStaffMasterItems(si || []); })
+      .catch(() => { setChallanStaffFood([]); setChallanStaffMasterItems([]); });
+  }, [challanOrder]);
   const [checkedItems, setCheckedItems] = useState({}); // { orderId: { itemId: true } } // order to show challan for
   // Items the store manager adds on the phone that weren't in the original written demand
   // (a forgotten item, called in after submission) — merged into the order's item list for
@@ -4806,6 +4821,21 @@ const Dispatch = () => {
     const dateStr = order.date || today();
     const timeStr = order.dispatched_at ? new Date(order.dispatched_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : new Date(order.submitted_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
 
+    // Staff Food requested for this same outlet+date — matched by shift when the order
+    // has one (a morning demand's challan shouldn't pull in an evening-only staff food
+    // request), otherwise folds every shift together. staff_demands.shift uses 'am'/'pm',
+    // demands.demand_slot uses 'morning'/'evening' — different vocabularies for the same
+    // morning/evening concept, so map before comparing.
+    const orderShift = order.demand_slot === "morning" ? "am" : order.demand_slot === "evening" ? "pm" : null;
+    const staffFoodForOrder = challanStaffFood.filter((d) => !orderShift || d.shift === orderShift);
+    const staffFoodConsolidated = {}; // item_id -> qty
+    staffFoodForOrder.forEach((d) => (d.items || []).forEach(({ item, qty }) => {
+      staffFoodConsolidated[item] = (staffFoodConsolidated[item] || 0) + (Number(qty) || 0);
+    }));
+    const staffFoodName = (id) => challanStaffMasterItems.find((i) => i.id === id)?.name || id;
+    const staffFoodUnit = (id) => challanStaffMasterItems.find((i) => i.id === id)?.unit || "";
+    const staffFoodRows = Object.entries(staffFoodConsolidated).filter(([, qty]) => qty > 0);
+
     const printChallan = () => {
       const pw = window.open("", "_blank");
       const rows = allIds.map((id) => {
@@ -4814,7 +4844,8 @@ const Dispatch = () => {
         const short = disp < dem;
         return `<tr style="${short ? "background:#FEF2F2" : ""}"><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${getItemName(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;color:#999;font-size:11px">${getItemUnit(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${dem}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:${short ? "#DC2626" : "#16A34A"}">${disp}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-size:11px;color:${short ? "#DC2626" : "#16A34A"}">${short ? "⬇ " + (dem - disp) + " short" : disp === dem ? "✓" : "⬆ +" + (disp - dem)}</td></tr>`;
       }).join("");
-      pw.document.write(`<!DOCTYPE html><html><head><title>Dispatch Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">The The Ananda Cafe — Dispatch Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${outlet?.name || order.outlet_id}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${dateStr}</div><div style="font-size:11px;color:#BBB">${timeStr}</div></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;display:flex;justify-content:space-between;font-size:11px;color:#999"><span>Total: ${allIds.length} items</span><span>Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</span></div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Transport</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Outlet Manager</div></div></div></body></html>`);
+      const staffFoodHtml = staffFoodRows.length === 0 ? "" : `<div style="margin-top:20px"><h2 style="font-size:13px;font-weight:800;color:#B45309;border-bottom:2px solid #FDE68A;padding-bottom:6px;margin-bottom:8px">🍛 Staff Food</h2><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#FFFBEB"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#92400E;text-transform:uppercase;border-bottom:2px solid #FDE68A">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#92400E;text-transform:uppercase;border-bottom:2px solid #FDE68A">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#92400E;text-transform:uppercase;border-bottom:2px solid #FDE68A">Qty</th></tr></thead><tbody>${staffFoodRows.map(([id, qty]) => `<tr><td style="padding:8px 10px;border-bottom:1px solid #F0F0EC;font-weight:600">${staffFoodName(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #F0F0EC;text-align:center;color:#999;font-size:11px">${staffFoodUnit(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #F0F0EC;text-align:center;font-weight:700;font-family:monospace">${qty}</td></tr>`).join("")}</tbody></table></div>`;
+      pw.document.write(`<!DOCTYPE html><html><head><title>Dispatch Challan</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">The The Ananda Cafe — Dispatch Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${outlet?.name || order.outlet_id}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${dateStr}</div><div style="font-size:11px;color:#BBB">${timeStr}</div></div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table>${staffFoodHtml}<div style="margin-top:20px;display:flex;justify-content:space-between;font-size:11px;color:#999"><span>Total: ${allIds.length} items${staffFoodRows.length > 0 ? ` + ${staffFoodRows.length} staff food` : ""}</span><span>Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</span></div><div style="margin-top:40px;display:flex;justify-content:space-between"><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Store Manager</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Transport</div></div><div style="text-align:center"><div style="border-top:1px solid #999;width:120px;margin-top:40px;padding-top:4px;font-size:10px;color:#888">Outlet Manager</div></div></div></body></html>`);
       pw.document.close();
       setTimeout(() => { pw.focus(); pw.print(); }, 400);
     };
@@ -4873,6 +4904,33 @@ const Dispatch = () => {
             </table>
           </div>
         </div>
+
+        {staffFoodRows.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #FDE68A", overflow: "hidden", marginTop: 14 }}>
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid #FDE68A", background: "#FFFBEB", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 16 }}>🍛</span>
+              <span style={{ fontWeight: 700, fontSize: 13, color: "#B45309" }}>Staff Food</span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead><tr style={{ background: "#FFFBEB" }}>
+                  <th style={thS}>Item</th>
+                  <th style={{ ...thS, textAlign: "center" }}>Unit</th>
+                  <th style={{ ...thS, textAlign: "center" }}>Qty</th>
+                </tr></thead>
+                <tbody>
+                  {staffFoodRows.map(([id, qty]) => (
+                    <tr key={id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{staffFoodName(id)}</td>
+                      <td style={{ ...tdS, textAlign: "center", color: "#999", fontSize: 11 }}>{staffFoodUnit(id)}</td>
+                      <td style={{ ...tdS, textAlign: "center", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }}>{qty}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
