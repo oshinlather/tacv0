@@ -6923,7 +6923,16 @@ const DemandHistory = () => {
 //  for franchise outlets only (billed for what Base Kitchen actually supplied)
 // ═════════════════════════════════════════════════════════════════════════════
 const FranchiseBilling = ({ lockedOutlet } = {}) => {
-  const franchiseOutlets = OUTLETS.filter((o) => o.franchise);
+  // Franchise-ness comes from the live `outlets` table (owner-editable in Franchise
+  // Settings) when available, falling back to the hardcoded OUTLETS flag for any outlet
+  // the migration/panel hasn't touched yet — so toggling a new franchise on shows up here
+  // immediately without a code change.
+  const [outletsConfig, setOutletsConfig] = useState([]);
+  useEffect(() => { api.getOutlets().then((o) => setOutletsConfig(o || [])).catch(() => setOutletsConfig([])); }, []);
+  const franchiseOutlets = OUTLETS.filter((o) => {
+    const dbRow = outletsConfig.find((x) => x.id === o.id);
+    return dbRow ? !!dbRow.is_franchise : !!o.franchise;
+  });
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || franchiseOutlets[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [demands, setDemands] = useState([]);
@@ -6991,6 +7000,18 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
     // billed at ₹0 here despite being priced correctly everywhere else in the app.
     api.getBkRecipeCosts().then((c) => setBkRecipeCosts(c || {})).catch(() => setBkRecipeCosts({}));
   }, []);
+
+  // Markup / BK fixed-cost share / royalty — computed server-side (needs every outlet's
+  // material cost for the BK-share ratio, which a franchise-scoped user can't fetch
+  // directly) off the owner-configured agreement in Franchise Settings.
+  const [billingSummary, setBillingSummary] = useState(null);
+  useEffect(() => {
+    if (!selOutlet || !selMonth) return;
+    setBillingSummary(null);
+    api.getFranchiseBillingSummary({ outlet_id: selOutlet, month: selMonth })
+      .then(setBillingSummary)
+      .catch(() => setBillingSummary(null));
+  }, [selOutlet, selMonth]);
 
   const rateMap = useMemo(() => { const m = {}; rateCard.forEach((r) => { m[r.id] = r; }); return m; }, [rateCard]);
   const convMap = useMemo(() => {
@@ -7092,6 +7113,19 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
 
+  // Markup applies to the actual billed Material Cost (totalAmount, corrections and all) —
+  // BK Share uses the ratio computed server-side across every outlet's raw material cost,
+  // deliberately independent of this outlet's own local corrections (see summary route).
+  const hasAgreement = !!billingSummary?.agreement;
+  const markupPct = billingSummary?.agreement?.markup_pct ?? 0;
+  const royaltyPct = billingSummary?.agreement?.royalty_pct ?? 0;
+  const markupAmount = totalAmount * markupPct / 100;
+  const bkShareAmount = (billingSummary?.bk_share_ratio || 0) * (billingSummary?.bk_monthly_fixed || 0);
+  const billingSubtotal = totalAmount + markupAmount + bkShareAmount;
+  const revenue = billingSummary?.revenue || 0;
+  const royaltyAmount = revenue * royaltyPct / 100;
+  const totalPayable = billingSubtotal + royaltyAmount;
+
   // Every date in the month up to today (dates with no demand still show as a column)
   const days = useMemo(() => {
     const [y, mo] = selMonth.split("-").map(Number);
@@ -7139,7 +7173,12 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
     }
     const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", "Rate Unit", "Amount"];
     const rows = items.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, i.rateUnit, Math.round(i.amount * 100) / 100]);
-    rows.push(["", "", "", "", "", "TOTAL", Math.round(totalAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
+    rows.push(["", "", "", "", "", `Royalty (${royaltyPct}% of revenue ₹${Math.round(revenue)})`, Math.round(royaltyAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
     exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
   };
 
@@ -7166,7 +7205,7 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
 
         {(loading || !correctionsLoaded) && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
 
-        {!loading && correctionsLoaded && (
+        {!loading && correctionsLoaded && (<>
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4", flexWrap: "wrap", gap: 8 }}>
               <div>
@@ -7298,7 +7337,44 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
               </div>
             </>)}
           </div>
-        )}
+
+          {items.length > 0 && (
+            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginTop: 12 }}>
+              <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #DDD6FE" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>💳 Billing Summary — {monthLabel}</span>
+              </div>
+              {!hasAgreement && (
+                <div style={{ padding: "10px 16px", fontSize: 12, color: "#DC2626", background: "#FEF2F2", borderBottom: "1px solid #FECACA" }}>⚠️ No franchise agreement configured for {outletName} — markup and royalty are showing as 0%. Set them in Owner → Audit → Franchise Settings.</div>
+              )}
+              <div style={{ padding: "4px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                  <span>Material Cost</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(totalAmount)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                  <span>+ Markup ({markupPct}% on material cost)</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(markupAmount)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                  <span>+ BK Fixed Cost Share ({Math.round((billingSummary?.bk_share_ratio || 0) * 1000) / 10}% of ₹{fmt(billingSummary?.bk_monthly_fixed || 0)})</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(bkShareAmount)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13, fontWeight: 700 }}>
+                  <span>Subtotal</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(billingSubtotal)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                  <span>+ Royalty ({royaltyPct}% of revenue ₹{fmt(revenue)})</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(royaltyAmount)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0", fontSize: 15 }}>
+                  <span style={{ fontWeight: 800 }}>Total Payable to Brand</span>
+                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 17 }}>{fmt(totalPayable)}</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </>)}
       </>)}
     </div>
   );
@@ -13895,6 +13971,172 @@ const FixedCostsPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  FRANCHISE SETTINGS — owner control panel for the two things Franchise Billing needs
+//  beyond material cost: which outlets are franchises (is_franchise, on the `outlets`
+//  table) and each one's markup % (on material cost) + royalty % (on revenue). Every
+//  save is a new agreement version, never an overwrite, so FranchiseBilling can always
+//  bill a past month against the terms that were actually in force then.
+// ═════════════════════════════════════════════════════════════════════════════
+const FranchiseSettingsPanel = () => {
+  const [outlets, setOutlets] = useState([]);
+  const [settings, setSettings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingOutlet, setEditingOutlet] = useState(null);
+  const [formMarkup, setFormMarkup] = useState("");
+  const [formRoyalty, setFormRoyalty] = useState("");
+  const [formDate, setFormDate] = useState(() => today());
+  const [formNotes, setFormNotes] = useState("");
+  const [expandedHistory, setExpandedHistory] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([api.getOutlets().catch(() => []), api.getFranchiseSettings().catch(() => [])])
+      .then(([o, s]) => { setOutlets(o || []); setSettings(s || []); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  // Merge the live `outlets` table onto the hardcoded OUTLETS list — id/name/short stay
+  // hardcoded (used everywhere else in the app), only is_franchise comes from the DB,
+  // falling back to the hardcoded flag for an outlet the migration hasn't reached yet.
+  const outletRows = OUTLETS.map((o) => {
+    const dbRow = outlets.find((x) => x.id === o.id);
+    return { id: o.id, name: o.name, short: o.short, is_franchise: dbRow ? !!dbRow.is_franchise : !!o.franchise };
+  });
+
+  // settings is already ordered outlet_id, effective_from desc (server-side) — first
+  // match per outlet is the current version.
+  const historyByOutlet = {};
+  settings.forEach((s) => { (historyByOutlet[s.outlet_id] ||= []).push(s); });
+  const currentByOutlet = {};
+  Object.entries(historyByOutlet).forEach(([oid, rows]) => { currentByOutlet[oid] = rows[0]; });
+
+  const toggleFranchise = async (outletId, next) => {
+    try { await api.patchOutlet(outletId, { is_franchise: next }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+
+  const openEdit = (outletId) => {
+    const cur = currentByOutlet[outletId];
+    setFormMarkup(cur ? String(cur.markup_pct) : "0");
+    setFormRoyalty(cur ? String(cur.royalty_pct) : "0");
+    setFormDate(today());
+    setFormNotes("");
+    setEditingOutlet(outletId);
+  };
+
+  const saveAgreement = async () => {
+    const markup = Number(formMarkup), royalty = Number(formRoyalty);
+    if (!Number.isFinite(markup) || markup < 0 || markup > 100) return alert("Markup % must be between 0 and 100");
+    if (!Number.isFinite(royalty) || royalty < 0 || royalty > 100) return alert("Royalty % must be between 0 and 100");
+    setSaving(true);
+    try {
+      await api.saveFranchiseSettings({ outlet_id: editingOutlet, markup_pct: markup, royalty_pct: royalty, effective_from: formDate, notes: formNotes.trim() || null });
+      setEditingOutlet(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSaving(false); }
+  };
+
+  const deleteVersion = async (id, outletId) => {
+    if (!confirm("Delete this agreement version? This cannot be undone.")) return;
+    try { await api.deleteFranchiseSettings(id); load(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏳️ Franchise Settings</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Mark outlets as franchise, and set markup % (on material cost) &amp; royalty % (on revenue). Changes take effect from the date you choose — past bills keep using the terms that applied then.</p>
+      </div>
+      {outletRows.map((o) => {
+        const cur = currentByOutlet[o.id];
+        const history = historyByOutlet[o.id] || [];
+        return (
+          <div key={o.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #DDD6FE", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>{o.name}</span>
+                <span style={{ fontSize: 10, color: "#9333EA", marginLeft: 8 }}>{o.short}</span>
+              </div>
+              <button onClick={() => toggleFranchise(o.id, !o.is_franchise)}
+                style={{ padding: "5px 12px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, background: o.is_franchise ? "#16A34A" : "#E0E0DC", color: o.is_franchise ? "#fff" : "#666" }}>
+                {o.is_franchise ? "🏳️ Franchise" : "🏠 Company-Owned"}
+              </button>
+            </div>
+            {!o.is_franchise && (
+              <div style={{ padding: "12px 16px", fontSize: 12, color: "#999" }}>Not a franchise — no billing terms apply.</div>
+            )}
+            {o.is_franchise && (
+              <div style={{ padding: "12px 16px" }}>
+                {cur ? (
+                  <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 10 }}>
+                    <div><div style={{ fontSize: 10, color: "#999" }}>Markup on material</div><div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{cur.markup_pct}%</div></div>
+                    <div><div style={{ fontSize: 10, color: "#999" }}>Royalty on revenue</div><div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{cur.royalty_pct}%</div></div>
+                    <div><div style={{ fontSize: 10, color: "#999" }}>Effective from</div><div style={{ fontSize: 13, fontWeight: 600, marginTop: 3 }}>{cur.effective_from}</div></div>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: "#DC2626", marginBottom: 10 }}>⚠️ No agreement configured yet — Franchise Billing will show 0% markup/royalty until you set one.</div>
+                )}
+                {cur?.notes && <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{cur.notes}</div>}
+
+                {editingOutlet !== o.id ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => openEdit(o.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#7C3AED", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✏️ New Agreement Version</button>
+                    {history.length > 0 && (
+                      <button onClick={() => setExpandedHistory(expandedHistory === o.id ? null : o.id)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#666", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{expandedHistory === o.id ? "Hide" : "Show"} History ({history.length})</button>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ background: "#FAFAF8", borderRadius: 10, border: "1px solid #E0E0DC", padding: 12 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                      <label style={{ fontSize: 11, color: "#666" }}>Markup %
+                        <input type="number" value={formMarkup} onChange={(e) => setFormMarkup(e.target.value)} style={{ display: "block", width: 90, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", marginTop: 3 }} />
+                      </label>
+                      <label style={{ fontSize: 11, color: "#666" }}>Royalty %
+                        <input type="number" value={formRoyalty} onChange={(e) => setFormRoyalty(e.target.value)} style={{ display: "block", width: 90, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", marginTop: 3 }} />
+                      </label>
+                      <label style={{ fontSize: 11, color: "#666" }}>Effective From
+                        <input type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} style={{ display: "block", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", marginTop: 3 }} />
+                      </label>
+                    </div>
+                    <textarea value={formNotes} onChange={(e) => setFormNotes(e.target.value)} placeholder="Notes (optional) — e.g. reason for the change"
+                      style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box", resize: "vertical", minHeight: 40 }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={saveAgreement} disabled={saving} style={{ padding: "7px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "Saving..." : "Save New Version"}</button>
+                      <button onClick={() => setEditingOutlet(null)} style={{ padding: "7px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#666", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {expandedHistory === o.id && history.length > 0 && (
+                  <div style={{ marginTop: 12, borderTop: "1px solid #F0F0EC", paddingTop: 10 }}>
+                    {history.map((h) => (
+                      <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", fontSize: 11, borderBottom: "1px solid #F5F5F3" }}>
+                        <span style={{ color: "#999", width: 90 }}>{h.effective_from}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{h.markup_pct}% mkup</span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{h.royalty_pct}% royalty</span>
+                        <span style={{ flex: 1, color: "#888" }}>{h.notes}</span>
+                        <span style={{ color: "#BBB" }}>{h.created_by}</span>
+                        <button onClick={() => deleteVersion(h.id, o.id)} style={{ padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  STORE RECIPES VIEW — BK + Outlet recipes in one tab
 // ═════════════════════════════════════════════════════════════════════════════
 const StoreRecipesView = () => {
@@ -14155,7 +14397,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "fixed_costs", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "fixed_costs", "franchise_settings", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -14311,6 +14553,7 @@ export default function AnandaCafe() {
           { id: "packaging", label: "📦 Packaging Audit", sub: "Conversions & unit consistency check" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
+          { id: "franchise_settings", label: "🏳️ Franchise Settings", sub: "Markup, royalty & franchise flag per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "employees", label: "👤 Employee Master", sub: "Full staff directory by outlet, BK & top mgmt" },
           { id: "payroll", label: "💰 Monthly Payroll", sub: "Leave/OT/advance-adjusted salary, finalize to pay" },
@@ -14381,6 +14624,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "packaging" && <PackagingAuditPanel />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
       {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
+      {auditUnlocked && ownerTab === "franchise_settings" && <FranchiseSettingsPanel />}
       {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
       {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}
       {auditUnlocked && ownerTab === "recipes" && <RecipesPanel />}

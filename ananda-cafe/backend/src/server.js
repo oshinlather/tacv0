@@ -3,7 +3,7 @@ const cors = require("cors");
 const multer = require("multer");
 
 const supabase = require("./supabase");
-const { requireAuth } = require("./routes/authGuards");
+const { requireAuth, requireOwner } = require("./routes/authGuards");
 const demandsRouter = require("./routes/demands");
 const issuancesRouter = require("./routes/issuances");
 const purchasesRouter = require("./routes/purchases");
@@ -55,6 +55,16 @@ app.get("/api/outlets", async (req, res) => {
   const { data, error } = await supabase.from("outlets").select("*");
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// Owner-only: flip an outlet between company-owned and franchise — drives the Franchise
+// Settings admin panel and the Franchise Billing outlet picker.
+app.patch("/api/outlets/:id", async (req, res) => {
+  if (!await requireOwner(req, res)) return;
+  const { is_franchise } = req.body;
+  const { error } = await supabase.from("outlets").update({ is_franchise: !!is_franchise }).eq("id", req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true });
 });
 
 // NOTE: The PIN-only /api/auth/login that used to live here has been removed.

@@ -4784,4 +4784,130 @@ router.post('/franchise-billing/corrections', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ────────────────────────────────────────────────────────────
+// Franchise Settings — owner-controlled markup % (on material cost) and royalty %
+// (on revenue) per franchise outlet, effective-dated. Every save is a new row, never an
+// UPDATE, so a bill for a past month always reflects the terms actually in force then
+// even after the agreement is later renegotiated. `is_franchise` itself lives on the
+// `outlets` table (PATCH /api/outlets/:id) since it's a structural flag, not a term.
+// ────────────────────────────────────────────────────────────
+
+// ── GET /api/franchise-settings — full version history (optionally one outlet)
+router.get('/franchise-settings', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, 'owner', 'avp', 'franchise');
+    if (!user) return;
+    const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
+    let query = supabase.from('franchise_settings').select('*').order('outlet_id').order('effective_from', { ascending: false });
+    if (outlet_id) query = query.eq('outlet_id', outlet_id);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/franchise-settings — record a new agreement version
+router.post('/franchise-settings', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, 'owner');
+    if (!user) return;
+    const { outlet_id, markup_pct, royalty_pct, effective_from, notes } = req.body;
+    if (!outlet_id || !effective_from) return res.status(400).json({ error: 'outlet_id and effective_from are required' });
+    const markup = Number(markup_pct);
+    const royalty = Number(royalty_pct);
+    if (!Number.isFinite(markup) || markup < 0 || markup > 100) return res.status(400).json({ error: 'markup_pct must be a number between 0 and 100' });
+    if (!Number.isFinite(royalty) || royalty < 0 || royalty > 100) return res.status(400).json({ error: 'royalty_pct must be a number between 0 and 100' });
+    const { error } = await supabase.from('franchise_settings').insert({
+      outlet_id, markup_pct: markup, royalty_pct: royalty, effective_from, notes: notes || null, created_by: user.name,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/franchise-settings/:id — undo a mistaken agreement entry
+router.delete('/franchise-settings/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { error } = await supabase.from('franchise_settings').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/franchise-billing/summary — markup/BK-share/royalty totals for one
+// outlet's monthly bill, on top of the existing item-level Material Cost (which stays
+// client-computed in FranchiseBilling so manual corrections keep flowing through).
+// The BK-share ratio needs every outlet's material cost, which a franchise-scoped user
+// can't fetch directly, so it's computed here server-side.
+router.get('/franchise-billing/summary', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, 'owner', 'avp', 'franchise');
+    if (!user) return;
+    const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
+    const month = req.query.month;
+    if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month are required' });
+
+    const monthStart = `${month}-01`;
+    const [y, mo] = month.split('-').map(Number);
+    const monthEnd = new Date(y, mo, 0).toISOString().slice(0, 10);
+
+    const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+
+    const [{ rateMap, bkRecipeMap, demandUnitMap, convFactorFor }, { data: demands, error: demandsErr }, { data: agreements, error: agreementsErr }, { data: bkFixed, error: bkFixedErr }, { data: outletSales, error: salesErr }] = await Promise.all([
+      buildCostingContext(),
+      supabase.from('demands').select('outlet_id, dispatch_items').eq('type', 'manual').neq('status', 'draft').gte('date', monthStart).lte('date', monthEnd),
+      supabase.from('franchise_settings').select('*').eq('outlet_id', outlet_id).lte('effective_from', monthEnd).order('effective_from', { ascending: false }).limit(1),
+      supabase.from('fixed_costs').select('amount').eq('outlet_id', 'bk').eq('active', true),
+      supabase.from('daily_outlet_sales').select('total_sale').eq('outlet_id', outlet_id).gte('date', monthStart).lte('date', monthEnd),
+    ]);
+    if (demandsErr) throw demandsErr;
+    if (agreementsErr) throw agreementsErr;
+    if (bkFixedErr) throw bkFixedErr;
+    if (salesErr) throw salesErr;
+
+    // Material cost per outlet — dispatched qty × rate card price (BK-recipe fallback for
+    // items with no rate card row), same pricing rule as /pnl/live's variable-cost block
+    // and /wastage/cost. Raw (uncorrected) on purpose: this ratio must be computed the same
+    // way for every outlet, and a franchise's own manual bill corrections shouldn't skew
+    // how much of BK's fixed cost gets allocated to it.
+    const materialCostByOutlet = {};
+    allOutletIds.forEach(id => { materialCostByOutlet[id] = 0; });
+    (demands || []).forEach(d => {
+      if (!allOutletIds.includes(d.outlet_id)) return;
+      Object.entries(d.dispatch_items || {}).forEach(([itemId, qty]) => {
+        if (!qty || qty <= 0) return;
+        const rate = rateMap[itemId];
+        const bkRecipe = bkRecipeMap[itemId];
+        let unitPrice = 0, itemUnit = '';
+        if (rate) { unitPrice = Number(rate.price); itemUnit = rate.unit || ''; }
+        else if (bkRecipe) { unitPrice = bkRecipe.costPerKg; itemUnit = 'Kg'; }
+        else return;
+        const rawUnit = demandUnitMap[itemId] || itemUnit;
+        const factor = convFactorFor(itemId, rawUnit, itemUnit);
+        materialCostByOutlet[d.outlet_id] += (Number(qty) || 0) * factor * unitPrice;
+      });
+    });
+    const rawOutletMaterialCost = materialCostByOutlet[outlet_id] || 0;
+    const rawMaterialCostAllOutlets = Object.values(materialCostByOutlet).reduce((s, v) => s + v, 0);
+    const bkShareRatio = rawMaterialCostAllOutlets > 0 ? rawOutletMaterialCost / rawMaterialCostAllOutlets : 0;
+
+    const bkMonthlyFixed = (bkFixed || []).reduce((s, f) => s + Number(f.amount || 0), 0);
+    const revenue = (outletSales || []).reduce((s, r) => s + Number(r.total_sale || 0), 0);
+
+    const agreement = agreements && agreements[0]
+      ? { markup_pct: Number(agreements[0].markup_pct), royalty_pct: Number(agreements[0].royalty_pct), effective_from: agreements[0].effective_from, notes: agreements[0].notes }
+      : null;
+
+    res.json({
+      outlet_id, month, agreement,
+      bk_share_ratio: bkShareRatio,
+      bk_monthly_fixed: Math.round(bkMonthlyFixed),
+      revenue: Math.round(revenue),
+      raw_outlet_material_cost: Math.round(rawOutletMaterialCost),
+      raw_material_cost_all_outlets: Math.round(rawMaterialCostAllOutlets),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;

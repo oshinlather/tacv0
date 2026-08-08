@@ -95,6 +95,13 @@ const api = {
   // ── Franchise Billing corrections (persisted Qty/Rate edits) ──
   getFranchiseBillingCorrections: (outlet_id, month) => get("/api/franchise-billing/corrections", { outlet_id, month }),
   saveFranchiseBillingCorrections: (data) => post("/api/franchise-billing/corrections", data),
+  getFranchiseBillingSummary: (params) => get("/api/franchise-billing/summary", params),
+
+  // ── Franchise Settings (markup %, royalty %, per-outlet agreement history) ──
+  getFranchiseSettings: (params) => get("/api/franchise-settings", params),
+  saveFranchiseSettings: (data) => post("/api/franchise-settings", data),
+  deleteFranchiseSettings: (id) => del(`/api/franchise-settings/${id}`),
+  patchOutlet: (id, data) => patch(`/api/outlets/${id}`, data),
 
   // ── PetPooja Recipes ──
   getRecipesPetpooja: () => get("/api/recipes/petpooja"),
