@@ -3929,6 +3929,13 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       {pnlTab === "attendance" && !lockedOutlet && (
         selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
+      {pnlTab === "flags" && !lockedOutlet && (
+        selMonth ? (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
+            Pick a single day (not month view) above for Flags.
+          </div>
+        ) : <FlagsSection dateStr={dateStr} selOutlet={selOutlet} />
+      )}
       {pnlTab === "challans" && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
@@ -8323,23 +8330,40 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
     }).filter((r) => r.hasData).sort((a, b) => b.spread - a.spread);
   }, [monthData, outletsWithData]);
 
-  const itemRows = useMemo(() => {
-    if (!monthData || !drillCat || outletsWithData.length === 0) return [];
+  // catIds: null = every category combined (the "Leakage %" tab) — same computation as a
+  // single-category drill, just pooling every section's items into one list instead of
+  // filtering to one. Item ids are unique across the whole demand catalog (not just within
+  // a category), so combining them can't collide.
+  const buildItemRows = (catIds) => {
+    if (!monthData || outletsWithData.length === 0) return [];
+    const cats = catIds || DEMAND_SECTIONS.map((s) => s.id);
     const itemIds = new Set();
-    outletsWithData.forEach((o) => Object.keys(monthData.categoryTotals[o.id]?.[drillCat]?.items || {}).forEach((id) => itemIds.add(id)));
+    outletsWithData.forEach((o) => cats.forEach((catId) => Object.keys(monthData.categoryTotals[o.id]?.[catId]?.items || {}).forEach((id) => itemIds.add(id))));
     return [...itemIds].map((id) => {
-      let name = id, unit = "";
+      let name = id, unit = "", catLabel = null, catEmoji = null;
       const pcts = outletsWithData.map((o) => {
-        const it = monthData.categoryTotals[o.id]?.[drillCat]?.items?.[id];
+        let it = null;
+        for (const catId of cats) {
+          const found = monthData.categoryTotals[o.id]?.[catId]?.items?.[id];
+          if (found) {
+            it = found;
+            if (!catLabel) { const sec = DEMAND_SECTIONS.find((s) => s.id === catId); catLabel = sec?.titleHi; catEmoji = sec?.emoji; }
+            break;
+          }
+        }
         if (it) { name = it.name; unit = it.unit; }
         return pctOf(o.id, it?.cost || 0);
       });
       const valid = pcts.filter((v) => v != null);
       const max = valid.length ? Math.max(...valid) : null;
       const min = valid.length ? Math.min(...valid) : null;
-      return { id, name, unit, pcts, spread: (max != null && min != null) ? max - min : 0 };
+      return { id, name, unit, pcts, spread: (max != null && min != null) ? max - min : 0, catLabel, catEmoji };
     }).filter((r) => r.pcts.some((v) => v > 0)).sort((a, b) => b.spread - a.spread);
-  }, [monthData, drillCat, outletsWithData]);
+  };
+  const itemRows = useMemo(() => (drillCat ? buildItemRows([drillCat]) : []), [monthData, drillCat, outletsWithData]);
+  // "Leakage %" tab — every item from every category, one flat list, worst cross-outlet
+  // spread first, so the biggest anomalies surface without hunting through each category.
+  const allItemRows = useMemo(() => buildItemRows(null), [monthData, outletsWithData]);
 
   // Re-sort by a clicked outlet column instead of the default spread — nulls (no data
   // for that outlet) always sink to the bottom regardless of direction.
@@ -8356,6 +8380,7 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   };
   const sortedCategoryRows = useMemo(() => applyColumnSort(categoryRows), [categoryRows, sortIdx, sortDir]);
   const sortedItemRows = useMemo(() => applyColumnSort(itemRows), [itemRows, sortIdx, sortDir]);
+  const sortedAllItemRows = useMemo(() => applyColumnSort(allItemRows), [allItemRows, sortIdx, sortDir]);
 
   // Colors each cell relative to the ROW's own average (not a fixed threshold — a
   // category's "normal" % varies hugely, e.g. Packaging vs Vegetable), so the outlier
@@ -8386,6 +8411,7 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
         {[
           // Cross-outlet — hidden for a locked franchise view, see cogsView's own comment.
           ...(lockedOutlet ? [] : [{ key: "table", label: "📊 Category & Item" }]),
+          ...(lockedOutlet ? [] : [{ key: "leakage", label: "📉 Leakage %" }]),
           { key: "dairy", label: "🥛 Dairy Audit" },
           { key: "cold_drink", label: "🥤 Cold Drink Audit" },
           { key: "report", label: "📈 COGS Report" },
@@ -11907,6 +11933,9 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
   const [audit, setAudit] = useState(null);
   const [loading, setLoading] = useState(false);
   const [expandedItem, setExpandedItem] = useState(null); // raw_material of the row showing its calculation
+  // Default order is the backend's |variance| desc (biggest absolute gap first); the owner
+  // can flip to leakage % to surface the worst-proportioned items regardless of volume.
+  const [sortBy, setSortBy] = useState("default"); // default | leakage_desc | leakage_asc
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
 
@@ -11919,6 +11948,14 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
 
   const outletData = audit?.outlets?.[0] || null;
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const sortedItems = useMemo(() => {
+    const items = [...(outletData?.items || [])];
+    // Items with no actual consumption (null variance_pct) always sink to the bottom so
+    // real leakage stays at the top whichever direction is picked.
+    if (sortBy === "leakage_desc") return items.sort((a, b) => (b.variance_pct ?? -Infinity) - (a.variance_pct ?? -Infinity));
+    if (sortBy === "leakage_asc") return items.sort((a, b) => (a.variance_pct ?? Infinity) - (b.variance_pct ?? Infinity));
+    return items; // backend order: |variance| desc
+  }, [outletData, sortBy]);
 
   return (
     <div>
@@ -11973,6 +12010,16 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
           )}
 
           {outletData.items.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                <option value="default">Sort: Biggest gap</option>
+                <option value="leakage_desc">Sort: Leakage % (high → low)</option>
+                <option value="leakage_asc">Sort: Leakage % (low → high)</option>
+              </select>
+            </div>
+          )}
+
+          {outletData.items.length > 0 && (
             // No overflow:hidden/overflowX:auto wrapper here (unlike other tables in this
             // file) — either one establishes a new containing block for any sticky
             // descendant, which silently breaks the header's position:sticky. Corners are
@@ -11987,7 +12034,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
                     <th style={{ ...thS, textAlign: "right", position: "sticky", top: 102, background: "#FAFAF8", zIndex: 5, borderTopRightRadius: 14 }}>Leakage</th>
                   </tr></thead>
                   <tbody>
-                    {outletData.items.map((item, i) => {
+                    {sortedItems.map((item, i) => {
                       const hasActual = item.actual_consumed != null;
                       const isOver = hasActual && item.variance > 0;
                       const isOpen = expandedItem === item.raw_material;
@@ -13069,6 +13116,7 @@ const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
   const [loading, setLoading] = useState(false);
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
   const [expandedItem, setExpandedItem] = useState(null);
+  const [sortBy, setSortBy] = useState("default"); // default | leakage_desc | leakage_asc
 
   useEffect(() => {
     setLoading(true);
@@ -13076,7 +13124,12 @@ const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
   }, [dateStr]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === selOutlet) || null;
-  const items = (outletData?.items || []).filter((it) => DAIRY_ITEM_IDS.has(it.item_id));
+  const items = useMemo(() => {
+    const list = (outletData?.items || []).filter((it) => DAIRY_ITEM_IDS.has(it.item_id));
+    if (sortBy === "leakage_desc") return [...list].sort((a, b) => (b.variance_pct ?? -Infinity) - (a.variance_pct ?? -Infinity));
+    if (sortBy === "leakage_asc") return [...list].sort((a, b) => (a.variance_pct ?? Infinity) - (b.variance_pct ?? Infinity));
+    return list;
+  }, [outletData, sortBy]);
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
 
   return (
@@ -13096,6 +13149,16 @@ const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
 
       {!loading && items.length === 0 && (
         <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No dairy consumption data for {outletName} on {dateStr}</div>
+      )}
+
+      {!loading && items.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+            <option value="default">Sort: Biggest gap</option>
+            <option value="leakage_desc">Sort: Leakage % (high → low)</option>
+            <option value="leakage_asc">Sort: Leakage % (low → high)</option>
+          </select>
+        </div>
       )}
 
       {!loading && items.length > 0 && (
@@ -13990,16 +14053,20 @@ const BKStoreAudit = ({ dateStr }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
+  const [selCat, setSelCat] = useState(null); // null = all categories
 
   useEffect(() => {
     setLoading(true);
     setExpandedId(null);
+    setSelCat(null);
     api.getStoreAudit(dateStr).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
   }, [dateStr]);
 
   const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
   const varColor = (n) => n == null ? "#999" : n === 0 ? "#16A34A" : n > 0 ? "#2563EB" : "#DC2626";
   const totalFlagged = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
+  const visibleCategories = selCat ? (data?.categories || []).filter((c) => c.category === selCat) : (data?.categories || []);
+  const visibleCount = visibleCategories.reduce((s, c) => s + c.items.length, 0);
   const dayBefore = useMemo(() => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }, [dateStr]);
 
   return (<div>
@@ -14020,9 +14087,17 @@ const BKStoreAudit = ({ dateStr }) => {
         {!data.actual_submitted && !data.is_today && " No count was submitted for " + dateStr + " itself — variance can't be computed, only Should-Be Closing is shown."}
         {data.is_today && !data.actual_submitted && " Today's Actual Closing uses the live system balance until a count is submitted."}
       </div>
-      {totalFlagged === 0 ? (
+      {totalFlagged > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+          <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({totalFlagged})</button>
+          {data.categories.map((c) => (
+            <button key={c.category} onClick={() => setSelCat(c.category)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c.category ? 700 : 500, border: selCat === c.category ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.category ? "#1A1A1A" : "#fff", color: selCat === c.category ? "#fff" : "#888" }}>{c.category} ({c.items.length})</button>
+          ))}
+        </div>
+      )}
+      {visibleCount === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing to flag for {dateStr}</div></div>
-      ) : data.categories.map((cat) => (
+      ) : visibleCategories.map((cat) => (
         <div key={cat.category} style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({cat.items.length} flagged)</span></div>
           <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
