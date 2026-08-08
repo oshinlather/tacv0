@@ -315,6 +315,32 @@ const DatePicker = ({ value, onChange }) => {
   </div>);
 };
 
+// Owner-side reporting screens (P&L, COGS Compare, RM/Dairy/Cold Drink Audit, Demand vs
+// Closing) used to each repeat a full row of "Today / Yesterday / 8 more day-pills" plus
+// a separate "Month view..." select bolted on next to it — two controls doing one job,
+// and the same markup copy-pasted into every screen. One dropdown instead: day options
+// first (the common case), month options folded into the same list rather than a second
+// control. `monthOptions` is optional — omit it on a screen with no month-aggregate view
+// (e.g. RM Audit) and it's just a plain day dropdown. `setSelMonth` is likewise optional;
+// when a page has no month concept at all, its absence is handled gracefully.
+const DateRangeDropdown = ({ selDay, setSelDay, selMonth, setSelMonth, monthOptions, days = 10, onChange }) => {
+  const dayOptions = Array.from({ length: days }, (_, i) => ({
+    value: i, label: i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i),
+  }));
+  const value = selMonth ? `m:${selMonth}` : `d:${selDay}`;
+  return (
+    <select value={value} onChange={(e) => {
+      const v = e.target.value;
+      if (v.startsWith("m:")) { setSelMonth(v.slice(2)); }
+      else { setSelDay(Number(v.slice(2))); if (setSelMonth) setSelMonth(null); }
+      onChange?.();
+    }} style={{ padding: "9px 12px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#1A1A1A", marginBottom: 16 }}>
+      {dayOptions.map((d) => <option key={d.value} value={`d:${d.value}`}>{d.label}</option>)}
+      {monthOptions && monthOptions.map((m) => <option key={m.value} value={`m:${m.value}`}>📅 {m.label}</option>)}
+    </select>
+  );
+};
+
 const PhotoUpload = ({ id: secId, emoji, titleHi, color, bg, border, image, onUpload, onRemove }) => {
   const uid = `cam-${secId}`;
   if (image) return (
@@ -2601,20 +2627,9 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
 
   return (
     <div>
-      {/* Date pills — omitted when syncDate is passed, since the parent already shows one */}
+      {/* Date dropdown — omitted when syncDate is passed, since the parent already shows one */}
       {!syncDate && (
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-        {Array.from({ length: 5 }, (_, i) => {
-          const dd = istNow(); dd.setDate(dd.getDate() - i);
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
-          return (<button key={i} onClick={() => { setIntSelDay(i); setIntSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-        })}
-        <select value={selMonth || ""} onChange={(e) => setIntSelMonth(e.target.value || null)}
-          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
-          <option value="">📅 Month view...</option>
-          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-      </div>
+        <DateRangeDropdown selDay={selDay} setSelDay={setIntSelDay} selMonth={selMonth} setSelMonth={setIntSelMonth} monthOptions={monthOptions} days={5} />
       )}
 
       {selMonth ? (
@@ -3137,11 +3152,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Daily P&L</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Live from dispatched items × rate card + fixed costs + purchases</p>
-      </div>
-
       {/* View pills — right under the header, above the date/outlet filters, since
           switching P&L/COGS/Audit/Missing Punches is the primary nav here and the
           filters below just refine whichever view is picked. overflowX + whiteSpace
@@ -3174,19 +3184,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         ))}
       </div>
 
-      {/* Date pills */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-        {Array.from({ length: 10 }, (_, i) => {
-          const dd = istNow(); dd.setDate(dd.getDate() - i);
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
-          return (<button key={i} onClick={() => { setSelDay(i); setSelMonth(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-        })}
-        <select value={selMonth || ""} onChange={(e) => setSelMonth(e.target.value || null)}
-          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
-          <option value="">📅 Month view...</option>
-          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-      </div>
+      <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} />
 
       {/* Outlet pills */}
       {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
@@ -3889,7 +3887,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
             Pick a single day (not month view) above for Demand vs Closing.
           </div>
-        ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
+        ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
       )}
     </div>
   );
@@ -8186,19 +8184,9 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
         ))}
       </div>
 
-      {/* Date pills — omitted when syncDate is passed, since the parent already shows one */}
+      {/* Date dropdown — omitted when syncDate is passed, since the parent already shows one */}
       {!syncDate && (
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
-        {Array.from({ length: 7 }, (_, i) => {
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
-          return (<button key={i} onClick={() => { setIntSelDay(i); setIntSelMonth(null); setDrillCat(null); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selMonth && selDay === i ? 700 : 500, border: !selMonth && selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selMonth && selDay === i ? "#1A1A1A" : "#fff", color: !selMonth && selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-        })}
-        <select value={selMonth || ""} onChange={(e) => { setIntSelMonth(e.target.value || null); setDrillCat(null); }}
-          style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: selMonth ? 700 : 500, border: selMonth ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selMonth ? "#1A1A1A" : "#fff", color: selMonth ? "#fff" : "#888", whiteSpace: "nowrap" }}>
-          <option value="">📅 Month view...</option>
-          {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-        </select>
-      </div>
+        <DateRangeDropdown selDay={selDay} setSelDay={setIntSelDay} selMonth={selMonth} setSelMonth={setIntSelMonth} monthOptions={monthOptions} days={7} onChange={() => setDrillCat(null)} />
       )}
 
       {cogsView === "dairy" && (
@@ -11464,12 +11452,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Raw Material Audit</h3>
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume, checked against actual outlet consumption (same figure P&L uses). The gap is leakage — over-portioning, unrecorded wastage, or theft.</p>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
-        {Array.from({ length: 7 }, (_, i) => {
-          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i).slice(5);
-          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
-        })}
-      </div>
+      <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} days={7} />
       {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
@@ -11996,11 +11979,22 @@ const DEMAND_ITEM_BY_ID = Object.fromEntries(DEMAND_SECTIONS.flatMap((sec) => se
 // always passes it and controls the day. Rendered standalone (AVP/Head Chef/BK Manager
 // scoped dashboards, which don't have a P&L page to nest inside), it manages its own
 // day picker instead, same pattern CogsCompare already uses for the same reason.
-const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
+const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet, selOutlet: propSelOutlet, setSelOutlet: propSetSelOutlet }) => {
   const standalone = propDateStr === undefined;
   const [intSelDay, setIntSelDay] = useState(0); // 0 = Today, matching this pill's usual default
   const dateStr = standalone ? istDateAgo(intSelDay) : propDateStr;
-  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
+  // Embedded in Daily P&L: share that page's own outlet pill instead of keeping a
+  // second, independent one — this table is inherently single-outlet, so when the
+  // page-level pill sits on "All Outlets" (null), default to the first real outlet and
+  // push that choice back up so the page-level pill visibly reflects it too, rather than
+  // this table just silently showing nothing.
+  const controlled = !standalone && !!propSetSelOutlet;
+  const [intSelOutlet, setIntSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
+  const selOutlet = lockedOutlet || (controlled ? (propSelOutlet || OUTLETS[0]?.id || null) : intSelOutlet);
+  const setSelOutlet = controlled ? propSetSelOutlet : setIntSelOutlet;
+  useEffect(() => {
+    if (controlled && !lockedOutlet && !propSelOutlet) propSetSelOutlet(OUTLETS[0]?.id || null);
+  }, [controlled, lockedOutlet, propSelOutlet]);
   const [catFilter, setCatFilter] = useState("all");
   const [closingYesterday, setClosingYesterday] = useState({});
   const [closingToday, setClosingToday] = useState({});
@@ -12011,11 +12005,11 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
   const [todaySales, setTodaySales] = useState(null); // { revenue, orders }
   const [loading, setLoading] = useState(true);
 
-  // Excel-style frozen panes: outlet pills, category pills, and the table header all
-  // stack as sticky bars below the page's own fixed title/tab bars (102px — same as
-  // every other sticky table in this app). Measured via ref rather than a hardcoded
-  // pixel guess, since these rows' heights aren't fixed (outlet pills disappear
-  // entirely for a locked/franchise view, category pills can wrap on a narrow screen).
+  // Excel-style frozen panes: outlet pills, category pills, and the table header stack
+  // as sticky bars below the page's own fixed title/tab bars (102px, same offset every
+  // other sticky table in this app uses). Heights measured via ref rather than a
+  // hardcoded guess, since these rows aren't fixed height (outlet pills disappear
+  // entirely for a locked/franchise view).
   const PAGE_CHROME_TOP = 102;
   const outletBarRef = useRef(null);
   const catBarRef = useRef(null);
@@ -12031,6 +12025,7 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
     return () => window.removeEventListener("resize", measure);
   }, [lockedOutlet]);
   const stickyBg = "#FAFAF8"; // matches PAGE's background — sticky bars need an opaque fill or scrolled rows show through
+  const theadTop = PAGE_CHROME_TOP + outletBarH + catBarH;
 
   // Closing stock is entered in whatever bulk unit the outlet actually orders in
   // (Tin, Batch, ...) — convert every raw quantity to its base unit (e.g. Desi Ghee's
@@ -12116,10 +12111,15 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
   const fmtNum = (v) => v == null ? "—" : Math.round(Number(v) * 100) / 100;
 
   return (<div>
-    <div style={{ marginBottom: 16 }}>
-      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
-    </div>
+    {standalone && (
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
+      </div>
+    )}
+    {!standalone && (
+      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
+    )}
 
     {standalone && (
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
@@ -12130,7 +12130,10 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
       </div>
     )}
 
-    {!lockedOutlet && (
+    {/* Outlet pills — only when this table owns its own outlet choice (standalone, or
+        embedded without a controlling parent); when embedded in Daily P&L it shares that
+        page's own outlet pill instead of duplicating one here. */}
+    {!lockedOutlet && !controlled && (
       <div ref={outletBarRef} style={{ display: "flex", gap: 6, marginBottom: 10, overflowX: "auto", paddingBottom: 4, position: "sticky", top: PAGE_CHROME_TOP, zIndex: 8, background: stickyBg }}>
         {OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>
@@ -12147,28 +12150,32 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
       <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No items in this category</div>
     ) : (
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+      // No overflow:hidden/overflowX:auto wrapper here (unlike most tables in this file)
+      // — either one gives position:sticky descendants a new containing block, which
+      // silently breaks the header's stickiness (see the identical note on RM Audit's
+      // Dairy detail table). Corners are rounded on the header cells themselves instead
+      // of clipped via the wrapper.
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Category</th>}
-              <th style={{ ...thS, position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Item</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>
+              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopLeftRadius: 14 }}>Category</th>}
+              <th style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, ...(catFilter !== "all" ? { borderTopLeftRadius: 14 } : {}) }}>Item</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>
                 Last Wk Same Day Consumed
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>
                 Today Consumption
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({dateStr}{todaySales ? ` · ${fmt(todaySales.revenue)} · ${todaySales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>{yesterdayStr} Closing</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Today AM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>Today PM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: PAGE_CHROME_TOP + outletBarH + catBarH, background: "#FAFAF8", zIndex: 6 }}>{dateStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>{yesterdayStr} Closing</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>Today AM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>Today PM Demand</th>
+              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopRightRadius: 14 }}>{dateStr} Closing</th>
             </tr></thead>
             <tbody>
               {rows.map((item) => {
@@ -12197,8 +12204,7 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet }) => {
                 );
               })}
             </tbody>
-          </table>
-        </div>
+        </table>
       </div>
     )}
   </div>);
