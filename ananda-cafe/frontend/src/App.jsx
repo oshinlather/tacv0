@@ -3188,10 +3188,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           spend a whole extra line on the date control alone. */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
-        {/* Attendance has its own, richer location filter (adds Base Kitchen and Top
-            Management, neither of which is a real outlet) — this pill row would just
-            sit there doing nothing on that tab, so it's skipped there specifically. */}
-        {!lockedOutlet && pnlTab !== "attendance" && (<>
+        {!lockedOutlet && (<>
           <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
           {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
         </>)}
@@ -3885,7 +3882,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       )}
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
       {pnlTab === "attendance" && !lockedOutlet && (
-        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} />
+        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
       {pnlTab === "demand_vs_closing" && (
         selMonth ? (
@@ -11840,11 +11837,10 @@ const ColdDrinkAuditSection = ({ dateStr, lockedOutlet }) => {
 // — mirrors the same employee_attendance rows Monthly Payroll's "Leaves
 // Taken" reads, so a day logged here counts correctly there too.
 const DAILY_STANDARD_HOURS = 11;
-const DailyAttendanceSection = ({ dateStr }) => {
+const DailyAttendanceSection = ({ dateStr, selOutlet }) => {
   const [employees, setEmployees] = useState([]);
   const [attendance, setAttendance] = useState({}); // employee_id -> attendance row
   const [loading, setLoading] = useState(true);
-  const [deptFilter, setDeptFilter] = useState("all");
   const [hoursDraft, setHoursDraft] = useState({}); // employee_id -> string being edited
   const [busyId, setBusyId] = useState(null);
 
@@ -11876,22 +11872,17 @@ const DailyAttendanceSection = ({ dateStr }) => {
   };
 
   const hoursFor = (id) => Number(attendance[id]?.hours_worked || 0);
-  const rows = employees.filter((e) => deptFilter === "all" || e.department === deptFilter)
+  // selOutlet uses the exact same ids as EMPLOYEE_DEPARTMENTS' outlet entries (both
+  // sourced from OUTLETS), so Daily P&L's own outlet pill filters this table directly —
+  // no second, separate selector needed. "All Outlets" (selOutlet null) still includes
+  // Base Kitchen and Top Management staff, who have no real outlet of their own.
+  const rows = employees.filter((e) => !selOutlet || e.department === selOutlet)
     .sort((a, b) => hoursFor(b.id) - hoursFor(a.id));
   const totalHours = rows.reduce((s, e) => s + hoursFor(e.id), 0);
   const totalOT = rows.reduce((s, e) => s + Math.max(0, hoursFor(e.id) - DAILY_STANDARD_HOURS), 0);
   const presentCount = rows.filter((e) => hoursFor(e.id) > 0).length;
-  const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
   return (<div>
-    <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Hours worked on {dateStr} — OT is hours beyond the {DAILY_STANDARD_HOURS}-hour standard shift. Anyone left at 0 hours is recorded on leave when saved.</p>
-
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-      <button onClick={() => setDeptFilter("all")} style={pillStyle(deptFilter === "all")}>All</button>
-      {EMPLOYEE_DEPARTMENTS.map((d) => (
-        <button key={d.id} onClick={() => setDeptFilter(d.id)} style={pillStyle(deptFilter === d.id)}>{d.label}</button>
-      ))}
-    </div>
 
     {!loading && rows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
@@ -11911,7 +11902,7 @@ const DailyAttendanceSection = ({ dateStr }) => {
     )}
 
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
-      <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No active employees{deptFilter !== "all" ? " in this department" : ""}</div>
+      <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No active employees{selOutlet ? " at this outlet" : ""}</div>
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
@@ -12149,9 +12140,6 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet, selOutlet:
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📦 Demand vs Closing</h3>
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
       </div>
-    )}
-    {!standalone && (
-      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>{lastWeekStr} (same weekday last week) and {dateStr} actual consumption · {yesterdayStr} and {dateStr} closing · {dateStr} AM/PM demand.</p>
     )}
 
     {standalone && (
