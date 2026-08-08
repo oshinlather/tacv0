@@ -10,7 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
-const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope } = require('./authGuards');
+const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope, getDemandItemSectionMap } = require('./authGuards');
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const multer = require('multer');
@@ -3217,6 +3217,58 @@ router.delete('/fixed-costs', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Fixed-cost header dropdown — a shared master list of labels (Rent, Salary, Water, ...)
+// so the same cost head is spelled identically across outlets instead of drifting into
+// "Maintenance"/"Maintainance"/"maintenence" variants that never reconcile. Stored as one
+// JSON array in the generic app_config k/v table (no dedicated table / migration needed);
+// falls back to a sensible default set until the owner adds their own.
+const DEFAULT_FIXED_COST_HEADS = ['Rent', 'Electricity', 'Salary', 'Porter', 'Maintenance', 'New Equipments', 'Water'];
+
+// ── GET /api/fixed-cost-heads — the dropdown options
+router.get('/fixed-cost-heads', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { data, error } = await supabase.from('app_config').select('value').eq('key', 'fixed_cost_heads').maybeSingle();
+    if (error) throw error;
+    let heads = data?.value ? JSON.parse(data.value) : null;
+    if (!Array.isArray(heads) || heads.length === 0) heads = DEFAULT_FIXED_COST_HEADS;
+    res.json(heads);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/fixed-cost-heads — add a new label to the dropdown (case-insensitive dedupe)
+router.post('/fixed-cost-heads', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const label = (req.body.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'label is required' });
+    const { data } = await supabase.from('app_config').select('value').eq('key', 'fixed_cost_heads').maybeSingle();
+    let heads = data?.value ? JSON.parse(data.value) : null;
+    if (!Array.isArray(heads) || heads.length === 0) heads = [...DEFAULT_FIXED_COST_HEADS];
+    if (!heads.some(h => String(h).toLowerCase() === label.toLowerCase())) heads.push(label);
+    heads.sort((a, b) => String(a).localeCompare(String(b)));
+    const { error } = await supabase.from('app_config').upsert({ key: 'fixed_cost_heads', value: JSON.stringify(heads) }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json({ ok: true, heads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/fixed-cost-heads?label= — remove a label from the dropdown (a mistaken
+// entry). Does not touch fixed_costs rows already using that label — only the picker list.
+router.delete('/fixed-cost-heads', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const label = (req.query.label || '').trim();
+    if (!label) return res.status(400).json({ error: 'label is required' });
+    const { data } = await supabase.from('app_config').select('value').eq('key', 'fixed_cost_heads').maybeSingle();
+    let heads = data?.value ? JSON.parse(data.value) : [...DEFAULT_FIXED_COST_HEADS];
+    heads = heads.filter(h => String(h).toLowerCase() !== label.toLowerCase());
+    const { error } = await supabase.from('app_config').upsert({ key: 'fixed_cost_heads', value: JSON.stringify(heads) }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json({ ok: true, heads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================
 // P&L COMPUTATION — Real-time from dispatched items + rate card
 // ============================================================
@@ -3904,11 +3956,19 @@ router.get('/closing-stock-draft-alerts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// The categories the owner actually wants an explicit ✅/❌ for within a closing stock
+// submission — a closing_stocks row existing at all only proves SOMETHING was punched,
+// not that every category was. Not the full 8 (skips Vegetable/Masala/Cleaning/Gas) —
+// scoped to the ones the owner asked to see broken out.
+const CLOSING_CHECK_SECTIONS = ['grocery', 'packaging', 'food', 'dairy', 'cold_drink'];
+
 // ── GET /api/punch-status/:date — Which of the 7 required daily punches (Sales,
 // Wastage, Demand, Closing, Dairy Purchase, Cold Drink Purchase, Verify Dispatch) each
 // outlet (including franchises) has NOT done yet for a given date. Powers the Daily
 // P&L "Missing Punches" pill so the owner can see exactly what to chase instead of
-// checking each outlet by hand.
+// checking each outlet by hand. Closing Stock also gets a per-category breakdown
+// (closing_categories) — a submitted row only proves something was punched, not that
+// every category actually got filled in.
 router.get('/punch-status/:date', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
@@ -3921,16 +3981,18 @@ router.get('/punch-status/:date', async (req, res) => {
       { data: closing },
       { data: purchases },
       { data: dispatched },
+      sectionMap,
     ] = await Promise.all([
       supabase.from('daily_outlet_sales').select('outlet_id').eq('date', date).in('outlet_id', outletIds),
       supabase.from('demands').select('outlet_id').eq('date', date).eq('type', 'wastage').eq('status', 'submitted').in('outlet_id', outletIds),
       supabase.from('demands').select('outlet_id').eq('date', date).eq('type', 'manual').in('status', ['submitted', 'fulfilled']).in('outlet_id', outletIds),
-      supabase.from('closing_stocks').select('outlet_id').eq('date', date).eq('status', 'submitted').in('outlet_id', outletIds),
+      supabase.from('closing_stocks').select('outlet_id, items').eq('date', date).eq('status', 'submitted').in('outlet_id', outletIds),
       supabase.from('purchases').select('outlet_id, items').eq('date', date).in('outlet_id', outletIds),
       // Only 'fulfilled' orders (actually dispatched) count toward "needs verifying" —
       // an outlet with nothing dispatched that day has nothing to verify, so it's not
       // flagged at all rather than showing a false-positive missing punch.
       supabase.from('demands').select('outlet_id, received_at').eq('date', date).eq('status', 'fulfilled').in('outlet_id', outletIds),
+      getDemandItemSectionMap(),
     ]);
 
     const has = (rows, oid) => (rows || []).some(r => r.outlet_id === oid);
@@ -3944,7 +4006,17 @@ router.get('/punch-status/:date', async (req, res) => {
       if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'dairy_purchase'))) missing.push('dairy_purchase');
       if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'cold_drink_purchase'))) missing.push('cold_drink_purchase');
       if ((dispatched || []).some(d => d.outlet_id === oid && !d.received_at)) missing.push('dispatch_verify');
-      return { outlet_id: oid, missing };
+
+      const closingRow = (closing || []).find(c => c.outlet_id === oid);
+      const punchedSections = new Set();
+      Object.keys(closingRow?.items || {}).forEach((key) => {
+        const bareId = key.startsWith('cs_') ? key.slice(3) : key;
+        const section = sectionMap[bareId];
+        if (section) punchedSections.add(section);
+      });
+      const closing_categories = Object.fromEntries(CLOSING_CHECK_SECTIONS.map((sec) => [sec, punchedSections.has(sec)]));
+
+      return { outlet_id: oid, missing, closing_categories };
     });
 
     res.json({ date, outlets });

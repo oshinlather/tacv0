@@ -195,6 +195,9 @@ const api = {
   getFixedCosts: (params) => get("/api/fixed-costs", params),
   saveFixedCost: (data) => post("/api/fixed-costs", data),
   deleteFixedCost: (outlet_id, cost_head) => del(`/api/fixed-costs?outlet_id=${outlet_id}&cost_head=${cost_head}`),
+  getFixedCostHeads: () => get("/api/fixed-cost-heads"),
+  addFixedCostHead: (label) => post("/api/fixed-cost-heads", { label }),
+  deleteFixedCostHead: (label) => del(`/api/fixed-cost-heads?label=${encodeURIComponent(label)}`),
 
   // ── Live P&L ──
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),

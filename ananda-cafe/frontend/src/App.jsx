@@ -2545,6 +2545,16 @@ const PUNCH_TYPES = [
   { key: "wastage", icon: "🗑️", label: "Wastage" },
   { key: "closing", icon: "📊", label: "Closing Stock" },
 ];
+// A submitted closing_stocks row only proves SOMETHING was punched, not that every
+// category was — these are the categories the owner wants an explicit ✅/❌ for within
+// that submission (not the full 8; scoped to what was actually asked for).
+const CLOSING_CATEGORY_META = [
+  { key: "grocery", icon: "🛒", label: "Grocery" },
+  { key: "packaging", icon: "📦", label: "Packaging" },
+  { key: "food", icon: "🍲", label: "Food" },
+  { key: "dairy", icon: "🥛", label: "Dairy" },
+  { key: "cold_drink", icon: "🥤", label: "Cold" },
+];
 
 // syncDate: optional { selDay, selMonth } — when passed (always, from Daily P&L's own
 // pills), reuses that date instead of showing a second, redundant date picker here.
@@ -2607,8 +2617,12 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
   const gridOutletIds = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"].filter((id) => !selOutlet || id === selOutlet);
 
   const outlets = (data?.outlets || []).filter((o) => !selOutlet || o.outlet_id === selOutlet);
-  const missingOutlets = outlets.filter((o) => o.missing.length > 0);
-  const doneOutlets = outlets.filter((o) => o.missing.length === 0);
+  // A closing_stocks row existing (so 'closing' isn't in o.missing) can still be missing
+  // whole categories inside it — those outlets need the same visible card + breakdown as
+  // an outright-missing one, not the terse "all punched" one-liner.
+  const closingIncomplete = (o) => Object.values(o.closing_categories || {}).some((v) => !v);
+  const missingOutlets = outlets.filter((o) => o.missing.length > 0 || closingIncomplete(o));
+  const doneOutlets = outlets.filter((o) => o.missing.length === 0 && !closingIncomplete(o));
 
   const waText = () => {
     const lines = [`*⚠️ Missing Punches — ${date}*`, ""];
@@ -2708,16 +2722,33 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
               return (
                 <div key={o.outlet_id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{oData?.name || o.outlet_id}</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {o.missing.map((m) => {
-                      const t = PUNCH_TYPES.find((p) => p.key === m);
-                      return (
-                        <span key={m} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
-                          {t ? `${t.icon} ${t.label}` : m}
-                        </span>
-                      );
-                    })}
-                  </div>
+                  {o.missing.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {o.missing.map((m) => {
+                        const t = PUNCH_TYPES.find((p) => p.key === m);
+                        return (
+                          <span key={m} style={{ padding: "6px 12px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: "#FEF2F2", color: "#991B1B", border: "1px solid #FECACA" }}>
+                            {t ? `${t.icon} ${t.label}` : m}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {o.closing_categories && (
+                    <div style={{ marginTop: o.missing.length > 0 ? 10 : 0 }}>
+                      <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>📊 Closing Stock by Category</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {CLOSING_CATEGORY_META.map((c) => {
+                          const done = o.closing_categories[c.key];
+                          return (
+                            <span key={c.key} style={{ padding: "5px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: done ? "#F0FDF4" : "#FEF2F2", color: done ? "#166534" : "#991B1B", border: `1px solid ${done ? "#BBF7D0" : "#FECACA"}` }}>
+                              {done ? "✅" : "❌"} {c.icon} {c.label}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -14027,12 +14058,33 @@ const FixedCostsPanel = () => {
   const [editId, setEditId] = useState(null);
   const [editAmt, setEditAmt] = useState("");
   const [addingTo, setAddingTo] = useState(null);
-  const [newHead, setNewHead] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [newAmt, setNewAmt] = useState("");
+  // Master dropdown list of cost-head labels — keeps spellings consistent across outlets.
+  const [heads, setHeads] = useState([]);
+  const [addingHead, setAddingHead] = useState(false); // inline "add new header" mode
+  const [newHeadLabel, setNewHeadLabel] = useState("");
 
   const load = () => { setLoading(true); api.getFixedCosts().then(setCosts).catch(() => setCosts([])).finally(() => setLoading(false)); };
   useEffect(load, []);
+  useEffect(() => { api.getFixedCostHeads().then((h) => setHeads(h || [])).catch(() => setHeads([])); }, []);
+
+  const resetAddForm = () => { setNewLabel(""); setNewAmt(""); setAddingHead(false); setNewHeadLabel(""); };
+  const saveNewHead = async () => {
+    const clean = newHeadLabel.trim();
+    if (!clean) return;
+    try {
+      const res = await api.addFixedCostHead(clean);
+      setHeads(res.heads || heads);
+      setNewLabel(clean); // auto-select the newly added header
+      setNewHeadLabel(""); setAddingHead(false);
+    } catch (e) { alert("Error: " + e.message); }
+  };
+  const removeHead = async (label) => {
+    if (!confirm(`Remove "${label}" from the dropdown? (Existing entries using it are not affected.)`)) return;
+    try { const res = await api.deleteFixedCostHead(label); setHeads(res.heads || heads); if (newLabel === label) setNewLabel(""); }
+    catch (e) { alert("Error: " + e.message); }
+  };
 
   const outletIds = ["bk", ...OUTLETS.map((o) => o.id)];
   const outletNames = { bk: "Base Kitchen", ...Object.fromEntries(OUTLETS.map((o) => [o.id, o.short])) };
@@ -14053,10 +14105,12 @@ const FixedCostsPanel = () => {
 
   const addCost = async (outletId) => {
     if (!newLabel.trim()) return;
-    const head = newHead.trim() || newLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+    // Slug derived from the (dropdown-selected) label — same label always yields the same
+    // cost_head, which is what keeps the P&L rollup from splitting on spelling variants.
+    const head = newLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
     try {
       await api.saveFixedCost({ outlet_id: outletId, cost_head: head, label: newLabel.trim(), amount: Number(newAmt) || 0 });
-      setNewHead(""); setNewLabel(""); setNewAmt(""); setAddingTo(null);
+      resetAddForm(); setAddingTo(null);
       load();
     } catch (e) { alert("Error: " + e.message); }
   };
@@ -14088,16 +14142,39 @@ const FixedCostsPanel = () => {
               <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>{outletNames[oid] || oid}</span>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>₹{total.toLocaleString("en-IN")}/mo</span>
-                <button onClick={() => setAddingTo(addingTo === oid ? null : oid)} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === oid ? "Cancel" : "+ Add"}</button>
+                <button onClick={() => { const opening = addingTo !== oid; setAddingTo(opening ? oid : null); resetAddForm(); }} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{addingTo === oid ? "Cancel" : "+ Add"}</button>
               </div>
             </div>
-            {addingTo === oid && (
-              <div style={{ display: "flex", gap: 6, padding: "8px 12px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0", flexWrap: "wrap" }}>
-                <input value={newLabel} onChange={(e) => setNewLabel(e.target.value)} placeholder="Label (e.g., Pest Control)" style={{ flex: "1 1 100px", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-                <input type="number" value={newAmt} onChange={(e) => setNewAmt(e.target.value)} placeholder="₹ Monthly" style={{ width: 80, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-                <button onClick={() => addCost(oid)} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Add</button>
+            {addingTo === oid && (() => {
+              // Only offer headers not already used by this outlet — no duplicate "Rent" rows.
+              const usedLabels = new Set(items.map((c) => (c.label || "").toLowerCase()));
+              const available = heads.filter((h) => !usedLabels.has(String(h).toLowerCase()));
+              return (
+              <div style={{ padding: "8px 12px", background: "#F0FDF4", borderBottom: "1px solid #BBF7D0" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  <select value={addingHead ? "__add_new__" : newLabel}
+                    onChange={(e) => { if (e.target.value === "__add_new__") { setAddingHead(true); setNewLabel(""); } else { setAddingHead(false); setNewLabel(e.target.value); } }}
+                    style={{ flex: "1 1 140px", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+                    <option value="">Select header…</option>
+                    {available.map((h) => <option key={h} value={h}>{h}</option>)}
+                    <option value="__add_new__">➕ Add new header…</option>
+                  </select>
+                  <input type="number" value={newAmt} onChange={(e) => setNewAmt(e.target.value)} placeholder="₹ Monthly" style={{ width: 80, padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                  <button onClick={() => addCost(oid)} disabled={!newLabel.trim()} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: newLabel.trim() ? "#16A34A" : "#BBF7D0", color: "#fff", fontSize: 12, fontWeight: 700, cursor: newLabel.trim() ? "pointer" : "not-allowed" }}>Add</button>
+                </div>
+                {addingHead && (
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+                    <input autoFocus value={newHeadLabel} onChange={(e) => setNewHeadLabel(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveNewHead(); }} placeholder="New header (e.g., Pest Control)" style={{ flex: "1 1 140px", padding: "6px 8px", borderRadius: 6, border: "1px solid #7C3AED", fontSize: 12, fontFamily: "inherit" }} />
+                    <button onClick={saveNewHead} style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#7C3AED", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Save Header</button>
+                    <button onClick={() => { setAddingHead(false); setNewHeadLabel(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Cancel</button>
+                  </div>
+                )}
+                {!addingHead && newLabel && (
+                  <button onClick={() => removeHead(newLabel)} style={{ marginTop: 6, padding: "2px 0", border: "none", background: "transparent", color: "#DC2626", fontSize: 10, cursor: "pointer" }}>🗑️ Remove "{newLabel}" from dropdown</button>
+                )}
               </div>
-            )}
+              );
+            })()}
             {items.sort((a, b) => b.amount - a.amount).map((c) => {
               const key = `${c.outlet_id}_${c.cost_head}`;
               return (

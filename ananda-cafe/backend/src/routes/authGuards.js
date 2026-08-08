@@ -163,4 +163,5 @@ module.exports = {
   scopedOutletFilter,
   invalidateUser,
   filterItemsToRoleScope,
+  getDemandItemSectionMap,
 };
