@@ -323,7 +323,7 @@ const DatePicker = ({ value, onChange }) => {
 // control. `monthOptions` is optional — omit it on a screen with no month-aggregate view
 // (e.g. RM Audit) and it's just a plain day dropdown. `setSelMonth` is likewise optional;
 // when a page has no month concept at all, its absence is handled gracefully.
-const DateRangeDropdown = ({ selDay, setSelDay, selMonth, setSelMonth, monthOptions, days = 10, onChange }) => {
+const DateRangeDropdown = ({ selDay, setSelDay, selMonth, setSelMonth, monthOptions, days = 10, onChange, marginBottom = 16 }) => {
   const dayOptions = Array.from({ length: days }, (_, i) => ({
     value: i, label: i === 0 ? "Today" : i === 1 ? "Yesterday" : istDateAgo(i),
   }));
@@ -334,7 +334,7 @@ const DateRangeDropdown = ({ selDay, setSelDay, selMonth, setSelMonth, monthOpti
       if (v.startsWith("m:")) { setSelMonth(v.slice(2)); }
       else { setSelDay(Number(v.slice(2))); if (setSelMonth) setSelMonth(null); }
       onChange?.();
-    }} style={{ padding: "9px 12px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#1A1A1A", marginBottom: 16 }}>
+    }} style={{ padding: "9px 12px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#1A1A1A", marginBottom }}>
       {dayOptions.map((d) => <option key={d.value} value={`d:${d.value}`}>{d.label}</option>)}
       {monthOptions && monthOptions.map((m) => <option key={m.value} value={`m:${m.value}`}>📅 {m.label}</option>)}
     </select>
@@ -3184,13 +3184,15 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         ))}
       </div>
 
-      <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} />
-
-      {/* Outlet pills */}
-      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap" }}>
-        <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
-        {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
-      </div>}
+      {/* Date dropdown + outlet pills share one row — same filter bar, no reason to
+          spend a whole extra line on the date control alone. */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
+        {!lockedOutlet && (<>
+          <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
+          {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
+        </>)}
+      </div>
 
       {pnlTab === "pnl" && !selMonth && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing P&L...</div>}
 
@@ -8168,10 +8170,7 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📊 COGS Compare</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
-      </div>
+      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Category & item cost as % of each outlet's own sale — same recipes and base kitchen everywhere, so a big spread here is a real signal, not expected variation.</p>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         {[
@@ -10465,12 +10464,19 @@ const FourWeekComparison = ({ selDay, selOutlet }) => {
     Promise.all(offsets.map((d) => api.getSales({ date: istDateAgo(d), outlet: selOutlet || "all" }).catch(() => null)))
       .then((results) => {
         setWeeks(offsets.map((d, i) => {
-          const ist = istNow();
-          ist.setDate(ist.getDate() - d);
+          const dateStr = istDateAgo(d);
+          // Weekday derived from the date STRING (noon-UTC-anchored), not from a
+          // .toLocaleDateString() call on the istNow()-shifted Date object without an
+          // explicit timeZone — that read the weekday in the browser's own local
+          // timezone, which on a device actually set to IST double-applies the offset
+          // istNow() already added. In the evening (roughly 6:30 PM–midnight IST) that
+          // pushed the reading a full calendar day ahead, so "yesterday" could show as
+          // e.g. Saturday when the date underneath it was genuinely Friday.
+          const weekdayDate = new Date(`${dateStr}T12:00:00Z`);
           return {
-            date: istDateAgo(d),
-            weekdayShort: ist.toLocaleDateString("en-US", { weekday: "short" }),
-            weekdayLong: ist.toLocaleDateString("en-US", { weekday: "long" }),
+            date: dateStr,
+            weekdayShort: weekdayDate.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+            weekdayLong: weekdayDate.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
             res: results[i],
           };
         }));
@@ -10564,10 +10570,9 @@ const FourWeekComparison = ({ selDay, selOutlet }) => {
   return (
     <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 20 }}>
       <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4" }}>
-        <span style={{ fontWeight: 700, fontSize: 14 }}>📊 4-Week {current.weekdayLong} Comparison</span>
-        <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>
+        <span style={{ fontSize: 12, color: "#888" }}>
           {selOutlet ? OUTLETS.find((o) => o.id === selOutlet)?.name : "All Outlets"} · last 4 {current.weekdayLong}s, week-over-week change
-        </div>
+        </span>
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -11452,12 +11457,12 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Raw Material Audit</h3>
         <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume, checked against actual outlet consumption (same figure P&L uses). The gap is leakage — over-portioning, unrecorded wastage, or theft.</p>
       </div>
-      <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} days={7} />
-      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-        {OUTLETS.map((o) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} days={7} marginBottom={0} />
+        {!lockedOutlet && OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
-      </div>}
+      </div>
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing audit...</div>}
 
@@ -12110,6 +12115,34 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet, selOutlet:
 
   const fmtNum = (v) => v == null ? "—" : Math.round(Number(v) * 100) / 100;
 
+  // Defaults to descending by Last Wk Same Day Consumed — the column managers actually
+  // scan first to spot the biggest-volume items. Clicking any header sorts descending by
+  // that column; clicking the same header again flips to ascending. Missing values sink
+  // to the bottom on descending sorts instead of jumbling in wherever they'd numerically
+  // land as 0.
+  const [sortBy, setSortBy] = useState("lastWeekConsumed");
+  const [sortDir, setSortDir] = useState("desc");
+  const sortValue = (item, key) => {
+    switch (key) {
+      case "category": return item.categoryLabel || "";
+      case "item": return item.name || "";
+      case "lastWeekConsumed": return lastWeekConsumed[item.id]?.actual ?? -Infinity;
+      case "todayConsumed": return todayConsumed[item.id]?.actual ?? -Infinity;
+      case "closingYesterday": return closingYesterday[item.id] ?? -Infinity;
+      case "demandAM": return demandToday.morning[item.id] ?? -Infinity;
+      case "demandPM": return demandToday.evening[item.id] ?? -Infinity;
+      case "closingToday": return closingToday[item.id] ?? -Infinity;
+      default: return 0;
+    }
+  };
+  const sortedRows = [...rows].sort((a, b) => {
+    const va = sortValue(a, sortBy), vb = sortValue(b, sortBy);
+    const cmp = typeof va === "string" || typeof vb === "string" ? String(va).localeCompare(String(vb)) : va - vb;
+    return sortDir === "desc" ? -cmp : cmp;
+  });
+  const toggleSort = (key) => { if (sortBy === key) setSortDir((d) => d === "desc" ? "asc" : "desc"); else { setSortBy(key); setSortDir("desc"); } };
+  const sortArrow = (key) => sortBy === key ? (sortDir === "desc" ? " ▼" : " ▲") : "";
+
   return (<div>
     {standalone && (
       <div style={{ marginBottom: 16 }}>
@@ -12158,27 +12191,27 @@ const DemandVsClosingSection = ({ dateStr: propDateStr, lockedOutlet, selOutlet:
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>
         <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              {catFilter === "all" && <th style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopLeftRadius: 14 }}>Category</th>}
-              <th style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, ...(catFilter !== "all" ? { borderTopLeftRadius: 14 } : {}) }}>Item</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>
-                Last Wk Same Day Consumed
+              {catFilter === "all" && <th onClick={() => toggleSort("category")} style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopLeftRadius: 14, cursor: "pointer", userSelect: "none" }}>Category{sortArrow("category")}</th>}
+              <th onClick={() => toggleSort("item")} style={{ ...thS, position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none", ...(catFilter !== "all" ? { borderTopLeftRadius: 14 } : {}) }}>Item{sortArrow("item")}</th>
+              <th onClick={() => toggleSort("lastWeekConsumed")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none" }}>
+                Last Wk Same Day Consumed{sortArrow("lastWeekConsumed")}
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({lastWeekStr}{lastWeekSales ? ` · ${fmt(lastWeekSales.revenue)} · ${lastWeekSales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>
-                Today Consumption
+              <th onClick={() => toggleSort("todayConsumed")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none" }}>
+                Today Consumption{sortArrow("todayConsumed")}
                 <div style={{ fontSize: 9, color: "#999", textTransform: "none", fontWeight: 500, marginTop: 2 }}>
                   ({dateStr}{todaySales ? ` · ${fmt(todaySales.revenue)} · ${todaySales.orders} orders` : ""})
                 </div>
               </th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>{yesterdayStr} Closing</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>Today AM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6 }}>Today PM Demand</th>
-              <th style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopRightRadius: 14 }}>{dateStr} Closing</th>
+              <th onClick={() => toggleSort("closingYesterday")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none" }}>{yesterdayStr} Closing{sortArrow("closingYesterday")}</th>
+              <th onClick={() => toggleSort("demandAM")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none" }}>Today AM Demand{sortArrow("demandAM")}</th>
+              <th onClick={() => toggleSort("demandPM")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, cursor: "pointer", userSelect: "none" }}>Today PM Demand{sortArrow("demandPM")}</th>
+              <th onClick={() => toggleSort("closingToday")} style={{ ...thS, textAlign: "right", position: "sticky", top: theadTop, background: "#FAFAF8", zIndex: 6, borderTopRightRadius: 14, cursor: "pointer", userSelect: "none" }}>{dateStr} Closing{sortArrow("closingToday")}</th>
             </tr></thead>
             <tbody>
-              {rows.map((item) => {
+              {sortedRows.map((item) => {
                 const baseUnit = convertToBase(1, item.unit, item.id, item.name).unit || item.unit;
                 return (
                 <tr key={item.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
