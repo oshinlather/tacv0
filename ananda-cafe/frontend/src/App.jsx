@@ -3188,7 +3188,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           spend a whole extra line on the date control alone. */}
       <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
-        {!lockedOutlet && (<>
+        {/* Attendance has its own, richer location filter (adds Base Kitchen and Top
+            Management, neither of which is a real outlet) — this pill row would just
+            sit there doing nothing on that tab, so it's skipped there specifically. */}
+        {!lockedOutlet && pnlTab !== "attendance" && (<>
           <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
           {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
         </>)}
@@ -11881,10 +11884,7 @@ const DailyAttendanceSection = ({ dateStr }) => {
   const pillStyle = (active) => ({ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
   return (<div>
-    <div style={{ marginBottom: 16 }}>
-      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>👥 Attendance</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Hours worked on {dateStr} — OT is hours beyond the {DAILY_STANDARD_HOURS}-hour standard shift. Anyone left at 0 hours is recorded on leave when saved.</p>
-    </div>
+    <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>Hours worked on {dateStr} — OT is hours beyond the {DAILY_STANDARD_HOURS}-hour standard shift. Anyone left at 0 hours is recorded on leave when saved.</p>
 
     <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
       <button onClick={() => setDeptFilter("all")} style={pillStyle(deptFilter === "all")}>All</button>
