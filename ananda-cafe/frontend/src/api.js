@@ -260,6 +260,16 @@ const api = {
   getAttendance: (params) => get("/api/employees/attendance", params),
   markAttendance: (data) => post("/api/employees/attendance", data),
   deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
+  uploadAttendanceCSV: (file, date) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("date", date);
+    return fetch(API + "/api/employees/attendance/bulk", {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
+  },
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
   // Employee Profile (particulars + KYC documents)

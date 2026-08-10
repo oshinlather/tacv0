@@ -18,8 +18,13 @@
 
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const csv = require('csv-parser');
+const { Readable } = require('stream');
 const supabase = require('../supabase');
 const { requireRole } = require('./authGuards');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const ATTENDANCE_STATUSES = ['present', 'absent', 'half_day', 'leave', 'holiday'];
 const DOC_TYPES = ['aadhar', 'pan', 'police_verification', 'offer_letter', 'id_card'];
@@ -264,6 +269,60 @@ router.post('/attendance', async (req, res) => {
       .select('*').single();
     if (error) throw error;
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/employees/attendance/bulk — backfill one missed day for many
+// employees at once from a CSV (columns: employee_code and/or name, hours_worked,
+// optional status/note). Same upsert-on-employee_id+date semantics as the
+// single-row POST above, so re-uploading the same date just overwrites those
+// rows rather than duplicating them. Rows that don't match a known employee
+// (in scope) are skipped and reported back, not silently dropped.
+router.post('/attendance/bulk', upload.single('file'), async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
+    if (!user) return;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const { date } = req.body;
+    if (!date) return res.status(400).json({ error: 'date is required' });
+    const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
+
+    let empQuery = supabase.from('employees').select('id, employee_code, name').eq('active', true);
+    if (scope) empQuery = empQuery.eq('department', scope);
+    const { data: employees } = await empQuery;
+    const byCode = {}, byName = {};
+    (employees || []).forEach((e) => {
+      if (e.employee_code) byCode[e.employee_code.trim().toLowerCase()] = e;
+      byName[e.name.trim().toLowerCase()] = e;
+    });
+
+    const rows = [];
+    const skipped = [];
+    const stream = Readable.from(req.file.buffer.toString());
+    await new Promise((resolve, reject) => {
+      stream.pipe(csv())
+        .on('data', (row) => {
+          const codeKey = (row.employee_code || '').trim().toLowerCase();
+          const nameKey = (row.name || row.employee_name || '').trim().toLowerCase();
+          const emp = (codeKey && byCode[codeKey]) || (nameKey && byName[nameKey]);
+          if (!emp) { skipped.push(row.employee_code || row.name || row.employee_name || '(blank row)'); return; }
+          const hours = row.hours_worked !== undefined && row.hours_worked !== '' ? Number(row.hours_worked) : 0;
+          let status = (row.status || '').trim().toLowerCase();
+          if (!ATTENDANCE_STATUSES.includes(status)) status = hours > 0 ? 'present' : 'leave';
+          rows.push({
+            employee_id: emp.id, date, status, note: row.note || null,
+            hours_worked: hours, marked_by: `${user.name} (CSV upload)`, updated_at: new Date().toISOString(),
+          });
+        })
+        .on('end', resolve).on('error', reject);
+    });
+
+    if (rows.length === 0) return res.status(400).json({ error: 'No matching employees found in the file', skipped });
+
+    const { error } = await supabase.from('employee_attendance').upsert(rows, { onConflict: 'employee_id,date' });
+    if (error) throw error;
+    res.json({ success: true, date, rows_saved: rows.length, skipped });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

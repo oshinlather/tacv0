@@ -50,6 +50,47 @@ async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
   return rows;
 }
 
+// Per-outlet revenue for a date, computed straight from PetPooja billing data
+// (daily_sales) instead of the outlet manager's manual "Daily Sales & Cash"
+// entry — see 2026_08_11_daily_sales_status_and_waived_off.sql for the schema
+// change this needed first. One row per unique invoice (every line item on an
+// order repeats that invoice's order_total/area/order_type/status), cancelled
+// invoices excluded entirely — their `total` is the would-have-been billed
+// amount, not 0, so leaving them in would double-count as real revenue.
+// `area` carries the aggregator name ('Zomato'/'Swiggy') for delivery orders
+// and a seating-area name for dine-in — confirmed against real PetPooja
+// exports, not guessed. Used by GET /api/pnl/live to replace daily_outlet_sales
+// as the source of total_sale/effective_sale.
+async function computeDailySalesRevenue(date) {
+  const rows = await fetchAllDailySales({ date, select: 'outlet_code, invoice_no, order_type, area, order_total, status, waived_off' });
+  const invoices = new Map(); // "outlet::invoice" -> one row (line items repeat these fields)
+  rows.forEach((r) => {
+    const key = `${r.outlet_code}::${r.invoice_no}`;
+    if (!invoices.has(key)) {
+      invoices.set(key, { outlet_code: r.outlet_code, order_type: r.order_type, area: r.area, total: Number(r.order_total) || 0, waivedOff: Number(r.waived_off) || 0, status: r.status });
+    }
+  });
+
+  const byOutlet = {};
+  const bucketFor = (oid) => byOutlet[oid] || (byOutlet[oid] = { total_sale: 0, store_sale: 0, swiggy_sale: 0, zomato_sale: 0, other_delivery_sale: 0, complimentary_amount: 0, cancelled_amount: 0 });
+
+  invoices.forEach((inv) => {
+    const b = bucketFor(inv.outlet_code);
+    // A waived/comped amount is real even on an order that later got flagged
+    // cancelled for an unrelated reason, so this isn't gated on status below.
+    b.complimentary_amount += inv.waivedOff;
+    if (inv.status === 'Cancelled') { b.cancelled_amount += inv.total; return; }
+    b.total_sale += inv.total;
+    const isDelivery = (inv.order_type || '').includes('Delivery');
+    if (!isDelivery) b.store_sale += inv.total;
+    else if (inv.area === 'Zomato') b.zomato_sale += inv.total;
+    else if (inv.area === 'Swiggy') b.swiggy_sale += inv.total;
+    else b.other_delivery_sale += inv.total;
+  });
+
+  return byOutlet;
+}
+
 // ── GET /api/sales/menu-items/:outlet — Every distinct item name actually billed at this
 // outlet in the last 180 days (PetPooja's own names, not the recipe system's). Powers the
 // "Pick dish..." picker used to link a raw-material/ingredient to a dish's recipe — without
@@ -116,6 +157,13 @@ delivery_charge: parseFloat(row.delivery_charge) || 0,
 container_charge: parseFloat(row.container_charge) || 0,
 order_total: parseFloat(row.total) || 0,
 area: row.area || null,
+// status/order_cancel_reason/waived_off: real PetPooja columns that were
+// previously dropped on the floor — status is what lets P&L's revenue
+// aggregation exclude cancelled orders (their `total` is the would-have-been
+// billed amount, not 0) instead of double-counting them as real sales.
+status: row.status || null,
+order_cancel_reason: row.order_cancel_reason || null,
+waived_off: parseFloat(row.waived_off) || 0,
 });
 })
 .on('end', resolve)
@@ -3402,7 +3450,7 @@ router.get('/pnl/live/:date', async (req, res) => {
     const { date } = req.params;
     const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise/outlet_mgr
 
-    // None of these nine queries depend on each other's results — fired concurrently
+    // None of these ten queries depend on each other's results — fired concurrently
     // instead of one-at-a-time, so this endpoint's total latency is bounded by the
     // slowest single query rather than the sum of all of them.
     const [
@@ -3411,7 +3459,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       { data: demandItemsRaw },
       { data: unitConversions },
       { data: purchases },
-      { data: outletSales },
+      salesByOutlet,
       { data: fixedCosts },
       { data: bkRecipes },
       { data: bkIngredients },
@@ -3422,7 +3470,10 @@ router.get('/pnl/live/:date', async (req, res) => {
       supabase.from('demand_items').select('id, unit').eq('active', true),
       supabase.from('unit_conversions').select('*').eq('active', true),
       supabase.from('purchases').select('*').eq('date', date),
-      supabase.from('daily_outlet_sales').select('*').eq('date', date),
+      // Revenue now comes from real PetPooja billing (daily_sales) instead of the
+      // outlet manager's manual "Daily Sales & Cash" entry — see
+      // computeDailySalesRevenue above.
+      computeDailySalesRevenue(date),
       supabase.from('fixed_costs').select('*').eq('active', true),
       supabase.from('bk_recipes').select('*'),
       supabase.from('bk_recipe_ingredients').select('*'),
@@ -3569,10 +3620,15 @@ router.get('/pnl/live/:date', async (req, res) => {
     const pnlResults = [];
 
     for (const oid of (outlet && outlet !== 'all' ? [outlet] : outletIds)) {
-      // ── REVENUE ──
-      const sales = (outletSales || []).find(s => s.outlet_id === oid);
+      // ── REVENUE — from real PetPooja billing (daily_sales), not the outlet
+      // manager's manual entry. Cancelled invoices are already excluded from
+      // totalSale/storeSale/swiggy/zomato/otherDelivery at the source (see
+      // computeDailySalesRevenue), so unlike the old formula there's no
+      // separate "− cancelledOrders" step here; cancelledOrders below is now
+      // purely informational (shown in the revenue breakdown, not deducted).
+      const sales = salesByOutlet[oid];
       const totalSale = Number(sales?.total_sale || 0);
-      const cancelledOrders = Number(sales?.cancelled_orders || 0);
+      const cancelledOrders = Number(sales?.cancelled_amount || 0);
       const complimentaryAmt = Number(sales?.complimentary_amount || 0);
       const swiggy = Number(sales?.swiggy_sale || 0);
       const zomato = Number(sales?.zomato_sale || 0);
@@ -3581,9 +3637,9 @@ router.get('/pnl/live/:date', async (req, res) => {
       // Delivery platforms charge 40% commission — net delivery revenue is 60%
       const deliveryCommission = Math.round((swiggy + zomato) * 0.4);
       const netDeliverySale = Math.round((swiggy + zomato) * 0.6) + otherDelivery;
-      const storeSale = Math.max(0, totalSale - deliverySale - cancelledOrders - complimentaryAmt);
-      // Effective sale = store sale + 60% of (Swiggy+Zomato) + other delivery - cancelled - complimentary
-      const effectiveSale = storeSale + netDeliverySale - cancelledOrders - complimentaryAmt;
+      const storeSale = Number(sales?.store_sale || 0);
+      // Effective sale = store sale + 60% of (Swiggy+Zomato) + other delivery - complimentary
+      const effectiveSale = storeSale + netDeliverySale - complimentaryAmt;
 
       // ── VARIABLE COST (from dispatched items × rate card) ──
       // Unit-aware: if item is dispatched in Gm but rate is per Kg, convert

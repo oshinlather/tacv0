@@ -7,10 +7,19 @@
 //   Prorated Salary = (Working Days ÷ Month Days) × Base Salary
 //   Net Payable     = Prorated Salary − outstanding advances
 //
-// "Leaves Taken" is computed live from employee_attendance: absent/leave = 1
-// day, half_day = 0.5, present/holiday = 0. OT hours are a manual monthly
-// entry per employee for now (see employee_monthly_ot) — PetPooja isn't
-// connected yet, this is a placeholder for an eventual auto-fill.
+// "Leaves Taken" and "OT Hours" are both driven live off employee_attendance
+// (Daily Attendance) — see computeAttendanceTotals below:
+//   - a day explicitly marked absent/leave counts 1, half_day counts 0.5
+//   - a day with NO attendance row at all (an employee who was simply never
+//     marked, up to today) also counts as a leave, unless it's before they
+//     joined or falls on their weekly_off — previously these days silently
+//     vanished from both the present and leave tallies, inflating pay
+//   - OT hours accumulate day by day: max(0, hours_worked − 11) on every
+//     present day, summed across the month
+// employee_monthly_ot (POST /ot) is now an optional manual override on top of
+// that auto-computed OT total — same "computed by default, override wins"
+// pattern as every other field below — for the rare case a manager needs to
+// hand-correct one employee's month.
 //
 // A month is "draft" (computed live from current attendance/OT/advances) until
 // finalized. Finalizing snapshots the numbers into employee_payroll_runs (so a
@@ -24,6 +33,7 @@ const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
 const { requireRole } = require('./authGuards');
+const { todayIST } = require('../helpers');
 
 const PAYROLL_ROLES = ['owner', 'avp', 'head_chef'];
 
@@ -32,18 +42,58 @@ const PAYROLL_ROLES = ['owner', 'avp', 'head_chef'];
 // per employee per month — see employee_payroll_overrides.
 const OVERRIDE_FIELDS = ['base_salary', 'leave_allowed', 'leaves_taken', 'leaves_cashin', 'ot_days', 'working_days', 'prorated_salary', 'advances_deducted', 'net_payable'];
 
+// Matches DailyAttendanceSection's own daily-OT threshold in App.jsx.
+const DAILY_STANDARD_HOURS = 11;
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
 function monthRange(month) {
   const [y, m] = month.split('-').map(Number);
   const monthDays = new Date(y, m, 0).getDate();
   return { monthDays, from: `${month}-01`, to: `${month}-${String(monthDays).padStart(2, '0')}` };
 }
 
-function leavesFromAttendance(rows) {
+// Every calendar day from `from` to `to`, capped at today (IST) — a day that
+// hasn't happened yet obviously can't count as a missed/leave day.
+function datesInRange(from, to) {
+  const cappedTo = to < todayIST() ? to : todayIST();
+  const dates = [];
+  const cur = new Date(from + 'T00:00:00');
+  const end = new Date(cappedTo + 'T00:00:00');
+  while (cur <= end) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
+
+// Leaves taken + auto OT hours per employee, both driven off employee_attendance
+// rows (`{ employee_id, status, date, hours_worked }`) for the given range —
+// see the file header comment for the exact rules.
+function computeAttendanceTotals(employees, attendanceRows, from, to) {
   const byEmp = {};
-  (rows || []).forEach((r) => {
+  employees.forEach((e) => { byEmp[e.id] = { leaves: 0, otHours: 0 }; });
+
+  const markedDates = {}; // employee_id -> Set(date)
+  (attendanceRows || []).forEach((r) => {
+    if (!byEmp[r.employee_id]) return;
+    (markedDates[r.employee_id] || (markedDates[r.employee_id] = new Set())).add(r.date);
     const inc = r.status === 'half_day' ? 0.5 : (r.status === 'absent' || r.status === 'leave') ? 1 : 0;
-    if (inc) byEmp[r.employee_id] = (byEmp[r.employee_id] || 0) + inc;
+    byEmp[r.employee_id].leaves += inc;
+    if (r.status === 'present') byEmp[r.employee_id].otHours += Math.max(0, Number(r.hours_worked || 0) - DAILY_STANDARD_HOURS);
   });
+
+  const dates = datesInRange(from, to);
+  employees.forEach((e) => {
+    const marked = markedDates[e.id] || new Set();
+    dates.forEach((d) => {
+      if (marked.has(d)) return;
+      if (e.joining_date && d < e.joining_date) return; // not yet employed
+      const weekday = WEEKDAY_NAMES[new Date(d + 'T00:00:00').getDay()];
+      if (e.weekly_off && weekday === e.weekly_off) return; // designated day off, not a leave
+      byEmp[e.id].leaves += 1;
+    });
+  });
+
   return byEmp;
 }
 
@@ -86,16 +136,16 @@ router.get('/', async (req, res) => {
     const empIds = employees.map((e) => e.id);
 
     const [{ data: attendance }, { data: otRows }, { data: advances }, { data: runs }, { data: overrideRows }] = await Promise.all([
-      supabase.from('employee_attendance').select('employee_id, status').in('employee_id', empIds).gte('date', from).lte('date', to),
+      supabase.from('employee_attendance').select('employee_id, status, date, hours_worked').in('employee_id', empIds).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('*').in('employee_id', empIds).eq('month', month),
       supabase.from('books_ledger').select('employee_id, amount, settled').eq('is_advance', true).not('employee_id', 'is', null).in('employee_id', empIds),
       supabase.from('employee_payroll_runs').select('*').in('employee_id', empIds).eq('month', month),
       supabase.from('employee_payroll_overrides').select('*').in('employee_id', empIds).eq('month', month),
     ]);
 
-    const leavesByEmp = leavesFromAttendance(attendance);
-    const otByEmp = {};
-    (otRows || []).forEach((r) => { otByEmp[r.employee_id] = Number(r.ot_hours || 0); });
+    const totalsByEmp = computeAttendanceTotals(employees, attendance, from, to);
+    const otOverrideByEmp = {};
+    (otRows || []).forEach((r) => { otOverrideByEmp[r.employee_id] = Number(r.ot_hours || 0); });
     const advByEmp = {};
     (advances || []).forEach((a) => { if (!a.settled) advByEmp[a.employee_id] = (advByEmp[a.employee_id] || 0) + Number(a.amount || 0); });
     const runByEmp = {};
@@ -117,7 +167,8 @@ router.get('/', async (req, res) => {
         };
       }
       const computed = computeRow(e, {
-        leavesTaken: leavesByEmp[e.id] || 0, otHours: otByEmp[e.id] || 0,
+        leavesTaken: totalsByEmp[e.id]?.leaves || 0,
+        otHours: otOverrideByEmp[e.id] != null ? otOverrideByEmp[e.id] : (totalsByEmp[e.id]?.otHours || 0),
         advancesDeducted: advByEmp[e.id] || 0, monthDays, overrides: overridesByEmp[e.id] || {},
       });
       return { ...base, ...computed, status: 'draft', has_overrides: !!overridesByEmp[e.id] };
@@ -185,14 +236,15 @@ router.post('/finalize', async (req, res) => {
 
     const { monthDays, from, to } = monthRange(month);
     const [{ data: attendance }, { data: otRow }, { data: outstandingAdvances }, { data: overrideRow }] = await Promise.all([
-      supabase.from('employee_attendance').select('employee_id, status').eq('employee_id', employee_id).gte('date', from).lte('date', to),
+      supabase.from('employee_attendance').select('employee_id, status, date, hours_worked').eq('employee_id', employee_id).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('ot_hours').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
       supabase.from('books_ledger').select('id, amount').eq('employee_id', employee_id).eq('is_advance', true).eq('settled', false),
       supabase.from('employee_payroll_overrides').select('*').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
     ]);
 
-    const leavesTaken = (leavesFromAttendance(attendance))[employee_id] || 0;
-    const otHours = Number(otRow?.ot_hours || 0);
+    const totals = (computeAttendanceTotals([emp], attendance, from, to))[employee_id] || { leaves: 0, otHours: 0 };
+    const leavesTaken = totals.leaves;
+    const otHours = otRow ? Number(otRow.ot_hours || 0) : totals.otHours;
     const advancesDeducted = (outstandingAdvances || []).reduce((s, a) => s + Number(a.amount || 0), 0);
     const computed = computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays, overrides: overrideRow || {} });
 

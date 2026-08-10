@@ -3354,9 +3354,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             {d.delivery_commission > 0 && <Row label="− Platform Commission (40%)" value={d.delivery_commission} negative indent />}
             {d.net_delivery_sale > 0 && <Row label="Net Delivery Revenue (60%)" value={d.net_delivery_sale} indent color="#2563EB" />}
             <Row label="Store Sale" value={d.store_sale} indent />
-            {d.cancelled_orders > 0 && <Row label="− Cancelled Orders" value={d.cancelled_orders} negative indent />}
-            {d.complimentary > 0 && <Row label="− Complimentary" value={d.complimentary} negative indent />}
-            <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Cancelled − Complimentary" />
+            {/* Cancelled orders are excluded from Total/Store/Delivery Sale above at the
+                source now (real PetPooja billing data, not the manager's manual entry) —
+                this is informational only, not a further subtraction into Effective Sale. */}
+            {d.cancelled_orders > 0 && <Row label="Cancelled Orders (already excluded above)" value={d.cancelled_orders} indent color="#999" />}
+            {d.complimentary > 0 && <Row label="− Complimentary / Waived" value={d.complimentary} negative indent />}
+            <Row label="Effective Sale" value={d.effective_sale} bold color="#166534" bg="#ECFDF5" sub="Store + Net Delivery − Complimentary" />
           </>)}
 
           {/* VARIABLE COST */}
@@ -12761,6 +12764,30 @@ const DailyAttendanceSection = ({ dateStr, selOutlet }) => {
   const [loading, setLoading] = useState(true);
   const [hoursDraft, setHoursDraft] = useState({}); // employee_id -> string being edited
   const [busyId, setBusyId] = useState(null);
+  // Bulk backfill — for a day missed entirely (marked late, offline, etc.), upload a CSV
+  // of employee_code/name + hours_worked instead of re-typing every row by hand. Always
+  // saved against `dateStr` — the day currently being viewed — so navigate to that day first.
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadResult(null);
+    try {
+      const result = await api.uploadAttendanceCSV(file, dateStr);
+      const skippedMsg = result.skipped?.length ? ` (skipped: ${result.skipped.join(', ')})` : '';
+      setUploadResult({ ok: true, msg: `✅ Saved ${result.rows_saved} rows for ${result.date}${skippedMsg}` });
+      load();
+    } catch (err) {
+      setUploadResult({ ok: false, msg: `❌ ${err.message}` });
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -12801,6 +12828,28 @@ const DailyAttendanceSection = ({ dateStr, selOutlet }) => {
   const presentCount = rows.filter((e) => hoursFor(e.id) > 0).length;
 
   return (<div>
+
+    <div
+      onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
+      onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
+      onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleFile({ target: { files: [file] } }); }}
+      style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 16, textAlign: "center", marginBottom: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📤 Missed a day? Backfill it here</div>
+      <div style={{ color: "#999", fontSize: 11, margin: "0 0 8px" }}>
+        Upload a CSV for <b>{dateStr}</b> — columns: <code>employee_code</code> (or <code>name</code>), <code>hours_worked</code>, optional <code>status</code>/<code>note</code>
+      </div>
+      <input type="file" accept=".csv" onChange={handleFile} ref={fileRef} disabled={uploading}
+        style={{ fontSize: 13, fontFamily: "inherit", cursor: uploading ? "default" : "pointer" }} />
+      {uploading && <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>⏳ Uploading...</div>}
+      {uploadResult && (
+        <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+          background: uploadResult.ok ? "#F0FDF4" : "#FEF2F2",
+          color: uploadResult.ok ? "#16A34A" : "#DC2626",
+          border: `1px solid ${uploadResult.ok ? "#BBF7D0" : "#FECACA"}` }}>
+          {uploadResult.msg}
+        </div>
+      )}
+    </div>
 
     {!loading && rows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
