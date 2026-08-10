@@ -3602,16 +3602,24 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                         style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>✏️ Edit qty per dish</button>
                                     )}
                                   </div>
-                                  {item.sc_breakdown.map((b, j) => (
-                                    <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0", display: "flex", alignItems: "center", gap: 4 }}>
-                                      <span>{b.qty_sold} × </span>
-                                      {scEditing && b.recipe_ingredient_id ? (
-                                        <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
-                                          onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
-                                          style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-                                      ) : <span>{b.per_dish}</span>}
-                                      <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
-                                      <span> = {b.subtotal}</span>
+                                  {groupBreakdownByDishCategory(item.sc_breakdown).map((g) => (
+                                    <div key={g.label} style={{ marginBottom: 4 }}>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+                                      {g.items.map((b, j) => (
+                                        <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                                          <span>{b.qty_sold} × </span>
+                                          {scEditing && b.recipe_ingredient_id ? (
+                                            <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
+                                              onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
+                                              style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                                          ) : <span>{b.per_dish}</span>}
+                                          <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
+                                          <span> = {b.subtotal}</span>
+                                        </div>
+                                      ))}
+                                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
+                                        {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
+                                      </div>
                                     </div>
                                   ))}
                                   <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
@@ -8084,16 +8092,24 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
                 style={{ padding: "2px 6px", border: "1px solid #BFDBFE", borderRadius: 5, background: "#EFF6FF", fontSize: 10, cursor: "pointer", fontFamily: "inherit", color: "#1D4ED8", fontWeight: 700 }}>✏️ Edit qty per dish</button>
             )}
           </div>
-          {item.sc_breakdown.map((b, j) => (
-            <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0", display: "flex", alignItems: "center", gap: 4 }}>
-              <span>{b.qty_sold} × </span>
-              {scEditing && b.recipe_ingredient_id ? (
-                <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
-                  onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
-                  style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-              ) : <span>{b.per_dish}</span>}
-              <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
-              <span> = {b.subtotal}</span>
+          {groupBreakdownByDishCategory(item.sc_breakdown).map((g) => (
+            <div key={g.label} style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+              {g.items.map((b, j) => (
+                <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px", display: "flex", alignItems: "center", gap: 4 }}>
+                  <span>{b.qty_sold} × </span>
+                  {scEditing && b.recipe_ingredient_id ? (
+                    <input type="number" inputMode="decimal" step="any" value={scEditValues[b.recipe_ingredient_id] ?? String(b.per_dish)}
+                      onChange={(e) => setScEditValues((p) => ({ ...p, [b.recipe_ingredient_id]: e.target.value }))}
+                      style={{ width: 56, padding: "2px 4px", borderRadius: 4, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                  ) : <span>{b.per_dish}</span>}
+                  <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish}{scEditing && !b.recipe_ingredient_id ? " — no recipe row" : ""})</span>
+                  <span> = {b.subtotal}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
+                {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
+              </div>
             </div>
           ))}
           <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
@@ -12025,6 +12041,47 @@ const itemCategoryId = (item) => {
   return sec && RM_AUDIT_CAT_IDS.has(sec) ? sec : "others";
 };
 
+// A should-consume breakdown (sales × recipe, per dish) is often 20-30 dishes long once
+// sorted by qty — hard to scan for what actually matters at BK: how much of this
+// ingredient Dosa dishes account for vs Idli dishes. Groups by dish name instead, with a
+// running subtotal per group, so those two buckets (plus a catch-all for everything
+// else) are each scannable at a glance. Shared by every "Should Consume — from dishes
+// sold" breakdown in the app (RM Audit, Dairy Audit, COGS Compare, P&L, Flags) instead
+// of resorting each one independently.
+const groupBreakdownByDishCategory = (breakdown) => {
+  const groups = { Dosa: [], Idli: [], Other: [] };
+  (breakdown || []).forEach((b) => {
+    const name = (b.dish || "").toLowerCase();
+    const bucket = name.includes("dosa") ? "Dosa" : name.includes("idli") ? "Idli" : "Other";
+    groups[bucket].push(b);
+  });
+  return ["Dosa", "Idli", "Other"]
+    .map((label) => ({ label, items: groups[label], subtotal: groups[label].reduce((s, b) => s + (Number(b.subtotal) || 0), 0) }))
+    .filter((g) => g.items.length > 0);
+};
+// Read-only render of the above — the 3 call sites that never offer inline editing
+// (RM Audit, Flags, Dairy Audit) all share this exact markup; the 2 that do (P&L,
+// COGS Compare's item detail box) group the same way but keep their own row markup
+// since editing needs an input per row instead of a plain qty.
+const ShouldConsumeBreakdown = ({ breakdown, total, unit }) => (<>
+  {groupBreakdownByDishCategory(breakdown).map((g) => (
+    <div key={g.label} style={{ marginBottom: 4 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+      {g.items.map((b, j) => (
+        <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
+          {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
+        </div>
+      ))}
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
+        {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
+      </div>
+    </div>
+  ))}
+  <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
+    = {total} {unit}
+  </div>
+</>);
+
 const RMAuditPanel = ({ lockedOutlet } = {}) => {
   const [selDay, setSelDay] = useState(1); // default Yesterday — today's closing stock is usually still incomplete
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
@@ -12204,14 +12261,7 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
                           <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                             <td colSpan={5} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
                               <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
-                              {(item.should_consume_breakdown || []).map((b, j) => (
-                                <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
-                                  {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
-                                </div>
-                              ))}
-                              <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
-                                = {Number(item.should_consume).toFixed(2)} {item.unit}
-                              </div>
+                              <ShouldConsumeBreakdown breakdown={item.should_consume_breakdown} total={Number(item.should_consume).toFixed(2)} unit={item.unit} />
                             </td>
                           </tr>
                         )}
@@ -12941,14 +12991,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
                       <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                         <td colSpan={cols} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
-                          {r.breakdown.map((b, j) => (
-                            <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
-                              {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
-                            </div>
-                          ))}
-                          <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
-                            = {r.should.toFixed(2)} {r.unit}
-                          </div>
+                          <ShouldConsumeBreakdown breakdown={r.breakdown} total={r.should.toFixed(2)} unit={r.unit} />
                         </td>
                       </tr>
                     )}
@@ -13382,14 +13425,7 @@ const DairyAuditSection = ({ dateStr, lockedOutlet }) => {
                     <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                       <td colSpan={5} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
                         <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 4px" }}>Should Consume — from dishes sold</div>
-                        {(item.should_consume_breakdown || []).map((b, j) => (
-                          <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>
-                            {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
-                          </div>
-                        ))}
-                        <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
-                          = {Number(item.should_consume).toFixed(2)} {item.unit}
-                        </div>
+                        <ShouldConsumeBreakdown breakdown={item.should_consume_breakdown} total={Number(item.should_consume).toFixed(2)} unit={item.unit} />
                       </td>
                     </tr>
                   )}
