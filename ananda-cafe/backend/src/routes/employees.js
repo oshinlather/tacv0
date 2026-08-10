@@ -43,12 +43,28 @@ const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'not
 const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
 
 // null = unrestricted (owner/avp/head_chef). A string = the one department
-// value (outlet id or 'bk') this user's employees are confined to.
+// value (outlet id or 'bk') this user's employees are confined to. false = this
+// user's role IS scope-restricted but has no valid department to restrict to
+// (e.g. an outlet_mgr whose app_users.outlet_id was never set) — callers MUST
+// treat this as "deny", never fall through to "unrestricted". Previously this
+// case returned the same falsy value as the unrestricted case (both were
+// effectively null/undefined), so `if (scope)` silently skipped the department
+// filter for a misconfigured outlet manager and handed them every outlet's
+// employee list — including cross-outlet advance-giving. See requireScope().
 function scopeForUser(user) {
   if (OWNER_LEVEL_ROLES.includes(user.role)) return null;
-  if (user.role === 'outlet_mgr') return user.outlet_id;
+  if (user.role === 'outlet_mgr') return user.outlet_id || false;
   if (user.role === 'store_mgr' || user.role === 'bk_manager') return 'bk';
-  return undefined;
+  return false;
+}
+// Call right after scopeForUser() in every scoped route. Returns true (and
+// already responded 403) if this account is scope-restricted but misconfigured.
+function requireScope(scope, res) {
+  if (scope === false) {
+    res.status(403).json({ error: 'Your account has no outlet assigned — ask the owner to fix this in Users' });
+    return true;
+  }
+  return false;
 }
 function sanitize(emp, role) {
   if (OWNER_LEVEL_ROLES.includes(role)) return emp;
@@ -65,6 +81,7 @@ router.get('/', async (req, res) => {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
 
     let query = supabase.from('employees').select('*').order('name');
     if (scope) query = query.eq('department', scope);
@@ -91,6 +108,7 @@ router.post('/', async (req, res) => {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     const isScoped = scope !== null;
 
     const { name, designation, department } = req.body;
@@ -124,6 +142,7 @@ router.patch('/:id', async (req, res) => {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
 
     if (scope) {
       const { data: existing } = await supabase.from('employees').select('department').eq('id', req.params.id).single();
@@ -155,6 +174,7 @@ router.post('/:id/advance', async (req, res) => {
     if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
 
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     if (scope && emp.department !== scope) return res.status(403).json({ error: "Cannot record an advance for an employee outside your own outlet/department" });
 
     const { data, error } = await supabase.from('books_ledger').insert({
@@ -179,6 +199,7 @@ router.get('/:id/advances', async (req, res) => {
     const { data: emp } = await supabase.from('employees').select('id, department').eq('id', req.params.id).single();
     if (!emp) return res.status(404).json({ error: 'Employee not found' });
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     if (scope && emp.department !== scope) return res.status(403).json({ error: "Not your employee" });
 
     const { data, error } = await supabase.from('books_ledger')
@@ -194,6 +215,7 @@ router.get('/attendance', async (req, res) => {
     const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     const { date, employee_id, from, to } = req.query;
 
     if (scope && employee_id) {
@@ -225,6 +247,7 @@ router.post('/attendance', async (req, res) => {
     if (!ATTENDANCE_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` });
 
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     if (scope) {
       const { data: emp } = await supabase.from('employees').select('department').eq('id', employee_id).single();
       if (!emp || emp.department !== scope) return res.status(403).json({ error: 'Not your employee' });
@@ -244,6 +267,7 @@ router.delete('/attendance/:id', async (req, res) => {
     const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
     if (scope) {
       const { data: existing } = await supabase.from('employee_attendance').select('employee_id, employees!inner(department)').eq('id', req.params.id).single();
       if (!existing || existing.employees.department !== scope) return res.status(403).json({ error: 'Not your employee' });

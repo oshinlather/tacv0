@@ -425,6 +425,11 @@ const UsersPanel = () => {
 
   const addUser = async () => {
     if (!newName || !newPhone) { alert("Name and phone required"); return; }
+    // An outlet-scoped role with no outlet picked used to silently create an
+    // account that could see/edit every outlet's employees instead of just its
+    // own (the department filter in employees.js treats "no outlet" the same
+    // as "unrestricted owner") — catch it here before it ever reaches the API.
+    if (OUTLET_SCOPED_ROLES_FE.includes(newRole) && !newOutlet) { alert("Please select an outlet for this role"); return; }
     setSaving(true);
     try {
       await api.createUser({ name: newName, phone: newPhone, role: newRole, outlet_id: newOutlet || null });
@@ -1034,7 +1039,10 @@ const TeamPanel = ({ onBack }) => {
       ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
       : employees.map((emp) => (
         <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</span>
+          </div>
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
           {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
 
@@ -3603,8 +3611,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                     )}
                                   </div>
                                   {groupBreakdownByDishCategory(item.sc_breakdown).map((g) => (
-                                    <div key={g.label} style={{ marginBottom: 4 }}>
-                                      <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+                                    <div key={g.label} style={{ marginBottom: 6 }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "3px 8px", marginBottom: 2 }}>
+                                        <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309" }}>{g.label}</span>
+                                        <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{Math.round(g.subtotal * 100) / 100} {displayUnit}</span>
+                                      </div>
                                       {g.items.map((b, j) => (
                                         <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px", display: "flex", alignItems: "center", gap: 4 }}>
                                           <span>{b.qty_sold} × </span>
@@ -3617,9 +3628,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                           <span> = {b.subtotal}</span>
                                         </div>
                                       ))}
-                                      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
-                                        {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
-                                      </div>
                                     </div>
                                   ))}
                                   <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
@@ -8093,8 +8101,11 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
             )}
           </div>
           {groupBreakdownByDishCategory(item.sc_breakdown).map((g) => (
-            <div key={g.label} style={{ marginBottom: 4 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+            <div key={g.label} style={{ marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "3px 8px", marginBottom: 2 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309" }}>{g.label}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{Math.round(g.subtotal * 100) / 100} {displayUnit}</span>
+              </div>
               {g.items.map((b, j) => (
                 <div key={j} style={{ fontSize: 11, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px", display: "flex", alignItems: "center", gap: 4 }}>
                   <span>{b.qty_sold} × </span>
@@ -8107,9 +8118,6 @@ const CogsItemDetailBox = ({ item, outletId, dateStr, lockedOutlet, allDishes, o
                   <span> = {b.subtotal}</span>
                 </div>
               ))}
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
-                {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
-              </div>
             </div>
           ))}
           <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>
@@ -12065,16 +12073,16 @@ const groupBreakdownByDishCategory = (breakdown) => {
 // since editing needs an input per row instead of a plain qty.
 const ShouldConsumeBreakdown = ({ breakdown, total, unit }) => (<>
   {groupBreakdownByDishCategory(breakdown).map((g) => (
-    <div key={g.label} style={{ marginBottom: 4 }}>
-      <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0" }}>{g.label}</div>
+    <div key={g.label} style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "3px 8px", marginBottom: 2 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309" }}>{g.label}</span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace" }}>{Math.round(g.subtotal * 100) / 100} {unit}</span>
+      </div>
       {g.items.map((b, j) => (
         <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
           {b.qty_sold} × {b.per_dish} <span style={{ color: "#999", fontFamily: "inherit" }}>({b.dish})</span> = {b.subtotal}
         </div>
       ))}
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
-        {g.label} subtotal = {Math.round(g.subtotal * 100) / 100}
-      </div>
     </div>
   ))}
   <div style={{ fontSize: 11.5, fontWeight: 700, color: "#2563EB", fontFamily: "'JetBrains Mono', monospace", padding: "4px 0 0", borderTop: "1px solid #E8E8E4", marginTop: 4 }}>

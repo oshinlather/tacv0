@@ -1931,9 +1931,14 @@ router.post('/auth/users', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
     const { name, phone, role, outlet_id } = req.body;
+    const finalRole = role || 'outlet_mgr';
+    // outlet_mgr's whole access model (employees.js scopeForUser) keys off this —
+    // silently letting it through as null used to leak every outlet's employee
+    // list and advance-giving to that manager instead of just their own.
+    if (finalRole === 'outlet_mgr' && !outlet_id) return res.status(400).json({ error: 'An outlet must be selected for an Outlet Manager account' });
     const pin = String(Math.floor(1000 + Math.random() * 9000));
     const { data, error } = await supabase.from('app_users')
-      .insert({ name, phone, pin, role: role || 'outlet_mgr', outlet_id: outlet_id || null })
+      .insert({ name, phone, pin, role: finalRole, outlet_id: outlet_id || null })
       .select('*').single();
     if (error) throw error;
     res.json(data);
@@ -1951,6 +1956,17 @@ router.patch('/auth/users/:id', async (req, res) => {
     if (req.body.pin) updates.pin = req.body.pin;
     if (req.body.pin) updates.pin = req.body.pin;
     else if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
+
+    // Same guard as create — check the state this update would result in, not
+    // just what's in this particular request body (a role-only edit shouldn't
+    // silently orphan an already-set outlet_id, and vice versa).
+    if ('role' in updates || 'outlet_id' in updates) {
+      const { data: existing } = await supabase.from('app_users').select('role, outlet_id').eq('id', req.params.id).single();
+      const finalRole = updates.role !== undefined ? updates.role : existing?.role;
+      const finalOutlet = updates.outlet_id !== undefined ? updates.outlet_id : existing?.outlet_id;
+      if (finalRole === 'outlet_mgr' && !finalOutlet) return res.status(400).json({ error: 'An outlet must be selected for an Outlet Manager account' });
+    }
+
     const { data, error } = await supabase.from('app_users').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(data);
@@ -3970,24 +3986,31 @@ router.get('/closing-stock-draft-alerts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// The categories the owner actually wants an explicit ✅/❌ for within a closing stock
+// The categories the owner wants an explicit ✅/❌ for within a closing stock
 // submission — a closing_stocks row existing at all only proves SOMETHING was punched,
-// not that every category was. Not the full 8 (skips Vegetable/Masala/Cleaning/Gas) —
-// scoped to the ones the owner asked to see broken out.
-const CLOSING_CHECK_SECTIONS = ['grocery', 'packaging', 'food', 'dairy', 'cold_drink'];
+// not that every category was. Not the full 8 (skips Vegetable/Masala/Cleaning) — scoped
+// to the ones the owner asked to see broken out (also used, equally weighted, by the
+// outlet Performance Dashboard's Punch Score).
+const CLOSING_CHECK_SECTIONS = ['grocery', 'packaging', 'food', 'dairy', 'cold_drink', 'gas'];
 
 // ── GET /api/punch-status/:date — Which of the 7 required daily punches (Sales,
 // Wastage, Demand, Closing, Dairy Purchase, Cold Drink Purchase, Verify Dispatch) each
 // outlet (including franchises) has NOT done yet for a given date. Powers the Daily
 // P&L "Missing Punches" pill so the owner can see exactly what to chase instead of
-// checking each outlet by hand. Closing Stock also gets a per-category breakdown
-// (closing_categories) — a submitted row only proves something was punched, not that
-// every category actually got filled in.
+// checking each outlet by hand, and the outlet-facing Performance Dashboard's Punch
+// Score. Closing Stock also gets a per-category breakdown (closing_categories) — a
+// submitted row only proves something was punched, not that every category actually
+// got filled in. outlet_mgr can call this too (for their own Performance Dashboard) —
+// scopedOutletFilter forces them to their own outlet_id regardless of ?outlet=,
+// same defensive pattern as every other outlet-scoped read route.
 router.get('/punch-status/:date', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr');
+    if (!user) return;
     const date = req.params.date;
-    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+    const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+    const scopedOutlet = scopedOutletFilter(user, req.query.outlet);
+    const outletIds = scopedOutlet ? [scopedOutlet] : allOutletIds;
     const [
       { data: sales },
       { data: wastage },
