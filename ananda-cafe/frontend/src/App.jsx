@@ -1093,7 +1093,7 @@ const PayrollEditableCell = ({ draft, changed, saving, onChange, onSave }) => (
   </div>
 );
 
-const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
+const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
   const [intMonth, setIntMonth] = useState(() => today().slice(0, 7));
   const month = syncMonth || intMonth;
   const [rows, setRows] = useState([]);
@@ -1161,9 +1161,14 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
     finally { setBusyId(null); }
   };
 
-  const totalNet = rows.reduce((s, r) => s + Number(r.net_payable || 0), 0);
-  const totalAdvances = rows.reduce((s, r) => s + Number(r.advances_deducted || 0), 0);
-  const finalizedCount = rows.filter((r) => r.status === "finalized").length;
+  // selOutlet, when passed (e.g. embedded inside Daily P&L's Attendance pill, which
+  // shares that page's outlet pills), filters to just that department — payroll rows
+  // already carry `department`, so no extra API call is needed, just a client-side
+  // filter, same as everywhere else `department` gates a view.
+  const visibleRows = selOutlet ? rows.filter((r) => r.department === selOutlet) : rows;
+  const totalNet = visibleRows.reduce((s, r) => s + Number(r.net_payable || 0), 0);
+  const totalAdvances = visibleRows.reduce((s, r) => s + Number(r.advances_deducted || 0), 0);
+  const finalizedCount = visibleRows.filter((r) => r.status === "finalized").length;
   const numS = { ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" };
 
   return (<div>
@@ -1180,7 +1185,7 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
     </div>
     )}
 
-    {!loading && rows.length > 0 && (
+    {!loading && visibleRows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
           <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(totalNet)}</div>
@@ -1191,13 +1196,13 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
           <div style={{ fontSize: 9, color: "#B45309" }}>advances deducted</div>
         </div>
         <div style={{ background: "#F0FDF4", borderRadius: 10, border: "1px solid #BBF7D0", padding: 12, textAlign: "center" }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#16A34A" }}>{finalizedCount}/{rows.length}</div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#16A34A" }}>{finalizedCount}/{visibleRows.length}</div>
           <div style={{ fontSize: 9, color: "#16A34A" }}>finalized</div>
         </div>
       </div>
     )}
 
-    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : rows.length === 0 ? (
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : visibleRows.length === 0 ? (
       <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No active employees</div>
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
@@ -1219,7 +1224,7 @@ const MonthlyPayrollPanel = ({ syncMonth } = {}) => {
               <th style={thS}>Status</th>
             </tr></thead>
             <tbody>
-              {rows.map((r) => {
+              {visibleRows.map((r) => {
                 const isFinal = r.status === "finalized";
                 const otVal = otDraft[r.employee_id] !== undefined ? otDraft[r.employee_id] : String(r.ot_hours || 0);
                 const otChanged = otDraft[r.employee_id] !== undefined && Number(otDraft[r.employee_id]) !== r.ot_hours;
@@ -2562,6 +2567,7 @@ const CLOSING_CATEGORY_META = [
   { key: "food", icon: "🍲", label: "Food" },
   { key: "dairy", icon: "🥛", label: "Dairy" },
   { key: "cold_drink", icon: "🥤", label: "Cold" },
+  { key: "gas", icon: "🔥", label: "Gas" },
 ];
 
 // syncDate: optional { selDay, selMonth } — when passed (always, from Daily P&L's own
@@ -3943,7 +3949,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       )}
       {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
       {pnlTab === "attendance" && !lockedOutlet && (
-        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
+        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} selOutlet={selOutlet} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
       {pnlTab === "flags" && !lockedOutlet && (
         selMonth ? (
@@ -11925,17 +11931,19 @@ const NeverMappedReport = ({ items }) => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  OUTLET PERFORMANCE DASHBOARD — the outlet manager's own scorecard
 // ═════════════════════════════════════════════════════════════════════════════
-// The app's core goal is getting every outlet's actual COGS as close as possible to
-// what the recipe says it SHOULD be (less leakage = more optimized operations) — this
-// is the outlet-facing view of that, so a manager can see their own standing without
-// waiting for the owner to point it out. COGS Score is real (RM Audit's ideal vs actual
-// material cost, same figures P&L/COGS Compare already use, just turned into a single
-// score); Punch/Discipline/Review are listed as the other pillars of "performance" but
-// not wired yet — Punch would come from Missing Punches' per-outlet punch-status,
-// Discipline from Attendance's hours-worked-vs-shift data, Review from the Reviews
-// module's per-outlet rating. Deliberately locked to one outlet (no picker) — this is
-// the screen an outlet manager reaches from their own home screen, not an owner tool.
+// Deliberately locked to one outlet (no picker) — this is the screen an outlet manager
+// reaches from their own home screen, not an owner tool. Discipline (Duty Hours) is
+// still not wired up — only COGS, Punch, and Review are real scores.
 const COGS_SCORE_THRESHOLDS = { good: 85, ok: 60 };
+// Punch Score weights, as specified: Closing 30% (split equally across its 6 tracked
+// categories, 5% each), Demand 20%, Wastage 20%, Verify Dispatch Challan 10%, Sales 10%,
+// Dairy + Cold Drink Purchase 20% (10% each). These literally sum to 110, not 100 — kept
+// as given rather than silently altering the relative weights, and normalized by the
+// actual total (PUNCH_TOTAL_WEIGHT) below so the score still tops out at 100.
+const PUNCH_CLOSING_WEIGHT = 30;
+const PUNCH_OTHER_WEIGHTS = { demand: 20, wastage: 20, dispatch_verify: 10, sales: 10, dairy_purchase: 10, cold_drink_purchase: 10 };
+const PUNCH_CLOSING_SUB_WEIGHT = PUNCH_CLOSING_WEIGHT / CLOSING_CATEGORY_META.length;
+const PUNCH_TOTAL_WEIGHT = PUNCH_CLOSING_WEIGHT + Object.values(PUNCH_OTHER_WEIGHTS).reduce((s, w) => s + w, 0);
 const OutletPerformanceDashboard = ({ outlet }) => {
   // Fixed at Yesterday, same reasoning RM Audit itself defaults to it — today's closing
   // stock is usually still incomplete, which would make "actual" cost look artificially
@@ -11945,9 +11953,11 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const dateStr = istDateAgo(1);
   const [audit, setAudit] = useState(null);
   const [pnl, setPnl] = useState(null);
+  const [punchData, setPunchData] = useState(null);
+  const [reviewData, setReviewData] = useState(null);
   const [loading, setLoading] = useState(true);
   // Score cards double as tabs — clicking one shows that pillar's own detail below,
-  // COGS Score selected by default since it's the only pillar actually wired up so far.
+  // COGS Score selected by default since it's the first pillar this dashboard had.
   const [activeTab, setActiveTab] = useState("cogs");
 
   useEffect(() => {
@@ -11956,7 +11966,9 @@ const OutletPerformanceDashboard = ({ outlet }) => {
     Promise.all([
       api.getRMAudit(dateStr, outlet).catch(() => null),
       api.getLivePnl(dateStr, outlet).catch(() => null),
-    ]).then(([a, p]) => { setAudit(a); setPnl(p); }).finally(() => setLoading(false));
+      api.getPunchStatus(dateStr).catch(() => null),
+      api.getDailyReviewSummary(dateStr).catch(() => null),
+    ]).then(([a, p, pu, r]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewData(r); }).finally(() => setLoading(false));
   }, [dateStr, outlet]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
@@ -11966,11 +11978,38 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const actualCost = outletData?.actual_material_cost ?? null;
   const idealPct = effectiveSale > 0 && idealCost != null ? (idealCost / effectiveSale * 100) : null;
   const actualPct = effectiveSale > 0 && actualCost != null ? (actualCost / effectiveSale * 100) : null;
-  // Symmetric — penalizes over-consumption (leakage, theft, over-portioning) AND
-  // under-consumption (usually a data problem: overstated closing stock, a missed
-  // wastage entry) equally, since both mean actual drifted away from what the recipe
-  // says should have happened. 100 = actual landed exactly on the recipe's number.
-  const cogsScore = idealCost > 0 && actualCost > 0 ? Math.round(100 * Math.min(actualCost, idealCost) / Math.max(actualCost, idealCost)) : null;
+  // Not an aggregate cost-total ratio — the win is item-level discipline: what share of
+  // items landed within 5% of what the recipe said they should. Only items RM Audit could
+  // actually score (a real should-consume basis AND actual consumption data) count toward
+  // either side — items with no basis for comparison are excluded from both, not counted
+  // as a miss.
+  const cogsItems = (outletData?.items || []).filter((it) => it.variance_pct != null);
+  const cogsWinners = cogsItems.filter((it) => Math.abs(it.variance_pct) < 5);
+  const cogsScore = cogsItems.length > 0 ? Math.round(cogsWinners.length / cogsItems.length * 100) : null;
+
+  // Punch Score — see PUNCH_* weight constants above.
+  const punchOutlet = punchData?.outlets?.find((o) => o.outlet_id === outlet) || null;
+  const missingPunches = new Set(punchOutlet?.missing || []);
+  const closingCats = punchOutlet?.closing_categories || {};
+  const punchBreakdown = punchOutlet ? [
+    ...CLOSING_CATEGORY_META.map((c) => ({ key: `closing_${c.key}`, label: `Closing — ${c.label}`, weight: PUNCH_CLOSING_SUB_WEIGHT, done: !!closingCats[c.key] })),
+    ...Object.entries(PUNCH_OTHER_WEIGHTS).map(([key, weight]) => ({ key, label: PUNCH_TYPES.find((p) => p.key === key)?.label || key, weight, done: !missingPunches.has(key) })),
+  ] : [];
+  const punchEarned = punchBreakdown.reduce((s, b) => s + (b.done ? b.weight : 0), 0);
+  const punchScore = punchOutlet ? Math.round(punchEarned / PUNCH_TOTAL_WEIGHT * 100) : null;
+
+  // Review Score — Swiggy and Zomato each worth 50, scaled from their 5-star average; a
+  // platform with zero reviews for the date scores 0 on its half rather than being
+  // excluded from the average, since no engagement is itself the failure mode being
+  // scored, not a neutral "no data" case.
+  const reviewRows = (reviewData?.rows || []).filter((r) => r.outlet_id === outlet);
+  const swiggyRow = reviewRows.find((r) => r.platform === "swiggy") || null;
+  const zomatoRow = reviewRows.find((r) => r.platform === "zomato") || null;
+  const platformScore = (row) => (row && row.num_reviews > 0 && row.avg_rating != null) ? (Number(row.avg_rating) / 5 * 50) : 0;
+  const swiggyScore = platformScore(swiggyRow);
+  const zomatoScore = platformScore(zomatoRow);
+  const reviewScore = reviewData ? Math.round(swiggyScore + zomatoScore) : null;
+
   const scoreColor = (score) => score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
   const scoreBg = (score) => score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
   const scoreBorder = (score) => score == null ? "#E8E8E4" : score >= COGS_SCORE_THRESHOLDS.good ? "#BBF7D0" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FDE68A" : "#FECACA";
@@ -12001,11 +12040,13 @@ const OutletPerformanceDashboard = ({ outlet }) => {
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
-          <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" comingSoon />
+          <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" score={punchScore}
+            sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data for this date"} />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
-            sub={idealPct != null && actualPct != null ? `Actual ${actualPct.toFixed(1)}% vs Ideal ${idealPct.toFixed(1)}% of sale` : "No sales/recipe data for this date"} />
+            sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data for this date"} />
           <ScoreCard tabKey="discipline" icon="⏰" label="Discipline (Duty Hours)" comingSoon />
-          <ScoreCard tabKey="review" icon="⭐" label="Review Score" comingSoon />
+          <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
+            sub={reviewData ? `Swiggy ${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"}★ · Zomato ${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}★` : "No review data"} />
         </div>
       )}
 
@@ -12015,7 +12056,41 @@ const OutletPerformanceDashboard = ({ outlet }) => {
           <RMAuditPanel lockedOutlet={outlet} />
         </div>
       )}
-      {activeTab !== "cogs" && (
+
+      {activeTab === "punch" && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>✏️ Punch Breakdown — {dateStr}</div>
+          {!punchOutlet ? (
+            <div style={{ textAlign: "center", color: "#999", padding: 20, fontSize: 13 }}>No punch data for this date</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {punchBreakdown.map((b) => (
+                <div key={b.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: 8, background: b.done ? "#F0FDF4" : "#FEF2F2" }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: b.done ? "#166534" : "#991B1B" }}>{b.done ? "✅" : "❌"} {b.label}</span>
+                  <span style={{ fontSize: 11, color: "#999", fontFamily: "'JetBrains Mono'" }}>{b.weight.toFixed(1)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "review" && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⭐ Review Breakdown — {dateStr}</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {[{ label: "Swiggy", row: swiggyRow, score: swiggyScore }, { label: "Zomato", row: zomatoRow, score: zomatoScore }].map((p) => (
+              <div key={p.label} style={{ flex: 1, background: "#FAFAF8", borderRadius: 10, padding: 14, textAlign: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{p.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{p.row?.avg_rating != null ? `${Number(p.row.avg_rating).toFixed(1)}★` : "No reviews"}</div>
+                <div style={{ fontSize: 10, color: "#999", marginTop: 4 }}>{p.row?.num_reviews || 0} reviews · {p.score.toFixed(1)} / 50</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "discipline" && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999", fontSize: 13 }}>
           Coming soon.
         </div>
