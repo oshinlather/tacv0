@@ -12034,25 +12034,22 @@ const OutletPerformanceDashboard = ({ outlet }) => {
 
   return (
     <div>
-      <p style={{ fontSize: 12, color: "#888", margin: "0 0 16px" }}>How close this outlet's actual numbers are to what they should be — based on {dateStr} (yesterday).</p>
-
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 20 }}>
           <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" score={punchScore}
-            sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data for this date"} />
+            sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data"} />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
-            sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data for this date"} />
-          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline (Duty Hours)" comingSoon />
+            sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data"} />
+          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" comingSoon />
           <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
-            sub={reviewData ? `Swiggy ${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"}★ · Zomato ${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}★` : "No review data"} />
+            sub={reviewData ? `🛵${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"} · 🍽️${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}` : "No review data"} />
         </div>
       )}
 
       {activeTab === "cogs" && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>🔍 Full Raw Material Audit — see exactly what's driving your COGS score</div>
           <RMAuditPanel lockedOutlet={outlet} />
         </div>
       )}
@@ -12209,14 +12206,11 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🔍 Raw Material Audit</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Sales × Recipe = Should Consume, checked against actual outlet consumption (same figure P&L uses). The gap is leakage — over-portioning, unrecorded wastage, or theft.</p>
-      </div>
+      {!lockedOutlet && <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 12px" }}>🔍 Raw Material Audit</h3>}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} days={7} marginBottom={0} />
         {!lockedOutlet && OUTLETS.map((o) => (
-          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
       </div>
 
@@ -12265,13 +12259,13 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
           </div>
 
           {outletData.items.length > 0 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-              <button onClick={() => setCatFilter("all")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === "all" ? 700 : 500, border: catFilter === "all" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "all" ? "#1A1A1A" : "#fff", color: catFilter === "all" ? "#fff" : "#888", whiteSpace: "nowrap" }}>All ({outletData.items.length})</button>
+            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+              <button onClick={() => setCatFilter("all")} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 11, fontWeight: catFilter === "all" ? 700 : 500, border: catFilter === "all" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "all" ? "#1A1A1A" : "#fff", color: catFilter === "all" ? "#fff" : "#888" }}>All ({outletData.items.length})</button>
               {RM_AUDIT_CATEGORIES.map((c) => catCounts[c.id] > 0 && (
-                <button key={c.id} onClick={() => setCatFilter(c.id)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === c.id ? 700 : 500, border: catFilter === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === c.id ? "#1A1A1A" : "#fff", color: catFilter === c.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{c.label} ({catCounts[c.id]})</button>
+                <button key={c.id} onClick={() => setCatFilter(c.id)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 11, fontWeight: catFilter === c.id ? 700 : 500, border: catFilter === c.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === c.id ? "#1A1A1A" : "#fff", color: catFilter === c.id ? "#fff" : "#888" }}>{c.label} ({catCounts[c.id]})</button>
               ))}
               {catCounts.others > 0 && (
-                <button onClick={() => setCatFilter("others")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: catFilter === "others" ? 700 : 500, border: catFilter === "others" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "others" ? "#1A1A1A" : "#fff", color: catFilter === "others" ? "#fff" : "#888", whiteSpace: "nowrap" }}>Others ({catCounts.others})</button>
+                <button onClick={() => setCatFilter("others")} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 11, fontWeight: catFilter === "others" ? 700 : 500, border: catFilter === "others" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: catFilter === "others" ? "#1A1A1A" : "#fff", color: catFilter === "others" ? "#fff" : "#888" }}>Others ({catCounts.others})</button>
               )}
             </div>
           )}
