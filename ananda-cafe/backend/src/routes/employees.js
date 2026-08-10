@@ -29,6 +29,12 @@ const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef'];
 const SCOPED_MANAGER_ROLES = ['outlet_mgr', 'store_mgr', 'bk_manager'];
 const ALL_EMPLOYEE_ROLES = [...OWNER_LEVEL_ROLES, ...SCOPED_MANAGER_ROLES];
 const ATTENDANCE_ROLES = [...OWNER_LEVEL_ROLES, 'store_mgr'];
+// Read-only extension of ATTENDANCE_ROLES — outlet_mgr can now VIEW (not mark/edit)
+// their own outlet's attendance, for the Performance Dashboard's Discipline score.
+// Deliberately not added to ATTENDANCE_ROLES itself, which still gates marking/editing
+// (POST/DELETE) — the original "no attendance" restriction for scoped managers stays,
+// this only widens the GET.
+const ATTENDANCE_READ_ROLES = [...ATTENDANCE_ROLES, 'outlet_mgr'];
 
 const FULL_EDIT_FIELDS = [
   'name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active',
@@ -212,7 +218,7 @@ router.get('/:id/advances', async (req, res) => {
 // ── GET /api/employees/attendance — filter by date, employee_id, and/or from/to range
 router.get('/attendance', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
+    const user = await requireRole(req, res, ...ATTENDANCE_READ_ROLES);
     if (!user) return;
     const scope = scopeForUser(user);
     if (requireScope(scope, res)) return;

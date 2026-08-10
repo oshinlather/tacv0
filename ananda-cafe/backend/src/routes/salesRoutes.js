@@ -978,6 +978,86 @@ function resolveIngredientRateId(key, rateByName, bkRecipeByName) {
   return RECIPE_RAW_MATERIAL_MAP[key] || rateByName[key] || (bkRecipeByName && bkRecipeByName[key]) || null;
 }
 
+// Crockery/Packaging — a fixed operational rule the owner sets, not a dish recipe, so
+// it can't be captured by the usual sales × recipe_ingredients path (no single dish
+// "contains" a wooden plate). Applies only at these 4 outlets: every DINE-IN item sold
+// (each line item counts individually — a table ordering 3 dosas is 3 plates) gets 1
+// Wooden Plate + 2 Bio Spoon + 1 Paper Bowl; every PICKUP/DELIVERY order (once per
+// order, not per item in it) gets 1 Dosa Box Small + 2×50ML Container + 2 Bio Spoon +
+// 1 Podi Idli Container. Bio Spoon is used by both rules and combines into one figure.
+const CROCKERY_PACKAGING_OUTLETS = new Set(['sec23', 'sec56', 'elan', 'gaursid']);
+// Rule quantities are always literal PIECE counts (1 plate, 2 spoons, ...) — converted
+// into whatever unit each item is actually tracked/priced in (Pkt for Bio Spoon/Paper
+// Bowl/50ML Container/Podi Idli Container, Pcs for Wooden Plates/Dosa Box Small) via
+// convFactorFor + unit_conversions below, same as the recipe path already does for
+// count-based ingredients — NOT a hardcoded pack size here, so it stays correct if the
+// owner ever changes a pack size in Master Data without a code change.
+const CROCKERY_PER_DINE_IN_ITEM = [
+  { item_id: 'wooden_plates', name: 'Wooden Plates', qty: 1 },
+  { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
+  { item_id: 'paper_bowl', name: 'Paper Bowl', qty: 1 },
+];
+const PACKAGING_PER_TAKEAWAY_ORDER = [
+  { item_id: 'dosa_box_small', name: 'Dosa Box Small', qty: 1 },
+  { item_id: 'container_50ml', name: '50ML Container', qty: 2 },
+  { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
+  { item_id: 'podi_idli_container', name: 'Podi Idli Container', qty: 1 },
+];
+// Builds should-consume entries for the crockery/packaging items in the exact same
+// shape computeRMAudit's recipe-matched items use, so they slot into the same list
+// (RM Audit, COGS Compare, P&L) with should_consume_cost/actual_consumed/variance all
+// computed the same way — actualById/rateMap/convFactorFor are the same per-outlet
+// lookups the recipe path already built, just reused here instead of re-fetched.
+function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap, convFactorFor) {
+  if (!CROCKERY_PACKAGING_OUTLETS.has(oid)) return [];
+
+  let dineInItems = 0;
+  const takeawayInvoices = new Set();
+  outletSalesRows.forEach((r) => {
+    if (r.order_type === 'Dine In') dineInItems += Number(r.item_quantity || 0);
+    else if (r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')) takeawayInvoices.add(r.invoice_no);
+  });
+  const takeawayOrders = takeawayInvoices.size;
+
+  const acc = {}; // item_id -> { name, qty (in tracked unit), breakdown[] }
+  const addRule = (rule, sourceLabel, sourceQty) => {
+    if (sourceQty <= 0) return;
+    const trackedUnit = actualById[rule.item_id]?.unit || rateMap[rule.item_id]?.unit || 'Pcs';
+    const perUnit = rule.qty * convFactorFor(rule.item_id, 'Piece', trackedUnit);
+    const subtotal = Math.round(perUnit * sourceQty * 1000) / 1000;
+    if (!acc[rule.item_id]) acc[rule.item_id] = { name: rule.name, qty: 0, breakdown: [] };
+    acc[rule.item_id].qty += subtotal;
+    acc[rule.item_id].breakdown.push({ dish: sourceLabel, qty_sold: sourceQty, per_dish: perUnit, subtotal });
+  };
+  CROCKERY_PER_DINE_IN_ITEM.forEach((rule) => addRule(rule, 'Dine-in items (crockery)', dineInItems));
+  PACKAGING_PER_TAKEAWAY_ORDER.forEach((rule) => addRule(rule, 'Pickup/Delivery orders (packaging)', takeawayOrders));
+
+  return Object.entries(acc).map(([itemId, data]) => {
+    const actualItem = actualById[itemId];
+    const rate = rateMap[itemId]?.price ?? null;
+    const shouldConsume = Math.round(data.qty * 1000) / 1000;
+    const actualQty = actualItem ? actualItem.used : null;
+    const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
+    const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
+    return {
+      raw_material: data.name,
+      item_id: itemId,
+      unit: actualItem?.unit || rateMap[itemId]?.unit || 'Pcs',
+      should_consume: shouldConsume,
+      should_consume_breakdown: data.breakdown,
+      rate,
+      should_consume_cost: rate != null ? Math.round(shouldConsume * rate * 100) / 100 : null,
+      actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
+      actual_consumed_cost: actualQty != null && rate != null ? Math.round(actualQty * rate * 100) / 100 : null,
+      actual_breakdown: actualItem ? {
+        prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
+        purchased: actualItem.purchased, wastage: actualItem.wastage, closing: actualItem.closing,
+      } : null,
+      variance, variance_pct: variancePct,
+    };
+  });
+}
+
 // Theoretical (recipe) consumption vs ACTUAL outlet-level consumption — the same
 // Yesterday Closing + Dispatched − Wastage − Today Closing figure P&L and COGS Compare
 // already show (via computeStockUsageForDate), not Base Kitchen's internal issuance
@@ -990,7 +1070,10 @@ async function computeRMAudit(date, outletFilter) {
   // Independent of each other — fired concurrently. costingContext is reused below instead
   // of computeStockUsageForDate fetching its own copy of the same six tables a second time.
   const [sales, { data: recipes }, costingContext] = await Promise.all([
-    fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' }),
+    // order_type + invoice_no are only needed for the crockery/packaging rule below
+    // (dine-in item count, distinct pickup/delivery order count) — the recipe path only
+    // ever used outlet_code/item_name/item_quantity.
+    fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity, order_type, invoice_no' }),
     supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
     buildCostingContext(),
   ]);
@@ -1018,8 +1101,9 @@ async function computeRMAudit(date, outletFilter) {
 
   const results = [];
   for (const oid of targetOutlets) {
+    const oidSales = (sales || []).filter(s => s.outlet_code === oid);
     const salesByDish = {};
-    (sales || []).filter(s => s.outlet_code === oid).forEach(s => {
+    oidSales.forEach(s => {
       salesByDish[s.item_name] = (salesByDish[s.item_name] || 0) + Number(s.item_quantity || 0);
     });
 
@@ -1046,7 +1130,7 @@ async function computeRMAudit(date, outletFilter) {
     (actualByOutlet[oid]?.items || []).forEach(it => { actualById[it.item_id] = it; });
 
     const unmappedIngredients = new Set();
-    const items = Object.values(theoretical).map(t => {
+    const recipeItems = Object.values(theoretical).map(t => {
       const key = normalizeIngredientName(t.raw_material);
       const mappedId = resolveIngredientRateId(key, costingContext.rateByName, costingContext.bkRecipeByName);
       if (!mappedId) { unmappedIngredients.add(t.raw_material); return null; }
@@ -1086,7 +1170,14 @@ async function computeRMAudit(date, outletFilter) {
         } : null,
         variance, variance_pct: variancePct,
       };
-    }).filter(Boolean).sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
+    }).filter(Boolean);
+
+    // Crockery/Packaging — fixed per-item/per-order rule, not recipe-driven (see
+    // computeCrockeryPackagingItems above), so it's computed separately and merged in
+    // here rather than going through the theoretical/resolveIngredientRateId path above.
+    const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor);
+    const allItems = [...recipeItems, ...crockeryPackagingItems]
+      .sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
     // Dish-TYPE match count (dishes_matched/dishes_sold below) can look fine even when a
     // huge chunk of actual VOLUME sold is unmatched — a handful of high-volume dishes with
@@ -1121,16 +1212,16 @@ async function computeRMAudit(date, outletFilter) {
     // resolveIngredientRateId). Items that don't (should_consume_cost null) are simply
     // excluded, same gap the never_mapped_items/unmapped_ingredients reports above surface
     // for fixing.
-    const idealMaterialCost = items.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
+    const idealMaterialCost = allItems.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
     // Actual side of the same comparison — what these items' ACTUAL consumption cost,
     // priced the same way (rate card / BK recipe cost) ideal_material_cost already is.
     // Used by the outlet Performance Dashboard's COGS Score: how close actual landed to
     // ideal, both expressed as a share of that day's effective sale.
-    const actualMaterialCost = items.reduce((s, it) => s + (it.actual_consumed_cost || 0), 0);
+    const actualMaterialCost = allItems.reduce((s, it) => s + (it.actual_consumed_cost || 0), 0);
 
     results.push({
       outlet_id: oid, date,
-      items,
+      items: allItems,
       unmatched_dishes: unmatchedDishes.sort((a, b) => b.qty - a.qty),
       unmapped_ingredients: [...unmappedIngredients],
       never_mapped_items: neverMappedItems,
@@ -4432,12 +4523,17 @@ router.get('/stock-usage/:date', async (req, res) => {
 
 // ── GET /api/wastage/cost — Day-wise wastage cost per item, all outlets or one, for a
 // date range. Same rate-card-first / BK-recipe-fallback costing as the consumed-material
-// formula, applied only to wastage entries — powers the owner's Wastage grid's cost view.
+// formula, applied only to wastage entries — powers the owner's Wastage grid's cost view,
+// and the outlet Performance Dashboard's Wastage card (outlet_mgr access, scoped to
+// their own outlet_id regardless of what's requested, same defensive pattern as every
+// other outlet-scoped read route).
 router.get('/wastage/cost', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
-    const { from, outlet_id } = req.query;
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr');
+    if (!user) return;
+    const { from } = req.query;
     if (!from) return res.status(400).json({ error: 'from is required' });
+    const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
 
     const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
 

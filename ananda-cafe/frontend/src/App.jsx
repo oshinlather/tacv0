@@ -11955,6 +11955,9 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const [pnl, setPnl] = useState(null);
   const [punchData, setPunchData] = useState(null);
   const [reviewHistory, setReviewHistory] = useState(null); // [{ date, rows }, ...] yesterday → 7 days back
+  const [employees, setEmployees] = useState(null);
+  const [attendance, setAttendance] = useState(null);
+  const [wastageCost, setWastageCost] = useState(null);
   const [loading, setLoading] = useState(true);
   // Score cards double as tabs — clicking one shows that pillar's own detail below,
   // COGS Score selected by default since it's the first pillar this dashboard had.
@@ -11977,7 +11980,10 @@ const OutletPerformanceDashboard = ({ outlet }) => {
       api.getLivePnl(dateStr, outlet).catch(() => null),
       api.getPunchStatus(dateStr).catch(() => null),
       Promise.all(reviewDates.map((d) => api.getDailyReviewSummary(d).then((r) => ({ date: d, rows: r?.rows || [] })).catch(() => ({ date: d, rows: [] })))),
-    ]).then(([a, p, pu, rh]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewHistory(rh); }).finally(() => setLoading(false));
+      api.getEmployees().catch(() => null),
+      api.getAttendance({ date: dateStr }).catch(() => null),
+      api.getWastageCost(dateStr).catch(() => null),
+    ]).then(([a, p, pu, rh, emp, att, wc]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewHistory(rh); setEmployees(emp); setAttendance(att); setWastageCost(wc); }).finally(() => setLoading(false));
   }, [dateStr, outlet, reviewDates]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
@@ -12027,21 +12033,64 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const zomatoScore = platformScore(zomatoRow);
   const reviewScore = reviewHistory ? Math.round(swiggyScore + zomatoScore) : null;
 
+  // Discipline Score — half Self (this outlet's own Manager-designation staff), half
+  // Team (everyone else active here), each person scored on yesterday's attendance:
+  // present with hours logged = hours_worked ÷ DAILY_STANDARD_HOURS (capped at 100% —
+  // no extra credit for OT, that's tracked separately), half_day = 50%, absent/leave/not
+  // marked at all = 0% (an unmarked day is itself a discipline gap, same convention the
+  // Attendance screen itself uses). Holiday is excluded entirely — a schedule fact, not
+  // a miss. No split beyond "self and team" was specified, so this is a plain average of
+  // the two group scores, not weighted differently.
+  const outletEmployees = (employees || []).filter((e) => e.department === outlet && e.active);
+  const selfEmployees = outletEmployees.filter((e) => e.designation === "Manager");
+  const teamEmployees = outletEmployees.filter((e) => e.designation !== "Manager");
+  const attendanceByEmployee = {};
+  (attendance || []).forEach((a) => { attendanceByEmployee[a.employee_id] = a; });
+  const personRatio = (emp) => {
+    const a = attendanceByEmployee[emp.id];
+    if (a?.status === "holiday") return null; // excluded, not a miss
+    if (!a) return 0; // not marked at all — itself a discipline gap
+    if (a.status === "present") return Math.min((Number(a.hours_worked) || 0) / DAILY_STANDARD_HOURS, 1);
+    if (a.status === "half_day") return 0.5;
+    return 0; // absent or leave
+  };
+  const groupScore = (group) => {
+    const ratios = group.map(personRatio).filter((r) => r != null);
+    return ratios.length > 0 ? Math.round(ratios.reduce((s, r) => s + r, 0) / ratios.length * 100) : null;
+  };
+  const selfScore = groupScore(selfEmployees);
+  const teamScore = groupScore(teamEmployees);
+  const disciplineScore = (selfScore != null || teamScore != null)
+    ? Math.round(((selfScore ?? teamScore) + (teamScore ?? selfScore)) / 2) : null;
+
+  // Wastage — actual ₹ value, not a normalized score (nothing to compare it against was
+  // asked for). Same rate-card-first/BK-recipe-fallback pricing as the rest of the app's
+  // costing (backend's buildCostingContext), reused from the owner's Wastage grid's own
+  // cost endpoint. Sorted highest-value item first, per spec.
+  const wastageItems = (wastageCost || []).filter((r) => r.outlet_id === outlet && r.date === dateStr).sort((a, b) => b.cost - a.cost);
+  const totalWastageValue = wastageItems.reduce((s, r) => s + (r.cost || 0), 0);
+
   const scoreColor = (score) => score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
   const scoreBg = (score) => score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
   const scoreBorder = (score) => score == null ? "#E8E8E4" : score >= COGS_SCORE_THRESHOLDS.good ? "#BBF7D0" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FDE68A" : "#FECACA";
 
-  const ScoreCard = ({ tabKey, icon, label, score, sub, comingSoon }) => {
+  // display/displayColor: escape hatch for a card that isn't a 0-100 score (Wastage
+  // shows a raw ₹ amount, which scoreColor's percentage thresholds don't make sense for).
+  const ScoreCard = ({ tabKey, icon, label, score, sub, comingSoon, display, displayColor }) => {
     const active = activeTab === tabKey;
+    const hasDisplay = display !== undefined;
+    const bg = hasDisplay ? (displayColor?.bg || "#FAFAF8") : scoreBg(score);
+    const border = hasDisplay ? (displayColor?.border || "#E8E8E4") : scoreBorder(score);
+    const textColor = hasDisplay ? (displayColor?.text || "#1A1A1A") : scoreColor(score);
     return (
-      <button onClick={() => setActiveTab(tabKey)} style={{ background: comingSoon ? "#FAFAF8" : scoreBg(score), borderRadius: 14, padding: "16px 10px", border: `1.5px solid ${active ? "#FDE68A" : (comingSoon ? "#E8E8E4" : scoreBorder(score))}`, textAlign: "center", cursor: "pointer", fontFamily: "inherit", boxShadow: active ? "0 0 0 3px rgba(253,230,138,0.35)" : "none" }}>
+      <button onClick={() => setActiveTab(tabKey)} style={{ background: comingSoon ? "#FAFAF8" : bg, borderRadius: 14, padding: "16px 10px", border: `1.5px solid ${active ? "#FDE68A" : (comingSoon ? "#E8E8E4" : border)}`, textAlign: "center", cursor: "pointer", fontFamily: "inherit", boxShadow: active ? "0 0 0 3px rgba(253,230,138,0.35)" : "none" }}>
         <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
         <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
         {comingSoon ? (
           <div style={{ fontSize: 12, color: "#BBB", fontWeight: 600 }}>Coming soon</div>
         ) : (
           <>
-            <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: scoreColor(score) }}>{score != null ? score : "—"}</div>
+            <div style={{ fontSize: hasDisplay ? 20 : 26, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: textColor }}>{hasDisplay ? display : (score != null ? score : "—")}</div>
             {sub && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{sub}</div>}
           </>
         )}
@@ -12059,9 +12108,14 @@ const OutletPerformanceDashboard = ({ outlet }) => {
             sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data"} />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
             sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data"} />
-          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" comingSoon />
+          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" score={disciplineScore}
+            sub={selfScore != null || teamScore != null ? `Self ${selfScore ?? "—"} · Team ${teamScore ?? "—"}` : "No attendance data"} />
           <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
             sub={reviewHistory ? `🛵${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"} · 🍽️${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}` : "No review data"} />
+          <ScoreCard tabKey="wastage" icon="🗑️" label="Wastage"
+            display={wastageCost != null ? fmt(totalWastageValue) : undefined}
+            displayColor={totalWastageValue > 0 ? { bg: "#FEF2F2", border: "#FECACA", text: "#DC2626" } : { bg: "#F0FDF4", border: "#BBF7D0", text: "#16A34A" }}
+            sub={wastageCost == null ? "No wastage data" : wastageItems.length > 0 ? `${wastageItems.length} item${wastageItems.length !== 1 ? "s" : ""}` : "Nothing wasted"} />
         </div>
       )}
 
@@ -12111,8 +12165,64 @@ const OutletPerformanceDashboard = ({ outlet }) => {
       )}
 
       {activeTab === "discipline" && (
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999", fontSize: 13 }}>
-          Coming soon.
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⏰ Discipline Breakdown — {dateStr}</div>
+          {outletEmployees.length === 0 ? (
+            <div style={{ textAlign: "center", color: "#999", padding: 20, fontSize: 13 }}>No employees on record for this outlet</div>
+          ) : (
+            [{ label: "Self (Manager)", group: selfEmployees, score: selfScore }, { label: "Team", group: teamEmployees, score: teamScore }].map((sec) => (
+              <div key={sec.label} style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#555" }}>{sec.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: scoreColor(sec.score) }}>{sec.score != null ? sec.score : "—"}</span>
+                </div>
+                {sec.group.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "#BBB", padding: "4px 0 8px" }}>No {sec.label.toLowerCase()} employees on record</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {sec.group.map((emp) => {
+                      const a = attendanceByEmployee[emp.id];
+                      const ratio = personRatio(emp);
+                      const isExcluded = a?.status === "holiday";
+                      return (
+                        <div key={emp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: 8, background: isExcluded ? "#F5F5F3" : ratio === 1 ? "#F0FDF4" : ratio === 0 ? "#FEF2F2" : "#FFFBEB" }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600 }}>{emp.name}</div>
+                            <div style={{ fontSize: 10, color: "#999" }}>{emp.designation} · {a ? (a.status === "present" ? `${a.hours_worked ?? 0}h worked` : a.status.replace("_", " ")) : "not marked"}</div>
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: isExcluded ? "#999" : ratio >= 0.9 ? "#16A34A" : ratio > 0 ? "#B45309" : "#DC2626" }}>{isExcluded ? "holiday" : `${Math.round((ratio || 0) * 100)}%`}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {activeTab === "wastage" && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>🗑️ Wastage Breakdown — {dateStr}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: totalWastageValue > 0 ? "#DC2626" : "#16A34A" }}>{fmt(totalWastageValue)}</div>
+          </div>
+          {wastageItems.length === 0 ? (
+            <div style={{ textAlign: "center", color: "#999", padding: 20, fontSize: 13 }}>Nothing logged as wasted for this date</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {wastageItems.map((r) => (
+                <div key={r.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: 8, background: "#FEF2F2" }}>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>{r.name}</div>
+                    <div style={{ fontSize: 10, color: "#999" }}>{r.qty} {r.unit} × {fmt(r.rate)}{!r.has_rate_card && " · no rate card, cost may be understated"}</div>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{fmt(r.cost)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
