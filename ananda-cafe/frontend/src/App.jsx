@@ -11954,11 +11954,20 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const [audit, setAudit] = useState(null);
   const [pnl, setPnl] = useState(null);
   const [punchData, setPunchData] = useState(null);
-  const [reviewData, setReviewData] = useState(null);
+  const [reviewHistory, setReviewHistory] = useState(null); // [{ date, rows }, ...] yesterday → 7 days back
   const [loading, setLoading] = useState(true);
   // Score cards double as tabs — clicking one shows that pillar's own detail below,
   // COGS Score selected by default since it's the first pillar this dashboard had.
   const [activeTab, setActiveTab] = useState("cogs");
+
+  // The daily PetPooja review scrape doesn't run every single day (real gaps happen) —
+  // strictly checking "yesterday" would score a missing scrape as "0 reviews received"
+  // (a hard fail on the Reviews tab's own data, not a real one), same trap the dashboard
+  // used to fall into. Look back up to a week for each platform's most recent ACTUAL
+  // scrape and score off that instead — a row that genuinely exists with num_reviews=0
+  // is the real "no review received" case and still scores 0, per spec.
+  const REVIEW_LOOKBACK_DAYS = 7;
+  const reviewDates = useMemo(() => Array.from({ length: REVIEW_LOOKBACK_DAYS }, (_, i) => istDateAgo(1 + i)), [dateStr]);
 
   useEffect(() => {
     if (!outlet) return;
@@ -11967,9 +11976,9 @@ const OutletPerformanceDashboard = ({ outlet }) => {
       api.getRMAudit(dateStr, outlet).catch(() => null),
       api.getLivePnl(dateStr, outlet).catch(() => null),
       api.getPunchStatus(dateStr).catch(() => null),
-      api.getDailyReviewSummary(dateStr).catch(() => null),
-    ]).then(([a, p, pu, r]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewData(r); }).finally(() => setLoading(false));
-  }, [dateStr, outlet]);
+      Promise.all(reviewDates.map((d) => api.getDailyReviewSummary(d).then((r) => ({ date: d, rows: r?.rows || [] })).catch(() => ({ date: d, rows: [] })))),
+    ]).then(([a, p, pu, rh]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewHistory(rh); }).finally(() => setLoading(false));
+  }, [dateStr, outlet, reviewDates]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
   const pnlRow = pnl?.pnl?.find((p) => p.outlet_id === outlet) || null;
@@ -11999,16 +12008,24 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const punchScore = punchOutlet ? Math.round(punchEarned / PUNCH_TOTAL_WEIGHT * 100) : null;
 
   // Review Score — Swiggy and Zomato each worth 50, scaled from their 5-star average; a
-  // platform with zero reviews for the date scores 0 on its half rather than being
-  // excluded from the average, since no engagement is itself the failure mode being
-  // scored, not a neutral "no data" case.
-  const reviewRows = (reviewData?.rows || []).filter((r) => r.outlet_id === outlet);
-  const swiggyRow = reviewRows.find((r) => r.platform === "swiggy") || null;
-  const zomatoRow = reviewRows.find((r) => r.platform === "zomato") || null;
+  // platform with zero reviews scores 0 on its half rather than being excluded, since no
+  // engagement is itself the failure mode being scored, not a neutral "no data" case.
+  // reviewHistory is ordered yesterday-first, so the first row found per platform across
+  // the lookback window is the most recent actual scrape — see REVIEW_LOOKBACK_DAYS above
+  // for why this isn't just "yesterday".
+  const findLatestReviewRow = (platform) => {
+    for (const day of reviewHistory || []) {
+      const row = day.rows.find((r) => r.outlet_id === outlet && r.platform === platform);
+      if (row) return { ...row, _asOfDate: day.date };
+    }
+    return null;
+  };
+  const swiggyRow = reviewHistory ? findLatestReviewRow("swiggy") : null;
+  const zomatoRow = reviewHistory ? findLatestReviewRow("zomato") : null;
   const platformScore = (row) => (row && row.num_reviews > 0 && row.avg_rating != null) ? (Number(row.avg_rating) / 5 * 50) : 0;
   const swiggyScore = platformScore(swiggyRow);
   const zomatoScore = platformScore(zomatoRow);
-  const reviewScore = reviewData ? Math.round(swiggyScore + zomatoScore) : null;
+  const reviewScore = reviewHistory ? Math.round(swiggyScore + zomatoScore) : null;
 
   const scoreColor = (score) => score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
   const scoreBg = (score) => score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
@@ -12044,7 +12061,7 @@ const OutletPerformanceDashboard = ({ outlet }) => {
             sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data"} />
           <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" comingSoon />
           <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
-            sub={reviewData ? `🛵${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"} · 🍽️${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}` : "No review data"} />
+            sub={reviewHistory ? `🛵${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"} · 🍽️${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}` : "No review data"} />
         </div>
       )}
 
@@ -12074,13 +12091,19 @@ const OutletPerformanceDashboard = ({ outlet }) => {
 
       {activeTab === "review" && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⭐ Review Breakdown — {dateStr}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>⭐ Review Breakdown</div>
           <div style={{ display: "flex", gap: 10 }}>
             {[{ label: "Swiggy", row: swiggyRow, score: swiggyScore }, { label: "Zomato", row: zomatoRow, score: zomatoScore }].map((p) => (
               <div key={p.label} style={{ flex: 1, background: "#FAFAF8", borderRadius: 10, padding: 14, textAlign: "center" }}>
                 <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{p.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{p.row?.avg_rating != null ? `${Number(p.row.avg_rating).toFixed(1)}★` : "No reviews"}</div>
                 <div style={{ fontSize: 10, color: "#999", marginTop: 4 }}>{p.row?.num_reviews || 0} reviews · {p.score.toFixed(1)} / 50</div>
+                {/* Only shown when the latest actual scrape isn't yesterday — makes a stale
+                    (not zero) data-pipeline gap visible instead of looking like a hard fail. */}
+                {p.row?._asOfDate && p.row._asOfDate !== dateStr && (
+                  <div style={{ fontSize: 9, color: "#B45309", marginTop: 4 }}>as of {p.row._asOfDate}</div>
+                )}
+                {!p.row && <div style={{ fontSize: 9, color: "#999", marginTop: 4 }}>no scrape in last {REVIEW_LOOKBACK_DAYS}d</div>}
               </div>
             ))}
           </div>
