@@ -234,6 +234,15 @@ router.post("/closing-stock", async (req, res) => {
   if (!await gate(req, res)) return;
   const { date, items, submitted_by } = req.body;
   if (!date || !items) return res.status(400).json({ error: "date and items are required" });
+  // A physical count can never be negative — a prior submission (2026-07-28) got -16/-2/-3
+  // punched in for a few Cleaning items (likely a stray minus-sign typo), which then
+  // silently poisoned Store Audit's "Prior Closing" for every day since since nothing
+  // newer has been submitted to anchor off instead. Reject at submit time instead of
+  // letting it happen again.
+  const negative = Object.entries(items).filter(([, qty]) => Number(qty) < 0);
+  if (negative.length > 0) {
+    return res.status(400).json({ error: `Closing count can't be negative: ${negative.map(([id, qty]) => `${id} (${qty})`).join(", ")}` });
+  }
   const { data, error } = await supabase.from("bk_closing_stock")
     .upsert({ date, items, submitted_by, submitted_at: new Date().toISOString() }, { onConflict: "date" })
     .select("*").single();
@@ -479,18 +488,21 @@ router.get("/audit-full/:date", async (req, res) => {
 // the separate Inventory "Stock Out" log the way audit-full's dispatch check does —
 // that log is essentially never used for BK-prepared items (see audit-full's Food
 // category rows), which would make a stock-out-based "should be" wrong for exactly the
-// items that matter most here. "Prior Actual Closing" is the most recent PRIOR date
-// with a submitted bk_closing_stock count, not necessarily yesterday — if a count was
-// missed, this walks demand/purchases across the whole gap instead of silently reusing
-// yesterday's (unsubmitted, so meaningless) number.
+// items that matter most here. "Prior Actual Closing" is STRICTLY yesterday's (date-1)
+// submitted bk_closing_stock count — it used to walk back to whatever the most recent
+// submission was, however many days old, which silently anchored "should be" off a
+// stale count with no indication anything was wrong. Now, if yesterday wasn't
+// submitted, there's no anchor and nothing is flagged for `date` at all (prev_date:
+// null) — the gap is surfaced via Missing Punches instead of quietly papered over here.
 router.get("/store-audit/:date", async (req, res) => {
   if (!await gate(req, res)) return;
   const { date } = req.params;
   try {
+    const yesterday = prevDay(date);
     const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
     const { data: demandItems } = await supabase.from("demand_items").select("id, section_id");
     const { data: stocks } = await supabase.from("inventory_stock").select("item_id, current_qty");
-    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").lte("date", date).order("date", { ascending: false }).limit(60);
+    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").in("date", [date, yesterday]);
 
     const foodDemandIds = new Set((demandItems || []).filter((d) => d.section_id === "food").map((d) => d.id));
     const isFoodItem = (item) => item.demand_item_id && foodDemandIds.has(item.demand_item_id);
@@ -501,7 +513,7 @@ router.get("/store-audit/:date", async (req, res) => {
     (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
 
     const todayClosing = (closings || []).find((c) => c.date === date)?.items;
-    const prevRow = (closings || []).find((c) => c.date < date); // most recent PRIOR submission, not necessarily date-1
+    const prevRow = (closings || []).find((c) => c.date === yesterday);
     const prevDate = prevRow?.date || null;
     const prevClosing = prevRow?.items || null;
 

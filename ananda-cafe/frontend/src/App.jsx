@@ -11999,6 +11999,7 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const dateStr = istDateAgo(1);
   const [audit, setAudit] = useState(null);
   const [pnl, setPnl] = useState(null);
+  const [stockUsage, setStockUsage] = useState(null);
   const [punchData, setPunchData] = useState(null);
   const [reviewHistory, setReviewHistory] = useState(null); // [{ date, rows }, ...] yesterday → 7 days back
   const [employees, setEmployees] = useState(null);
@@ -12024,12 +12025,13 @@ const OutletPerformanceDashboard = ({ outlet }) => {
     Promise.all([
       api.getRMAudit(dateStr, outlet).catch(() => null),
       api.getLivePnl(dateStr, outlet).catch(() => null),
+      api.getStockUsage(dateStr, outlet).catch(() => null),
       api.getPunchStatus(dateStr).catch(() => null),
       Promise.all(reviewDates.map((d) => api.getDailyReviewSummary(d).then((r) => ({ date: d, rows: r?.rows || [] })).catch(() => ({ date: d, rows: [] })))),
       api.getEmployees().catch(() => null),
       api.getAttendance({ date: dateStr }).catch(() => null),
       api.getWastageCost(dateStr).catch(() => null),
-    ]).then(([a, p, pu, rh, emp, att, wc]) => { setAudit(a); setPnl(p); setPunchData(pu); setReviewHistory(rh); setEmployees(emp); setAttendance(att); setWastageCost(wc); }).finally(() => setLoading(false));
+    ]).then(([a, p, su, pu, rh, emp, att, wc]) => { setAudit(a); setPnl(p); setStockUsage(su); setPunchData(pu); setReviewHistory(rh); setEmployees(emp); setAttendance(att); setWastageCost(wc); }).finally(() => setLoading(false));
   }, [dateStr, outlet, reviewDates]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
@@ -12039,6 +12041,16 @@ const OutletPerformanceDashboard = ({ outlet }) => {
   const actualCost = outletData?.actual_material_cost ?? null;
   const idealPct = effectiveSale > 0 && idealCost != null ? (idealCost / effectiveSale * 100) : null;
   const actualPct = effectiveSale > 0 && actualCost != null ? (actualCost / effectiveSale * 100) : null;
+  // The SAME full-ledger material cost Daily P&L's own "COGS:" figure uses (every item
+  // that moved — Food/Dairy/Vegetable/Grocery/Masala/Packaging/Cleaning/Gas — not just
+  // dish-recipe ingredients). Shown alongside Actual/Ideal COGS% below because those two
+  // are deliberately scoped to recipe-matched ingredients only (RM Audit's
+  // actual_material_cost excludes Packaging/Cleaning/Gas, and for outlets outside
+  // CROCKERY_PACKAGING_OUTLETS excludes ALL packaging too) — the two numbers answer
+  // different questions and were being shown as if they were the same COGS%, which is
+  // exactly what confused the owner into thinking one of them was wrong.
+  const fullCogsCost = stockUsage?.outlets?.find((o) => o.outlet_id === outlet)?.total_used_cost ?? null;
+  const fullCogsPct = effectiveSale > 0 && fullCogsCost != null ? (fullCogsCost / effectiveSale * 100) : null;
   // Not an aggregate cost-total ratio — the win is item-level discipline: what share of
   // items landed within 5% of what the recipe said they should. Only items RM Audit could
   // actually score (a real should-consume basis AND actual consumption data) count toward
@@ -12167,17 +12179,27 @@ const OutletPerformanceDashboard = ({ outlet }) => {
 
       {activeTab === "cogs" && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
-          {(actualPct != null || idealPct != null) && (
-            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-              <div style={{ flex: 1, background: "#FEF2F2", borderRadius: 10, border: "1px solid #FECACA", padding: 12, textAlign: "center" }}>
-                <div style={{ fontSize: 9, color: "#991B1B", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Actual COGS %</div>
+          {fullCogsPct != null && (
+            <div style={{ fontSize: 10, color: "#888", marginBottom: 10, padding: "6px 10px", background: "#FAFAF8", borderRadius: 8 }}>
+              Recipe-Matched COGS below only covers dish-recipe ingredients (and, at some outlets, a fixed packaging/crockery rule) — it will read lower than Full COGS%, which is every item that moved in stock, same figure Daily P&L shows.
+            </div>
+          )}
+          {(actualPct != null || idealPct != null || fullCogsPct != null) && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 120px", background: "#FEF2F2", borderRadius: 10, border: "1px solid #FECACA", padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#991B1B", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Actual COGS % <span style={{ opacity: 0.7 }}>(recipe-matched)</span></div>
                 <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{actualPct != null ? `${actualPct.toFixed(1)}%` : "—"}</div>
                 <div style={{ fontSize: 9, color: "#999", marginTop: 2 }}>of effective sale — {fmt(effectiveSale)}</div>
               </div>
-              <div style={{ flex: 1, background: "#EFF6FF", borderRadius: 10, border: "1px solid #BFDBFE", padding: 12, textAlign: "center" }}>
+              <div style={{ flex: "1 1 120px", background: "#EFF6FF", borderRadius: 10, border: "1px solid #BFDBFE", padding: 12, textAlign: "center" }}>
                 <div style={{ fontSize: 9, color: "#1E40AF", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Ideal COGS %</div>
                 <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{idealPct != null ? `${idealPct.toFixed(1)}%` : "—"}</div>
                 <div style={{ fontSize: 9, color: "#999", marginTop: 2 }}>recipe × today's sales</div>
+              </div>
+              <div style={{ flex: "1 1 120px", background: "#FFFBEB", borderRadius: 10, border: "1px solid #FDE68A", padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#92400E", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Full COGS % <span style={{ opacity: 0.7 }}>(P&amp;L)</span></div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fullCogsPct != null ? `${fullCogsPct.toFixed(1)}%` : "—"}</div>
+                <div style={{ fontSize: 9, color: "#999", marginTop: 2 }}>every item consumed — {fullCogsCost != null ? fmt(fullCogsCost) : "—"}</div>
               </div>
             </div>
           )}
@@ -14447,7 +14469,11 @@ const BKClosingStock = () => {
               <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
               <div style={{ fontSize: 10, color: "#999" }}>System: {item.current_qty} {item.unit}</div>
             </div>
-            <input type="number" inputMode="decimal" step="any" value={counts[item.id] ?? ""} onChange={(e) => setCounts((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Number(e.target.value) }))}
+            {/* min=0 blocks the spinner arrows from going negative, but a physical count
+                could still be pasted/typed negative — clamp on change too, same guard the
+                backend also enforces (a stray "-16" here once poisoned Store Audit's
+                Prior Closing for every day until the next submission). */}
+            <input type="number" inputMode="decimal" step="any" min="0" value={counts[item.id] ?? ""} onChange={(e) => setCounts((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, Number(e.target.value)) }))}
               style={{ width: 70, padding: "6px", borderRadius: 8, border: isEdited ? "2px solid #B45309" : "1px solid #E0E0DC", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700, background: "#fff" }} />
             <span style={{ fontSize: 9, color: "#999", width: 24 }}>{item.unit}</span>
           </div>);
