@@ -138,7 +138,10 @@ router.get('/', async (req, res) => {
     const [{ data: attendance }, { data: otRows }, { data: advances }, { data: runs }, { data: overrideRows }] = await Promise.all([
       supabase.from('employee_attendance').select('employee_id, status, date, hours_worked').in('employee_id', empIds).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('*').in('employee_id', empIds).eq('month', month),
-      supabase.from('books_ledger').select('employee_id, amount, settled').eq('is_advance', true).not('employee_id', 'is', null).in('employee_id', empIds),
+      // status='approved' excludes fines still awaiting owner approval (see
+      // 2026_08_12_books_ledger_approval_status.sql / employees.js POST /:id/fine)
+      // — a pending fine must not reduce net_payable until the owner approves it.
+      supabase.from('books_ledger').select('employee_id, amount, settled, status').eq('is_advance', true).not('employee_id', 'is', null).in('employee_id', empIds),
       supabase.from('employee_payroll_runs').select('*').in('employee_id', empIds).eq('month', month),
       supabase.from('employee_payroll_overrides').select('*').in('employee_id', empIds).eq('month', month),
     ]);
@@ -147,7 +150,7 @@ router.get('/', async (req, res) => {
     const otOverrideByEmp = {};
     (otRows || []).forEach((r) => { otOverrideByEmp[r.employee_id] = Number(r.ot_hours || 0); });
     const advByEmp = {};
-    (advances || []).forEach((a) => { if (!a.settled) advByEmp[a.employee_id] = (advByEmp[a.employee_id] || 0) + Number(a.amount || 0); });
+    (advances || []).forEach((a) => { if (!a.settled && a.status === 'approved') advByEmp[a.employee_id] = (advByEmp[a.employee_id] || 0) + Number(a.amount || 0); });
     const runByEmp = {};
     (runs || []).forEach((r) => { runByEmp[r.employee_id] = r; });
     const overridesByEmp = {};
@@ -238,7 +241,9 @@ router.post('/finalize', async (req, res) => {
     const [{ data: attendance }, { data: otRow }, { data: outstandingAdvances }, { data: overrideRow }] = await Promise.all([
       supabase.from('employee_attendance').select('employee_id, status, date, hours_worked').eq('employee_id', employee_id).gte('date', from).lte('date', to),
       supabase.from('employee_monthly_ot').select('ot_hours').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
-      supabase.from('books_ledger').select('id, amount').eq('employee_id', employee_id).eq('is_advance', true).eq('settled', false),
+      // status='approved' — see the header comment above and employees.js POST /:id/fine;
+      // a pending fine must never be swept into a payroll finalize.
+      supabase.from('books_ledger').select('id, amount').eq('employee_id', employee_id).eq('is_advance', true).eq('settled', false).eq('status', 'approved'),
       supabase.from('employee_payroll_overrides').select('*').eq('employee_id', employee_id).eq('month', month).maybeSingle(),
     ]);
 

@@ -278,6 +278,10 @@ const api = {
   },
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
+  imposeEmployeeFine: (id, data) => post(`/api/employees/${id}/fine`, data),
+  getPendingFines: () => get("/api/employees/fines/pending"),
+  approveFine: (id) => patch(`/api/employees/fines/${id}/approve`),
+  rejectFine: (id, note) => patch(`/api/employees/fines/${id}/reject`, { note }),
   // Employee Profile (particulars + KYC documents)
   getEmployee: (id) => get(`/api/employees/${id}`),
   uploadEmployeeDoc: (id, data) => post(`/api/employees/${id}/documents`, data),

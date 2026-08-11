@@ -103,11 +103,14 @@ router.get('/', async (req, res) => {
     const { data: employees, error } = await query;
     if (error) throw error;
 
+    // status='approved' excludes fines still awaiting owner approval (see
+    // 2026_08_12_books_ledger_approval_status.sql) — a pending fine must not drag
+    // down outstanding_advance (or payroll's deduction, see payroll.js) until approved.
     const { data: advances } = await supabase.from('books_ledger')
-      .select('employee_id, amount, settled').eq('is_advance', true).not('employee_id', 'is', null);
+      .select('employee_id, amount, settled, status').eq('is_advance', true).not('employee_id', 'is', null);
     const balances = {};
     (advances || []).forEach((a) => {
-      if (a.settled) return;
+      if (a.settled || a.status !== 'approved') return;
       balances[a.employee_id] = (balances[a.employee_id] || 0) + Number(a.amount || 0);
     });
 
@@ -205,7 +208,9 @@ router.post('/:id/advance', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── GET /api/employees/:id/advances — one employee's advance history
+// ── GET /api/employees/:id/advances — one employee's advance history (includes
+// fines, approved or still pending — both are is_advance=true rows, see POST
+// /:id/fine below; status distinguishes them for display)
 router.get('/:id/advances', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
@@ -221,6 +226,92 @@ router.get('/:id/advances', async (req, res) => {
       .select('*').eq('employee_id', req.params.id).eq('is_advance', true).order('entry_date', { ascending: false });
     if (error) throw error;
     res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/employees/:id/fine — impose a fine on an employee, with a
+// mandatory reason. Unlike an advance, this does NOT take effect immediately:
+// it's inserted as a books_ledger row (is_advance=true, category='staff_fine')
+// with status='pending', so it's invisible to outstanding_advance and payroll's
+// advance deduction (both now filter on status='approved' — see the GET /
+// and GET /:id handlers above and payroll.js) until an owner approves it via
+// PATCH /fines/:id/approve below. Same scoped-manager gating as /advance.
+router.post('/:id/fine', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
+    if (!user) return;
+    const { amount, reason, entry_date } = req.body;
+    if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'A positive amount is required' });
+    if (!reason || !reason.trim()) return res.status(400).json({ error: 'A reason is required to impose a fine' });
+
+    const { data: emp, error: empErr } = await supabase.from('employees').select('id, name, department').eq('id', req.params.id).single();
+    if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
+
+    const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
+    if (scope && emp.department !== scope) return res.status(403).json({ error: "Cannot impose a fine on an employee outside your own outlet/department" });
+
+    const { data, error } = await supabase.from('books_ledger').insert({
+      entry_date: entry_date || new Date().toISOString().slice(0, 10),
+      submitted_by: user.name,
+      description: `Fine for ${emp.name} — ${reason.trim()}`,
+      category: 'staff_fine', amount: Number(amount), payment_mode: null, vendor_or_recipient: null,
+      is_advance: true, advance_to: emp.name, employee_id: emp.id, status: 'pending',
+      outlet_id: null, source: 'manual', raw_message: null, created_by: user.id,
+    }).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/employees/fines/pending — every fine awaiting owner approval,
+// across every department, for the P&L "Fines" pill. Owner-level only.
+router.get('/fines/pending', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+    const { data, error } = await supabase.from('books_ledger')
+      .select('*, employees(name, department, designation)')
+      .eq('category', 'staff_fine').eq('status', 'pending').order('entry_date', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/employees/fines/:id/approve — owner approves a pending fine; it
+// immediately becomes a live outstanding advance (counted in outstanding_advance
+// and swept into the employee's next payroll finalize, same as any other advance).
+router.patch('/fines/:id/approve', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+    const { data: fine } = await supabase.from('books_ledger').select('id, category, status').eq('id', req.params.id).single();
+    if (!fine || fine.category !== 'staff_fine') return res.status(404).json({ error: 'Fine not found' });
+    if (fine.status !== 'pending') return res.status(400).json({ error: `This fine is already ${fine.status}` });
+
+    const { data, error } = await supabase.from('books_ledger')
+      .update({ status: 'approved', approved_by: user.name, approved_at: new Date().toISOString() })
+      .eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/employees/fines/:id/reject — owner rejects a pending fine; it
+// never becomes an advance and stays permanently excluded (status filter).
+router.patch('/fines/:id/reject', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+    const { data: fine } = await supabase.from('books_ledger').select('id, category, status').eq('id', req.params.id).single();
+    if (!fine || fine.category !== 'staff_fine') return res.status(404).json({ error: 'Fine not found' });
+    if (fine.status !== 'pending') return res.status(400).json({ error: `This fine is already ${fine.status}` });
+
+    const { data, error } = await supabase.from('books_ledger')
+      .update({ status: 'rejected', approved_by: user.name, approved_at: new Date().toISOString(), rejection_note: req.body.note || null })
+      .eq('id', req.params.id).select('*').single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -370,7 +461,7 @@ router.get('/:id', async (req, res) => {
       return { ...d, url: signed?.signedUrl || null };
     }));
 
-    const outstanding_advance = (advances || []).filter((a) => !a.settled).reduce((s, a) => s + Number(a.amount || 0), 0);
+    const outstanding_advance = (advances || []).filter((a) => !a.settled && a.status === 'approved').reduce((s, a) => s + Number(a.amount || 0), 0);
     res.json({ ...emp, documents, advances: advances || [], outstanding_advance });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

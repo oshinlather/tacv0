@@ -177,11 +177,24 @@ if (rows.length === 0) {
 return res.status(400).json({ error: 'No valid rows found in CSV' });
 }
 
-// Get the date from first row
+// Get the date from first row (kept for the response only — see below for why the
+// delete/recompute steps no longer rely on this alone).
 const uploadDate = rows[0].sale_date;
+// A CSV can legitimately span many days (a "download whole month" PetPooja export) —
+// used to delete-then-replace only rows[0]'s single date before inserting EVERY row in
+// the file, so every OTHER date in the file just got inserted on top of whatever
+// already existed for it — silently duplicating (double-counting) revenue for any date
+// in the file that already had data, exactly the case a re-upload to backfill/fix a
+// range hits hardest. Now scoped to every distinct (date × outlet) pair actually
+// present in the file instead — a plain .in(dates).in(outlets) is a cartesian match
+// rather than exact pairs, but real exports are one outlet per file, so in practice
+// this deletes exactly "every date this file covers, for the outlet(s) it covers" and
+// nothing belonging to another outlet that happened to share a date.
+const uploadDates = [...new Set(rows.map(r => r.sale_date))];
+const uploadOutlets = [...new Set(rows.map(r => r.outlet_code))];
 
-// Delete existing data for this date (re-upload replaces)
-await supabase.from('daily_sales').delete().eq('sale_date', uploadDate);
+// Delete existing data for these dates/outlets (re-upload replaces)
+await supabase.from('daily_sales').delete().in('sale_date', uploadDates).in('outlet_code', uploadOutlets);
 
 // Insert in batches of 500
 const batchSize = 500;
@@ -193,15 +206,21 @@ if (error) throw error;
 inserted += batch.length;
 }
 
-// After upload, trigger P&L + audit computation
-await computeDailyPnL(uploadDate);
-await computeRMAudit(uploadDate);
+// After upload, trigger P&L + audit computation for every date this file touched, not
+// just the first row's — otherwise a multi-day upload silently left every date but the
+// first showing stale (pre-upload) computed P&L/audit numbers until something else
+// happened to recompute them.
+for (const d of uploadDates) {
+await computeDailyPnL(d);
+await computeRMAudit(d);
+}
 
 res.json({
 success: true,
 date: uploadDate,
+dates: uploadDates,
 rows_inserted: inserted,
-outlets: [...new Set(rows.map(r => r.outlet_code))],
+outlets: uploadOutlets,
 });
 } catch (err) {
 console.error('Sales upload error:', err);

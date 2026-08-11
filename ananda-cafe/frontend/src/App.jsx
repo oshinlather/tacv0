@@ -837,7 +837,9 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
             {emp.advances.slice(0, 10).map((a) => (
               <div key={a.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0", borderBottom: "1px solid #F0F0EC" }}>
                 <span>{a.entry_date}{a.description ? ` · ${a.description}` : ""}</span>
-                <span style={{ fontWeight: 700, color: a.settled ? "#16A34A" : "#B45309" }}>{fmt(a.amount)}{a.settled ? " ✓ settled" : ""}</span>
+                <span style={{ fontWeight: 700, color: a.status === "pending" ? "#999" : a.status === "rejected" ? "#DC2626" : a.settled ? "#16A34A" : "#B45309" }}>
+                  {fmt(a.amount)}{a.status === "pending" ? " ⏳ pending approval" : a.status === "rejected" ? " ✗ rejected" : a.settled ? " ✓ settled" : ""}
+                </span>
               </div>
             ))}
           </div>
@@ -1001,6 +1003,12 @@ const TeamPanel = ({ onBack }) => {
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
   const [advanceSaving, setAdvanceSaving] = useState(false);
+  // Impose Fine — like an advance, but requires a reason and doesn't take effect
+  // until the owner approves it from the P&L "Fines" pill (see FinesPanel).
+  const [fineId, setFineId] = useState(null);
+  const [fineAmount, setFineAmount] = useState("");
+  const [fineReason, setFineReason] = useState("");
+  const [fineSaving, setFineSaving] = useState(false);
 
   const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -1028,6 +1036,20 @@ const TeamPanel = ({ onBack }) => {
       load();
     } catch (e) { alert("Error: " + e.message); }
     finally { setAdvanceSaving(false); }
+  };
+
+  const openFine = (id) => { setFineId(id); setFineAmount(""); setFineReason(""); };
+  const imposeFine = async (id) => {
+    if (!fineAmount || Number(fineAmount) <= 0) { alert("Enter an amount"); return; }
+    if (!fineReason.trim()) { alert("A reason is required to impose a fine"); return; }
+    setFineSaving(true);
+    try {
+      await api.imposeEmployeeFine(id, { amount: Number(fineAmount), reason: fineReason.trim() });
+      setFineId(null); setFineAmount(""); setFineReason("");
+      alert("Fine submitted — pending owner approval");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setFineSaving(false); }
   };
 
   const openEdit = (emp) => {
@@ -1100,10 +1122,21 @@ const TeamPanel = ({ onBack }) => {
                 <button onClick={() => setAdvanceId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               </div>
             </div>
+          ) : fineId === emp.id ? (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+              <input type="number" inputMode="numeric" placeholder="₹ amount" value={fineAmount} onChange={(e) => setFineAmount(e.target.value)} autoFocus style={inputStyle} />
+              <input placeholder="Reason (required)" value={fineReason} onChange={(e) => setFineReason(e.target.value)} style={inputStyle} />
+              <div style={{ fontSize: 10.5, color: "#999", marginBottom: 8 }}>Goes to the owner for approval before it's deducted as an advance.</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => imposeFine(emp.id)} disabled={fineSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{fineSaving ? "⏳..." : "✓ Submit"}</button>
+                <button onClick={() => setFineId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+            </div>
           ) : (
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
               <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
               <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+              <button onClick={() => openFine(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
             </div>
           )}
         </div>
@@ -2627,6 +2660,70 @@ const CLOSING_CATEGORY_META = [
 
 // syncDate: optional { selDay, selMonth } — when passed (always, from Daily P&L's own
 // pills), reuses that date instead of showing a second, redundant date picker here.
+// Owner's approval queue for fines imposed by outlet/BK managers on their team
+// (TeamPanel's "🚩 Impose Fine"). A fine is a books_ledger row (is_advance=true,
+// category='staff_fine') sitting at status='pending' — invisible to
+// outstanding_advance and payroll until approved here (see employees.js and
+// payroll.js for the status='approved' filters). This is the first
+// submit-then-owner-approves workflow in the app, so nothing to reuse visually —
+// simple pending-list-with-two-buttons, same card language as the rest of P&L.
+const FinesPanel = () => {
+  const [fines, setFines] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState(null);
+  const [rejectId, setRejectId] = useState(null);
+  const [rejectNote, setRejectNote] = useState("");
+
+  const load = () => { api.getPendingFines().then(setFines).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const approve = async (id) => {
+    setBusyId(id);
+    try { await api.approveFine(id); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+  const reject = async (id) => {
+    setBusyId(id);
+    try { await api.rejectFine(id, rejectNote || null); setRejectId(null); setRejectNote(""); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyId(null); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+  if (fines.length === 0) return <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No fines pending approval</div>;
+
+  return (
+    <div>
+      {fines.map((f) => (
+        <div key={f.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #FECACA", padding: "12px 14px", marginBottom: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{f.employees?.name || f.advance_to || "Unknown"}{f.employees?.designation && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {f.employees.designation}</span>}</div>
+            <span style={{ fontSize: 14, fontWeight: 800, color: "#DC2626", fontFamily: "'JetBrains Mono', monospace" }}>₹{fmt(f.amount)}</span>
+          </div>
+          <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{f.description}</div>
+          <div style={{ fontSize: 10.5, color: "#AAA", marginTop: 2 }}>Submitted by {f.submitted_by} · {f.entry_date}{f.employees?.department ? ` · ${EMPLOYEE_DEPARTMENTS.find((d) => d.id === f.employees.department)?.label || f.employees.department}` : ""}</div>
+
+          {rejectId === f.id ? (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+              <input placeholder="Rejection note (optional)" value={rejectNote} onChange={(e) => setRejectNote(e.target.value)} autoFocus style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => reject(f.id)} disabled={busyId === f.id} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{busyId === f.id ? "⏳..." : "✓ Confirm Reject"}</button>
+                <button onClick={() => { setRejectId(null); setRejectNote(""); }} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={() => approve(f.id)} disabled={busyId === f.id} style={{ flex: 1, padding: 6, borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{busyId === f.id ? "⏳..." : "✅ Approve"}</button>
+              <button onClick={() => setRejectId(f.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚫 Reject</button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const MissingPunches = ({ selOutlet, syncDate }) => {
   const [intSelDay, setIntSelDay] = useState(1); // 0=Today, 1=Yesterday (default)
   const [intSelMonth, setIntSelMonth] = useState(null); // 'YYYY-MM', or null for day pills
@@ -3273,6 +3370,9 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // pill is meaningless on a locked franchise view and hidden there too.
           ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
           ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
+          // Fines — outlet/BK managers impose these from Team, but they sit pending
+          // here until an owner approves/rejects; same internal-HR gating as Attendance.
+          ...(lockedOutlet ? [] : [{ key: "fines", label: "🚩 Fines" }]),
           // Challans and Demand vs Closing are both useful to a franchise partner too —
           // it's their own outlet's numbers either way, the shared outlet pill just
           // narrows to it (locked, so there's nothing else to pick).
@@ -4007,6 +4107,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       {pnlTab === "attendance" && !lockedOutlet && (
         selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} selOutlet={selOutlet} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
+      {pnlTab === "fines" && !lockedOutlet && <FinesPanel />}
       {pnlTab === "flags" && !lockedOutlet && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
@@ -11509,7 +11610,12 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
     try {
       const dateToUse = useCustomDate ? uploadDate : null;
       const result = await api.uploadSalesCSV(file, dateToUse);
-      setUploadResult({ ok: true, msg: `✅ Uploaded ${result.rows_inserted} rows for ${result.date}` });
+      // A file can span many days (a "download whole month" PetPooja export) — result.dates
+      // covers every one of them (each fully deleted-and-replaced, not just the first row's
+      // date), so the summary should say so instead of implying only one date landed.
+      const dates = result.dates || [result.date];
+      const span = dates.length > 1 ? `${[...dates].sort()[0]} → ${[...dates].sort().slice(-1)[0]} (${dates.length} days)` : result.date;
+      setUploadResult({ ok: true, msg: `✅ Uploaded ${result.rows_inserted} rows for ${span}${result.outlets ? ` — ${result.outlets.join(", ")}` : ""}` });
       loadSales();
     } catch (err) {
       setUploadResult({ ok: false, msg: `❌ ${err.message}` });
