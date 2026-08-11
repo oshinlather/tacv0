@@ -10293,7 +10293,7 @@ const OutletMgr = ({ onBack }) => {
                   see what's already on the shelf while deciding how much to order — see
                   the recentClosing fetch above. */}
               {onHand !== undefined && (
-                <div style={{ fontSize: 10, color: "#999" }}>On hand ({recentClosing.date === today() ? "today" : recentClosing.date === istDateAgo(1) ? "yesterday" : recentClosing.date}): <strong style={{ color: "#555" }}>{onHand} {onHandUnit}</strong></div>
+                <div style={{ fontSize: 10, color: "#999" }}>On hand: <strong style={{ color: "#555" }}>{onHand} {onHandUnit}</strong></div>
               )}
             </div>
             <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} allowBatch={false} />
