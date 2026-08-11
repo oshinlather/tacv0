@@ -3515,6 +3515,10 @@ router.get('/pnl/live/:date', async (req, res) => {
       buildCostingContext(),
     ]);
     const bkPurchaseByOutlet = await computeBkPurchaseByOutlet(date, date, bkPurchaseCostingContext);
+    // Denominator for BK Fixed Cost's proportional split below (see the "BK FIXED COST
+    // SHARE" block inside the per-outlet loop) — total across the same 6-outlet set the
+    // equal split used to divide by, computed once here rather than per-outlet iteration.
+    const totalBkPurchaseAllOutlets = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'].reduce((s, oid) => s + (bkPurchaseByOutlet[oid] || 0), 0);
     const rateMap = {};
     (rates || []).forEach(r => { rateMap[r.id] = r; });
     const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
@@ -3870,12 +3874,17 @@ router.get('/pnl/live/:date', async (req, res) => {
         monthly: Number(f.amount), daily: Math.round(Number(f.amount) / daysInMonth)
       }));
 
-      // ── BK FIXED COST SHARE ──
+      // ── BK FIXED COST SHARE — proportional to how much each outlet actually bought
+      // from BK today (bk_purchase), not split equally. An outlet that didn't buy from
+      // BK today carries none of BK's fixed cost today; an outlet that bought more
+      // carries more. Falls back to an equal split only on a day with zero BK purchases
+      // everywhere (nothing to prorate against) — same fallback Finance's outlet-pnl uses.
       const bkFixed = (fixedCosts || []).filter(f => f.outlet_id === 'bk');
       const bkMonthlyFixed = bkFixed.reduce((sum, f) => sum + Number(f.amount || 0), 0);
       const bkDailyFixed = Math.round(bkMonthlyFixed / daysInMonth);
-      // Split BK fixed cost equally across 4 outlets
-      const bkSharePerOutlet = Math.round(bkDailyFixed / outletIds.length);
+      const bkSharePerOutlet = totalBkPurchaseAllOutlets > 0
+        ? Math.round(bkDailyFixed * (bkPurchaseByOutlet[oid] || 0) / totalBkPurchaseAllOutlets)
+        : Math.round(bkDailyFixed / outletIds.length);
 
       // ── TOTALS ──
       const totalExpense = totalVariableCost + dailyFixedCost + bkSharePerOutlet + purchasesExclColdDrink;

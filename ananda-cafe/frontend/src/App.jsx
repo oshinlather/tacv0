@@ -3508,6 +3508,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                       factors in closing stock/wastage). Kept as its own line so the two never
                       get confused for each other. */}
                   <div style={{ fontSize: 9, color: "#888" }}>BK Purchase: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_purchase || 0)}</strong></div>
+                  {/* BK's own rent/salary/etc, split proportional to each outlet's BK
+                      Purchase above (not equally) — an outlet that bought nothing from BK
+                      today carries none of it. Already folded into Expense above; shown
+                      again here just so the size of that slice is visible on its own. */}
+                  <div style={{ fontSize: 9, color: "#888" }}>BK Fixed Share: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_share || 0)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                     {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                   </strong>{netPnlCalc && <span style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}> {netPnlCalc}</span>}</div>
@@ -3993,6 +3998,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                       <div style={{ fontSize: 9, color: "#888" }}>Effective Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888" }}>BK Purchase: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_purchase || 0)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>BK Fixed Share: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_share || 0)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                         {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                       </strong></div>
@@ -15097,6 +15103,7 @@ const InventoryLedger = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const FINANCE_EXPENSE_COLS = [
   { key: "bk_purchase", label: "BK Purchase" },
+  { key: "bk_fixed_share", label: "BK Fixed Share" },
   { key: "rent", label: "Rent" },
   { key: "salary", label: "Salary" },
   { key: "electricity", label: "Electricity" },
@@ -15141,7 +15148,7 @@ const FinancePnL = () => {
   return (<div>
     <div style={{ marginBottom: 14 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💵 Outlet-wise P&L</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus BK Purchase (what was dispatched, at rate-card cost) and fixed costs = Net P&L.</p>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus BK Purchase (what was dispatched, at rate-card cost), BK Fixed Share (BK's own rent/salary/etc, split proportional to each outlet's BK Purchase — not equally), and fixed costs = Net P&L.</p>
     </div>
 
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
@@ -15225,7 +15232,7 @@ const FinancePnL = () => {
         </div>
       </div>
     )}
-    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/Transport/Water/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above; any configured cost head not in this list (Internet, Mala Decoration, Staff Room Rent, Waste Collection, etc.) rolls into Misc. GST has no entries yet — add a "GST" fixed cost head to populate that column.</p>
+    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/Transport/Water/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above; any configured cost head not in this list (Internet, Mala Decoration, Staff Room Rent, Waste Collection, etc.) rolls into Misc. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's BK Purchase — an outlet that bought nothing from BK this period carries none of it.</p>
   </div>);
 };
 

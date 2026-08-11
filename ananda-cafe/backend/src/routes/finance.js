@@ -7,6 +7,12 @@
 //     Today Closing "actual consumption" formula RM Audit/Daily P&L use. The owner asked
 //     for this specific simplification: "i dont want to focus on closing and wastage,
 //     its simple what was total ordered from base kitchen".)
+//   − BK Fixed Cost Share (Base Kitchen's OWN rent/salary/etc — outlet_id='bk' rows in
+//     fixed_costs — prorated across the range same as every other fixed cost, then split
+//     across outlets proportional to each outlet's BK Purchase above, not split equally.
+//     An outlet that bought nothing from BK this period carries none of BK's fixed cost;
+//     an outlet that bought more carries more. Falls back to an equal split only when
+//     total BK Purchase across every outlet is zero — nothing to prorate against.)
 //   − Rent, Salary, Electricity, GST, Transport, Water, Misc (from the same fixed_costs
 //     table FixedCostsPanel already writes to — this view just pivots those rows into
 //     named columns and prorates each row's monthly amount across the selected range)
@@ -81,12 +87,21 @@ router.get("/outlet-pnl", async (req, res) => {
       supabase.from("app_config").select("value").eq("key", "delivery_commission_pct").maybeSingle(),
       computeDailySalesRevenue({ from, to }),
       buildCostingContext(),
-      supabase.from("fixed_costs").select("*").eq("active", true).in("outlet_id", OUTLET_IDS),
+      // Fetch BK's own fixed costs (outlet_id='bk') alongside the 6 outlets' — previously
+      // excluded by the .in(OUTLET_IDS) filter, so BK's rent/salary/etc never showed up
+      // anywhere in this view at all.
+      supabase.from("fixed_costs").select("*").eq("active", true).in("outlet_id", [...OUTLET_IDS, "bk"]),
     ]);
     const commissionPct = commissionCfg?.value ? Number(JSON.parse(commissionCfg.value)) : 40;
     const bkPurchaseByOutlet = await computeBkPurchaseByOutlet(from, to, costingContext);
 
     const round = (n) => Math.round(n || 0);
+
+    // BK's own fixed cost, prorated across [from, to] same as every other fixed_costs
+    // row, then divided proportionally by each outlet's BK Purchase share below.
+    const bkFixedRows = (fixedCostRows || []).filter((f) => f.outlet_id === "bk");
+    const bkFixedTotalProrated = bkFixedRows.reduce((s, f) => s + prorateFixedAmount(Number(f.amount) || 0, from, to), 0);
+    const totalBkPurchaseAllOutlets = OUTLET_IDS.reduce((s, oid) => s + (bkPurchaseByOutlet[oid] || 0), 0);
     const outlets = OUTLET_IDS.map((oid) => {
       const sales = salesByOutlet[oid] || {};
       const swiggy = Number(sales.swiggy_sale || 0);
@@ -104,6 +119,9 @@ router.get("/outlet-pnl", async (req, res) => {
       const effectiveSale = round(storeSale + netDeliverySale - complimentary);
 
       const bkPurchase = round(bkPurchaseByOutlet[oid] || 0);
+      const bkFixedShare = round(totalBkPurchaseAllOutlets > 0
+        ? bkFixedTotalProrated * (bkPurchaseByOutlet[oid] || 0) / totalBkPurchaseAllOutlets
+        : bkFixedTotalProrated / OUTLET_IDS.length);
 
       const fixed = { rent: 0, salary: 0, electricity: 0, gst: 0, transport: 0, water: 0, misc: 0 };
       (fixedCostRows || []).filter((f) => f.outlet_id === oid).forEach((f) => {
@@ -113,7 +131,7 @@ router.get("/outlet-pnl", async (req, res) => {
       Object.keys(fixed).forEach((k) => { fixed[k] = round(fixed[k]); });
       const totalFixed = Object.values(fixed).reduce((s, v) => s + v, 0);
 
-      const totalExpense = bkPurchase + totalFixed;
+      const totalExpense = bkPurchase + bkFixedShare + totalFixed;
       const netPnl = round(effectiveSale - totalExpense);
       const marginPct = effectiveSale > 0 ? Math.round((netPnl / effectiveSale) * 1000) / 10 : null;
 
@@ -121,12 +139,12 @@ router.get("/outlet-pnl", async (req, res) => {
         outlet_id: oid,
         total_sale: round(totalSale), delivery_sale: round(deliverySale),
         delivery_commission: deliveryCommission, effective_sale: effectiveSale,
-        bk_purchase: bkPurchase, ...fixed,
+        bk_purchase: bkPurchase, bk_fixed_share: bkFixedShare, ...fixed,
         total_expense: round(totalExpense), net_pnl: netPnl, margin_pct: marginPct,
       };
     });
 
-    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "rent", "salary", "electricity", "gst", "transport", "water", "misc", "total_expense", "net_pnl"];
+    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "bk_fixed_share", "rent", "salary", "electricity", "gst", "transport", "water", "misc", "total_expense", "net_pnl"];
     const totals = { outlet_id: "all" };
     SUM_KEYS.forEach((k) => { totals[k] = round(outlets.reduce((s, o) => s + o[k], 0)); });
     totals.margin_pct = totals.effective_sale > 0 ? Math.round((totals.net_pnl / totals.effective_sale) * 1000) / 10 : null;
