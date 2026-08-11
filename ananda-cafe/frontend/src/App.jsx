@@ -8220,6 +8220,12 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   // sums across a month into one editable number), so this stays empty in month view.
   const [dayEnrichedItems, setDayEnrichedItems] = useState({}); // { [outlet_id]: { [item_id]: fullItem } }
   const [allDishes, setAllDishes] = useState([]);
+  // COGS Score per outlet — same "% of items within 5% of what the recipe called for"
+  // methodology as the outlet Performance Dashboard's own COGS Score card, computed
+  // straight off the same RM Audit response already fetched below. Single-day only,
+  // same reason should-consume/dayEnrichedItems are — a month has no one variance_pct
+  // to score against.
+  const [cogsScoreByOutlet, setCogsScoreByOutlet] = useState({}); // { [outlet_id]: { score, winners, total } }
   useEffect(() => {
     if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
       api.getRecipes(true).then((r) => setAllDishes(r || [])).catch(() => setAllDishes([]));
@@ -8299,14 +8305,14 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
               }
             });
           }
-          return pnl?.pnl || [];
+          return { pnlRows: pnl?.pnl || [], audit };
         })
     )).then((results) => {
       const totals = {}; // outlet_id -> { effective_sale }
       const categoryTotals = {}; // outlet_id -> { catId -> { total, items: { item_id -> { name, unit, cost } } } }
       const enriched = {}; // outlet_id -> { item_id -> full stock item }, single-day only
-      results.forEach((pnl) => {
-        pnl.forEach((p) => {
+      results.forEach(({ pnlRows }) => {
+        pnlRows.forEach((p) => {
           if (p.outlet_id === "all") return;
           if (!totals[p.outlet_id]) totals[p.outlet_id] = { effective_sale: 0 };
           totals[p.outlet_id].effective_sale += p.effective_sale || 0;
@@ -8327,6 +8333,16 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
       });
       setMonthData({ totals, categoryTotals });
       setDayEnrichedItems(enriched);
+
+      const scoreByOutlet = {};
+      if (isSingleDay) {
+        (results[0]?.audit?.outlets || []).forEach((o) => {
+          const items = (o.items || []).filter((it) => it.variance_pct != null);
+          const winners = items.filter((it) => Math.abs(it.variance_pct) < 5);
+          scoreByOutlet[o.outlet_id] = items.length > 0 ? { score: Math.round(winners.length / items.length * 100), winners: winners.length, total: items.length } : null;
+        });
+      }
+      setCogsScoreByOutlet(scoreByOutlet);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -8458,6 +8474,33 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
           single day/month. */}
       {!syncDate && cogsView !== "report" && (
         <DateRangeDropdown selDay={selDay} setSelDay={setIntSelDay} selMonth={selMonth} setSelMonth={setIntSelMonth} monthOptions={monthOptions} days={7} onChange={() => setDrillCat(null)} />
+      )}
+
+      {/* COGS Score — one per outlet, same "% of items within 5% of the recipe"
+          methodology as the outlet Performance Dashboard's own COGS Score card. Single-day
+          only (a month has no one variance_pct to score against — same reason the item-wise
+          drill-down's detail box is single-day only too), and only on the two cross-outlet
+          tabs this comparison actually belongs on. */}
+      {!selMonth && !loading && hasAnyData && (cogsView === "table" || cogsView === "leakage") && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: "#999", fontWeight: 700, marginBottom: 8 }}>💰 COGS Score — {periodLabel} · % of items within 5% of the recipe</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8 }}>
+            {outletsWithData.map((o) => {
+              const s = cogsScoreByOutlet[o.id];
+              const score = s?.score ?? null;
+              const color = score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
+              const bg = score == null ? "#FAFAF8" : score >= COGS_SCORE_THRESHOLDS.good ? "#F0FDF4" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FFFBEB" : "#FEF2F2";
+              const border = score == null ? "#E8E8E4" : score >= COGS_SCORE_THRESHOLDS.good ? "#BBF7D0" : score >= COGS_SCORE_THRESHOLDS.ok ? "#FDE68A" : "#FECACA";
+              return (
+                <div key={o.id} style={{ background: bg, borderRadius: 10, border: `1px solid ${border}`, padding: "10px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#999", fontWeight: 700 }}>{o.short}</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color }}>{score != null ? score : "—"}</div>
+                  <div style={{ fontSize: 8, color: "#999" }}>{s ? `${s.winners}/${s.total} within 5%` : "no data"}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {cogsView === "report" && <CogsReportSection lockedOutlet={lockedOutlet} />}
@@ -12110,7 +12153,7 @@ const OutletPerformanceDashboard = ({ outlet }) => {
           <ScoreCard tabKey="punch" icon="✏️" label="Punch Score" score={punchScore}
             sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data"} />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
-            sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} items within 5%` : "No consumption data"} />
+            sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} within 5% · ${actualPct != null ? actualPct.toFixed(1) + "% COGS" : "—"}` : "No consumption data"} />
           <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" score={disciplineScore}
             sub={selfScore != null || teamScore != null ? `Self ${selfScore ?? "—"} · Team ${teamScore ?? "—"}` : "No attendance data"} />
           <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
@@ -12124,6 +12167,20 @@ const OutletPerformanceDashboard = ({ outlet }) => {
 
       {activeTab === "cogs" && (
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16 }}>
+          {(actualPct != null || idealPct != null) && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, background: "#FEF2F2", borderRadius: 10, border: "1px solid #FECACA", padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#991B1B", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Actual COGS %</div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{actualPct != null ? `${actualPct.toFixed(1)}%` : "—"}</div>
+                <div style={{ fontSize: 9, color: "#999", marginTop: 2 }}>of effective sale — {fmt(effectiveSale)}</div>
+              </div>
+              <div style={{ flex: 1, background: "#EFF6FF", borderRadius: 10, border: "1px solid #BFDBFE", padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: "#1E40AF", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Ideal COGS %</div>
+                <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{idealPct != null ? `${idealPct.toFixed(1)}%` : "—"}</div>
+                <div style={{ fontSize: 9, color: "#999", marginTop: 2 }}>recipe × today's sales</div>
+              </div>
+            </div>
+          )}
           <RMAuditPanel lockedOutlet={outlet} />
         </div>
       )}
