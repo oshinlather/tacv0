@@ -29,6 +29,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 const ATTENDANCE_STATUSES = ['present', 'absent', 'half_day', 'leave', 'holiday'];
 const DOC_TYPES = ['aadhar', 'pan', 'police_verification', 'offer_letter', 'id_card'];
 const DOC_BUCKET = 'employee-docs';
+// A scoped manager may upload/view only these two — the ones they'd realistically
+// be collecting from their own new hires in person. PAN/offer letter/ID card stay
+// owner-only, same as salary/bank data.
+const SCOPED_DOC_TYPES = ['aadhar', 'police_verification'];
 
 const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef'];
 const SCOPED_MANAGER_ROLES = ['outlet_mgr', 'store_mgr', 'bk_manager'];
@@ -471,17 +475,24 @@ router.get('/:id', async (req, res) => {
 // private 'employee-docs' bucket — signed URLs only, never a public link,
 // since these are ID-proof scans. Re-uploading the same doc_type overwrites
 // the record (unique on employee_id+doc_type) and best-effort deletes the
-// previous file from storage.
+// previous file from storage. Scoped managers can upload for their own
+// department's employees, but only aadhar/police_verification (SCOPED_DOC_TYPES) —
+// everything else (PAN, offer letter, ID card) stays owner-only.
 router.post('/:id/documents', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
     const { doc_type, base64, file_name } = req.body;
     if (!doc_type || !DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: `doc_type must be one of: ${DOC_TYPES.join(', ')}` });
     if (!base64) return res.status(400).json({ error: 'base64 file data is required' });
 
-    const { data: emp } = await supabase.from('employees').select('id').eq('id', req.params.id).single();
+    const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
+    if (scope && !SCOPED_DOC_TYPES.includes(doc_type)) return res.status(403).json({ error: `You can only upload: ${SCOPED_DOC_TYPES.join(', ')}` });
+
+    const { data: emp } = await supabase.from('employees').select('id, department').eq('id', req.params.id).single();
     if (!emp) return res.status(404).json({ error: 'Employee not found' });
+    if (scope && emp.department !== scope) return res.status(403).json({ error: "Cannot upload a document for an employee outside your own outlet/department" });
 
     const match = /^data:(.+);base64,(.+)$/.exec(base64);
     const contentType = match ? match[1] : 'application/octet-stream';
@@ -505,6 +516,34 @@ router.post('/:id/documents', async (req, res) => {
 
     const { data: signed } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(storagePath, 86400);
     res.json({ ...data, url: signed?.signedUrl || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/employees/:id/documents — lightweight doc list (with signed URLs)
+// for the scoped Team edit form, so it can show "already uploaded" state without
+// pulling the owner-only GET /:id (which also returns salary/bank data). A
+// scoped manager only ever sees the doc types they're allowed to manage.
+router.get('/:id/documents', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
+    if (!user) return;
+    const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
+
+    const { data: emp } = await supabase.from('employees').select('id, department').eq('id', req.params.id).single();
+    if (!emp) return res.status(404).json({ error: 'Employee not found' });
+    if (scope && emp.department !== scope) return res.status(403).json({ error: "Not your employee" });
+
+    let query = supabase.from('employee_documents').select('*').eq('employee_id', req.params.id);
+    if (scope) query = query.in('doc_type', SCOPED_DOC_TYPES);
+    const { data: docs, error } = await query;
+    if (error) throw error;
+
+    const documents = await Promise.all((docs || []).map(async (d) => {
+      const { data: signed } = await supabase.storage.from(DOC_BUCKET).createSignedUrl(d.storage_path, 86400);
+      return { ...d, url: signed?.signedUrl || null };
+    }));
+    res.json(documents);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

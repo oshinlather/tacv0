@@ -285,6 +285,7 @@ const api = {
   // Employee Profile (particulars + KYC documents)
   getEmployee: (id) => get(`/api/employees/${id}`),
   uploadEmployeeDoc: (id, data) => post(`/api/employees/${id}/documents`, data),
+  getEmployeeDocuments: (id) => get(`/api/employees/${id}/documents`),
   // Monthly Payroll
   getPayroll: (month) => get("/api/payroll", { month }),
   setEmployeeOT: (data) => post("/api/payroll/ot", data),

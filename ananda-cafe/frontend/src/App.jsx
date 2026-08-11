@@ -999,6 +999,10 @@ const TeamPanel = ({ onBack }) => {
   const [editJoiningDate, setEditJoiningDate] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editSaving, setEditSaving] = useState(false);
+  // KYC docs (Aadhar/Police Verification only — see SCOPED_DOC_TYPES on the
+  // backend) uploadable straight from the edit form, no separate profile screen.
+  const [editDocs, setEditDocs] = useState([]);
+  const [uploadingDoc, setUploadingDoc] = useState(null);
   const [advanceId, setAdvanceId] = useState(null);
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
@@ -1055,6 +1059,8 @@ const TeamPanel = ({ onBack }) => {
   const openEdit = (emp) => {
     setEditId(emp.id); setEditName(emp.name || ""); setEditDesignation(emp.designation || "");
     setEditPhone(emp.phone || ""); setEditJoiningDate(emp.joining_date || ""); setEditActive(emp.active !== false);
+    setEditDocs([]);
+    api.getEmployeeDocuments(emp.id).then(setEditDocs).catch(() => setEditDocs([]));
   };
   const saveEdit = async (id) => {
     if (!editName || !editDesignation) { alert("Name and designation required"); return; }
@@ -1065,6 +1071,14 @@ const TeamPanel = ({ onBack }) => {
       load();
     } catch (e) { alert("Error: " + e.message); }
     finally { setEditSaving(false); }
+  };
+  const uploadEditDoc = async (id, docType, base64, fileName) => {
+    setUploadingDoc(docType);
+    try {
+      await api.uploadEmployeeDoc(id, { doc_type: docType, base64, file_name: fileName });
+      api.getEmployeeDocuments(id).then(setEditDocs).catch(() => {});
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setUploadingDoc(null); }
   };
 
   return (<div>
@@ -1093,7 +1107,8 @@ const TeamPanel = ({ onBack }) => {
             <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}{!emp.active && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700 }}> · Inactive</span>}</div>
             <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</span>
           </div>
-          <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
+          {emp.phone && <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>📞 {emp.phone}</div>}
+          <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}</div>
           {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
 
           {editId === emp.id ? (
@@ -1101,12 +1116,19 @@ const TeamPanel = ({ onBack }) => {
               <input placeholder="Name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus style={inputStyle} />
               <input placeholder="Designation" value={editDesignation} onChange={(e) => setEditDesignation(e.target.value)} style={inputStyle} />
               <input type="tel" placeholder="Phone (optional)" value={editPhone} onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
-              <input type="date" value={editJoiningDate} onChange={(e) => setEditJoiningDate(e.target.value)} style={inputStyle} />
               {/* Left/right pair, same as a demand UnitPicker toggle — not a checkbox, so
                   which state is currently selected is unambiguous at a glance. */}
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <button type="button" onClick={() => setEditActive(true)} style={{ flex: 1, padding: 8, borderRadius: 8, border: editActive ? "none" : "1px solid #E0E0DC", background: editActive ? "#16A34A" : "#fff", color: editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✅ Active</button>
                 <button type="button" onClick={() => setEditActive(false)} style={{ flex: 1, padding: 8, borderRadius: 8, border: !editActive ? "none" : "1px solid #E0E0DC", background: !editActive ? "#DC2626" : "#fff", color: !editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🚫 Inactive</button>
+              </div>
+              {/* KYC — only the two doc types a scoped manager is allowed to handle
+                  (backend enforces this too); PAN/offer letter/ID card stay owner-only. */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+                {KYC_DOC_TYPES.filter((cfg) => ["aadhar", "police_verification"].includes(cfg.id)).map((cfg) => {
+                  const doc = editDocs.find((d) => d.doc_type === cfg.id);
+                  return <KycDocSlot key={cfg.id} config={cfg} doc={doc} uploading={uploadingDoc === cfg.id} onUpload={(base64, fileName) => uploadEditDoc(emp.id, cfg.id, base64, fileName)} />;
+                })}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => saveEdit(emp.id)} disabled={editSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{editSaving ? "⏳..." : "✓ Save"}</button>
