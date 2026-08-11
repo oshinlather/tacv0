@@ -15784,6 +15784,12 @@ const FixedCostsPanel = () => {
   // Group by outlet
   const grouped = {};
   filteredCosts.forEach((c) => { if (!grouped[c.outlet_id]) grouped[c.outlet_id] = []; grouped[c.outlet_id].push(c); });
+  // An outlet with zero fixed-cost rows yet (S-14, GSID — never configured) would
+  // otherwise have no key in `grouped` at all, so its whole card — including the "+ Add"
+  // button that lives inside it — never rendered below, leaving no way to add the FIRST
+  // entry. Force the card to exist (empty) whenever a specific outlet is selected, so
+  // there's always an "+ Add" to click regardless of whether anything's been entered yet.
+  if (selOutlet && !grouped[selOutlet]) grouped[selOutlet] = [];
 
   const saveAmount = async (outletId, costHead) => {
     try {
