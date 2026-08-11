@@ -9136,11 +9136,22 @@ const OutletMgr = ({ onBack }) => {
   // undefined = not loaded yet, null = nothing submitted in the lookback window.
   const [recentClosing, setRecentClosing] = useState(undefined);
   useEffect(() => {
+    // Deliberately scoped to [outlet] only, not [outlet, screen] — refetching every time
+    // the Demand screen is (re-)entered would mean waiting on a network round-trip after
+    // every closing-stock submission before Demand becomes usable again, which is worse
+    // than the staleness it'd fix. One fetch per outlet session is the tradeoff.
     if (!outlet) return;
     setRecentClosing(undefined);
     api.getClosingStocks({ outlet_id: outlet, from: istDateAgo(6) }).then((rows) => {
-      const submitted = (rows || []).filter((r) => (r.status || "submitted") === "submitted").sort((a, b) => (a.date < b.date ? 1 : -1));
-      setRecentClosing(submitted[0] || null);
+      // Draft counts here, not just "submitted" — unlike P&L's consumed-material formula
+      // (where an unfinalized count feeding a financial number is a real problem), this is
+      // just a reference figure for a human deciding how much to order, and the Morning
+      // Demand lock below. Requiring a full Finalize & Submit — which is a separate manual
+      // step the outlet manager has to remember to come back and do after Chef/Bainmarry
+      // fill their sections — was locking managers out of ordering even when real
+      // closing-stock data had genuinely been entered that day.
+      const withData = (rows || []).filter((r) => r.items && Object.keys(r.items).length > 0).sort((a, b) => (a.date < b.date ? 1 : -1));
+      setRecentClosing(withData[0] || null);
     }).catch(() => setRecentClosing(null));
   }, [outlet]);
   // Morning Demand orders ahead for tomorrow (or, past midnight, today) — the manager
@@ -9463,6 +9474,12 @@ const OutletMgr = ({ onBack }) => {
           const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "draft" });
           setExistingRecord(result);
           clearWip(wipKey("closing", outlet, selectedDate));
+          // Same optimistic update as the manager's own submit below (recentClosing now
+          // counts drafts too, see the fetch above) — a Chef/Bainmarry section save is
+          // real closing-stock data even before the manager comes back to finalize it.
+          if (!recentClosing || selectedDate >= recentClosing.date) {
+            setRecentClosing({ date: selectedDate, items: result.items || scopedClosing, items_units: result.items_units || closingItemsUnits, status: "draft" });
+          }
           alert(`✅ Your section saved — the manager will see it when finalizing.`);
           setScreen("home");
         } else {
@@ -9470,6 +9487,15 @@ const OutletMgr = ({ onBack }) => {
           const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
           setSubs((p) => [e, ...p]); setLast(e);
           clearWip(wipKey("closing", outlet, selectedDate));
+          // Update recentClosing (which gates Morning Demand and the on-hand display)
+          // optimistically off this exact submission, instead of refetching — a fresh
+          // GET would fix the same staleness but cost every submission a network
+          // round-trip before Demand becomes usable again, which is worse than just
+          // trusting the response we already have in hand. Only advances the cache
+          // forward (never overwrites with an older back-dated submission).
+          if (!recentClosing || selectedDate >= recentClosing.date) {
+            setRecentClosing({ date: selectedDate, items: result.items || scopedClosing, items_units: result.items_units || closingItemsUnits, status: "submitted" });
+          }
           alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(scopedClosing).length} items`);
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
@@ -10254,6 +10280,12 @@ const OutletMgr = ({ onBack }) => {
         </div>
         <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => {
           const onHand = recentClosing?.items?.[`cs_${item.id}`];
+          // Closing Stock records this item's qty in whatever unit its own UnitPicker
+          // forces it to (allowBatch=false there too) — e.g. Dosa/Idli Batter as Kg, not
+          // item.unit's raw catalog default (Batch). Reusing the same getUnitOptions call
+          // Demand's own UnitPicker makes below keeps the label honest about what unit the
+          // number actually is, instead of relabeling a Kg figure as "Batch".
+          const onHandUnit = getUnitOptions(item.id, item.unit, false)[0];
           return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13 }}>{item.name}</div>
@@ -10261,7 +10293,7 @@ const OutletMgr = ({ onBack }) => {
                   see what's already on the shelf while deciding how much to order — see
                   the recentClosing fetch above. */}
               {onHand !== undefined && (
-                <div style={{ fontSize: 10, color: "#999" }}>On hand ({recentClosing.date === today() ? "today" : recentClosing.date === istDateAgo(1) ? "yesterday" : recentClosing.date}): <strong style={{ color: "#555" }}>{onHand} {item.unit}</strong></div>
+                <div style={{ fontSize: 10, color: "#999" }}>On hand ({recentClosing.date === today() ? "today" : recentClosing.date === istDateAgo(1) ? "yesterday" : recentClosing.date}): <strong style={{ color: "#555" }}>{onHand} {onHandUnit}</strong></div>
               )}
             </div>
             <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} allowBatch={false} />
