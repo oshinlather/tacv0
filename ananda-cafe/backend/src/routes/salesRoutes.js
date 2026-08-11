@@ -65,10 +65,17 @@ async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
 // P&L, which needs a whole month's revenue in one query rather than looping day by day).
 async function computeDailySalesRevenue(dateOrRange) {
   const rangeArgs = typeof dateOrRange === 'string' ? { date: dateOrRange } : dateOrRange;
-  const rows = await fetchAllDailySales({ ...rangeArgs, select: 'outlet_code, invoice_no, order_type, area, order_total, status, waived_off' });
-  const invoices = new Map(); // "outlet::invoice" -> one row (line items repeat these fields)
+  const rows = await fetchAllDailySales({ ...rangeArgs, select: 'outlet_code, sale_date, invoice_no, order_type, area, order_total, status, waived_off' });
+  const invoices = new Map(); // "outlet::date::invoice" -> one row (line items repeat these fields)
   rows.forEach((r) => {
-    const key = `${r.outlet_code}::${r.invoice_no}`;
+    // sale_date is REQUIRED in this key, not just outlet+invoice — invoice_no resets
+    // daily for some outlets (confirmed: sec31 reuses "149" on all 61 days of a Jun-Jul
+    // range, each a genuinely different order) while others (sec23) keep incrementing
+    // forever and never collide across dates. Single-date callers are unaffected (every
+    // row already shares one date), but the Finance module's range queries would
+    // otherwise silently collapse ~60 real invoices sharing a number into one, which is
+    // exactly what made S-31's revenue look ~20x too low there.
+    const key = `${r.outlet_code}::${r.sale_date}::${r.invoice_no}`;
     if (!invoices.has(key)) {
       invoices.set(key, { outlet_code: r.outlet_code, order_type: r.order_type, area: r.area, total: Number(r.order_total) || 0, waivedOff: Number(r.waived_off) || 0, status: r.status });
     }
