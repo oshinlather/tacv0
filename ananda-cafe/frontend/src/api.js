@@ -200,6 +200,12 @@ const api = {
   addFixedCostHead: (label) => post("/api/fixed-cost-heads", { label }),
   deleteFixedCostHead: (label) => del(`/api/fixed-cost-heads?label=${encodeURIComponent(label)}`),
 
+  // ── Finance — outlet-wise P&L (simplified: BK Purchase = dispatched value, not
+  // consumed-material) ──
+  getFinanceOutletPnl: (from, to) => get("/api/finance/outlet-pnl", { from, to }),
+  getFinanceCommissionPct: () => get("/api/finance/commission-pct"),
+  setFinanceCommissionPct: (pct) => patch("/api/finance/commission-pct", { pct }),
+
   // ── Live P&L ──
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),
   getStockUsage: (date, outlet) => get(`/api/stock-usage/${date}`, outlet ? { outlet } : {}),

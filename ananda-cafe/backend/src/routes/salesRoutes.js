@@ -60,9 +60,12 @@ async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
 // `area` carries the aggregator name ('Zomato'/'Swiggy') for delivery orders
 // and a seating-area name for dine-in — confirmed against real PetPooja
 // exports, not guessed. Used by GET /api/pnl/live to replace daily_outlet_sales
-// as the source of total_sale/effective_sale.
-async function computeDailySalesRevenue(date) {
-  const rows = await fetchAllDailySales({ date, select: 'outlet_code, invoice_no, order_type, area, order_total, status, waived_off' });
+// as the source of total_sale/effective_sale. Accepts either a single date (string,
+// existing callers) or a { from, to } range (added for the Finance module's outlet-wise
+// P&L, which needs a whole month's revenue in one query rather than looping day by day).
+async function computeDailySalesRevenue(dateOrRange) {
+  const rangeArgs = typeof dateOrRange === 'string' ? { date: dateOrRange } : dateOrRange;
+  const rows = await fetchAllDailySales({ ...rangeArgs, select: 'outlet_code, invoice_no, order_type, area, order_total, status, waived_off' });
   const invoices = new Map(); // "outlet::invoice" -> one row (line items repeat these fields)
   rows.forEach((r) => {
     const key = `${r.outlet_code}::${r.invoice_no}`;
@@ -5188,3 +5191,11 @@ router.get('/franchise-billing/summary', async (req, res) => {
 });
 
 module.exports = router;
+// Attached as properties on the router (a function, which can hold arbitrary properties
+// in JS) rather than switched to a named-export object — every existing
+// `require('./salesRoutes')` call site treats this as the router itself
+// (`app.use('/api', salesRoutes)`), so that has to keep working unchanged. Exported for
+// the Finance module (finance.js) to reuse the same revenue/costing logic instead of a
+// second, possibly-drifting copy of the rate-card/BK-recipe pricing rules.
+module.exports.computeDailySalesRevenue = computeDailySalesRevenue;
+module.exports.buildCostingContext = buildCostingContext;

@@ -47,8 +47,12 @@ const FULL_EDIT_FIELDS = [
   'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id',
 ];
 // What a scoped manager (outlet_mgr/store_mgr/bk_manager) may create/edit — no
-// salary, bank/UPI, app-login linking, or department reassignment.
-const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes'];
+// salary, bank/UPI, app-login linking, or department reassignment. 'active' is
+// included so an outlet manager can mark a departed staff member inactive
+// themselves — otherwise a former employee keeps accumulating 0%s in the
+// Performance Dashboard's Discipline score (personRatio scores "not marked" as 0)
+// until the owner happens to notice and deactivate them.
+const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active'];
 // Fields stripped out of API responses for scoped managers — payroll/bank data
 // isn't their business even read-only.
 const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];

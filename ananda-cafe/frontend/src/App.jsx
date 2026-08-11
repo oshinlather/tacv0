@@ -984,6 +984,19 @@ const TeamPanel = ({ onBack }) => {
   const [newPhone, setNewPhone] = useState("");
   const [newJoiningDate, setNewJoiningDate] = useState("");
   const [saving, setSaving] = useState(false);
+  // Edit an existing team member — name/designation/phone/joining date, and Active
+  // status. Active matters beyond just "still works here": the Performance Dashboard's
+  // Discipline score treats every day an active employee isn't marked as a 0%, so a
+  // departed staff member left active silently drags down Team Score until someone
+  // notices — this lets the outlet manager fix that themselves instead of waiting on
+  // the owner.
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editDesignation, setEditDesignation] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editJoiningDate, setEditJoiningDate] = useState("");
+  const [editActive, setEditActive] = useState(true);
+  const [editSaving, setEditSaving] = useState(false);
   const [advanceId, setAdvanceId] = useState(null);
   const [advanceAmount, setAdvanceAmount] = useState("");
   const [advanceNote, setAdvanceNote] = useState("");
@@ -1017,6 +1030,21 @@ const TeamPanel = ({ onBack }) => {
     finally { setAdvanceSaving(false); }
   };
 
+  const openEdit = (emp) => {
+    setEditId(emp.id); setEditName(emp.name || ""); setEditDesignation(emp.designation || "");
+    setEditPhone(emp.phone || ""); setEditJoiningDate(emp.joining_date || ""); setEditActive(emp.active !== false);
+  };
+  const saveEdit = async (id) => {
+    if (!editName || !editDesignation) { alert("Name and designation required"); return; }
+    setEditSaving(true);
+    try {
+      await api.updateEmployee(id, { name: editName, designation: editDesignation, phone: editPhone || null, joining_date: editJoiningDate || null, active: editActive });
+      setEditId(null);
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setEditSaving(false); }
+  };
+
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
       {onBack && <BackBtn onClick={onBack} />}
@@ -1040,13 +1068,30 @@ const TeamPanel = ({ onBack }) => {
       : employees.map((emp) => (
         <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}{!emp.active && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700 }}> · Inactive</span>}</div>
             <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</span>
           </div>
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
           {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
 
-          {advanceId === emp.id ? (
+          {editId === emp.id ? (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+              <input placeholder="Name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus style={inputStyle} />
+              <input placeholder="Designation" value={editDesignation} onChange={(e) => setEditDesignation(e.target.value)} style={inputStyle} />
+              <input type="tel" placeholder="Phone (optional)" value={editPhone} onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
+              <input type="date" value={editJoiningDate} onChange={(e) => setEditJoiningDate(e.target.value)} style={inputStyle} />
+              {/* Left/right pair, same as a demand UnitPicker toggle — not a checkbox, so
+                  which state is currently selected is unambiguous at a glance. */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                <button type="button" onClick={() => setEditActive(true)} style={{ flex: 1, padding: 8, borderRadius: 8, border: editActive ? "none" : "1px solid #E0E0DC", background: editActive ? "#16A34A" : "#fff", color: editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✅ Active</button>
+                <button type="button" onClick={() => setEditActive(false)} style={{ flex: 1, padding: 8, borderRadius: 8, border: !editActive ? "none" : "1px solid #E0E0DC", background: !editActive ? "#DC2626" : "#fff", color: !editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🚫 Inactive</button>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => saveEdit(emp.id)} disabled={editSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{editSaving ? "⏳..." : "✓ Save"}</button>
+                <button onClick={() => setEditId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+            </div>
+          ) : advanceId === emp.id ? (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
               <input type="number" inputMode="numeric" placeholder="₹ amount" value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} autoFocus style={inputStyle} />
               <input placeholder="Note (optional)" value={advanceNote} onChange={(e) => setAdvanceNote(e.target.value)} style={inputStyle} />
@@ -1056,7 +1101,10 @@ const TeamPanel = ({ onBack }) => {
               </div>
             </div>
           ) : (
-            <button onClick={() => openAdvance(emp.id)} style={{ width: "100%", marginTop: 10, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+              <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+            </div>
           )}
         </div>
       ))}
@@ -14905,6 +14953,148 @@ const InventoryLedger = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  FINANCE — outlet-wise P&L, all 6 outlets in one view. First piece of the Finance
+//  module. Deliberately simpler than Daily P&L (DailyPnL): BK Purchase is what was
+//  actually dispatched from Base Kitchen this period at rate-card cost — no closing
+//  stock, no wastage adjustment, per the owner's own framing: "i dont want to focus
+//  on closing and wastage, its simple what was total ordered from base kitchen".
+//  Backed by GET /api/finance/outlet-pnl (see finance.js for the full formula).
+// ═════════════════════════════════════════════════════════════════════════════
+const FINANCE_EXPENSE_COLS = [
+  { key: "bk_purchase", label: "BK Purchase" },
+  { key: "rent", label: "Rent" },
+  { key: "salary", label: "Salary" },
+  { key: "electricity", label: "Electricity" },
+  { key: "gst", label: "GST" },
+  { key: "transport", label: "Transport" },
+  { key: "water", label: "Water" },
+  { key: "misc", label: "Misc" },
+];
+const FinancePnL = () => {
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [commissionPct, setCommissionPct] = useState(null); // server value, kept separate from data.commission_pct so editing doesn't need a full refetch to reflect
+  const [editingCommission, setEditingCommission] = useState(false);
+  const [commissionInput, setCommissionInput] = useState("");
+  const [commissionSaving, setCommissionSaving] = useState(false);
+
+  const range = useMemo(() => {
+    const lastDay = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
+    const monthEnd = `${selMonth}-${String(lastDay).padStart(2, "0")}`;
+    return { from: `${selMonth}-01`, to: monthEnd < today() ? monthEnd : today() };
+  }, [selMonth]);
+
+  const load = () => {
+    setLoading(true);
+    api.getFinanceOutletPnl(range.from, range.to).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
+  };
+  useEffect(load, [range]);
+
+  const saveCommission = async () => {
+    const pct = Number(commissionInput);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) { alert("Enter a number between 0 and 100"); return; }
+    setCommissionSaving(true);
+    try { await api.setFinanceCommissionPct(pct); setEditingCommission(false); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setCommissionSaving(false); }
+  };
+
+  const fmt0 = (n) => n == null ? "—" : Math.round(n).toLocaleString("en-IN");
+  const monthLabel = useMemo(() => new Date(`${selMonth}-01T00:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" }), [selMonth]);
+
+  return (<div>
+    <div style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💵 Outlet-wise P&L</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus BK Purchase (what was dispatched, at rate-card cost) and fixed costs = Net P&L.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+        <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); setSelMonth(d.toISOString().slice(0, 7)); }} disabled={selMonth >= today().slice(0, 7)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: selMonth >= today().slice(0, 7) ? "not-allowed" : "pointer", opacity: selMonth >= today().slice(0, 7) ? 0.4 : 1, fontFamily: "inherit", fontSize: 14 }}>→</button>
+      </div>
+      {/* Delivery commission % — editable, owner-only write (PATCH gated server-side too);
+          AVP/Head Chef see the current value read-only. */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 10px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A" }}>
+        <span style={{ fontSize: 11, color: "#92400E", fontWeight: 700 }}>Delivery Commission:</span>
+        {editingCommission ? (<>
+          <input type="number" min="0" max="100" step="0.1" autoFocus value={commissionInput} onChange={(e) => setCommissionInput(e.target.value)} style={{ width: 56, padding: "3px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit", textAlign: "center" }} />
+          <span style={{ fontSize: 11, color: "#92400E" }}>%</span>
+          <button onClick={saveCommission} disabled={commissionSaving} style={{ padding: "3px 8px", borderRadius: 6, border: "none", background: "#B45309", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{commissionSaving ? "…" : "Save"}</button>
+          <button onClick={() => setEditingCommission(false)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+        </>) : (<>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono'" }}>{commissionPct ?? "—"}%</span>
+          {getCurrentUser()?.role === "owner" && <button onClick={() => { setCommissionInput(String(commissionPct ?? 40)); setEditingCommission(true); }} style={{ padding: "2px 8px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", fontSize: 10, fontWeight: 700, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
+        </>)}
+      </div>
+    </div>
+
+    {loading ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
+    ) : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Finance P&L</div>
+    ) : (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1400 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 }}>Outlet</th>
+              <th style={{ ...thS, textAlign: "right" }}>Total Sale</th>
+              <th style={{ ...thS, textAlign: "right" }}>Delivery Sale</th>
+              <th style={{ ...thS, textAlign: "right" }}>Commission</th>
+              <th style={{ ...thS, textAlign: "right", color: "#2563EB" }}>Effective Sale</th>
+              {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+              <th style={{ ...thS, textAlign: "right" }}>Total Expense</th>
+              <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
+              <th style={{ ...thS, textAlign: "right" }}>Margin</th>
+            </tr></thead>
+            <tbody>
+              {data.outlets.map((o) => {
+                const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+                const netColor = o.net_pnl > 0 ? "#16A34A" : o.net_pnl < 0 ? "#DC2626" : "#999";
+                return (
+                  <tr key={o.outlet_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>{oData?.short || o.outlet_id}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt0(o.total_sale)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt0(o.delivery_sale)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>−{fmt0(o.delivery_commission)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{fmt0(o.effective_sale)}</td>
+                    {FINANCE_EXPENSE_COLS.map((c) => (
+                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o[c.key] > 0 ? "#991B1B" : "#BBB" }}>{o[c.key] > 0 ? `−${fmt0(o[c.key])}` : "—"}</td>
+                    ))}
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(o.total_expense)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: netColor }}>{o.net_pnl > 0 ? "+" : ""}{fmt0(o.net_pnl)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: netColor }}>{o.margin_pct != null ? `${o.margin_pct}%` : "—"}</td>
+                  </tr>
+                );
+              })}
+              {/* Totals row — visually separated (heavier border, tinted background) rather
+                  than just another row, since it's a sum not a real outlet. */}
+              <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E0E0DC" }}>
+                <td style={{ ...tdS, fontWeight: 800, position: "sticky", left: 0, background: "#FAFAF8" }}>All Outlets</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>{fmt0(data.totals.total_sale)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#888" }}>{fmt0(data.totals.delivery_sale)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>−{fmt0(data.totals.delivery_commission)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#2563EB" }}>{fmt0(data.totals.effective_sale)}</td>
+                {FINANCE_EXPENSE_COLS.map((c) => (
+                  <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: data.totals[c.key] > 0 ? "#991B1B" : "#BBB" }}>{data.totals[c.key] > 0 ? `−${fmt0(data.totals[c.key])}` : "—"}</td>
+                ))}
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#991B1B" }}>−{fmt0(data.totals.total_expense)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: data.totals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{data.totals.net_pnl > 0 ? "+" : ""}{fmt0(data.totals.net_pnl)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: data.totals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{data.totals.margin_pct != null ? `${data.totals.margin_pct}%` : "—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/Transport/Water/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above; any configured cost head not in this list (Internet, Mala Decoration, Staff Room Rent, Waste Collection, etc.) rolls into Misc. GST has no entries yet — add a "GST" fixed cost head to populate that column.</p>
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MASTER DATA — Central item & recipe management
 // ═════════════════════════════════════════════════════════════════════════════
 // Standard units for master data forms (dropdown options)
@@ -15769,6 +15959,7 @@ const StoreRecipesView = () => {
 const SCOPED_ROLE_TABS = {
   avp: [
     { id: "store", label: "🏭 Base Kitchen Manager" },
+    { id: "finance", label: "💵 Finance" },
     { id: "cogs_compare", label: "📊 COGS Compare" },
     { id: "audit", label: "🔍 RM Audit" },
     { id: "reviews", label: "⭐ Reviews" },
@@ -15871,6 +16062,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "custodian_ledger" && <CustodianLedger />}
       {tab === "store" && storeView === "actions" && <StoreMgr onBack={null} />}
       {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
+      {tab === "finance" && <FinancePnL />}
       {tab === "cogs_compare" && <CogsCompare />}
       {tab === "audit" && <RMAuditPanel />}
       {tab === "reviews" && <DailyReviewSummary />}
@@ -16109,7 +16301,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
@@ -16194,7 +16386,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ownerTab === "payroll" || ownerTab === "pnl" ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ownerTab === "payroll" || ownerTab === "pnl" || ownerTab === "finance" ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
@@ -16204,6 +16396,7 @@ export default function AnandaCafe() {
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "pnl" && <DailyPnL />}
+      {ownerTab === "finance" && <FinancePnL />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
       {ownerTab === "todo" && <OwnerTodos />}
