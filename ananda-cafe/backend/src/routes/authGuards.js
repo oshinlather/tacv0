@@ -123,6 +123,17 @@ const CATEGORY_SCOPE = {
   bainmarry: ['packaging'],
 };
 
+// Cold Drink & Water is a real DEMAND_SECTIONS section in App.jsx (frontend-only —
+// BK doesn't stock/dispatch it, so it was never added to the demand_items/
+// demand_sections DB tables) but it DOES appear in Closing Stock and Wastage. Without
+// this, getDemandItemSectionMap() below can never resolve any item to 'cold_drink' —
+// which meant the Performance Dashboard's Punch Score could never award its Closing —
+// Cold Drink sub-weight (7.5%) to ANY outlet on ANY day, regardless of what was
+// actually submitted. Mirrors COLD_DRINK_ITEMS in salesRoutes.js (same reason that one
+// is duplicated from the frontend rather than DB-sourced) — keep both in sync if the
+// physical item list ever changes.
+const COLD_DRINK_SECTION_IDS = ['cold_drink', 'diet_coke', 'small_water_bottle', 'water_bottle_1l'];
+
 // demand_items.section_id lookup, cached briefly — small table (~150 rows), but no
 // need to hit it on every draft/closing-stock save.
 let demandItemSectionCache = null; // { map, expires }
@@ -132,6 +143,7 @@ async function getDemandItemSectionMap() {
   const { data } = await supabase.from('demand_items').select('id, section_id');
   const map = {};
   (data || []).forEach((d) => { map[d.id] = d.section_id; });
+  COLD_DRINK_SECTION_IDS.forEach((id) => { map[id] = 'cold_drink'; });
   demandItemSectionCache = { map, expires: Date.now() + SECTION_CACHE_TTL_MS };
   return map;
 }

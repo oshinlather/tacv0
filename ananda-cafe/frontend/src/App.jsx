@@ -3082,11 +3082,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       const fixedTotals = {}; // outlet_id -> { cost_head -> { label, total } }
       results.forEach(({ pnl }) => {
         pnl.forEach((p) => {
-          if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, vendor_payments: 0, new_purchases: 0, total_expense: 0, net_profit: 0 };
+          if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, bk_purchase: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, vendor_payments: 0, new_purchases: 0, total_expense: 0, net_profit: 0 };
           const t = totals[p.outlet_id];
           t.total_sale += p.total_sale || 0;
           t.effective_sale += p.effective_sale || 0;
           t.variable_cost += p.variable_cost || 0;
+          t.bk_purchase += p.bk_purchase || 0;
           t.daily_fixed_cost += p.daily_fixed_cost || 0;
           t.bk_share += p.bk_share || 0;
           t.daily_purchases += p.daily_purchases || 0;
@@ -3502,6 +3503,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                   <div style={{ fontSize: 9, color: "#888" }}>Total Sale: <strong style={{ color: "#166534" }}>{fmt(r.total_sale)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888" }}>Effective Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
+                  {/* What was actually dispatched from BK today at rate-card cost — NOT the
+                      same figure as the consumed-material cost behind COGS% below (which also
+                      factors in closing stock/wastage). Kept as its own line so the two never
+                      get confused for each other. */}
+                  <div style={{ fontSize: 9, color: "#888" }}>BK Purchase: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_purchase || 0)}</strong></div>
                   <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                     {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                   </strong>{netPnlCalc && <span style={{ fontFamily: "'JetBrains Mono'", color: "#2563EB", fontWeight: 600 }}> {netPnlCalc}</span>}</div>
@@ -3986,6 +3992,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                       <div style={{ fontSize: 9, color: "#888" }}>Total Sale: <strong style={{ color: "#166534" }}>{fmt(r.total_sale)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888" }}>Effective Sale: <strong style={{ color: "#166534" }}>{fmt(r.effective_sale)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888" }}>Expense: <strong style={{ color: "#991B1B" }}>{fmt(r.total_expense)}</strong></div>
+                      <div style={{ fontSize: 9, color: "#888" }}>BK Purchase: <strong style={{ color: "#7C3AED" }}>{fmt(r.bk_purchase || 0)}</strong></div>
                       <div style={{ fontSize: 9, color: "#888", marginTop: 4 }}>Net P&L: <strong style={{ fontFamily: "'JetBrains Mono'", color: r.net_profit >= 0 ? "#16A34A" : "#DC2626" }}>
                         {r.net_profit >= 0 ? "" : "−"}{fmt(Math.abs(r.net_profit))}
                       </strong></div>

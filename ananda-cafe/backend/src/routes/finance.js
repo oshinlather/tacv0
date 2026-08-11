@@ -15,7 +15,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { requireRole } = require("./authGuards");
-const { computeDailySalesRevenue, buildCostingContext } = require("./salesRoutes");
+const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet } = require("./salesRoutes");
 
 const OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"];
 
@@ -46,37 +46,10 @@ function prorateFixedAmount(monthlyAmount, from, to) {
 // expense columns, not one column per configured head.
 const FIXED_HEAD_BUCKET = { rent: "rent", salary: "salary", electricity: "electricity", gst: "gst", transport: "transport", water: "water", water_expense: "water" };
 
-// Dispatched items (this period, this outlet) × rate card / BK-recipe cost — same
-// "rate card first, then BK recipe fallback" pricing rule as everywhere else in the app
-// (see CLAUDE.md), just summed over a date range instead of computed per order for
-// display. Deliberately NOT the actual-consumption formula (closing stock, wastage) —
-// this is "what did we actually order/pay Base Kitchen for", full stop.
-async function computeBkPurchaseByOutlet(from, to, costingContext) {
-  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
-  const { data: orders, error } = await supabase.from("demands").select("outlet_id, items, dispatch_items, status").gte("date", from).lte("date", to);
-  if (error) throw error;
-  const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
-  const byOutlet = {};
-  dispatched.forEach((o) => {
-    const items = o.dispatch_items || o.items || {};
-    let cost = 0;
-    Object.entries(items).forEach(([itemId, qty]) => {
-      const q = Number(qty) || 0;
-      if (q <= 0) return;
-      const rate = rateMap[itemId];
-      if (rate) {
-        // rawUnit omitted (null) — convFactorFor falls back to this item's own demand
-        // unit internally, same as every other caller that doesn't have a per-entry unit
-        // override to pass.
-        cost += q * convFactorFor(itemId, null, rate.unit) * Number(rate.price);
-      } else if (bkRecipeMap[itemId]) {
-        cost += q * convFactorFor(itemId, null, "Kg") * bkRecipeMap[itemId].costPerKg;
-      }
-    });
-    byOutlet[o.outlet_id] = (byOutlet[o.outlet_id] || 0) + cost;
-  });
-  return byOutlet;
-}
+// computeBkPurchaseByOutlet now lives in salesRoutes.js (exported alongside
+// computeDailySalesRevenue/buildCostingContext) so /pnl/live's per-outlet cards can
+// reuse the exact same "what did we actually order from Base Kitchen" figure instead
+// of a second, possibly-drifting copy — see the comment there for the full formula.
 
 // ── GET /api/finance/commission-pct — the single editable delivery-commission rate
 // (Swiggy/Zomato charge ~40%; kept editable since aggregators renegotiate this).

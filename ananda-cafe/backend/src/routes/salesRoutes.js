@@ -3493,6 +3493,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       { data: bkRecipes },
       { data: bkIngredients },
       { data: invItemsList },
+      bkPurchaseCostingContext,
     ] = await Promise.all([
       supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
       supabase.from('demands').select('*').eq('date', date),
@@ -3507,7 +3508,13 @@ router.get('/pnl/live/:date', async (req, res) => {
       supabase.from('bk_recipes').select('*'),
       supabase.from('bk_recipe_ingredients').select('*'),
       supabase.from('inventory_items').select('id, name, demand_item_id'),
+      // Own costing context (rate_card/BK-recipe pricing) for computeBkPurchaseByOutlet
+      // below — deliberately a separate build rather than reusing this route's own
+      // hand-rolled rateMap/convMap (different shape), so the BK Purchase figure here
+      // exactly matches Finance's, not a similar-but-drifting variant.
+      buildCostingContext(),
     ]);
+    const bkPurchaseByOutlet = await computeBkPurchaseByOutlet(date, date, bkPurchaseCostingContext);
     const rateMap = {};
     (rates || []).forEach(r => { rateMap[r.id] = r; });
     const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
@@ -3892,6 +3899,13 @@ router.get('/pnl/live/:date', async (req, res) => {
         variable_by_category: variableByCategory,
         item_breakdown: itemBreakdown,
         cold_drink_purchase_total: Math.round(coldDrinkPurchaseTotal),
+        // What was actually dispatched from Base Kitchen today, priced at rate-card/
+        // BK-recipe cost — NOT the same number as variable_cost above (which is the
+        // Yesterday Closing + Dispatched − Wastage − Today Closing "actual consumption"
+        // formula). Same computeBkPurchaseByOutlet the Finance module uses, so this
+        // figure never drifts from that one. See CLAUDE.md / finance.js for why the two
+        // are deliberately different metrics.
+        bk_purchase: Math.round(bkPurchaseByOutlet[oid] || 0),
         // Fixed cost
         daily_fixed_cost: dailyFixedCost,
         bk_share: bkSharePerOutlet,
@@ -3924,6 +3938,7 @@ router.get('/pnl/live/:date', async (req, res) => {
         complimentary: consolidated.reduce((s, r) => s + r.complimentary, 0),
         effective_sale: consolidated.reduce((s, r) => s + r.effective_sale, 0),
         variable_cost: consolidated.reduce((s, r) => s + r.variable_cost, 0),
+        bk_purchase: consolidated.reduce((s, r) => s + (r.bk_purchase || 0), 0),
         daily_fixed_cost: consolidated.reduce((s, r) => s + r.daily_fixed_cost, 0),
         bk_share: consolidated.reduce((s, r) => s + r.bk_share, 0),
         daily_purchases: consolidated.reduce((s, r) => s + r.daily_purchases, 0),
@@ -4133,6 +4148,39 @@ async function buildCostingContext() {
     };
 
     return { rateMap, rateByName, bkRecipeByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
+}
+
+// Dispatched items (this period, this outlet) × rate card / BK-recipe cost — same
+// "rate card first, then BK recipe fallback" pricing rule as everywhere else in the app
+// (see CLAUDE.md), just summed over a date range instead of computed per order for
+// display. Deliberately NOT the actual-consumption formula (closing stock, wastage) —
+// this is "what did we actually order/pay Base Kitchen for", full stop. Originally lived
+// in finance.js (the owner asked for exactly this simplification there: "i dont want to
+// focus on closing and wastage, its simple what was total ordered from base kitchen");
+// moved here so /pnl/live's per-outlet cards can show the same figure instead of a
+// second, possibly-drifting copy of this logic.
+async function computeBkPurchaseByOutlet(from, to, costingContext) {
+  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
+  const { data: orders, error } = await supabase.from("demands").select("outlet_id, items, dispatch_items, status").gte("date", from).lte("date", to);
+  if (error) throw error;
+  const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
+  const byOutlet = {};
+  dispatched.forEach((o) => {
+    const items = o.dispatch_items || o.items || {};
+    let cost = 0;
+    Object.entries(items).forEach(([itemId, qty]) => {
+      const q = Number(qty) || 0;
+      if (q <= 0) return;
+      const rate = rateMap[itemId];
+      if (rate) {
+        cost += q * convFactorFor(itemId, null, rate.unit) * Number(rate.price);
+      } else if (bkRecipeMap[itemId]) {
+        cost += q * convFactorFor(itemId, null, "Kg") * bkRecipeMap[itemId].costPerKg;
+      }
+    });
+    byOutlet[o.outlet_id] = (byOutlet[o.outlet_id] || 0) + cost;
+  });
+  return byOutlet;
 }
 
 // Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was
@@ -5225,3 +5273,4 @@ module.exports = router;
 // second, possibly-drifting copy of the rate-card/BK-recipe pricing rules.
 module.exports.computeDailySalesRevenue = computeDailySalesRevenue;
 module.exports.buildCostingContext = buildCostingContext;
+module.exports.computeBkPurchaseByOutlet = computeBkPurchaseByOutlet;
