@@ -9128,6 +9128,27 @@ const OutletMgr = ({ onBack }) => {
   const [existingRecord, setExistingRecord] = useState(null);
   // true = showing the read-only "already submitted, tap Edit" recap instead of the form.
   const [viewingSubmitted, setViewingSubmitted] = useState(false);
+  // Most recent SUBMITTED closing stock (looking back a few days) — shown alongside each
+  // item in the Demand form so a manager can see what's actually on the shelf while
+  // deciding how much to order, and used to gate Morning Demand below (ordering ahead for
+  // tomorrow needs to know today's/yesterday's actual stock, not a stale count).
+  // undefined = not loaded yet, null = nothing submitted in the lookback window.
+  const [recentClosing, setRecentClosing] = useState(undefined);
+  useEffect(() => {
+    if (!outlet) return;
+    setRecentClosing(undefined);
+    api.getClosingStocks({ outlet_id: outlet, from: istDateAgo(6) }).then((rows) => {
+      const submitted = (rows || []).filter((r) => (r.status || "submitted") === "submitted").sort((a, b) => (a.date < b.date ? 1 : -1));
+      setRecentClosing(submitted[0] || null);
+    }).catch(() => setRecentClosing(null));
+  }, [outlet]);
+  // Morning Demand orders ahead for tomorrow (or, past midnight, today) — the manager
+  // needs to know what's actually on the shelf right now to decide how much to order, so
+  // it's locked until the most recent closing stock submission is today or yesterday, not
+  // older/missing.
+  // undefined = still loading (don't show a false lock while the fetch is in flight),
+  // false = confirmed missing/stale, true = good to go.
+  const closingIsCurrent = recentClosing === undefined ? undefined : !!(recentClosing && (recentClosing.date === today() || recentClosing.date === istDateAgo(1)));
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState(smartDefaultDate()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
@@ -10087,14 +10108,20 @@ const OutletMgr = ({ onBack }) => {
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>When do you need this?</h3>
         <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Select the delivery slot for your demand</p>
       </div>
-      <button onClick={() => setPickingMorningDate(true)} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 40 }}>🌅</div>
+      <button onClick={() => { if (closingIsCurrent) setPickingMorningDate(true); }} disabled={!closingIsCurrent} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${closingIsCurrent === false ? "#FECACA" : "#FDE68A"}`, background: closingIsCurrent === false ? "#FEF2F2" : "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: closingIsCurrent ? "pointer" : "not-allowed", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: closingIsCurrent === undefined ? 0.6 : 1 }}>
+        <div style={{ fontSize: 40 }}>{closingIsCurrent === false ? "🔒" : "🌅"}</div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#B45309" }}>Morning Delivery</div>
-          <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Pick today or tomorrow's date</div>
-          <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items will be prepared tonight & dispatched tomorrow morning</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: closingIsCurrent === false ? "#991B1B" : "#B45309" }}>Morning Delivery</div>
+          {closingIsCurrent === false ? (
+            <div style={{ fontSize: 12, color: "#991B1B", marginTop: 2 }}>Locked — submit today's Closing Stock first, ordering ahead needs to know what's actually on the shelf.</div>
+          ) : closingIsCurrent === undefined ? (
+            <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Checking closing stock…</div>
+          ) : (<>
+            <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Pick today or tomorrow's date</div>
+            <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items will be prepared tonight & dispatched tomorrow morning</div>
+          </>)}
         </div>
-        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
+        <span style={{ color: closingIsCurrent === false ? "#DC2626" : "#D97706", fontSize: 18 }}>{closingIsCurrent === false ? "🔒" : "→"}</span>
       </button>
       <button onClick={() => setDemandSlot("evening")} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
         <div style={{ fontSize: 40 }}>🌇</div>
@@ -10225,7 +10252,21 @@ const OutletMgr = ({ onBack }) => {
           <span style={{ fontSize: 11, color: "#999" }}>({filterManualItems(activeSec.items).length} items)</span>
           {savedSections[activeSec.id] && <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 4, background: "#F0FDF4", color: "#16A34A", fontWeight: 700 }}>✅ Saved</span>}
         </div>
-        <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} /></div>))}</div>
+        <div style={{ padding: "6px 12px 12px" }}>{filterManualItems(activeSec.items).map((item) => {
+          const onHand = recentClosing?.items?.[`cs_${item.id}`];
+          return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? activeSec.bg : "#FAFAF8", marginBottom: 3 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13 }}>{item.name}</div>
+              {/* Most recent submitted Closing Stock qty for this item, so the manager can
+                  see what's already on the shelf while deciding how much to order — see
+                  the recentClosing fetch above. */}
+              {onHand !== undefined && (
+                <div style={{ fontSize: 10, color: "#999" }}>On hand ({recentClosing.date === today() ? "today" : recentClosing.date === istDateAgo(1) ? "yesterday" : recentClosing.date}): <strong style={{ color: "#555" }}>{onHand} {item.unit}</strong></div>
+              )}
+            </div>
+            <input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => setDraft((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${activeSec.border}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} allowBatch={false} />
+          </div>);
+        })}</div>
       </div>
       {/* Sticky footer — Save + Submit side by side */}
       <div style={{ position: "sticky", bottom: 0, background: "linear-gradient(transparent, #FAF9F6 20%)", padding: "12px 0", zIndex: 10 }}>
