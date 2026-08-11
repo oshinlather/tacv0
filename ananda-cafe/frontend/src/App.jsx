@@ -9128,6 +9128,7 @@ const OutletMgr = ({ onBack }) => {
   const [existingRecord, setExistingRecord] = useState(null);
   // true = showing the read-only "already submitted, tap Edit" recap instead of the form.
   const [viewingSubmitted, setViewingSubmitted] = useState(false);
+  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   // Most recent SUBMITTED closing stock (looking back a few days) — shown alongside each
   // item in the Demand form so a manager can see what's actually on the shelf while
   // deciding how much to order, and used to gate Morning Demand below (ordering ahead for
@@ -9149,7 +9150,6 @@ const OutletMgr = ({ onBack }) => {
   // undefined = still loading (don't show a false lock while the fetch is in flight),
   // false = confirmed missing/stale, true = good to go.
   const closingIsCurrent = recentClosing === undefined ? undefined : !!(recentClosing && (recentClosing.date === today() || recentClosing.date === istDateAgo(1)));
-  const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState(smartDefaultDate()); // for back-dating wastage/closing/purchase
   const [demandSlot, setDemandSlot] = useState(null); // "morning" or "evening"
   // Local write-through cache for whatever's typed into Demand/Wastage/Closing Stock but
