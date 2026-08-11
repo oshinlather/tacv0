@@ -2557,7 +2557,14 @@ const PUNCH_TYPES = [
   { key: "sales", icon: "💰", label: "Sales" },
   { key: "wastage", icon: "🗑️", label: "Wastage" },
   { key: "closing", icon: "📊", label: "Closing Stock" },
+  // Not an outlet punch — Store Manager's own BK Closing Stock count. Only ever appears
+  // on the synthetic 'bk' pseudo-outlet entry the backend appends, never on a real
+  // outlet's own missing list.
+  { key: "bk_closing", icon: "🏪", label: "BK Closing Stock" },
 ];
+// OUTLETS has no 'bk' entry (it's not a real outlet) — this is the one place a punch
+// row needs a human name for it anyway.
+const punchOutletLabel = (oid) => oid === "bk" ? "Base Kitchen (Store Manager)" : (OUTLETS.find((x) => x.id === oid)?.name || oid);
 // A submitted closing_stocks row only proves SOMETHING was punched, not that every
 // category was — these are the categories the owner wants an explicit ✅/❌ for within
 // that submission (not the full 8; scoped to what was actually asked for).
@@ -2641,8 +2648,7 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
   const waText = () => {
     const lines = [`*⚠️ Missing Punches — ${date}*`, ""];
     missingOutlets.forEach((o) => {
-      const oName = OUTLETS.find((x) => x.id === o.outlet_id)?.name || o.outlet_id;
-      lines.push(`*${oName}*`);
+      lines.push(`*${punchOutletLabel(o.outlet_id)}*`);
       o.missing.forEach((m) => {
         const t = PUNCH_TYPES.find((p) => p.key === m);
         lines.push(`• ${t ? `${t.icon} ${t.label}` : m}`);
@@ -2732,10 +2738,9 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
           </button>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {missingOutlets.map((o) => {
-              const oData = OUTLETS.find((x) => x.id === o.outlet_id);
               return (
                 <div key={o.outlet_id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{oData?.name || o.outlet_id}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{punchOutletLabel(o.outlet_id)}</div>
                   {o.missing.length > 0 && (
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {o.missing.map((m) => {
@@ -2769,7 +2774,7 @@ const MissingPunches = ({ selOutlet, syncDate }) => {
           </div>
           {doneOutlets.length > 0 && (
             <div style={{ marginTop: 16, fontSize: 11, color: "#888" }}>
-              ✅ {doneOutlets.map((o) => OUTLETS.find((x) => x.id === o.outlet_id)?.short || o.outlet_id).join(", ")} — all punched
+              ✅ {doneOutlets.map((o) => o.outlet_id === "bk" ? "BK" : (OUTLETS.find((x) => x.id === o.outlet_id)?.short || o.outlet_id)).join(", ")} — all punched
             </div>
           )}
         </>)}
@@ -14641,10 +14646,13 @@ const BKStoreAudit = ({ dateStr }) => {
     ) : !data ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {dateStr}</div>
     ) : !data.prev_date ? (
-      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No prior BK Closing Stock submission exists to audit from yet.</div>
+      // Anchor is strictly yesterday (date-1) now — no walking back to an older stale
+      // submission — so a missing prev_date means yesterday specifically wasn't punched.
+      // Also flagged in Missing Punches so it doesn't just sit here silently.
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Yesterday's ({dayBefore}) BK Closing Stock wasn't submitted — nothing to audit {dateStr} from until it is.</div>
     ) : (<>
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
-        ℹ️ Anchored to the most recent submitted count, {data.prev_date}{data.prev_date !== dayBefore ? " (earlier than the day before — that day's count was missed, so this walks the whole gap)" : ""}.
+        ℹ️ Anchored to yesterday's submitted count, {data.prev_date}.
         {!data.actual_submitted && !data.is_today && " No count was submitted for " + dateStr + " itself — variance can't be computed, only Should-Be Closing is shown."}
         {data.is_today && !data.actual_submitted && " Today's Actual Closing uses the live system balance until a count is submitted."}
       </div>
