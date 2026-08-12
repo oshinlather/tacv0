@@ -11196,9 +11196,46 @@ const DailyReviewSummary = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
+  // Complaints — reuses the existing Owner To Do list's 'complaint' category (same
+  // owner_todos table the ✅ To Do tab already manages) rather than a new data model,
+  // surfaced right here since a complaint is naturally something you'd log while
+  // looking at the day's reviews. Not date-scoped (owner_todos has no outlet/date
+  // columns) — shows whatever's currently open, same as the To Do tab's default view.
+  const [complaints, setComplaints] = useState([]);
+  const [complaintsLoading, setComplaintsLoading] = useState(true);
+  const [showResolvedComplaints, setShowResolvedComplaints] = useState(false);
+  const [showAddComplaint, setShowAddComplaint] = useState(false);
+  const [newComplaintTitle, setNewComplaintTitle] = useState("");
+  const [newComplaintNotes, setNewComplaintNotes] = useState("");
+  const [savingComplaint, setSavingComplaint] = useState(false);
+  const isOwner = getCurrentUser()?.role === "owner"; // POST /api/todos is owner-only server-side
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
   const dateLabel = selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr;
+
+  const loadComplaints = useCallback(() => {
+    setComplaintsLoading(true);
+    api.getTodos({ category: "complaint", ...(showResolvedComplaints ? {} : { status: "open" }) })
+      .then((res) => setComplaints(res.todos || []))
+      .catch(() => setComplaints([]))
+      .finally(() => setComplaintsLoading(false));
+  }, [showResolvedComplaints]);
+  useEffect(loadComplaints, [loadComplaints]);
+
+  const addComplaint = async () => {
+    if (!newComplaintTitle.trim()) { alert("Enter what the complaint was about"); return; }
+    setSavingComplaint(true);
+    try {
+      await api.createTodo({ title: newComplaintTitle.trim(), category: "complaint", notes: newComplaintNotes.trim() || null, priority: "high" });
+      setNewComplaintTitle(""); setNewComplaintNotes(""); setShowAddComplaint(false);
+      loadComplaints();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setSavingComplaint(false); }
+  };
+  const toggleComplaintDone = async (c) => {
+    try { await api.updateTodo(c.id, { status: c.status === "done" ? "open" : "done" }); loadComplaints(); }
+    catch (e) { alert("Error: " + e.message); }
+  };
 
   useEffect(() => {
     setLoading(true); setErr(null);
@@ -11219,10 +11256,12 @@ const DailyReviewSummary = () => {
   return (<div>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>⭐ Daily Review & Rating Summary</h3>
-      <div style={{ display: "flex", gap: 6 }}>
-        {[{ d: 0, l: "Today" }, { d: 1, l: "Yesterday" }, { d: 7, l: "7d ago" }].map((p) => (
-          <button key={p.d} onClick={() => setSelDay(p.d)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: selDay === p.d ? 700 : 500, border: selDay === p.d ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === p.d ? "#1A1A1A" : "#fff", color: selDay === p.d ? "#fff" : "#888" }}>{p.l}</button>
-        ))}
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+        {Array.from({ length: 7 }, (_, i) => {
+          const dd = istNow(); dd.setDate(dd.getDate() - i);
+          const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : dd.toISOString().split("T")[0].slice(5);
+          return (<button key={i} onClick={() => setSelDay(i)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: selDay === i ? 700 : 500, border: selDay === i ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selDay === i ? "#1A1A1A" : "#fff", color: selDay === i ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>);
+        })}
       </div>
     </div>
     <div style={{ fontSize: 11, color: "#999", marginBottom: 14 }}>{dateLabel} · {dateStr}</div>
@@ -11262,6 +11301,49 @@ const DailyReviewSummary = () => {
     )}
     <div style={{ fontSize: 10, color: "#999", marginTop: 12, lineHeight: 1.5 }}>
       Avg Rating formula: (5★×n5 + 4★×n4 + 3★×n3 + 2★×n2 + 1★×n1) / total reviews. Source: PetPooja → CRM → Feedback → Ratings & Reviews (Zomato / Swiggy tabs) + Reports → Order Report: Sub-Order Wise, per outlet, for the selected date.
+    </div>
+
+    {/* Complaints — same owner_todos rows the ✅ To Do tab shows under its own
+        "Complaint / Review" category filter, just reachable without leaving Reviews. */}
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0 }}>😠 Complaints</h3>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <button onClick={() => setShowResolvedComplaints((v) => !v)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid #E0E0DC", background: "#fff", color: "#888", cursor: "pointer", fontFamily: "inherit" }}>{showResolvedComplaints ? "Show open only" : "Show resolved too"}</button>
+          {isOwner && <button onClick={() => setShowAddComplaint((v) => !v)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{showAddComplaint ? "Cancel" : "➕ Log Complaint"}</button>}
+        </div>
+      </div>
+
+      {showAddComplaint && (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 14, marginBottom: 12 }}>
+          <input value={newComplaintTitle} onChange={(e) => setNewComplaintTitle(e.target.value)} placeholder="What was the complaint about? (e.g. Sector 31 — cold food, Zomato order #1234)"
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
+          <textarea value={newComplaintNotes} onChange={(e) => setNewComplaintNotes(e.target.value)} placeholder="Notes (optional) — what happened, what's being done about it" rows={2}
+            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box", resize: "vertical" }} />
+          <button onClick={addComplaint} disabled={savingComplaint} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{savingComplaint ? "⏳..." : "Log Complaint"}</button>
+        </div>
+      )}
+
+      {complaintsLoading ? (
+        <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>Loading…</div>
+      ) : complaints.length === 0 ? (
+        <div style={{ padding: 24, textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
+          {showResolvedComplaints ? "No complaints logged." : "No open complaints. 🎉"}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {complaints.map((c) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, background: c.status === "done" ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${c.status === "done" ? "#BBF7D0" : "#FECACA"}` }}>
+              <button onClick={() => toggleComplaintDone(c)} title={c.status === "done" ? "Reopen" : "Mark resolved"} style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1.5px solid ${c.status === "done" ? "#16A34A" : "#DC2626"}`, background: c.status === "done" ? "#16A34A" : "#fff", color: c.status === "done" ? "#fff" : "transparent", fontSize: 13, lineHeight: "18px", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>✓</button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: c.status === "done" ? "#166534" : "#991B1B", textDecoration: c.status === "done" ? "line-through" : "none" }}>{c.title}</div>
+                {c.notes && <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{c.notes}</div>}
+                <div style={{ fontSize: 10, color: "#AAA", marginTop: 2 }}>{c.created_by ? `${c.created_by} · ` : ""}{new Date(c.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" })}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   </div>);
 };
