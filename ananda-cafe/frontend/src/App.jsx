@@ -15119,6 +15119,11 @@ const InventoryLedger = () => {
 //  on closing and wastage, its simple what was total ordered from base kitchen".
 //  Backed by GET /api/finance/outlet-pnl (see finance.js for the full formula).
 // ═════════════════════════════════════════════════════════════════════════════
+// Transport/Water dropped as their own columns — they, plus Internet/Mala Decoration/
+// Staff Room Rent/Waste Collection/anything else configured in FixedCostsPanel, all fold
+// into Misc now (see finance.js's FIXED_HEAD_BUCKET) so nothing sits at the far right in
+// its own rarely-populated column. Misc expands the same way BK Purchase does — see
+// misc-detail below — so every head is still fully visible, just one click away.
 const FINANCE_EXPENSE_COLS = [
   { key: "bk_purchase", label: "BK Purchase" },
   { key: "bk_fixed_share", label: "BK Fixed Share" },
@@ -15126,8 +15131,6 @@ const FINANCE_EXPENSE_COLS = [
   { key: "salary", label: "Salary" },
   { key: "electricity", label: "Electricity" },
   { key: "gst", label: "GST" },
-  { key: "transport", label: "Transport" },
-  { key: "water", label: "Water" },
   { key: "misc", label: "Misc" },
 ];
 const FinancePnL = () => {
@@ -15143,6 +15146,12 @@ const FinancePnL = () => {
   const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
   const [bkPurchaseDetail, setBkPurchaseDetail] = useState({}); // outlet_id -> { dates, items }
   const [bkPurchaseLoading, setBkPurchaseLoading] = useState(null); // outlet_id currently loading
+  // Misc drill-down — same lazy-fetch-and-cache pattern as BK Purchase, independent toggle
+  // (both can be open at once for the same outlet). Per cost-head amount, not per-date —
+  // fixed costs are one prorated monthly figure per head, not naturally day-itemized.
+  const [expandedMisc, setExpandedMisc] = useState(null); // outlet_id, or null
+  const [miscDetail, setMiscDetail] = useState({}); // outlet_id -> { items, total }
+  const [miscLoading, setMiscLoading] = useState(null); // outlet_id currently loading
 
   const range = useMemo(() => {
     const lastDay = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
@@ -15157,6 +15166,8 @@ const FinancePnL = () => {
     // or it'd keep showing the previous month's breakdown under the same outlet.
     setExpandedBkPurchase(null);
     setBkPurchaseDetail({});
+    setExpandedMisc(null);
+    setMiscDetail({});
   };
   useEffect(load, [range]);
 
@@ -15169,6 +15180,18 @@ const FinancePnL = () => {
         .then((d) => setBkPurchaseDetail((p) => ({ ...p, [outletId]: d })))
         .catch(() => setBkPurchaseDetail((p) => ({ ...p, [outletId]: { dates: [], items: [] } })))
         .finally(() => setBkPurchaseLoading(null));
+    }
+  };
+
+  const toggleMisc = (outletId) => {
+    if (expandedMisc === outletId) { setExpandedMisc(null); return; }
+    setExpandedMisc(outletId);
+    if (!miscDetail[outletId]) {
+      setMiscLoading(outletId);
+      api.getMiscDetail(outletId, range.from, range.to)
+        .then((d) => setMiscDetail((p) => ({ ...p, [outletId]: d })))
+        .catch(() => setMiscDetail((p) => ({ ...p, [outletId]: { items: [], total: 0 } })))
+        .finally(() => setMiscLoading(null));
     }
   };
 
@@ -15237,6 +15260,8 @@ const FinancePnL = () => {
                 const netColor = o.net_pnl > 0 ? "#16A34A" : o.net_pnl < 0 ? "#DC2626" : "#999";
                 const isExpanded = expandedBkPurchase === o.outlet_id;
                 const detail = bkPurchaseDetail[o.outlet_id];
+                const isMiscExpanded = expandedMisc === o.outlet_id;
+                const miscData = miscDetail[o.outlet_id];
                 return (
                   <Fragment key={o.outlet_id}>
                   <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
@@ -15251,6 +15276,15 @@ const FinancePnL = () => {
                           <span onClick={() => toggleBkPurchase(o.outlet_id)} title="Item-wise, day-wise breakdown" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
                             −{fmt0(o.bk_purchase)}
                             <span style={{ fontSize: 9, color: "#2563EB" }}>{isExpanded ? "▲" : "▼"}</span>
+                          </span>
+                        ) : "—"}
+                      </td>
+                    ) : c.key === "misc" ? (
+                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o.misc > 0 ? "#991B1B" : "#BBB" }}>
+                        {o.misc > 0 ? (
+                          <span onClick={() => toggleMisc(o.outlet_id)} title="Cost-head breakdown" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            −{fmt0(o.misc)}
+                            <span style={{ fontSize: 9, color: "#2563EB" }}>{isMiscExpanded ? "▲" : "▼"}</span>
                           </span>
                         ) : "—"}
                       </td>
@@ -15297,6 +15331,33 @@ const FinancePnL = () => {
                       </td>
                     </tr>
                   )}
+                  {isMiscExpanded && (
+                    <tr>
+                      <td colSpan={5 + FINANCE_EXPENSE_COLS.length + 3} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <div style={{ padding: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>🧾 Misc — {oData?.short || o.outlet_id} — {monthLabel} — every cost head folded into Misc</div>
+                          {miscLoading === o.outlet_id ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>
+                          ) : !miscData || miscData.items.length === 0 ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#BBB", fontSize: 12 }}>No Misc cost heads for this period</div>
+                          ) : (
+                            <div style={{ maxWidth: 420 }}>
+                              {miscData.items.map((it) => (
+                                <div key={it.cost_head} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                  <span style={{ color: "#555" }}>{it.label}</span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(it.amount)}</span>
+                                </div>
+                              ))}
+                              <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 0", fontSize: 12, fontWeight: 800 }}>
+                                <span>Total</span>
+                                <span style={{ fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(miscData.total)}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                   </Fragment>
                 );
               })}
@@ -15320,7 +15381,7 @@ const FinancePnL = () => {
         </div>
       </div>
     )}
-    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/Transport/Water/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above; any configured cost head not in this list (Internet, Mala Decoration, Staff Room Rent, Waste Collection, etc.) rolls into Misc. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's BK Purchase — an outlet that bought nothing from BK this period carries none of it.</p>
+    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/GST/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above. Misc is everything that isn't Rent/Salary/Electricity/GST — Transport, Water, Internet, Mala Decoration, Staff Room Rent, Waste Collection, and any other configured cost head — click its ▼ to see exactly which heads make it up and how much each one is. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's BK Purchase — an outlet that bought nothing from BK this period carries none of it.</p>
   </div>);
 };
 

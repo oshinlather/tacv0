@@ -206,6 +206,7 @@ const api = {
   getFinanceCommissionPct: () => get("/api/finance/commission-pct"),
   setFinanceCommissionPct: (pct) => patch("/api/finance/commission-pct", { pct }),
   getBkPurchaseDetail: (outlet_id, from, to) => get("/api/finance/bk-purchase-detail", { outlet_id, from, to }),
+  getMiscDetail: (outlet_id, from, to) => get("/api/finance/misc-detail", { outlet_id, from, to }),
 
   // ── Live P&L ──
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),

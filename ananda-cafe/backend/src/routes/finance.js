@@ -13,9 +13,13 @@
 //     An outlet that bought nothing from BK this period carries none of BK's fixed cost;
 //     an outlet that bought more carries more. Falls back to an equal split only when
 //     total BK Purchase across every outlet is zero — nothing to prorate against.)
-//   − Rent, Salary, Electricity, GST, Transport, Water, Misc (from the same fixed_costs
-//     table FixedCostsPanel already writes to — this view just pivots those rows into
-//     named columns and prorates each row's monthly amount across the selected range)
+//   − Rent, Salary, Electricity, GST, Misc (from the same fixed_costs table FixedCostsPanel
+//     already writes to — this view pivots those rows into named columns and prorates each
+//     row's monthly amount across the selected range). Misc is every cost head that isn't
+//     one of the four named ones — Transport, Water, Internet, Mala Decoration, Staff Room
+//     Rent, Waste Collection, and anything else configured in FixedCostsPanel — nothing
+//     silently excluded from the P&L; Misc expands (see /misc-detail) to show exactly which
+//     heads make it up and how much each contributed, same drill-down as BK Purchase.
 //   = Net P&L
 const express = require("express");
 const router = express.Router();
@@ -60,11 +64,12 @@ function proratedFixedCost(allRows, outletId, costHead, from, to) {
   return total;
 }
 
-// cost_head → named P&L column. Anything not listed here (Internet, Mala Decoration,
-// Staff Room Rent, Waste Collection, the existing "misc" head itself, or any future head
-// added via FixedCostsPanel) rolls into Misc — the owner asked for exactly these 7
-// expense columns, not one column per configured head.
-const FIXED_HEAD_BUCKET = { rent: "rent", salary: "salary", electricity: "electricity", gst: "gst", transport: "transport", water: "water", water_expense: "water" };
+// cost_head → named P&L column. Anything not listed here (Transport, Water, Internet,
+// Mala Decoration, Staff Room Rent, Waste Collection, the "misc" head itself, or any
+// future head added via FixedCostsPanel) rolls into Misc — the owner asked for exactly
+// these 5 expense columns, not one column per configured head. Every head that lands in
+// Misc is still fully visible via GET /misc-detail's per-head breakdown below.
+const FIXED_HEAD_BUCKET = { rent: "rent", salary: "salary", electricity: "electricity", gst: "gst" };
 
 // computeBkPurchaseByOutlet now lives in salesRoutes.js (exported alongside
 // computeDailySalesRevenue/buildCostingContext) so /pnl/live's per-outlet cards can
@@ -140,7 +145,7 @@ router.get("/outlet-pnl", async (req, res) => {
         ? bkFixedTotalProrated * (bkPurchaseByOutlet[oid] || 0) / totalBkPurchaseAllOutlets
         : bkFixedTotalProrated / OUTLET_IDS.length);
 
-      const fixed = { rent: 0, salary: 0, electricity: 0, gst: 0, transport: 0, water: 0, misc: 0 };
+      const fixed = { rent: 0, salary: 0, electricity: 0, gst: 0, misc: 0 };
       const outletHeads = new Set((fixedCostRows || []).filter((f) => f.outlet_id === oid).map((f) => f.cost_head));
       outletHeads.forEach((head) => {
         const bucket = FIXED_HEAD_BUCKET[(head || "").toLowerCase()] || "misc";
@@ -162,7 +167,7 @@ router.get("/outlet-pnl", async (req, res) => {
       };
     });
 
-    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "bk_fixed_share", "rent", "salary", "electricity", "gst", "transport", "water", "misc", "total_expense", "net_pnl"];
+    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "bk_fixed_share", "rent", "salary", "electricity", "gst", "misc", "total_expense", "net_pnl"];
     const totals = { outlet_id: "all" };
     SUM_KEYS.forEach((k) => { totals[k] = round(outlets.reduce((s, o) => s + o[k], 0)); });
     totals.margin_pct = totals.effective_sale > 0 ? Math.round((totals.net_pnl / totals.effective_sale) * 1000) / 10 : null;
@@ -186,6 +191,44 @@ router.get("/bk-purchase-detail", async (req, res) => {
     const costingContext = await buildCostingContext();
     const detail = await computeBkPurchaseDetail(outlet_id, from, to, costingContext);
     res.json({ outlet_id, from, to, ...detail });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/finance/misc-detail?outlet_id=&from=&to= — the Misc column's drill-down:
+// every cost head that isn't Rent/Salary/Electricity/GST (Transport, Water, Internet,
+// Mala Decoration, Staff Room Rent, Waste Collection, etc.), each prorated across the
+// range the same way as every other fixed cost above — so the sum of these always equals
+// the outlet's Misc figure in /outlet-pnl. Heads that resolve to ₹0 for this range (never
+// configured, or configured only for months outside it) are omitted.
+router.get("/misc-detail", async (req, res) => {
+  try {
+    const user = await requireRole(req, res, "owner", "avp", "head_chef");
+    if (!user) return;
+    const { outlet_id, from, to } = req.query;
+    if (!outlet_id || !from || !to) return res.status(400).json({ error: "outlet_id, from, and to are required" });
+    if (!OUTLET_IDS.includes(outlet_id)) return res.status(400).json({ error: "Invalid outlet_id" });
+
+    const { data: fixedCostRows, error } = await supabase.from("fixed_costs").select("*").eq("active", true).eq("outlet_id", outlet_id);
+    if (error) throw error;
+
+    const round = (n) => Math.round(n || 0);
+    const explicitHeads = new Set(Object.keys(FIXED_HEAD_BUCKET));
+    const headLabel = {};
+    (fixedCostRows || []).forEach((r) => { headLabel[r.cost_head] = r.label || r.cost_head; });
+    const miscHeads = [...new Set((fixedCostRows || []).map((f) => f.cost_head))].filter((head) => !explicitHeads.has((head || "").toLowerCase()));
+
+    // Sum the RAW (unrounded) per-head amounts first, then round once — same order
+    // /outlet-pnl's own misc figure uses (accumulate floats into `fixed.misc`, round at
+    // the very end) — rounding each head individually before summing would drift a rupee
+    // or two off that figure, breaking the "these two numbers always reconcile" promise.
+    const rawItems = miscHeads.map((head) => ({ cost_head: head, label: headLabel[head] || head, raw: proratedFixedCost(fixedCostRows, outlet_id, head, from, to) }));
+    const total = round(rawItems.reduce((s, it) => s + it.raw, 0));
+    const items = rawItems
+      .map((it) => ({ cost_head: it.cost_head, label: it.label, amount: round(it.raw) }))
+      .filter((it) => it.amount !== 0)
+      .sort((a, b) => b.amount - a.amount);
+
+    res.json({ outlet_id, from, to, items, total });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
