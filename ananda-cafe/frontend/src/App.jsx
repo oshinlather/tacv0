@@ -9459,14 +9459,20 @@ const OutletMgr = ({ onBack }) => {
   const [dcExisting, setDcExisting] = useState(null);
   const [dcEditing, setDcEditing] = useState(false);
   const [dcLoading, setDcLoading] = useState(false);
+  // "Not Purchased Today" for Cold Drink & Water — an explicit cold_drink_purchase_none
+  // sentinel item (see submitDcPurchase) that still satisfies the Cold Drink Purchase
+  // punch, since not buying cold drinks every single day is legitimate and shouldn't
+  // ding the manager's score the way silently missing it does.
+  const [dcColdDrinkSkipped, setDcColdDrinkSkipped] = useState(false);
   useEffect(() => {
     if (screen !== "dairy_cold_drink" || !outlet) return;
     setDcLoading(true);
     api.getPurchases({ outlet_id: outlet, date: selectedDate })
       .then((rows) => {
-        const existing = (rows || []).find((p) => (p.items || []).some((i) => ["dairy_purchase", "cold_drink_purchase"].includes(i.type))) || null;
+        const existing = (rows || []).find((p) => (p.items || []).some((i) => ["dairy_purchase", "cold_drink_purchase", "cold_drink_purchase_none"].includes(i.type))) || null;
         setDcExisting(existing);
         setDcEditing(!existing);
+        setDcColdDrinkSkipped((existing?.items || []).some((i) => i.type === "cold_drink_purchase_none"));
         const allDcItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
         const q = {}, a = {};
         (existing?.items || []).forEach((i) => {
@@ -9475,7 +9481,7 @@ const OutletMgr = ({ onBack }) => {
         });
         setDcQty(q); setDcAmount(a);
       })
-      .catch(() => { setDcExisting(null); setDcEditing(true); })
+      .catch(() => { setDcExisting(null); setDcEditing(true); setDcColdDrinkSkipped(false); })
       .finally(() => setDcLoading(false));
   }, [screen, selectedDate, outlet]);
   const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
@@ -9488,14 +9494,28 @@ const OutletMgr = ({ onBack }) => {
       🌙 It's past midnight — defaulted to <b>yesterday's</b> date since you're likely closing out yesterday's business. Tap a date above if that's wrong.
     </div>
   ) : null;
-  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); setDcExisting(null); setDcEditing(false); };
-  const submitDcPurchase = async () => {
+  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); setDcExisting(null); setDcEditing(false); setDcColdDrinkSkipped(false); };
+  // forceColdDrinkSkip: true only when called from the "🚫 Not Purchased Today" button —
+  // an explicit, unambiguous action that always wins, dropping any Cold Drink items that
+  // happen to be filled in. Without it, the normal Save button falls back to whatever
+  // dcColdDrinkSkipped remembers from a previous save, UNLESS the manager has since typed
+  // real Cold Drink values (those always take priority over a stale flag).
+  const submitDcPurchase = async (forceColdDrinkSkip = false) => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
-    const filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0);
-    if (filled.length === 0) { alert("Fill qty and amount for at least 1 item"); return; }
+    let filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0);
+    let effectiveSkip;
+    if (forceColdDrinkSkip) {
+      filled = filled.filter((i) => i.cat !== "cold_drink");
+      effectiveSkip = true;
+    } else {
+      const hasRealColdDrink = filled.some((i) => i.cat === "cold_drink");
+      effectiveSkip = dcColdDrinkSkipped && !hasRealColdDrink;
+    }
+    if (filled.length === 0 && !effectiveSkip) { alert("Fill qty and amount for at least 1 item"); return; }
     setDcSaving(true); setErr(null);
     try {
       const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
+      if (effectiveSkip) apiItems.push({ item_name: "Not purchased today", quantity: 0, unit: "", amount: 0, vendor: null, type: "cold_drink_purchase_none" });
       let result;
       if (dcExisting) {
         // Same day, already saved once — update that row instead of inserting a second
@@ -9515,12 +9535,21 @@ const OutletMgr = ({ onBack }) => {
         // isn't — it's paid in full immediately, just not out of the outlet's cash).
         result = await api.createPurchase({ items: apiItems, payment_mode: "upi", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
       }
-      alert(`✅ Purchase ${dcExisting ? "updated" : "saved"} — ${filled.length} items`);
+      alert(effectiveSkip && filled.length === 0 ? "✅ Cold Drink marked as not purchased today" : `✅ Purchase ${dcExisting ? "updated" : "saved"} — ${filled.length} items`);
       // Stay on this screen showing what was just saved (instead of jumping back to
       // home) — the whole point of this fix is to make the save visibly stick.
-      setDcExisting(result); setDcEditing(false);
+      setDcExisting(result); setDcEditing(false); setDcColdDrinkSkipped(effectiveSkip);
     } catch (e) { setErr(e.message); alert(`❌ Failed to save: ${e.message}`); }
     finally { setDcSaving(false); }
+  };
+  const markColdDrinkNotPurchased = () => {
+    // submitDcPurchase(true) already drops any filled Cold Drink items on its own — this
+    // just clears the visible inputs too, so the form doesn't keep showing stale numbers
+    // that were never actually saved.
+    const coldIds = new Set((DC_PURCHASE_CATEGORIES.find((c) => c.id === "cold_drink")?.items || []).map((i) => i.id));
+    setDcQty((p) => Object.fromEntries(Object.entries(p).filter(([id]) => !coldIds.has(id))));
+    setDcAmount((p) => Object.fromEntries(Object.entries(p).filter(([id]) => !coldIds.has(id))));
+    submitDcPurchase(true);
   };
 
   // Dispatched Challan (outlet-side) — what BK sent to this outlet on a given date,
@@ -10656,6 +10685,9 @@ const OutletMgr = ({ onBack }) => {
     const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
     const dcFilledCount = dcAllItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0).length;
     const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0);
+    // The cold_drink_purchase_none sentinel is a bookkeeping marker, not a real line
+    // item — excluded from every real-items list/count shown below.
+    const dcRealItems = (dcExisting?.items || []).filter((i) => i.type !== "cold_drink_purchase_none");
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🥛 Dairy / Cold Drink Purchase</div>{dcTotal > 0 && <span style={{ padding: "4px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#2563EB", fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(dcTotal)}</span>}</div>
       <div style={{ padding: "8px 12px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11, color: "#1D4ED8", marginBottom: 10 }}>📋 For inventory & audit records only — this isn't a cash expense you're paying for, so it won't be deducted from your cash to deposit.</div>
@@ -10665,17 +10697,24 @@ const OutletMgr = ({ onBack }) => {
 
       {!dcLoading && dcExisting && !dcEditing ? (<>
         <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>
-          ✅ Already saved for {selectedDate} — {(dcExisting.items || []).length} items, {fmt(dcExisting.total_amount || 0)}. Tap Edit to change.
+          ✅ Already saved for {selectedDate} — {dcRealItems.length} item{dcRealItems.length === 1 ? "" : "s"}, {fmt(dcExisting.total_amount || 0)}. Tap Edit to change.
         </div>
-        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
-          {(dcExisting.items || []).map((i, idx) => (
-            <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: idx < dcExisting.items.length - 1 ? "1px solid #F0F0EC" : "none" }}>
-              <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{i.item_name}</span>
-              <span style={{ fontSize: 12, color: "#888" }}>{i.quantity} {i.unit}</span>
-              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", minWidth: 60, textAlign: "right" }}>{fmt(i.amount)}</span>
-            </div>
-          ))}
-        </div>
+        {dcColdDrinkSkipped && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14, fontWeight: 600 }}>
+            🥤 Cold Drink & Water — marked not purchased today
+          </div>
+        )}
+        {dcRealItems.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+            {dcRealItems.map((i, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: idx < dcRealItems.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{i.item_name}</span>
+                <span style={{ fontSize: 12, color: "#888" }}>{i.quantity} {i.unit}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", minWidth: 60, textAlign: "right" }}>{fmt(i.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
         <button onClick={() => setDcEditing(true)} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
       </>) : !dcLoading && (<>
       <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
@@ -10683,6 +10722,19 @@ const OutletMgr = ({ onBack }) => {
           <button key={c.id} onClick={() => setDcCategory(c.id)} style={{ flex: 1, padding: 10, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: dcCategory === c.id ? "2px solid #2563EB" : "1px solid #E0E0DC", background: dcCategory === c.id ? "#EFF6FF" : "#fff", color: dcCategory === c.id ? "#2563EB" : "#888" }}>{c.label}</button>
         ))}
       </div>
+
+      {/* Cold Drink isn't bought every day (unlike Dairy) — this marks today's Cold Drink
+          Purchase punch as satisfied without a real entry, so a genuinely no-purchase day
+          doesn't cost the manager their Punch Score. Saves immediately on click. */}
+      {dcCategory === "cold_drink" && (
+        dcColdDrinkSkipped ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", fontWeight: 600, marginBottom: 12 }}>
+            🥤 Marked not purchased today — fill in real items below and Save to undo this.
+          </div>
+        ) : (
+          <button onClick={markColdDrinkNotPurchased} disabled={dcSaving} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#92400E", fontWeight: 700, fontSize: 12.5, cursor: dcSaving ? "not-allowed" : "pointer", fontFamily: "inherit", marginBottom: 12 }}>🚫 Not Purchased Today</button>
+        )
+      )}
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
         {dcActiveCat.items.map((item) => {
@@ -10705,7 +10757,7 @@ const OutletMgr = ({ onBack }) => {
 
       <ErrBar />
       <div style={{ position: "sticky", bottom: 0, padding: "12px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={submitDcPurchase} disabled={dcFilledCount === 0 || dcSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: dcFilledCount > 0 && !dcSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: dcFilledCount > 0 && !dcSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+        <button onClick={() => submitDcPurchase()} disabled={dcFilledCount === 0 || dcSaving} style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: dcFilledCount > 0 && !dcSaving ? "#2563EB" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 16, cursor: dcFilledCount > 0 && !dcSaving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
           {dcSaving ? "⏳ Saving..." : dcExisting ? `💾 Update Purchase (${dcFilledCount} items)` : `💾 Save Purchase (${dcFilledCount} items)`}
         </button>
       </div>

@@ -4413,7 +4413,11 @@ router.get('/punch-status/:date', async (req, res) => {
       if (!has(closing, oid)) missing.push('closing');
       const oPurchases = (purchases || []).filter(p => p.outlet_id === oid);
       if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'dairy_purchase'))) missing.push('dairy_purchase');
-      if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'cold_drink_purchase'))) missing.push('cold_drink_purchase');
+      // cold_drink_purchase_none: an explicit "nothing to buy today" marker (see the DC
+      // Purchase screen's "Not Purchased Today" button) — counts the same as a real
+      // purchase for punch purposes, since not buying cold drinks every single day is
+      // legitimate and shouldn't cost the manager their score.
+      if (!oPurchases.some(p => (p.items || []).some(i => i.type === 'cold_drink_purchase' || i.type === 'cold_drink_purchase_none'))) missing.push('cold_drink_purchase');
       if ((dispatched || []).some(d => d.outlet_id === oid && !d.received_at)) missing.push('dispatch_verify');
 
       const closingRow = (closing || []).find(c => c.outlet_id === oid);
