@@ -72,7 +72,7 @@ const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_accoun
 // employee list — including cross-outlet advance-giving. See requireScope().
 function scopeForUser(user) {
   if (OWNER_LEVEL_ROLES.includes(user.role)) return null;
-  if (user.role === 'outlet_mgr') return user.outlet_id || false;
+  if (user.role === 'outlet_mgr' || user.role === 'chef') return user.outlet_id || false;
   if (user.role === 'store_mgr' || user.role === 'bk_manager') return 'bk';
   return false;
 }
@@ -94,10 +94,12 @@ function sanitize(emp, role) {
 
 // ── GET /api/employees — full directory (scoped managers only see their own
 // department), each row annotated with its outstanding (unsettled) advance
-// balance from Books Ledger
+// balance from Books Ledger. 'chef' added on this route only (not the shared
+// ALL_EMPLOYEE_ROLES constant) — they need the roster to pick who to fine, but
+// stay locked out of every write route below except POST /:id/fine.
 router.get('/', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES, 'chef');
     if (!user) return;
     const scope = scopeForUser(user);
     if (requireScope(scope, res)) return;
@@ -238,11 +240,14 @@ router.get('/:id/advances', async (req, res) => {
 // it's inserted as a books_ledger row (is_advance=true, category='staff_fine')
 // with status='pending', so it's invisible to outstanding_advance and payroll's
 // advance deduction (both now filter on status='approved' — see the GET /
-// and GET /:id handlers above and payroll.js) until an owner approves it via
-// PATCH /fines/:id/approve below. Same scoped-manager gating as /advance.
+// and GET /:id handlers above and payroll.js) until approved via PATCH
+// /fines/:id/approve below — Head Chef included there via OWNER_LEVEL_ROLES, so
+// a fine Chef imposes on their own team is Head Chef's to approve. Same
+// scoped-manager gating as /advance; 'chef' added here only (see GET / above —
+// this is their one and only write route in this file).
 router.post('/:id/fine', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES, 'chef');
     if (!user) return;
     const { amount, reason, entry_date } = req.body;
     if (!amount || Number(amount) <= 0) return res.status(400).json({ error: 'A positive amount is required' });

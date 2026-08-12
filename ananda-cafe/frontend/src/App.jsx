@@ -977,7 +977,11 @@ const EmployeeMasterPanel = () => {
 //  see routes/employees.js). AVP/Head Chef get the full EmployeeMasterPanel
 //  instead, wired into their scoped dashboard tabs.
 // ═════════════════════════════════════════════════════════════════════════════
-const TeamPanel = ({ onBack }) => {
+// fineOnly: Chef's cut of this same panel — sees every team member at their outlet but
+// can only Impose Fine (no onboarding, editing, or advances). Backend enforces this too
+// (POST /:id/fine is the only employees.js write route chef is allowed to call), this
+// just keeps the UI from offering buttons that would 403 anyway.
+const TeamPanel = ({ onBack, fineOnly = false }) => {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -1086,12 +1090,12 @@ const TeamPanel = ({ onBack }) => {
       {onBack && <BackBtn onClick={onBack} />}
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 15, fontWeight: 800 }}>👥 Team</div>
-        <div style={{ fontSize: 11, color: "#999" }}>Onboard staff & record advances</div>
+        <div style={{ fontSize: 11, color: "#999" }}>{fineOnly ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff & record advances"}</div>
       </div>
-      <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
+      {!fineOnly && <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>}
     </div>
 
-    {showAdd && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
+    {showAdd && !fineOnly && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
       <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={inputStyle} />
       <input type="tel" placeholder="Phone (optional)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
@@ -1148,7 +1152,7 @@ const TeamPanel = ({ onBack }) => {
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
               <input type="number" inputMode="numeric" placeholder="₹ amount" value={fineAmount} onChange={(e) => setFineAmount(e.target.value)} autoFocus style={inputStyle} />
               <input placeholder="Reason (required)" value={fineReason} onChange={(e) => setFineReason(e.target.value)} style={inputStyle} />
-              <div style={{ fontSize: 10.5, color: "#999", marginBottom: 8 }}>Goes to the owner for approval before it's deducted as an advance.</div>
+              <div style={{ fontSize: 10.5, color: "#999", marginBottom: 8 }}>Goes to {fineOnly ? "Head Chef" : "the owner"} for approval before it's deducted as an advance.</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => imposeFine(emp.id)} disabled={fineSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{fineSaving ? "⏳..." : "✓ Submit"}</button>
                 <button onClick={() => setFineId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
@@ -1156,8 +1160,8 @@ const TeamPanel = ({ onBack }) => {
             </div>
           ) : (
             <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
-              <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+              {!fineOnly && <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
+              {!fineOnly && <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>}
               <button onClick={() => openFine(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
             </div>
           )}
@@ -9860,12 +9864,13 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && opt.s === "performance")).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
-  // ── TEAM — onboard staff for this outlet, give an advance ──
-  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} />;
+  // ── TEAM — onboard staff for this outlet, give an advance (Chef: fine-only cut, see
+  // TeamPanel's fineOnly prop) ──
+  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} fineOnly={isChef} />;
 
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
@@ -16141,6 +16146,10 @@ const SCOPED_ROLE_TABS = {
     { id: "pp_recipes", label: "📖 Dish Recipes" },
     { id: "employees", label: "👤 Employee Master" },
     { id: "payroll", label: "💰 Monthly Payroll" },
+    // Fines Chef imposes on their own team (TeamPanel's fineOnly cut) land here for
+    // approval — backend already permits head_chef (OWNER_LEVEL_ROLES) on all three
+    // fine endpoints, this just surfaces the same FinesPanel the owner's P&L uses.
+    { id: "fines", label: "🚩 Fines" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
   bk_manager: [
@@ -16235,6 +16244,7 @@ const ScopedDashboard = () => {
       {tab === "bk_demand" && <BKDemandForm />}
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
+      {tab === "fines" && <FinesPanel />}
       {tab === "team" && <TeamPanel />}
       {tab === "demand_vs_closing" && <DemandVsClosingSection />}
     </div>
