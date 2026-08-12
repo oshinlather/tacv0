@@ -2570,17 +2570,25 @@ router.patch('/orders/:id/receive', async (req, res) => {
 router.patch('/orders/:id/dispatch', async (req, res) => {
   try {
     const { id } = req.params;
-    const { dispatch_items, dispatched_by, remaining_items } = req.body;
-    
+    const { dispatch_items, dispatched_by, remaining_items, items_units } = req.body;
+
     // 1. Get the order
     const { data: order, error: orderErr } = await supabase.from('demands')
       .select('*').eq('id', id).single();
     if (orderErr) throw orderErr;
 
+    // Merge (not overwrite) — a "phoned-in" item added straight at dispatch time (never
+    // went through the outlet manager's UnitPicker) needs its own unit tag too, or a Kg
+    // item like dosa/idli batter silently falls back to the catalog default ("Batch")
+    // downstream in costing, a 9x/8x error. Union with whatever the original demand
+    // already had so an item that WAS tagged at demand time keeps that tag.
+    const mergedItemsUnits = { ...(order.items_units || {}), ...(items_units || {}) };
+
     // 2. Mark order as fulfilled with dispatch items
     const { error: updateErr } = await supabase.from('demands').update({
       status: 'fulfilled',
       dispatch_items: dispatch_items || {},
+      items_units: mergedItemsUnits,
       dispatched_at: new Date().toISOString(),
       dispatched_by: dispatched_by || null,
     }).eq('id', id);
@@ -2595,6 +2603,9 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
         type: order.type || 'manual',
         status: 'submitted',
         items: remaining_items,
+        // Carry the same merged unit tags forward — otherwise a partially-dispatched
+        // Kg item's tag would be lost on the follow-up order for whatever's left.
+        items_units: mergedItemsUnits,
         note: `Remaining from partial dispatch (${Object.keys(dispatch_items).length} items sent)`,
         submitted_by: order.submitted_by,
         submitted_at: order.submitted_at,
@@ -4211,11 +4222,19 @@ async function computeBkPurchaseByOutlet(from, to, costingContext) {
     Object.entries(items).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
       if (q <= 0) return;
+      // Per-record unit override (e.g. dosa/idli batter demanded in Kg since Aug 11,
+      // 2026 — see CLAUDE.md/demand form) — was hardcoded null here, which silently fell
+      // back to demand_items' catalog default unit ("Batch" for dosa/idli), multiplying
+      // every already-Kg dispatch qty by the Batch→Kg conversion factor (9x/8x) on top of
+      // itself. Same items_units-first pattern computeStockUsageForDate already uses for
+      // the core COGS/Material Cost figure below — this function just hadn't been updated
+      // to match when the demand form switched to Kg.
+      const rawUnit = (o.items_units || {})[itemId] || null;
       const rate = rateMap[itemId];
       if (rate) {
-        cost += q * convFactorFor(itemId, null, rate.unit) * Number(rate.price);
+        cost += q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
       } else if (bkRecipeMap[itemId]) {
-        cost += q * convFactorFor(itemId, null, "Kg") * bkRecipeMap[itemId].costPerKg;
+        cost += q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipeMap[itemId].costPerKg;
       }
     });
     byOutlet[o.outlet_id] = (byOutlet[o.outlet_id] || 0) + cost;
@@ -4240,12 +4259,14 @@ async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
     Object.entries(items).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
       if (q <= 0) return;
+      // See the same fix in computeBkPurchaseByOutlet above — rawUnit was hardcoded null.
+      const rawUnit = (o.items_units || {})[itemId] || null;
       const rate = rateMap[itemId];
       let amount = 0;
       if (rate) {
-        amount = q * convFactorFor(itemId, null, rate.unit) * Number(rate.price);
+        amount = q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
       } else if (bkRecipeMap[itemId]) {
-        amount = q * convFactorFor(itemId, null, "Kg") * bkRecipeMap[itemId].costPerKg;
+        amount = q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipeMap[itemId].costPerKg;
       } else {
         return;
       }

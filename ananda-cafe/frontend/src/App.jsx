@@ -4443,6 +4443,18 @@ const DailyStockUsage = () => {
 
 // ─── BK Items — auto-derived from DEMAND_SECTIONS so they always match ──────
 const BK_ITEMS = DEMAND_SECTIONS.flatMap((sec) => sec.items.map((item) => ({ ...item, category: sec.id })));
+// Dosa/Idli/Vada Batter are demanded, closed, and wasted in Kg everywhere else in the
+// app now (the demand/closing/wastage forms all force Kg — see UnitPicker's
+// allowBatch=false) — dosa_batter/idli_batter's catalog default unit is still "Batch"
+// only because unit_conversions needs a from-unit to convert legacy pre-Aug-2026-08-11
+// records that were genuinely recorded in Batch (no items_units override stamped).
+// BK Consolidated/Dispatch/Driver Challans should always DISPLAY (and, for Consolidated,
+// SUM) these three in Kg, matching every other screen — this is the one place that
+// still showed/summed in Batch, which is exactly the confusing "0.78 Batch" style
+// mis-punch risk this fixes. Not touching the catalog default itself (still "Batch")
+// keeps normalizeUnit's from-unit fallback correct for old records.
+const KG_STANDARDIZED_ITEMS = new Set(["dosa_batter", "idli_batter", "vada_batter"]);
+const bkDisplayUnit = (itemId, catalogUnit) => (KG_STANDARDIZED_ITEMS.has(itemId) ? "Kg" : catalogUnit);
 let RAW_MATERIALS = [
   { id: "besan", name: "Besan", unit: "Kg" },
   { id: "golden_sela_rice", name: "Golden Sela Rice", unit: "Kg" },
@@ -4705,11 +4717,11 @@ const BaseKitchen = () => {
   const issuedOrders = cycleOrders.filter((o) => o.status === "issued");
   const activeOrders = showAll ? cycleOrders : pendingOrders;
 
-  // Some outlets demand a BK-prepared item (e.g. Dosa Batter) in Kg instead of the
-  // default Batch — items_units records that override. Without normalizing back to
-  // the default unit here, a 7 Kg demand would silently be counted as "7 Batch" in
-  // this table, which is exactly the outlet-vs-BK mismatch this fixes.
-  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; activeOrders.forEach((o) => { const q = normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], bk.unit); consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
+  // Batter items always consolidate into Kg (bkDisplayUnit), everything else into its
+  // own catalog unit — normalizeUnit handles both a straight Kg entry (post-Aug-11) and
+  // a legacy Batch entry (no items_units stamped) correctly either way, converting
+  // whichever one doesn't already match the target.
+  const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; const targetUnit = bkDisplayUnit(bk.id, bk.unit); activeOrders.forEach((o) => { const q = normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], targetUnit); consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
 
   const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
   const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
@@ -4781,10 +4793,10 @@ const BaseKitchen = () => {
       <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 20 }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</span>
-          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bk.unit || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
+          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bkDisplayUnit(bk.id, bk.unit) || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
-        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bk.unit}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => { const csItems = closingStocksByOutlet[o.id]; const rawClosing = csItems?.[`cs_${bk.id}`] ?? csItems?.[bk.id]; const closingLabel = rawClosing != null && rawClosing !== "" ? Math.round(Number(rawClosing) * 100) / 100 : "NA"; return (<td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({closingLabel})</span></td>); })}</tr>); })}</tbody></table></div>
+        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bkDisplayUnit(bk.id, bk.unit)}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => { const csItems = closingStocksByOutlet[o.id]; const rawClosing = csItems?.[`cs_${bk.id}`] ?? csItems?.[bk.id]; const closingLabel = rawClosing != null && rawClosing !== "" ? Math.round(Number(rawClosing) * 100) / 100 : "NA"; return (<td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({closingLabel})</span></td>); })}</tr>); })}</tbody></table></div>
       </div>
 
       {/* Staff Food Requests — separate from the regular demand items above (different
@@ -5001,9 +5013,15 @@ const Dispatch = () => {
       }
     });
     if (!hasAny) { alert("Tick at least 1 item to dispatch"); return; }
+    // A phoned-in item (added via "+ Add Item" below, never touched the outlet manager's
+    // UnitPicker) never got an items_units tag — stamp Kg for the 3 standardized batter
+    // items here so they don't silently fall back to the catalog default ("Batch")
+    // downstream. Everything else keeps whatever unit the original demand already used.
+    const newItemsUnits = {};
+    Object.keys(dispItems).forEach((id) => { if (isExtraItem(order, id) && KG_STANDARDIZED_ITEMS.has(id)) newItemsUnits[id] = "Kg"; });
     setDispatching(order.id);
     try {
-      await api.dispatchOrder(order.id, dispItems, getCurrentUser()?.name || "store", remainingItems);
+      await api.dispatchOrder(order.id, dispItems, getCurrentUser()?.name || "store", remainingItems, newItemsUnits);
       setCheckedItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
       setDispatchQty((p) => { const c = { ...p }; delete c[order.id]; return c; });
       setExtraItems((p) => { const c = { ...p }; delete c[order.id]; return c; });
@@ -5032,7 +5050,7 @@ const Dispatch = () => {
     return id;
   };
   const getItemUnit = (id) => {
-    for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.unit; }
+    for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return bkDisplayUnit(id, it.unit); }
     return "";
   };
 
@@ -5412,7 +5430,7 @@ const DriverChallans = () => {
   }, []);
 
   const getName = (id) => getBk(id);
-  const getUnit = (id) => BK_ITEMS.find((b) => b.id === id)?.unit || "";
+  const getUnit = (id) => bkDisplayUnit(id, BK_ITEMS.find((b) => b.id === id)?.unit || "");
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>⏳ Loading...</div>;
 
@@ -6970,6 +6988,10 @@ const DemandHistory = () => {
       const ids = new Set([...Object.keys(items), ...Object.keys(dispItems || {})]);
       ids.forEach(id => {
         if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, demandIds: [] };
+        // NOT switched to bkDisplayUnit/Kg like every other screen — see the comment on
+        // the `displayUnit` line below in the .map() for why (RECIPES[id].yieldQty for
+        // dosa/idli batter is a separate, pre-existing bug that this Batch-denominated
+        // path happens to cancel out algebraically; Kg would make it a real 2x error).
         const defaultUnit = allItems.find(i => i.id === id)?.unit;
         merged[id].qty += toDefaultUnit(id, Number(items[id]) || 0, units[id], defaultUnit);
         if (dispItems) {
@@ -7026,6 +7048,16 @@ const DemandHistory = () => {
         const def = allItems.find(i => i.id === id);
         const rate = rateMap[id];
         let unitPrice = rate ? Number(rate.price) : 0;
+        // Deliberately NOT bkDisplayUnit/Kg here, unlike BK Consolidated/Dispatch/Driver
+        // Challans/Challans Section — RECIPES.dosa_batter/idli_batter.yieldQty is 18/16
+        // here (frontend-only recipe copy) vs the backend bk_recipes table's authoritative
+        // 9/8 (confirmed via direct DB query: identical ingredient quantities, just a
+        // different yield denominator — looks like a doubling typo, not intentional).
+        // The 'Batch' branch below happens to be algebraically immune to that bug
+        // (unitPrice = costPerKg × yieldQty = batchCost regardless of yieldQty's value) —
+        // switching this to Kg would remove that accidental cancellation and turn a
+        // dormant bug into a real, visible 2x cost-per-Kg understatement. Flagged to the
+        // owner separately rather than silently changing RECIPES' configured yield.
         let displayUnit = def?.unit || '';
         let rateUnit = displayUnit;
         let convFactor = 1;
@@ -9882,7 +9914,7 @@ const OutletMgr = ({ onBack }) => {
   // ── DISPATCHED CHALLANS (outlet-side) — view + confirm receipt ──
   if (screen === "dispatched") {
     const getName = (id) => { for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.name; } return getBk(id); };
-    const getUnit = (id) => { for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return it.unit; } return BK_ITEMS.find((b) => b.id === id)?.unit || ""; };
+    const getUnit = (id) => { for (const sec of DEMAND_SECTIONS) { const it = sec.items.find((i) => i.id === id); if (it) return bkDisplayUnit(id, it.unit); } return bkDisplayUnit(id, BK_ITEMS.find((b) => b.id === id)?.unit || ""); };
 
     if (openDispatchOrder) {
       const order = openDispatchOrder;
@@ -13507,7 +13539,7 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
                   return (
                     <tr key={`${r.outletId}_${r.itemId}`} style={{ borderBottom: "1px solid #F0F0EC", background: rowBg }}>
                       {!selOutlet && <td style={{ ...tdS, fontWeight: 600 }}>{OUTLETS.find((o) => o.id === r.outletId)?.short || r.outletId}</td>}
-                      <td style={tdS}>{item?.name || r.itemId} <span style={{ fontSize: 10, color: "#999" }}>{item?.unit}</span></td>
+                      <td style={tdS}>{item?.name || r.itemId} <span style={{ fontSize: 10, color: "#999" }}>{item && bkDisplayUnit(r.itemId, item.unit)}</span></td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{r.demanded}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: short ? "#DC2626" : "#1A1A1A" }}>{r.dispatched}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.dispatched === 0 ? "#CCC" : r.anyUnverified ? "#B45309" : "#16A34A" }}>
