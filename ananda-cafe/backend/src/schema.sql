@@ -236,6 +236,44 @@ ALTER TABLE daily_review_summary ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Service role access" ON daily_review_summary FOR ALL USING (true);
 
 -- ═══════════════════════════════════════════════════════════════
+--  DAILY CUSTOMER COMPLAINTS — 2026-08 migration
+--  One row per individual customer complaint, sourced from PetPooja
+--  CRM > Feedback > Complaints (filtered to the selected date, per outlet).
+--  Replaces the old manual "Complaints" log (owner_todos category='complaint')
+--  in the Reviews tab. Populated by the "petpooja-daily-review-summary"
+--  scheduled task each morning (alongside the review summary), then upserted
+--  via POST /api/petpooja/complaints/daily. The owner's Reviews tab reads it
+--  via GET, keyed off istDateAgo(1) by default.
+--
+--  POST semantics: replace-by-date — all rows for the posted date are deleted
+--  and re-inserted, so a re-run is idempotent even though a complaint has no
+--  stable natural key (order_id can repeat or be blank).
+-- ═══════════════════════════════════════════════════════════════
+CREATE TABLE IF NOT EXISTS daily_complaints (
+  id BIGSERIAL PRIMARY KEY,
+  date DATE NOT NULL,               -- the day the complaints belong to (scrape date)
+  outlet_id TEXT NOT NULL,          -- matches OUTLETS ids: sec23, sec31, sec56, sec14, elan, gaursid
+  platform TEXT,                    -- 'zomato' | 'swiggy' (nullable if source doesn't split)
+  order_id TEXT,                    -- PetPooja online order # the complaint is about
+  complaint_at TIMESTAMPTZ,         -- when the complaint was raised (nullable)
+  reason TEXT,                      -- complaint category, e.g. "Poor taste or quality", "Wrong item(s) delivered"
+  item TEXT,                        -- "Issue With", e.g. "1 X Ghee Masala Dosa"
+  details TEXT,                     -- full complaint / feedback text from the customer
+  status TEXT,                      -- as shown in PetPooja: 'Open' | 'Dismissed' | 'Resolved' etc.
+  refund_status TEXT,               -- PetPooja refund status, e.g. 'Open'
+  customer TEXT,                    -- customer name shown on the complaint
+  raw JSONB,                        -- full captured object, for any extra fields (expired_at, order count, etc.)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_complaints_date ON daily_complaints (date);
+CREATE INDEX IF NOT EXISTS idx_daily_complaints_outlet_date ON daily_complaints (outlet_id, date);
+
+ALTER TABLE daily_complaints ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service role access" ON daily_complaints FOR ALL USING (true);
+
+-- ═══════════════════════════════════════════════════════════════
 --  INDEXES for fast queries
 -- ═══════════════════════════════════════════════════════════════
 CREATE INDEX idx_demands_outlet_date ON demands(outlet_id, date);

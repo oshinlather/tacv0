@@ -11196,46 +11196,24 @@ const DailyReviewSummary = () => {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  // Complaints — reuses the existing Owner To Do list's 'complaint' category (same
-  // owner_todos table the ✅ To Do tab already manages) rather than a new data model,
-  // surfaced right here since a complaint is naturally something you'd log while
-  // looking at the day's reviews. Not date-scoped (owner_todos has no outlet/date
-  // columns) — shows whatever's currently open, same as the To Do tab's default view.
+  // Customer Complaints — one row per individual complaint pulled from PetPooja
+  // CRM > Feedback > Complaints for the selected date, per outlet/platform. Read
+  // from daily_complaints (populated by the daily scheduled scrape). Replaces the
+  // old manual owner_todos-backed complaint log. Date-scoped to match the review
+  // summary above, so both move together with the day selector.
   const [complaints, setComplaints] = useState([]);
   const [complaintsLoading, setComplaintsLoading] = useState(true);
-  const [showResolvedComplaints, setShowResolvedComplaints] = useState(false);
-  const [showAddComplaint, setShowAddComplaint] = useState(false);
-  const [newComplaintTitle, setNewComplaintTitle] = useState("");
-  const [newComplaintNotes, setNewComplaintNotes] = useState("");
-  const [savingComplaint, setSavingComplaint] = useState(false);
-  const isOwner = getCurrentUser()?.role === "owner"; // POST /api/todos is owner-only server-side
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
   const dateLabel = selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr;
 
-  const loadComplaints = useCallback(() => {
+  useEffect(() => {
     setComplaintsLoading(true);
-    api.getTodos({ category: "complaint", ...(showResolvedComplaints ? {} : { status: "open" }) })
-      .then((res) => setComplaints(res.todos || []))
+    api.getDailyComplaints(dateStr)
+      .then((res) => setComplaints(res.rows || []))
       .catch(() => setComplaints([]))
       .finally(() => setComplaintsLoading(false));
-  }, [showResolvedComplaints]);
-  useEffect(loadComplaints, [loadComplaints]);
-
-  const addComplaint = async () => {
-    if (!newComplaintTitle.trim()) { alert("Enter what the complaint was about"); return; }
-    setSavingComplaint(true);
-    try {
-      await api.createTodo({ title: newComplaintTitle.trim(), category: "complaint", notes: newComplaintNotes.trim() || null, priority: "high" });
-      setNewComplaintTitle(""); setNewComplaintNotes(""); setShowAddComplaint(false);
-      loadComplaints();
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSavingComplaint(false); }
-  };
-  const toggleComplaintDone = async (c) => {
-    try { await api.updateTodo(c.id, { status: c.status === "done" ? "open" : "done" }); loadComplaints(); }
-    catch (e) { alert("Error: " + e.message); }
-  };
+  }, [dateStr]);
 
   useEffect(() => {
     setLoading(true); setErr(null);
@@ -11303,47 +11281,52 @@ const DailyReviewSummary = () => {
       Avg Rating formula: (5★×n5 + 4★×n4 + 3★×n3 + 2★×n2 + 1★×n1) / total reviews. Source: PetPooja → CRM → Feedback → Ratings & Reviews (Zomato / Swiggy tabs) + Reports → Order Report: Sub-Order Wise, per outlet, for the selected date.
     </div>
 
-    {/* Complaints — same owner_todos rows the ✅ To Do tab shows under its own
-        "Complaint / Review" category filter, just reachable without leaving Reviews. */}
-    <div style={{ marginTop: 24 }}>
+    {/* Customer Complaints — one row per complaint from PetPooja CRM > Feedback >
+        Complaints for the selected date, per outlet/platform. Read-only; populated
+        by the daily scheduled scrape (daily_complaints table). */}
+    <div style={{ marginTop: 28 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0 }}>😠 Complaints</h3>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button onClick={() => setShowResolvedComplaints((v) => !v)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid #E0E0DC", background: "#fff", color: "#888", cursor: "pointer", fontFamily: "inherit" }}>{showResolvedComplaints ? "Show open only" : "Show resolved too"}</button>
-          {isOwner && <button onClick={() => setShowAddComplaint((v) => !v)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{showAddComplaint ? "Cancel" : "➕ Log Complaint"}</button>}
-        </div>
+        <h3 style={{ fontSize: 15, fontWeight: 800, margin: 0 }}>😠 Customer Complaints</h3>
+        {!complaintsLoading && complaints.length > 0 && (
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#991B1B", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 999, padding: "3px 10px" }}>{complaints.length} {complaints.length === 1 ? "complaint" : "complaints"} · {dateLabel.toLowerCase()}</span>
+        )}
       </div>
-
-      {showAddComplaint && (
-        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 14, marginBottom: 12 }}>
-          <input value={newComplaintTitle} onChange={(e) => setNewComplaintTitle(e.target.value)} placeholder="What was the complaint about? (e.g. Sector 31 — cold food, Zomato order #1234)"
-            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" }} />
-          <textarea value={newComplaintNotes} onChange={(e) => setNewComplaintNotes(e.target.value)} placeholder="Notes (optional) — what happened, what's being done about it" rows={2}
-            style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box", resize: "vertical" }} />
-          <button onClick={addComplaint} disabled={savingComplaint} style={{ padding: "9px 16px", borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{savingComplaint ? "⏳..." : "Log Complaint"}</button>
-        </div>
-      )}
 
       {complaintsLoading ? (
         <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>Loading…</div>
       ) : complaints.length === 0 ? (
         <div style={{ padding: 24, textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
-          {showResolvedComplaints ? "No complaints logged." : "No open complaints. 🎉"}
+          No complaints for {dateLabel.toLowerCase()}. 🎉
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {complaints.map((c) => (
-            <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, background: c.status === "done" ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${c.status === "done" ? "#BBF7D0" : "#FECACA"}` }}>
-              <button onClick={() => toggleComplaintDone(c)} title={c.status === "done" ? "Reopen" : "Mark resolved"} style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1.5px solid ${c.status === "done" ? "#16A34A" : "#DC2626"}`, background: c.status === "done" ? "#16A34A" : "#fff", color: c.status === "done" ? "#fff" : "transparent", fontSize: 13, lineHeight: "18px", cursor: "pointer", fontFamily: "inherit", padding: 0 }}>✓</button>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: c.status === "done" ? "#166534" : "#991B1B", textDecoration: c.status === "done" ? "line-through" : "none" }}>{c.title}</div>
-                {c.notes && <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{c.notes}</div>}
-                <div style={{ fontSize: 10, color: "#AAA", marginTop: 2 }}>{c.created_by ? `${c.created_by} · ` : ""}{new Date(c.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "Asia/Kolkata" })}</div>
+          {complaints.map((c) => {
+            const outletName = (OUTLETS.find((o) => o.id === c.outlet_id) || {}).name || c.outlet_id;
+            const plat = c.platform ? c.platform.charAt(0).toUpperCase() + c.platform.slice(1) : null;
+            const resolved = c.status && /resolv|closed|done/i.test(c.status);
+            const timeStr = c.complaint_at
+              ? new Date(c.complaint_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })
+              : null;
+            return (
+              <div key={c.id} style={{ padding: "10px 12px", borderRadius: 10, background: resolved ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${resolved ? "#BBF7D0" : "#FECACA"}` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#1A1A1A" }}>{outletName}</span>
+                  {plat && <span style={{ fontSize: 10, fontWeight: 600, color: "#555", background: "#fff", border: "1px solid #E0E0DC", borderRadius: 6, padding: "1px 6px" }}>{plat}</span>}
+                  {c.order_id && <span style={{ fontSize: 10, color: "#888", fontFamily: "'JetBrains Mono'" }}>#{c.order_id}</span>}
+                  {c.status && <span style={{ fontSize: 10, fontWeight: 600, color: resolved ? "#166534" : "#991B1B", marginLeft: "auto" }}>{c.status}</span>}
+                </div>
+                {c.reason && <div style={{ fontSize: 13, fontWeight: 600, color: "#991B1B" }}>{c.reason}</div>}
+                {c.item && <div style={{ fontSize: 11, color: "#777", marginTop: 1 }}>Issue with: {c.item}</div>}
+                {c.details && <div style={{ fontSize: 12, color: "#555", marginTop: 3 }}>{c.details}</div>}
+                <div style={{ fontSize: 10, color: "#AAA", marginTop: 3 }}>{[c.customer, timeStr, c.refund_status ? `Refund: ${c.refund_status}` : null].filter(Boolean).join(" · ")}</div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
+      <div style={{ fontSize: 10, color: "#999", marginTop: 10, lineHeight: 1.5 }}>
+        Source: PetPooja → CRM → Feedback → Complaints, per outlet, for the selected date. Populated by the daily scrape.
+      </div>
     </div>
   </div>);
 };
@@ -15234,6 +15217,13 @@ const FinancePnL = () => {
   const [editingCommission, setEditingCommission] = useState(false);
   const [commissionInput, setCommissionInput] = useState("");
   const [commissionSaving, setCommissionSaving] = useState(false);
+  // Fixed Costs — swaps in for the P&L table itself (own month picker, own toolbar) rather
+  // than living behind the owner-only Audit PIN lock elsewhere in the app. Finance is the
+  // one place BK Purchase/Misc/etc. drill down into their real numbers, so Fixed Costs
+  // (the thing that actually sets Rent/Salary/Electricity/GST/Misc) belongs right here too
+  // — backend still enforces owner-only on every fixed-costs write regardless of where the
+  // button lives, this is just giving the owner a shortcut to it.
+  const [showFixedCosts, setShowFixedCosts] = useState(false);
   // BK Purchase drill-down — one outlet expanded at a time, item × date breakdown fetched
   // lazily on first expand and cached per outlet_id for the rest of this month view.
   const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
@@ -15326,8 +15316,12 @@ const FinancePnL = () => {
           {getCurrentUser()?.role === "owner" && <button onClick={() => { setCommissionInput(String(commissionPct ?? 40)); setEditingCommission(true); }} style={{ padding: "2px 8px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", fontSize: 10, fontWeight: 700, color: "#92400E", cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
         </>)}
       </div>
+      {getCurrentUser()?.role === "owner" && (
+        <button onClick={() => setShowFixedCosts(true)} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🏢 Fixed Costs</button>
+      )}
     </div>
 
+    {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} /> : (<>
     {loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
     ) : !data ? (
@@ -15475,6 +15469,7 @@ const FinancePnL = () => {
       </div>
     )}
     <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/GST/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above. Misc is everything that isn't Rent/Salary/Electricity/GST — Transport, Water, Internet, Mala Decoration, Staff Room Rent, Waste Collection, and any other configured cost head — click its ▼ to see exactly which heads make it up and how much each one is. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's BK Purchase — an outlet that bought nothing from BK this period carries none of it.</p>
+    </>)}
   </div>);
 };
 
@@ -15998,7 +15993,7 @@ const RateCardPanel = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  FIXED COSTS — Monthly costs per outlet, editable
 // ═════════════════════════════════════════════════════════════════════════════
-const FixedCostsPanel = () => {
+const FixedCostsPanel = ({ onBack } = {}) => {
   const [costs, setCosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selOutlet, setSelOutlet] = useState(null);
@@ -16083,9 +16078,12 @@ const FixedCostsPanel = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏢 Fixed Costs (Monthly)</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Monthly recurring costs per outlet — specific to the month shown below. A head with no entry yet for this month carries forward the most recent prior value (shown greyed out); saving it starts a real entry for this month without touching that older one.</p>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 16 }}>
+        {onBack && <BackBtn onClick={onBack} />}
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏢 Fixed Costs (Monthly)</h3>
+          <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Monthly recurring costs per outlet — specific to the month shown below. A head with no entry yet for this month carries forward the most recent prior value (shown greyed out); saving it starts a real entry for this month without touching that older one.</p>
+        </div>
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
         <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
@@ -16611,7 +16609,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "fixed_costs", "franchise_settings", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "franchise_settings", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -16766,7 +16764,6 @@ export default function AnandaCafe() {
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "packaging", label: "📦 Packaging Audit", sub: "Conversions & unit consistency check" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
-          { id: "fixed_costs", label: "🏢 Fixed Costs", sub: "Monthly costs per outlet" },
           { id: "franchise_settings", label: "🏳️ Franchise Settings", sub: "Markup, royalty & franchise flag per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "employees", label: "👤 Employee Master", sub: "Full staff directory by outlet, BK & top mgmt" },
@@ -16838,7 +16835,6 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "packaging" && <PackagingAuditPanel />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
-      {auditUnlocked && ownerTab === "fixed_costs" && <FixedCostsPanel />}
       {auditUnlocked && ownerTab === "franchise_settings" && <FranchiseSettingsPanel />}
       {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
       {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}

@@ -133,6 +133,8 @@ const api = {
   getPetpoojaStatus: () => get("/api/petpooja/status"),
   getDailyReviewSummary: (date) => get("/api/petpooja/reviews/daily", { date }),
   saveDailyReviewSummary: (date, rows) => post("/api/petpooja/reviews/daily", { date, rows }),
+  getDailyComplaints: (date) => get("/api/petpooja/complaints/daily", { date }),
+  saveDailyComplaints: (date, rows) => post("/api/petpooja/complaints/daily", { date, rows }),
 
   // ── Inventory ──
   getInventory: (params) => get("/api/inventory", params),
