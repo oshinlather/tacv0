@@ -46,6 +46,14 @@ const istHour = () => istNow().getUTCHours();
 // window so a late-night submission doesn't silently land under the new date; the
 // DatePicker is still right there to override.
 const smartDefaultDate = () => (istHour() < 6 ? istDateAgo(1) : today());
+// Morning Delivery slot's date, auto-computed — no more asking the manager to work out
+// "today or tomorrow?" by hand (that manual picker is exactly what let a Sector 56
+// submission at 11:48 PM land on the wrong, already-dispatched date instead of the next
+// morning — see backend's POST /demands duplicate-fulfilled guard for the other half of
+// this fix). The AM window is open until 11:00 IST: before that, "morning" still means
+// TODAY's morning (catching up on an overnight/early submission); at or after 11:00, the
+// day's morning slot has already happened, so "morning" now means the NEXT one.
+const morningSlotDate = () => (istHour() < 11 ? today() : istDateAgo(-1));
 // Demand windows: Night (9PM-1AM) and Day (11AM-4PM)
 const getDemandWindow = () => {
   const h = istHour();
@@ -9396,11 +9404,37 @@ const OutletMgr = ({ onBack }) => {
   const loadWip = (key) => { try { return JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) { return {}; } };
   const saveWip = (key, items) => { try { if (items && Object.keys(items).length > 0) localStorage.setItem(key, JSON.stringify(items)); else localStorage.removeItem(key); } catch (e) {} };
   const clearWip = (key) => { try { localStorage.removeItem(key); } catch (e) {} };
-  // Morning demand is ambiguous right after midnight — managers working through the
-  // night don't mentally distinguish "today" from "tomorrow". So instead of guessing
-  // from the clock, ask explicitly which calendar date the morning delivery is for.
-  const [pickingMorningDate, setPickingMorningDate] = useState(false);
+  // Morning Delivery's date used to be a manual "which morning?" pick (today vs
+  // tomorrow) — exactly the kind of late-night date arithmetic that caused a real
+  // incident (a submission meant for the next morning landed on a date that was
+  // already dispatched instead). Now auto-computed via morningSlotDate() and only
+  // ever shown, never chosen.
   const [morningDeliveryDate, setMorningDeliveryDate] = useState(null);
+  const [checkingSlotDispatch, setCheckingSlotDispatch] = useState(false);
+  // Guards against creating a second demand for a slot BK has already dispatched —
+  // same check the backend enforces authoritatively (POST /demands / PATCH
+  // /demands/draft), this is just the fast, friendly version so a manager finds out
+  // before filling in a whole form instead of after hitting submit.
+  const selectDemandSlot = async (slot) => {
+    if (slot === "morning" && !closingIsCurrent) return;
+    const resolvedDate = slot === "morning" ? morningSlotDate() : today();
+    setCheckingSlotDispatch(true);
+    try {
+      const rows = await api.getOrders({ outlet_id: outlet, date: resolvedDate });
+      const already = (rows || []).find((r) => r.type === "manual" && r.demand_slot === slot && r.status === "fulfilled");
+      if (already) {
+        alert(`${slot === "morning" ? "Morning" : "Evening"} demand for ${resolvedDate} has already been dispatched by Base Kitchen — a second demand can't be created for the same slot.\n\nNeed something extra? Use Transfer, or ask Base Kitchen to add it when they next dispatch.`);
+        return;
+      }
+      if (slot === "morning") setMorningDeliveryDate(resolvedDate);
+      setDemandSlot(slot);
+    } catch (e) {
+      // Network hiccup on the pre-check shouldn't block a manager who has a real slot to
+      // fill — proceed and let the backend's own authoritative guard catch it on submit.
+      if (slot === "morning") setMorningDeliveryDate(resolvedDate);
+      setDemandSlot(slot);
+    } finally { setCheckingSlotDispatch(false); }
+  };
   const [savedSections, setSavedSections] = useState({}); // { sectionId: true } — which categories have been saved
   const [draftId, setDraftId] = useState(null); // unused now but kept for compatibility
   const [salesData, setSalesData] = useState({ total_sale: "", swiggy_sale: "", zomato_sale: "", other_delivery_sale: "", cancelled_orders: "", complimentary_amount: "", complimentary_reason: "", zomato_district: "", upi_collected: "", cash_collected: "", cash_expense: "", cash_expense_note: "", cash_deposited: "", cash_deposited_to: "", notes: "" });
@@ -9444,7 +9478,7 @@ const OutletMgr = ({ onBack }) => {
       .catch(() => { setDcExisting(null); setDcEditing(true); })
       .finally(() => setDcLoading(false));
   }, [screen, selectedDate, outlet]);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setPickingMorningDate(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
   // moment the manager picks a date themselves, since selectedDate then stops matching.
@@ -9671,11 +9705,11 @@ const OutletMgr = ({ onBack }) => {
     // chosen morning date has already passed by actual submit time, don't silently
     // submit a demand for a bygone day — send them back to re-pick.
     if (type === "manual" && demandSlot === "morning") {
-      const chosenDate = morningDeliveryDate || istDateAgo(-1);
+      const chosenDate = morningDeliveryDate || morningSlotDate();
       if (chosenDate < today()) {
-        alert(`⚠️ The delivery date you picked (${chosenDate}) has already passed — it's now ${today()}.\n\nPlease re-select the delivery date.`);
+        alert(`⚠️ The delivery date this form was opened for (${chosenDate}) has already passed — it's now ${today()}.\n\nTap Morning Delivery again to pick up the current slot.`);
         setDemandSlot(null);
-        setPickingMorningDate(true);
+        setMorningDeliveryDate(null);
         return;
       }
     }
@@ -9746,7 +9780,7 @@ const OutletMgr = ({ onBack }) => {
           reset(); setClosing({}); setClosingUnits({}); setScreen("done");
         }
       } else {
-        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today();
         const slotNote = `[${demandSlot === "morning" ? "🌅 Morning " + deliveryDate : "🌇 Evening " + deliveryDate}] ${note}`.trim();
         const scopedDraft = filterToScope(draft);
         const draftItemsUnits = filterToScope(Object.fromEntries(Object.entries(draftUnits).filter(([id]) => draft[id] > 0)));
@@ -9842,7 +9876,7 @@ const OutletMgr = ({ onBack }) => {
         setViewingSubmitted((rec?.status || "submitted") === "submitted");
       }).catch(() => { setClosing(wip); });
     } else if (screen === "manual" && demandSlot) {
-      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today();
       const key = wipKey("manual", outlet, deliveryDate, demandSlot);
       const wip = loadWip(key);
       api.getOrders({ outlet_id: outlet, date: deliveryDate }).then((rows) => {
@@ -9864,7 +9898,7 @@ const OutletMgr = ({ onBack }) => {
   useEffect(() => { if (screen === "close" && outlet) saveWip(wipKey("closing", outlet, selectedDate), closing); }, [closing, screen, outlet, selectedDate]);
   useEffect(() => {
     if (screen === "manual" && outlet && demandSlot) {
-      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+      const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today();
       saveWip(wipKey("manual", outlet, deliveryDate, demandSlot), draft);
     }
   }, [draft, screen, outlet, demandSlot, morningDeliveryDate]);
@@ -10327,31 +10361,6 @@ const OutletMgr = ({ onBack }) => {
     </div>);
   }
 
-  if (screen === "manual" && !demandSlot && pickingMorningDate) {
-    return (<div><SavingOverlay />
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><BackBtn onClick={() => setPickingMorningDate(false)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🌅 Which morning?</div></div>
-      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 20 }}>
-        If it's already past midnight, pick <strong>Today</strong> — the morning you mean is happening today. If it's still before midnight, pick <strong>Tomorrow</strong>.
-      </div>
-      <button onClick={() => { setMorningDeliveryDate(today()); setDemandSlot("morning"); }} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 34 }}>🌅</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#B45309" }}>{today()} (Today)</div>
-          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Past midnight — this morning is today's date</div>
-        </div>
-        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
-      </button>
-      <button onClick={() => { setMorningDeliveryDate(istDateAgo(-1)); setDemandSlot("morning"); }} style={{ width: "100%", padding: "18px", borderRadius: 16, border: "1px solid #FDE68A", background: "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 34 }}>🌅</div>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#B45309" }}>{istDateAgo(-1)} (Tomorrow)</div>
-          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Still before midnight — ordering ahead for the next morning</div>
-        </div>
-        <span style={{ color: "#D97706", fontSize: 18 }}>→</span>
-      </button>
-    </div>);
-  }
-
   if (screen === "manual" && !demandSlot) {
     return (<div><SavingOverlay />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div></div>
@@ -10360,7 +10369,7 @@ const OutletMgr = ({ onBack }) => {
         <h3 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 4px" }}>When do you need this?</h3>
         <p style={{ fontSize: 13, color: "#888", margin: 0 }}>Select the delivery slot for your demand</p>
       </div>
-      <button onClick={() => { if (closingIsCurrent) setPickingMorningDate(true); }} disabled={!closingIsCurrent} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${closingIsCurrent === false ? "#FECACA" : "#FDE68A"}`, background: closingIsCurrent === false ? "#FEF2F2" : "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: closingIsCurrent ? "pointer" : "not-allowed", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: closingIsCurrent === undefined ? 0.6 : 1 }}>
+      <button onClick={() => selectDemandSlot("morning")} disabled={!closingIsCurrent || checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${closingIsCurrent === false ? "#FECACA" : "#FDE68A"}`, background: closingIsCurrent === false ? "#FEF2F2" : "linear-gradient(135deg, #FFFBEB, #FFF7ED)", cursor: closingIsCurrent && !checkingSlotDispatch ? "pointer" : "not-allowed", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: closingIsCurrent === undefined ? 0.6 : 1 }}>
         <div style={{ fontSize: 40 }}>{closingIsCurrent === false ? "🔒" : "🌅"}</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: closingIsCurrent === false ? "#991B1B" : "#B45309" }}>Morning Delivery</div>
@@ -10369,17 +10378,18 @@ const OutletMgr = ({ onBack }) => {
           ) : closingIsCurrent === undefined ? (
             <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Checking closing stock…</div>
           ) : (<>
-            <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>Pick today or tomorrow's date</div>
+            {/* Auto-computed (11 AM cutoff), never hand-picked — see morningSlotDate(). */}
+            <div style={{ fontSize: 13, color: "#92400E", marginTop: 2 }}>{checkingSlotDispatch ? "Checking…" : morningSlotDate()}</div>
             <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items will be prepared tonight & dispatched tomorrow morning</div>
           </>)}
         </div>
         <span style={{ color: closingIsCurrent === false ? "#DC2626" : "#D97706", fontSize: 18 }}>{closingIsCurrent === false ? "🔒" : "→"}</span>
       </button>
-      <button onClick={() => setDemandSlot("evening")} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+      <button onClick={() => selectDemandSlot("evening")} disabled={checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
         <div style={{ fontSize: 40 }}>🌇</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB" }}>Evening Delivery</div>
-          <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{today()} (Today)</div>
+          <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{checkingSlotDispatch ? "Checking…" : today()} {checkingSlotDispatch ? "" : "(Today)"}</div>
           <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items needed for today's evening shift</div>
         </div>
         <span style={{ color: "#2563EB", fontSize: 18 }}>→</span>
@@ -10417,7 +10427,7 @@ const OutletMgr = ({ onBack }) => {
         const secItemIds = new Set(filterManualItems(sec.items).map((i) => i.id));
         const secItems = Object.fromEntries(Object.entries(draft).filter(([id]) => secItemIds.has(id)));
         const secUnits = Object.fromEntries(Object.entries(draftUnits).filter(([id]) => secItemIds.has(id) && draft[id] > 0));
-        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today();
+        const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today();
         const result = await api.saveDemandDraft({ outlet_id: outlet, type: "manual", date: deliveryDate, demand_slot: demandSlot, items: secItems, items_units: secUnits, submitted_by: currentUser?.name });
         setExistingRecord(result);
         setSavedSections((p) => ({ ...p, [secId]: true }));
@@ -10462,7 +10472,7 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || istDateAgo(-1)) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {viewingSubmitted && !isDraftRole ? (<>
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for this slot — {ft} items. Tap Edit to change.</div>

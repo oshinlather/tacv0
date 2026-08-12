@@ -2164,6 +2164,25 @@ router.post('/demands', async (req, res) => {
     const { data: existingRows } = await existingQuery.order('submitted_at', { ascending: false }).limit(1);
     const existingId = existingRows && existingRows[0] && existingRows[0].id;
 
+    // Block a brand-new (not-yet-existing) manual demand for a slot that's already been
+    // dispatched — the Aug 12/13 Sector 56 incident this guards against: the old "Which
+    // morning?" picker made a manager pick between two ambiguous dates by hand late at
+    // night, and a wrong pick silently created a second demand for an already-fulfilled
+    // slot instead of the new one they actually meant. The date picker itself is now
+    // auto-computed (no more manual guess — see morningSlotDate() on the frontend), but
+    // this is the authoritative backstop regardless of what the client sends. Wastage
+    // (type='wastage') is unaffected — only real demand (type='manual') is slotted this
+    // way; a legitimate same-day top-up request after dispatch should go through Transfer
+    // or a phoned-in add at BK's dispatch screen instead of a second full demand record.
+    if (!existingId && type === 'manual') {
+      let fulfilledQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', targetDate).eq('type', 'manual').eq('status', 'fulfilled');
+      fulfilledQuery = demand_slot ? fulfilledQuery.eq('demand_slot', demand_slot) : fulfilledQuery.is('demand_slot', null);
+      const { data: fulfilledRows } = await fulfilledQuery.limit(1);
+      if (fulfilledRows && fulfilledRows.length > 0) {
+        return res.status(400).json({ error: `${demand_slot ? demand_slot.charAt(0).toUpperCase() + demand_slot.slice(1) : 'This'} demand for ${targetDate} has already been dispatched — a second demand can't be created for the same slot. Need something extra? Use Transfer, or ask Base Kitchen to add it at dispatch time.` });
+      }
+    }
+
     const itemsUnitsVal = items_units && Object.keys(items_units).length > 0 ? items_units : null;
     let data, error;
     if (existingId) {
@@ -2220,6 +2239,17 @@ router.patch('/demands/draft', async (req, res) => {
     const { data: existingRows, error: findErr } = await query.order('submitted_at', { ascending: false }).limit(1);
     if (findErr) throw findErr;
     const existing = existingRows?.[0];
+
+    // Same guard as POST /demands — don't start a fresh draft for a slot that's already
+    // been dispatched (see the comment there for the incident this prevents).
+    if (!existing && type === 'manual') {
+      let fulfilledQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', date).eq('type', 'manual').eq('status', 'fulfilled');
+      fulfilledQuery = demand_slot ? fulfilledQuery.eq('demand_slot', demand_slot) : fulfilledQuery.is('demand_slot', null);
+      const { data: fulfilledRows } = await fulfilledQuery.limit(1);
+      if (fulfilledRows && fulfilledRows.length > 0) {
+        return res.status(400).json({ error: `${demand_slot ? demand_slot.charAt(0).toUpperCase() + demand_slot.slice(1) : 'This'} demand for ${date} has already been dispatched — a second demand can't be created for the same slot. Need something extra? Use Transfer, or ask Base Kitchen to add it at dispatch time.` });
+      }
+    }
 
     const mergedItems = { ...(existing?.items || {}), ...(items || {}) };
     const mergedUnits = { ...(existing?.items_units || {}), ...(items_units || {}) };
