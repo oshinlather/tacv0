@@ -12427,16 +12427,27 @@ const OutletPerformanceDashboard = ({ outlet, hideDiscipline = false }) => {
   const cogsWinners = cogsItems.filter((it) => Math.abs(it.variance_pct) < 5);
   const cogsScore = cogsItems.length > 0 ? Math.round(cogsWinners.length / cogsItems.length * 100) : null;
 
-  // Punch Score — see PUNCH_* weight constants above.
+  // Punch Score — see PUNCH_* weight constants above. Chef only actually punches Demand
+  // and 3 of the 6 Closing categories (Food/Grocery/Dairy — Cold/Gas/Packaging aren't
+  // Chef's to fill), so Wastage/Verify Dispatch/Sales/Dairy Purchase/Cold Drink Purchase
+  // and those other 3 Closing categories would otherwise sit permanently unearned and
+  // cap Chef's score well below 100% for things that were never theirs to punch.
+  // hideDiscipline doubles as "this is Chef's cut of the dashboard" (same flag that
+  // already hides the Discipline card), so it's reused here rather than a second prop.
+  const CHEF_CLOSING_CATS = new Set(["food", "grocery", "dairy"]);
+  const closingCatsForRole = hideDiscipline ? CLOSING_CATEGORY_META.filter((c) => CHEF_CLOSING_CATS.has(c.key)) : CLOSING_CATEGORY_META;
+  const otherWeightsForRole = hideDiscipline ? { demand: PUNCH_OTHER_WEIGHTS.demand } : PUNCH_OTHER_WEIGHTS;
+  const punchTotalWeightForRole = PUNCH_CLOSING_SUB_WEIGHT * closingCatsForRole.length + Object.values(otherWeightsForRole).reduce((s, w) => s + w, 0);
+
   const punchOutlet = punchData?.outlets?.find((o) => o.outlet_id === outlet) || null;
   const missingPunches = new Set(punchOutlet?.missing || []);
   const closingCats = punchOutlet?.closing_categories || {};
   const punchBreakdown = punchOutlet ? [
-    ...CLOSING_CATEGORY_META.map((c) => ({ key: `closing_${c.key}`, label: `Closing — ${c.label}`, weight: PUNCH_CLOSING_SUB_WEIGHT, done: !!closingCats[c.key] })),
-    ...Object.entries(PUNCH_OTHER_WEIGHTS).map(([key, weight]) => ({ key, label: PUNCH_TYPES.find((p) => p.key === key)?.label || key, weight, done: !missingPunches.has(key) })),
+    ...closingCatsForRole.map((c) => ({ key: `closing_${c.key}`, label: `Closing — ${c.label}`, weight: PUNCH_CLOSING_SUB_WEIGHT, done: !!closingCats[c.key] })),
+    ...Object.entries(otherWeightsForRole).map(([key, weight]) => ({ key, label: PUNCH_TYPES.find((p) => p.key === key)?.label || key, weight, done: !missingPunches.has(key) })),
   ] : [];
   const punchEarned = punchBreakdown.reduce((s, b) => s + (b.done ? b.weight : 0), 0);
-  const punchScore = punchOutlet ? Math.round(punchEarned / PUNCH_TOTAL_WEIGHT * 100) : null;
+  const punchScore = punchOutlet ? Math.round(punchEarned / punchTotalWeightForRole * 100) : null;
 
   // Review Score — Swiggy and Zomato each worth 50, scaled from their 5-star average; a
   // platform with zero reviews scores 0 on its half rather than being excluded, since no
