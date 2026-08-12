@@ -9294,6 +9294,11 @@ const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
   const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
   const isDraftRole = currentUser?.role === "chef" || currentUser?.role === "bainmarry";
+  // Chef additionally gets a read-only Performance Dashboard tile (COGS Score/RM Audit,
+  // Punch, Reviews, Wastage — same cards Outlet Manager has, minus Discipline, which is
+  // attendance/staff data that isn't Chef's to see) — bainmarry stays limited to the
+  // core draft-role screens only, per the same restriction as before.
+  const isChef = currentUser?.role === "chef";
   // Item ids (optionally cs_-prefixed) belonging to the current role's category scope —
   // used to strip out-of-scope keys before Chef/Bainmarry save their section, so their
   // save never touches items outside their own categories. null = no filtering (manager).
@@ -9855,7 +9860,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s)).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && opt.s === "performance")).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -9866,7 +9871,7 @@ const OutletMgr = ({ onBack }) => {
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
   if (screen === "performance") return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ fontSize: 15, fontWeight: 800 }}>🏆 Performance Dashboard</div></div>
-    <OutletPerformanceDashboard outlet={outlet} />
+    <OutletPerformanceDashboard outlet={outlet} hideDiscipline={isChef} />
   </div>);
 
   // ── DISPATCHED CHALLANS (outlet-side) — view + confirm receipt ──
@@ -12257,7 +12262,13 @@ const PUNCH_CLOSING_WEIGHT = 30;
 const PUNCH_OTHER_WEIGHTS = { demand: 20, wastage: 20, dispatch_verify: 10, sales: 10, dairy_purchase: 10, cold_drink_purchase: 10 };
 const PUNCH_CLOSING_SUB_WEIGHT = PUNCH_CLOSING_WEIGHT / CLOSING_CATEGORY_META.length;
 const PUNCH_TOTAL_WEIGHT = PUNCH_CLOSING_WEIGHT + Object.values(PUNCH_OTHER_WEIGHTS).reduce((s, w) => s + w, 0);
-const OutletPerformanceDashboard = ({ outlet }) => {
+// hideDiscipline: omits the Discipline card + detail panel entirely — used to give Chef
+// a read-only cut of this same dashboard (COGS/RM Audit, Punch, Review, Wastage) without
+// staff attendance data, which isn't Chef's to see. A plain boolean (not an array/object)
+// deliberately — the call site below passes a fresh literal on every render, and a
+// non-primitive prop would retrigger the data-fetching effect below on every unrelated
+// re-render of the parent screen.
+const OutletPerformanceDashboard = ({ outlet, hideDiscipline = false }) => {
   // Fixed at Yesterday, same reasoning RM Audit itself defaults to it — today's closing
   // stock is usually still incomplete, which would make "actual" cost look artificially
   // low (or the leakage look artificially huge) for reasons that have nothing to do with
@@ -12295,11 +12306,13 @@ const OutletPerformanceDashboard = ({ outlet }) => {
       api.getStockUsage(dateStr, outlet).catch(() => null),
       api.getPunchStatus(dateStr).catch(() => null),
       Promise.all(reviewDates.map((d) => api.getDailyReviewSummary(d).then((r) => ({ date: d, rows: r?.rows || [] })).catch(() => ({ date: d, rows: [] })))),
-      api.getEmployees().catch(() => null),
-      api.getAttendance({ date: dateStr }).catch(() => null),
+      // Skipped when Discipline is hidden (Chef's cut of this dashboard) — Chef has no
+      // access to either endpoint, so there's no point firing (and 403-ing) them.
+      hideDiscipline ? Promise.resolve(null) : api.getEmployees().catch(() => null),
+      hideDiscipline ? Promise.resolve(null) : api.getAttendance({ date: dateStr }).catch(() => null),
       api.getWastageCost(dateStr).catch(() => null),
     ]).then(([a, p, su, pu, rh, emp, att, wc]) => { setAudit(a); setPnl(p); setStockUsage(su); setPunchData(pu); setReviewHistory(rh); setEmployees(emp); setAttendance(att); setWastageCost(wc); }).finally(() => setLoading(false));
-  }, [dateStr, outlet, reviewDates]);
+  }, [dateStr, outlet, reviewDates, hideDiscipline]);
 
   const outletData = audit?.outlets?.find((o) => o.outlet_id === outlet) || null;
   const pnlRow = pnl?.pnl?.find((p) => p.outlet_id === outlet) || null;
@@ -12433,8 +12446,8 @@ const OutletPerformanceDashboard = ({ outlet }) => {
             sub={punchOutlet ? `${punchBreakdown.filter((b) => b.done).length}/${punchBreakdown.length} punches done` : "No punch data"} />
           <ScoreCard tabKey="cogs" icon="💰" label="COGS Score" score={cogsScore}
             sub={cogsItems.length > 0 ? `${cogsWinners.length}/${cogsItems.length} within 5% · ${actualPct != null ? actualPct.toFixed(1) + "% COGS" : "—"}` : "No consumption data"} />
-          <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" score={disciplineScore}
-            sub={selfScore != null || teamScore != null ? `Self ${selfScore ?? "—"} · Team ${teamScore ?? "—"}` : "No attendance data"} />
+          {!hideDiscipline && <ScoreCard tabKey="discipline" icon="⏰" label="Discipline" score={disciplineScore}
+            sub={selfScore != null || teamScore != null ? `Self ${selfScore ?? "—"} · Team ${teamScore ?? "—"}` : "No attendance data"} />}
           <ScoreCard tabKey="review" icon="⭐" label="Review Score" score={reviewScore}
             sub={reviewHistory ? `🛵${swiggyRow?.avg_rating != null ? Number(swiggyRow.avg_rating).toFixed(1) : "—"} · 🍽️${zomatoRow?.avg_rating != null ? Number(zomatoRow.avg_rating).toFixed(1) : "—"}` : "No review data"} />
           <ScoreCard tabKey="wastage" icon="🗑️" label="Wastage"

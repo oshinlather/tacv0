@@ -562,8 +562,9 @@ try {
     // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score drill-down
     // — scopedOutletFilter below already forces them (same as franchise) to their own
     // outlet_id regardless of what ?outlet= is requested, so this can't leak another
-    // outlet's numbers.
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager', 'outlet_mgr');
+    // outlet's numbers. chef added the same way, for the same dashboard now surfaced on
+    // their own kitchen-side dashboard too.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager', 'outlet_mgr', 'chef');
     if (!user) return;
     const { date } = req.params;
     const outlets = await computeRMAudit(date, scopedOutletFilter(user, req.query.outlet));
@@ -3473,8 +3474,8 @@ router.get('/pnl/live/:date', async (req, res) => {
   try {
     // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score (needs
     // effective_sale to turn ideal/actual material cost into a % of sale) — forced to
-    // their own outlet below, same as franchise already is.
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr');
+    // their own outlet below, same as franchise already is. chef added the same way.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr', 'chef');
     if (!user) return;
     const { date } = req.params;
     const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise/outlet_mgr
@@ -4241,7 +4242,9 @@ const CLOSING_CHECK_SECTIONS = ['grocery', 'packaging', 'food', 'dairy', 'cold_d
 // a distinct person's responsibility, not folded into any of theirs.
 router.get('/punch-status/:date', async (req, res) => {
   try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr');
+    // outlet_mgr/chef: outlet-side Performance Dashboard's Punch Score card — same
+    // scopedOutletFilter confinement as every other outlet-scoped read route below.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr', 'chef');
     if (!user) return;
     const date = req.params.date;
     const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
@@ -4682,12 +4685,12 @@ router.get('/stock-usage/:date', async (req, res) => {
 // ── GET /api/wastage/cost — Day-wise wastage cost per item, all outlets or one, for a
 // date range. Same rate-card-first / BK-recipe-fallback costing as the consumed-material
 // formula, applied only to wastage entries — powers the owner's Wastage grid's cost view,
-// and the outlet Performance Dashboard's Wastage card (outlet_mgr access, scoped to
+// and the outlet Performance Dashboard's Wastage card (outlet_mgr/chef access, scoped to
 // their own outlet_id regardless of what's requested, same defensive pattern as every
 // other outlet-scoped read route).
 router.get('/wastage/cost', async (req, res) => {
   try {
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr');
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'outlet_mgr', 'chef');
     if (!user) return;
     const { from } = req.query;
     if (!from) return res.status(400).json({ error: 'from is required' });
