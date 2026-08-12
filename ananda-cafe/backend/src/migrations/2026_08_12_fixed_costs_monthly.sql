@@ -29,7 +29,7 @@ begin
   join information_schema.key_column_usage kcu on tc.constraint_name = kcu.constraint_name and tc.table_name = kcu.table_name
   where tc.table_name = 'fixed_costs' and tc.constraint_type = 'UNIQUE'
   group by tc.constraint_name
-  having array_agg(kcu.column_name order by kcu.column_name) = array['cost_head', 'outlet_id']::text[]
+  having array_agg(kcu.column_name::text order by kcu.column_name::text) = array['cost_head', 'outlet_id']::text[]
   limit 1;
   if con_name is not null then
     execute format('alter table fixed_costs drop constraint %I', con_name);

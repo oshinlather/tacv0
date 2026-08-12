@@ -15274,19 +15274,19 @@ const FinancePnL = () => {
                             <div style={{ overflowX: "auto" }}>
                               <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
                                 <thead><tr>
-                                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", minWidth: 150, zIndex: 1 }}>Item</th>
-                                  {detail.dates.map((d) => <th key={d} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap" }}>{d.slice(5)}</th>)}
-                                  <th style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>Total</th>
+                                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", minWidth: 150, zIndex: 2 }}>Item</th>
+                                  <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", minWidth: 110, textAlign: "right", whiteSpace: "nowrap", zIndex: 2, borderRight: "1px solid #E0E0DC" }}>Total</th>
+                                  {detail.dates.map((d) => <th key={d} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap", borderLeft: "1px dotted #CCC", background: "#FAFAF8" }}>{d.slice(5)}</th>)}
                                 </tr></thead>
                                 <tbody>
                                   {detail.items.map((it) => (
                                     <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{it.name}</td>
+                                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap", zIndex: 1 }}>{it.name}</td>
+                                      <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap", zIndex: 1, borderRight: "1px solid #E0E0DC" }}>{fmt0(it.total_amount)} ({it.total_qty} {it.unit})</td>
                                       {detail.dates.map((d) => {
                                         const cell = it.byDate[d];
-                                        return <td key={d} style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap", color: cell ? "#1A1A1A" : "#DDD" }}>{cell ? `${fmt0(cell.amount)} (${cell.qty})` : "—"}</td>;
+                                        return <td key={d} style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap", color: cell ? "#1A1A1A" : "#DDD", borderLeft: "1px dotted #CCC" }}>{cell ? `${fmt0(cell.amount)} (${cell.qty})` : "—"}</td>;
                                       })}
-                                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap" }}>{fmt0(it.total_amount)} ({it.total_qty} {it.unit})</td>
                                     </tr>
                                   ))}
                                 </tbody>
