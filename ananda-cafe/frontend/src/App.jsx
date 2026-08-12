@@ -15296,6 +15296,7 @@ const FinancePnL = () => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus BK Purchase (what was dispatched, at rate-card cost), BK Fixed Share (BK's own rent/salary/etc, split proportional to each outlet's BK Purchase — not equally), and fixed costs = Net P&L.</p>
     </div>
 
+    {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} /> : (<>
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
@@ -15321,7 +15322,6 @@ const FinancePnL = () => {
       )}
     </div>
 
-    {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} /> : (<>
     {loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
     ) : !data ? (
