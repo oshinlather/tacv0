@@ -195,7 +195,7 @@ const api = {
   // ── Fixed Costs ──
   getFixedCosts: (params) => get("/api/fixed-costs", params),
   saveFixedCost: (data) => post("/api/fixed-costs", data),
-  deleteFixedCost: (outlet_id, cost_head) => del(`/api/fixed-costs?outlet_id=${outlet_id}&cost_head=${cost_head}`),
+  deleteFixedCost: (outlet_id, cost_head, month) => del(`/api/fixed-costs?outlet_id=${outlet_id}&cost_head=${cost_head}&month=${month}`),
   getFixedCostHeads: () => get("/api/fixed-cost-heads"),
   addFixedCostHead: (label) => post("/api/fixed-cost-heads", { label }),
   deleteFixedCostHead: (label) => del(`/api/fixed-cost-heads?label=${encodeURIComponent(label)}`),
@@ -205,6 +205,7 @@ const api = {
   getFinanceOutletPnl: (from, to) => get("/api/finance/outlet-pnl", { from, to }),
   getFinanceCommissionPct: () => get("/api/finance/commission-pct"),
   setFinanceCommissionPct: (pct) => patch("/api/finance/commission-pct", { pct }),
+  getBkPurchaseDetail: (outlet_id, from, to) => get("/api/finance/bk-purchase-detail", { outlet_id, from, to }),
 
   // ── Live P&L ──
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),

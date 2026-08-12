@@ -21,7 +21,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { requireRole } = require("./authGuards");
-const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet } = require("./salesRoutes");
+const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, resolveFixedCostsForMonth } = require("./salesRoutes");
 
 const OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"];
 
@@ -29,20 +29,34 @@ function daysInMonthOf(dateStr) {
   const [y, m] = dateStr.split("-").map(Number);
   return new Date(y, m, 0).getDate();
 }
-// A fixed_costs row is a MONTHLY amount — prorate it across [from, to] one calendar day
-// at a time (rather than a single monthly/daysInRange ratio) so a range that happens to
-// straddle two different-length months still prorates correctly on both sides. In the
-// common case (from/to both inside one month) this is equivalent to
-// monthly * daysInRange/daysInThatMonth.
-function prorateFixedAmount(monthlyAmount, from, to) {
-  let total = 0;
+function daysInRange(from, to) {
+  const days = [];
   const d = new Date(`${from}T00:00:00Z`);
   const end = new Date(`${to}T00:00:00Z`);
-  while (d <= end) {
-    const ds = d.toISOString().slice(0, 10);
-    total += monthlyAmount / daysInMonthOf(ds);
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
+  while (d <= end) { days.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+  return days;
+}
+// Prorated total for one (outlet_id, cost_head) across [from, to] — each day resolves
+// THAT DAY'S month's applicable amount independently via resolveFixedCostsForMonth
+// (walking back to the latest entry at-or-before that month, same rule FixedCostsPanel
+// itself displays), instead of blindly prorating whatever the CURRENT value happens to
+// be. So viewing July's P&L after August's electricity bill was entered still uses
+// July's real figure, not August's, and a range that straddles a month boundary uses
+// each side's own value. `allRows` is fetched ONCE per request (full history, every
+// month) — resolveFixedCostsForMonth is a pure in-memory walk-back, no extra queries.
+function proratedFixedCost(allRows, outletId, costHead, from, to) {
+  let total = 0;
+  const monthCache = {};
+  daysInRange(from, to).forEach((ds) => {
+    const month = ds.slice(0, 7);
+    if (!monthCache[month]) {
+      const map = {};
+      resolveFixedCostsForMonth(allRows, month).forEach((r) => { map[`${r.outlet_id}|${r.cost_head}`] = r; });
+      monthCache[month] = map;
+    }
+    const row = monthCache[month][`${outletId}|${costHead}`];
+    if (row) total += Number(row.amount || 0) / daysInMonthOf(ds);
+  });
   return total;
 }
 
@@ -87,9 +101,11 @@ router.get("/outlet-pnl", async (req, res) => {
       supabase.from("app_config").select("value").eq("key", "delivery_commission_pct").maybeSingle(),
       computeDailySalesRevenue({ from, to }),
       buildCostingContext(),
-      // Fetch BK's own fixed costs (outlet_id='bk') alongside the 6 outlets' — previously
-      // excluded by the .in(OUTLET_IDS) filter, so BK's rent/salary/etc never showed up
-      // anywhere in this view at all.
+      // Full history (every month, not just ones inside [from,to]) — proratedFixedCost
+      // needs to walk back to whatever month a head was last actually set in, which can
+      // be well before the range being viewed (e.g. Rent set once in April, still
+      // applies in August). Fetch BK's own rows (outlet_id='bk') alongside the 6
+      // outlets' too, same as before.
       supabase.from("fixed_costs").select("*").eq("active", true).in("outlet_id", [...OUTLET_IDS, "bk"]),
     ]);
     const commissionPct = commissionCfg?.value ? Number(JSON.parse(commissionCfg.value)) : 40;
@@ -97,10 +113,11 @@ router.get("/outlet-pnl", async (req, res) => {
 
     const round = (n) => Math.round(n || 0);
 
-    // BK's own fixed cost, prorated across [from, to] same as every other fixed_costs
-    // row, then divided proportionally by each outlet's BK Purchase share below.
-    const bkFixedRows = (fixedCostRows || []).filter((f) => f.outlet_id === "bk");
-    const bkFixedTotalProrated = bkFixedRows.reduce((s, f) => s + prorateFixedAmount(Number(f.amount) || 0, from, to), 0);
+    // BK's own fixed cost, prorated across [from, to] — resolved per month like every
+    // other fixed cost below, then divided proportionally by each outlet's BK Purchase
+    // share.
+    const bkHeads = new Set((fixedCostRows || []).filter((f) => f.outlet_id === "bk").map((f) => f.cost_head));
+    const bkFixedTotalProrated = [...bkHeads].reduce((s, head) => s + proratedFixedCost(fixedCostRows, "bk", head, from, to), 0);
     const totalBkPurchaseAllOutlets = OUTLET_IDS.reduce((s, oid) => s + (bkPurchaseByOutlet[oid] || 0), 0);
     const outlets = OUTLET_IDS.map((oid) => {
       const sales = salesByOutlet[oid] || {};
@@ -124,9 +141,10 @@ router.get("/outlet-pnl", async (req, res) => {
         : bkFixedTotalProrated / OUTLET_IDS.length);
 
       const fixed = { rent: 0, salary: 0, electricity: 0, gst: 0, transport: 0, water: 0, misc: 0 };
-      (fixedCostRows || []).filter((f) => f.outlet_id === oid).forEach((f) => {
-        const bucket = FIXED_HEAD_BUCKET[(f.cost_head || "").toLowerCase()] || "misc";
-        fixed[bucket] += prorateFixedAmount(Number(f.amount) || 0, from, to);
+      const outletHeads = new Set((fixedCostRows || []).filter((f) => f.outlet_id === oid).map((f) => f.cost_head));
+      outletHeads.forEach((head) => {
+        const bucket = FIXED_HEAD_BUCKET[(head || "").toLowerCase()] || "misc";
+        fixed[bucket] += proratedFixedCost(fixedCostRows, oid, head, from, to);
       });
       Object.keys(fixed).forEach((k) => { fixed[k] = round(fixed[k]); });
       const totalFixed = Object.values(fixed).reduce((s, v) => s + v, 0);
@@ -150,6 +168,24 @@ router.get("/outlet-pnl", async (req, res) => {
     totals.margin_pct = totals.effective_sale > 0 ? Math.round((totals.net_pnl / totals.effective_sale) * 1000) / 10 : null;
 
     res.json({ from, to, commission_pct: commissionPct, outlets, totals });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/finance/bk-purchase-detail?outlet_id=&from=&to= — the BK Purchase column's
+// drill-down: every item dispatched from Base Kitchen to this one outlet across the range,
+// broken out day by day. Same pricing basis as the summed figure above (see
+// computeBkPurchaseDetail), so the two always reconcile.
+router.get("/bk-purchase-detail", async (req, res) => {
+  try {
+    const user = await requireRole(req, res, "owner", "avp", "head_chef");
+    if (!user) return;
+    const { outlet_id, from, to } = req.query;
+    if (!outlet_id || !from || !to) return res.status(400).json({ error: "outlet_id, from, and to are required" });
+    if (!OUTLET_IDS.includes(outlet_id)) return res.status(400).json({ error: "Invalid outlet_id" });
+
+    const costingContext = await buildCostingContext();
+    const detail = await computeBkPurchaseDetail(outlet_id, from, to, costingContext);
+    res.json({ outlet_id, from, to, ...detail });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

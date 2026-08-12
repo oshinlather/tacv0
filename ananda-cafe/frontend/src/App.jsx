@@ -15138,6 +15138,11 @@ const FinancePnL = () => {
   const [editingCommission, setEditingCommission] = useState(false);
   const [commissionInput, setCommissionInput] = useState("");
   const [commissionSaving, setCommissionSaving] = useState(false);
+  // BK Purchase drill-down — one outlet expanded at a time, item × date breakdown fetched
+  // lazily on first expand and cached per outlet_id for the rest of this month view.
+  const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
+  const [bkPurchaseDetail, setBkPurchaseDetail] = useState({}); // outlet_id -> { dates, items }
+  const [bkPurchaseLoading, setBkPurchaseLoading] = useState(null); // outlet_id currently loading
 
   const range = useMemo(() => {
     const lastDay = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
@@ -15148,8 +15153,24 @@ const FinancePnL = () => {
   const load = () => {
     setLoading(true);
     api.getFinanceOutletPnl(range.from, range.to).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
+    // Cached detail is keyed by outlet_id only, so a month change needs an explicit reset
+    // or it'd keep showing the previous month's breakdown under the same outlet.
+    setExpandedBkPurchase(null);
+    setBkPurchaseDetail({});
   };
   useEffect(load, [range]);
+
+  const toggleBkPurchase = (outletId) => {
+    if (expandedBkPurchase === outletId) { setExpandedBkPurchase(null); return; }
+    setExpandedBkPurchase(outletId);
+    if (!bkPurchaseDetail[outletId]) {
+      setBkPurchaseLoading(outletId);
+      api.getBkPurchaseDetail(outletId, range.from, range.to)
+        .then((d) => setBkPurchaseDetail((p) => ({ ...p, [outletId]: d })))
+        .catch(() => setBkPurchaseDetail((p) => ({ ...p, [outletId]: { dates: [], items: [] } })))
+        .finally(() => setBkPurchaseLoading(null));
+    }
+  };
 
   const saveCommission = async () => {
     const pct = Number(commissionInput);
@@ -15214,20 +15235,69 @@ const FinancePnL = () => {
               {data.outlets.map((o) => {
                 const oData = OUTLETS.find((x) => x.id === o.outlet_id);
                 const netColor = o.net_pnl > 0 ? "#16A34A" : o.net_pnl < 0 ? "#DC2626" : "#999";
+                const isExpanded = expandedBkPurchase === o.outlet_id;
+                const detail = bkPurchaseDetail[o.outlet_id];
                 return (
-                  <tr key={o.outlet_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <Fragment key={o.outlet_id}>
+                  <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>{oData?.short || o.outlet_id}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt0(o.total_sale)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt0(o.delivery_sale)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>−{fmt0(o.delivery_commission)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{fmt0(o.effective_sale)}</td>
-                    {FINANCE_EXPENSE_COLS.map((c) => (
+                    {FINANCE_EXPENSE_COLS.map((c) => c.key === "bk_purchase" ? (
+                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o.bk_purchase > 0 ? "#991B1B" : "#BBB" }}>
+                        {o.bk_purchase > 0 ? (
+                          <span onClick={() => toggleBkPurchase(o.outlet_id)} title="Item-wise, day-wise breakdown" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            −{fmt0(o.bk_purchase)}
+                            <span style={{ fontSize: 9, color: "#2563EB" }}>{isExpanded ? "▲" : "▼"}</span>
+                          </span>
+                        ) : "—"}
+                      </td>
+                    ) : (
                       <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o[c.key] > 0 ? "#991B1B" : "#BBB" }}>{o[c.key] > 0 ? `−${fmt0(o[c.key])}` : "—"}</td>
                     ))}
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(o.total_expense)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: netColor }}>{o.net_pnl > 0 ? "+" : ""}{fmt0(o.net_pnl)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: netColor }}>{o.margin_pct != null ? `${o.margin_pct}%` : "—"}</td>
                   </tr>
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={5 + FINANCE_EXPENSE_COLS.length + 3} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <div style={{ padding: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>🏭 BK Purchase — {oData?.short || o.outlet_id} — {monthLabel} — amount (qty) per day</div>
+                          {bkPurchaseLoading === o.outlet_id ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>
+                          ) : !detail || detail.items.length === 0 ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#BBB", fontSize: 12 }}>No BK Purchase items for this period</div>
+                          ) : (
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+                                <thead><tr>
+                                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", minWidth: 150, zIndex: 1 }}>Item</th>
+                                  {detail.dates.map((d) => <th key={d} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap" }}>{d.slice(5)}</th>)}
+                                  <th style={{ ...thS, textAlign: "right", whiteSpace: "nowrap" }}>Total</th>
+                                </tr></thead>
+                                <tbody>
+                                  {detail.items.map((it) => (
+                                    <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap" }}>{it.name}</td>
+                                      {detail.dates.map((d) => {
+                                        const cell = it.byDate[d];
+                                        return <td key={d} style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap", color: cell ? "#1A1A1A" : "#DDD" }}>{cell ? `${fmt0(cell.amount)} (${cell.qty})` : "—"}</td>;
+                                      })}
+                                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap" }}>{fmt0(it.total_amount)} ({it.total_qty} {it.unit})</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
               {/* Totals row — visually separated (heavier border, tinted background) rather
@@ -15787,9 +15857,13 @@ const FixedCostsPanel = () => {
   const [heads, setHeads] = useState([]);
   const [addingHead, setAddingHead] = useState(false); // inline "add new header" mode
   const [newHeadLabel, setNewHeadLabel] = useState("");
+  // Each entry now belongs to a specific month (Water/Electricity/Wastage genuinely
+  // differ month to month) — defaults to the current month; every save/delete below acts
+  // on selMonth specifically, never silently overwriting an older month's real figure.
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
 
-  const load = () => { setLoading(true); api.getFixedCosts().then(setCosts).catch(() => setCosts([])).finally(() => setLoading(false)); };
-  useEffect(load, []);
+  const load = () => { setLoading(true); api.getFixedCosts({ month: selMonth }).then(setCosts).catch(() => setCosts([])).finally(() => setLoading(false)); };
+  useEffect(load, [selMonth]);
   useEffect(() => { api.getFixedCostHeads().then((h) => setHeads(h || [])).catch(() => setHeads([])); }, []);
 
   const resetAddForm = () => { setNewLabel(""); setNewAmt(""); setAddingHead(false); setNewHeadLabel(""); };
@@ -15826,7 +15900,11 @@ const FixedCostsPanel = () => {
   const saveAmount = async (outletId, costHead) => {
     try {
       const item = costs.find((c) => c.outlet_id === outletId && c.cost_head === costHead);
-      await api.saveFixedCost({ outlet_id: outletId, cost_head: costHead, label: item?.label || costHead, amount: Number(editAmt) || 0 });
+      // Always writes a NEW row for selMonth (upsert keys on outlet+head+month) rather
+      // than overwriting whatever month the displayed value was carried forward from —
+      // editing a carried-forward figure here starts a real entry for THIS month without
+      // touching the older month's own history.
+      await api.saveFixedCost({ outlet_id: outletId, cost_head: costHead, label: item?.label || costHead, amount: Number(editAmt) || 0, month: selMonth });
       setEditId(null);
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -15838,22 +15916,27 @@ const FixedCostsPanel = () => {
     // cost_head, which is what keeps the P&L rollup from splitting on spelling variants.
     const head = newLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
     try {
-      await api.saveFixedCost({ outlet_id: outletId, cost_head: head, label: newLabel.trim(), amount: Number(newAmt) || 0 });
+      await api.saveFixedCost({ outlet_id: outletId, cost_head: head, label: newLabel.trim(), amount: Number(newAmt) || 0, month: selMonth });
       resetAddForm(); setAddingTo(null);
       load();
     } catch (e) { alert("Error: " + e.message); }
   };
 
   const deleteCost = async (outletId, costHead) => {
-    if (!confirm(`Delete ${costHead} for ${outletNames[outletId]}?`)) return;
-    try { await api.deleteFixedCost(outletId, costHead); load(); } catch (e) { alert("Error: " + e.message); }
+    if (!confirm(`Delete ${costHead} for ${outletNames[outletId]} in ${selMonth}?`)) return;
+    try { await api.deleteFixedCost(outletId, costHead, selMonth); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏢 Fixed Costs (Monthly)</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Monthly recurring costs per outlet. Daily P&L uses: monthly ÷ days in month.</p>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Monthly recurring costs per outlet — specific to the month shown below. A head with no entry yet for this month carries forward the most recent prior value (shown greyed out); saving it starts a real entry for this month without touching that older one.</p>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+        <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); setSelMonth(d.toISOString().slice(0, 7)); }} disabled={selMonth >= today().slice(0, 7)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: selMonth >= today().slice(0, 7) ? "not-allowed" : "pointer", opacity: selMonth >= today().slice(0, 7) ? 0.4 : 1, fontFamily: "inherit", fontSize: 14 }}>→</button>
       </div>
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All</button>
@@ -15906,9 +15989,17 @@ const FixedCostsPanel = () => {
             })()}
             {items.sort((a, b) => b.amount - a.amount).map((c) => {
               const key = `${c.outlet_id}_${c.cost_head}`;
+              // is_current_month=false means this is a carried-forward value from an
+              // earlier month (no real row for selMonth yet) — greyed out so it reads as
+              // "still using an older figure", and its delete is disabled since there's
+              // nothing to delete FOR THIS MONTH (the real row lives in an earlier one).
+              const carried = c.is_current_month === false;
               return (
-                <div key={key} style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #F0F0EC" }}>
-                  <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{c.label}</span>
+                <div key={key} style={{ display: "flex", alignItems: "center", padding: "8px 16px", borderBottom: "1px solid #F0F0EC", background: carried ? "#FAFAF8" : "transparent" }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: carried ? "#999" : "#1A1A1A" }}>
+                    {c.label}
+                    {carried && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: "#B45309", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 4, padding: "1px 5px" }}>carried from {c.month}</span>}
+                  </span>
                   {editId === key ? (
                     <div style={{ display: "flex", gap: 3 }}>
                       <input type="number" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
@@ -15917,11 +16008,11 @@ const FixedCostsPanel = () => {
                       <button onClick={() => saveAmount(c.outlet_id, c.cost_head)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, cursor: "pointer" }}>✓</button>
                     </div>
                   ) : (
-                    <span onClick={() => { setEditId(key); setEditAmt(String(c.amount)); }} style={{ cursor: "pointer", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#7C3AED", fontSize: 14 }}>
+                    <span onClick={() => { setEditId(key); setEditAmt(String(c.amount)); }} style={{ cursor: "pointer", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: carried ? "#999" : "#7C3AED", fontSize: 14 }}>
                       ₹{Number(c.amount).toLocaleString("en-IN")} ✏️
                     </span>
                   )}
-                  <button onClick={() => deleteCost(c.outlet_id, c.cost_head)} style={{ marginLeft: 8, padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: "#DC2626", fontSize: 12, cursor: "pointer" }}>🗑️</button>
+                  <button onClick={() => !carried && deleteCost(c.outlet_id, c.cost_head)} disabled={carried} title={carried ? "Nothing to delete for this month — this is carried forward from an earlier one" : "Delete"} style={{ marginLeft: 8, padding: "2px 6px", borderRadius: 4, border: "none", background: "transparent", color: carried ? "#DDD" : "#DC2626", fontSize: 12, cursor: carried ? "not-allowed" : "pointer" }}>🗑️</button>
                 </div>
               );
             })}

@@ -3373,41 +3373,65 @@ router.delete('/rate-card/:id', async (req, res) => {
 // ============================================================
 // FIXED COSTS — Monthly recurring costs per outlet
 // ============================================================
+// Each row now belongs to a specific month (2026_08_12_fixed_costs_monthly.sql) instead
+// of being one evergreen value forever — Water/Electricity/Wastage genuinely differ
+// month to month, so a single current figure was silently misrepresenting every PAST
+// month's P&L (Finance module, Daily P&L) as if that same number applied then too.
+// resolveFixedCostsForMonth below is the read-side rule both use: for a target month,
+// take the LATEST row at-or-before that month per (outlet_id, cost_head) — so Rent/
+// Salary (rarely changed) don't need re-entry every month, while a head with a fresher
+// entry for the target month uses that instead. `is_current_month` tells the caller
+// (FixedCostsPanel) whether this is a real entry for the month being viewed or a
+// carried-forward value from an earlier month.
+function resolveFixedCostsForMonth(allRows, targetMonth) {
+  const latest = {}; // "outlet_id|cost_head" -> best row so far (month <= targetMonth, highest month)
+  (allRows || []).forEach((r) => {
+    if (r.month > targetMonth) return; // a future month's entry doesn't apply yet
+    const key = `${r.outlet_id}|${r.cost_head}`;
+    if (!latest[key] || r.month > latest[key].month) latest[key] = r;
+  });
+  return Object.values(latest).map((r) => ({ ...r, is_current_month: r.month === targetMonth }));
+}
 
-// ── GET /api/fixed-costs — All active fixed costs
+// ── GET /api/fixed-costs — resolved fixed costs for one month (default: current month)
 router.get('/fixed-costs', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
-    const { outlet_id } = req.query;
+    const { outlet_id, month } = req.query;
+    const targetMonth = month || todayIST().slice(0, 7);
     let query = supabase.from('fixed_costs').select('*').eq('active', true).order('outlet_id').order('cost_head');
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
     const { data, error } = await query;
     if (error) throw error;
-    res.json(data || []);
+    res.json(resolveFixedCostsForMonth(data, targetMonth));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── POST /api/fixed-costs — Add/update fixed cost
+// ── POST /api/fixed-costs — Add/update fixed cost FOR A SPECIFIC MONTH. Writes a new row
+// for that month rather than overwriting whatever the value used to be — a past month's
+// P&L keeps using what was actually true then, even after this month's bill changes it.
 router.post('/fixed-costs', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
-    const { outlet_id, cost_head, label, amount, category } = req.body;
+    const { outlet_id, cost_head, label, amount, category, month } = req.body;
+    if (!month) return res.status(400).json({ error: 'month (YYYY-MM) is required' });
     const { error } = await supabase.from('fixed_costs').upsert({
-      outlet_id, cost_head, label, amount: amount || 0, category: category || 'fixed',
+      outlet_id, cost_head, label, amount: amount || 0, category: category || 'fixed', month,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'outlet_id,cost_head' });
+    }, { onConflict: 'outlet_id,cost_head,month' });
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── DELETE /api/fixed-costs — Soft delete
+// ── DELETE /api/fixed-costs — Soft delete ONE MONTH's entry, not the whole head's history
 router.delete('/fixed-costs', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
-    const { outlet_id, cost_head } = req.query;
+    const { outlet_id, cost_head, month } = req.query;
+    if (!month) return res.status(400).json({ error: 'month (YYYY-MM) is required' });
     const { error } = await supabase.from('fixed_costs')
-      .update({ active: false }).eq('outlet_id', outlet_id).eq('cost_head', cost_head);
+      .update({ active: false }).eq('outlet_id', outlet_id).eq('cost_head', cost_head).eq('month', month);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -3533,6 +3557,12 @@ router.get('/pnl/live/:date', async (req, res) => {
     // Get days in month for daily fixed cost
     const dateObj = new Date(date);
     const daysInMonth = new Date(dateObj.getFullYear(), dateObj.getMonth() + 1, 0).getDate();
+    // Resolve fixed_costs to this date's month — a row belongs to a specific month now
+    // (Water/Electricity/etc. genuinely differ month to month), so summing every active
+    // row regardless of month would blend past and future bills into today's figure.
+    // Walks back to the latest entry at-or-before this month per (outlet,cost_head), so
+    // Rent/Salary (rarely re-entered) still apply without needing a fresh row every month.
+    const resolvedFixedCosts = resolveFixedCostsForMonth(fixedCosts, date.slice(0, 7));
 
     // Get inventory items for mapping raw_material_id → rate_card id
     const invByName = {};
@@ -3867,7 +3897,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       const purchasesExclColdDrink = Math.round((dailyPurchaseTotal - coldDrinkPurchaseTotal) * 100) / 100;
 
       // ── FIXED COSTS (daily = monthly / days in month) ──
-      const outletFixed = (fixedCosts || []).filter(f => f.outlet_id === oid);
+      const outletFixed = resolvedFixedCosts.filter(f => f.outlet_id === oid);
       const monthlyFixed = outletFixed.reduce((sum, f) => sum + Number(f.amount || 0), 0);
       const dailyFixedCost = Math.round(monthlyFixed / daysInMonth);
       const fixedBreakdown = outletFixed.map(f => ({
@@ -3880,7 +3910,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       // BK today carries none of BK's fixed cost today; an outlet that bought more
       // carries more. Falls back to an equal split only on a day with zero BK purchases
       // everywhere (nothing to prorate against) — same fallback Finance's outlet-pnl uses.
-      const bkFixed = (fixedCosts || []).filter(f => f.outlet_id === 'bk');
+      const bkFixed = resolvedFixedCosts.filter(f => f.outlet_id === 'bk');
       const bkMonthlyFixed = bkFixed.reduce((sum, f) => sum + Number(f.amount || 0), 0);
       const bkDailyFixed = Math.round(bkMonthlyFixed / daysInMonth);
       const bkSharePerOutlet = totalBkPurchaseAllOutlets > 0
@@ -4191,6 +4221,51 @@ async function computeBkPurchaseByOutlet(from, to, costingContext) {
     byOutlet[o.outlet_id] = (byOutlet[o.outlet_id] || 0) + cost;
   });
   return byOutlet;
+}
+
+// Same dispatched-items-at-rate-card-cost basis as computeBkPurchaseByOutlet above, just
+// broken out per item per date instead of summed into one outlet total — powers Finance's
+// BK Purchase drill-down (one outlet, every item dispatched from Base Kitchen across the
+// range, day by day). An item with no rate-card or BK-recipe pricing basis is excluded
+// here too, same as the total above, so the two figures always reconcile.
+async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
+  const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = costingContext;
+  const { data: orders, error } = await supabase.from("demands").select("outlet_id, date, items, dispatch_items, status").eq("outlet_id", outletId).gte("date", from).lte("date", to);
+  if (error) throw error;
+  const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
+  const itemsById = {};
+  const datesSet = new Set();
+  dispatched.forEach((o) => {
+    const items = o.dispatch_items || o.items || {};
+    Object.entries(items).forEach(([itemId, qty]) => {
+      const q = Number(qty) || 0;
+      if (q <= 0) return;
+      const rate = rateMap[itemId];
+      let amount = 0;
+      if (rate) {
+        amount = q * convFactorFor(itemId, null, rate.unit) * Number(rate.price);
+      } else if (bkRecipeMap[itemId]) {
+        amount = q * convFactorFor(itemId, null, "Kg") * bkRecipeMap[itemId].costPerKg;
+      } else {
+        return;
+      }
+      if (!itemsById[itemId]) itemsById[itemId] = { item_id: itemId, name: demandNameMap[itemId] || itemId.replace(/_/g, " "), unit: demandUnitMap[itemId] || "", byDate: {}, total_qty: 0, total_amount: 0 };
+      const bucket = itemsById[itemId];
+      if (!bucket.byDate[o.date]) bucket.byDate[o.date] = { qty: 0, amount: 0 };
+      bucket.byDate[o.date].qty += q;
+      bucket.byDate[o.date].amount += amount;
+      bucket.total_qty += q;
+      bucket.total_amount += amount;
+      datesSet.add(o.date);
+    });
+  });
+  const items = Object.values(itemsById).map((it) => ({
+    ...it,
+    total_qty: Math.round(it.total_qty * 1000) / 1000,
+    total_amount: Math.round(it.total_amount * 100) / 100,
+    byDate: Object.fromEntries(Object.entries(it.byDate).map(([d, v]) => [d, { qty: Math.round(v.qty * 1000) / 1000, amount: Math.round(v.amount * 100) / 100 }])),
+  })).sort((a, b) => b.total_amount - a.total_amount);
+  return { dates: [...datesSet].sort(), items };
 }
 
 // Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was
@@ -5286,3 +5361,5 @@ module.exports = router;
 module.exports.computeDailySalesRevenue = computeDailySalesRevenue;
 module.exports.buildCostingContext = buildCostingContext;
 module.exports.computeBkPurchaseByOutlet = computeBkPurchaseByOutlet;
+module.exports.computeBkPurchaseDetail = computeBkPurchaseDetail;
+module.exports.resolveFixedCostsForMonth = resolveFixedCostsForMonth;
