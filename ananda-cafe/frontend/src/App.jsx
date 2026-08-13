@@ -9768,8 +9768,7 @@ const OutletMgr = ({ onBack }) => {
           if (!recentClosing || selectedDate >= recentClosing.date) {
             setRecentClosing({ date: selectedDate, items: result.items || scopedClosing, items_units: result.items_units || closingItemsUnits, status: "draft" });
           }
-          alert(`✅ Your section saved — the manager will see it when finalizing.`);
-          setScreen("home");
+          showToastThen(`✅ Your section saved — the manager will see it when finalizing.`, () => setScreen("home"));
         } else {
           const result = await api.submitClosingStock({ outlet_id: outlet, items: scopedClosing, items_units: closingItemsUnits, date: selectedDate, status: "submitted" });
           const e = { ...result, type: "closing", outlet, time: timeNow(), date: selectedDate };
@@ -9784,8 +9783,7 @@ const OutletMgr = ({ onBack }) => {
           if (!recentClosing || selectedDate >= recentClosing.date) {
             setRecentClosing({ date: selectedDate, items: result.items || scopedClosing, items_units: result.items_units || closingItemsUnits, status: "submitted" });
           }
-          alert(`✅ Closing stock submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n📊 ${Object.keys(scopedClosing).length} items`);
-          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+          showToastThen(`✅ Closing stock submitted successfully!\n🏪 ${oData?.name}  📅 ${selectedDate}  📊 ${Object.keys(scopedClosing).length} items`, () => { reset(); setClosing({}); setClosingUnits({}); setScreen("done"); });
         }
       } else if (type === "wastage") {
         const scopedDraft = filterToScope(draft);
@@ -9794,8 +9792,7 @@ const OutletMgr = ({ onBack }) => {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "wastage", date: selectedDate, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
           setExistingRecord(result);
           clearWip(wipKey("wastage", outlet, selectedDate));
-          alert(`✅ Your section saved — the manager will see it when finalizing.`);
-          setScreen("home");
+          showToastThen(`✅ Your section saved — the manager will see it when finalizing.`, () => setScreen("home"));
         } else {
           let result;
           if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
@@ -9805,8 +9802,7 @@ const OutletMgr = ({ onBack }) => {
           setSubs((p) => [e, ...p]); setLast(e);
           const wastageCount = Object.values(draft).filter(v => v > 0).length;
           clearWip(wipKey("wastage", outlet, selectedDate));
-          alert(`✅ Wastage submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${selectedDate}\n🗑️ ${wastageCount} items`);
-          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+          showToastThen(`✅ Wastage submitted successfully!\n🏪 ${oData?.name}  📅 ${selectedDate}  🗑️ ${wastageCount} items`, () => { reset(); setClosing({}); setClosingUnits({}); setScreen("done"); });
         }
       } else {
         const deliveryDate = demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today();
@@ -9817,8 +9813,7 @@ const OutletMgr = ({ onBack }) => {
           const result = await api.saveDemandDraft({ outlet_id: outlet, type: "manual", date: deliveryDate, demand_slot: demandSlot, items: scopedDraft, items_units: draftItemsUnits, submitted_by: currentUser?.name });
           setExistingRecord(result);
           clearWip(wipKey("manual", outlet, deliveryDate, demandSlot));
-          alert(`✅ Your section saved — the manager will see it when finalizing.`);
-          setScreen("home");
+          showToastThen(`✅ Your section saved — the manager will see it when finalizing.`, () => setScreen("home"));
         } else {
           let result;
           if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
@@ -9827,14 +9822,16 @@ const OutletMgr = ({ onBack }) => {
           const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
           clearWip(wipKey("manual", outlet, deliveryDate, demandSlot));
-          alert(`✅ Demand submitted successfully!\n\n🏪 ${oData?.name}\n📅 ${deliveryDate}\n${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} delivery\n📦 ${filledCount} items`);
-          reset(); setClosing({}); setClosingUnits({}); setScreen("done");
+          showToastThen(`✅ Demand submitted successfully!\n🏪 ${oData?.name}  📅 ${deliveryDate}  ${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"}  📦 ${filledCount} items`, () => { reset(); setClosing({}); setClosingUnits({}); setScreen("done"); });
         }
       }
     } catch (error) {
       const errMsg = error.message || "Failed to submit";
+      // setErr surfaces this via <ErrBar /> (already rendered on every screen that calls
+      // submit()) — no alert() here, same reasoning as showToastThen above: a blocking
+      // dialog can silently fail to render on some mobile browsers, and there's nothing
+      // this one added beyond what ErrBar already shows.
       setErr(errMsg);
-      alert(`❌ Submission failed!\n\n${errMsg}\n\nPlease check your internet connection and try again.`);
       console.error("Submit error:", error);
     } finally { setSaving(false); }
   };
@@ -9857,6 +9854,18 @@ const OutletMgr = ({ onBack }) => {
   };
   const ErrBar = () => err ? <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#991B1B", marginBottom: 12 }}>❌ {err}</div> : null;
   const SavingOverlay = () => saving ? <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Submitting...</div><div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Please wait</div></div></div> : null;
+  // Non-blocking replacement for the success alert()s in submit() below — a real
+  // native alert() blocks the JS thread until dismissed, which is a known failure mode
+  // in some mobile "Add to Home Screen" PWA contexts (notably iOS Safari standalone
+  // mode): the dialog silently fails to render, leaving the screen looking permanently
+  // frozen even though the save already succeeded server-side. Traced exactly this for
+  // a Chef account reporting "can't save Closing Stock/Wastage" — confirmed via direct
+  // DB check that the submission had gone through every time; the alert() afterward was
+  // the only thing stuck. showToastThen shows the same message as a banner instead,
+  // then runs the same screen-transition callback the alert() used to gate on dismiss.
+  const [toast, setToast] = useState(null);
+  const Toast = () => toast ? <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 1000, background: "#16A34A", color: "#fff", padding: "12px 20px", borderRadius: 12, fontSize: 13, fontWeight: 700, textAlign: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.25)", maxWidth: "92%", whiteSpace: "pre-line", lineHeight: 1.4 }}>{toast}</div> : null;
+  const showToastThen = (msg, after) => { setToast(msg); setTimeout(() => { setToast(null); after(); }, 1400); };
 
   // Auto-select outlet for assigned outlet managers, chefs, and bainmarry staff
   useEffect(() => {
@@ -10226,7 +10235,7 @@ const OutletMgr = ({ onBack }) => {
     const wastageItemRow = (item) => (<div key={item.id} style={{ marginBottom: 3 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, background: draft[item.id] > 0 ? "#FEF2F2" : "#FAFAF8" }}><span style={{ flex: 1, fontSize: 13 }}>{item.name}</span><input type="number" inputMode="numeric" min="0" placeholder="0" value={draft[item.id] || ""} onChange={(e) => { const v = Math.max(0, +e.target.value || 0); setDraft((p) => ({ ...p, [item.id]: v })); }} style={{ width: 56, padding: "6px", borderRadius: 8, border: `1px solid ${draft[item.id] > 0 ? "#FECACA" : "#E0E0DC"}`, background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} /><UnitPicker itemId={item.id} defaultUnit={item.unit} unitsState={draftUnits} setUnitsState={setDraftUnits} allowBatch={false} /></div>
     </div>);
-    return (<div><SavingOverlay />
+    return (<div><SavingOverlay /><Toast />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🗑️ Wastage / Disposal</div>{ft > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700 }}>{ft} items</span>}</div>
     <DatePicker value={selectedDate} onChange={setSelectedDate} />
     {viewingSubmitted && !isDraftRole ? (<>
@@ -10501,7 +10510,7 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {viewingSubmitted && !isDraftRole ? (<>
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for this slot — {ft} items. Tap Edit to change.</div>
@@ -10782,7 +10791,7 @@ const OutletMgr = ({ onBack }) => {
         <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
         <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} allowBatch={false} />
       </div>); };
-    return (<div><SavingOverlay />
+    return (<div><SavingOverlay /><Toast />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
       <DatePicker value={selectedDate} onChange={setSelectedDate} />
       {viewingSubmitted && !isDraftRole ? (<>
