@@ -15406,16 +15406,29 @@ const FinancePnL = () => {
   };
   useEffect(load, [range]);
 
+  // Shared by both the monthly BK Purchase drill-down and each day row's own drill-down
+  // below — same item x date breakdown either way, so a day-row expand doesn't refetch
+  // if the monthly one (or another day) already pulled this outlet's detail in.
+  const ensureBkPurchaseDetail = (outletId) => {
+    if (bkPurchaseDetail[outletId] || bkPurchaseLoading === outletId) return;
+    setBkPurchaseLoading(outletId);
+    api.getBkPurchaseDetail(outletId, range.from, range.to)
+      .then((d) => setBkPurchaseDetail((p) => ({ ...p, [outletId]: d })))
+      .catch(() => setBkPurchaseDetail((p) => ({ ...p, [outletId]: { dates: [], items: [] } })))
+      .finally(() => setBkPurchaseLoading(null));
+  };
   const toggleBkPurchase = (outletId) => {
     if (expandedBkPurchase === outletId) { setExpandedBkPurchase(null); return; }
     setExpandedBkPurchase(outletId);
-    if (!bkPurchaseDetail[outletId]) {
-      setBkPurchaseLoading(outletId);
-      api.getBkPurchaseDetail(outletId, range.from, range.to)
-        .then((d) => setBkPurchaseDetail((p) => ({ ...p, [outletId]: d })))
-        .catch(() => setBkPurchaseDetail((p) => ({ ...p, [outletId]: { dates: [], items: [] } })))
-        .finally(() => setBkPurchaseLoading(null));
-    }
+    ensureBkPurchaseDetail(outletId);
+  };
+  // One day at a time, per outlet — key is `${outletId}|${date}` so a different outlet's
+  // day-by-day table (if also expanded) tracks its own toggle independently.
+  const [expandedDailyBkPurchase, setExpandedDailyBkPurchase] = useState(null);
+  const toggleDailyBkPurchase = (outletId, date) => {
+    const key = `${outletId}|${date}`;
+    setExpandedDailyBkPurchase((p) => (p === key ? null : key));
+    ensureBkPurchaseDetail(outletId);
   };
 
   const toggleMisc = (outletId) => {
@@ -15664,20 +15677,64 @@ const FinancePnL = () => {
                                     if (!row) return null;
                                     const dNetColor = row.net_pnl > 0 ? "#16A34A" : row.net_pnl < 0 ? "#DC2626" : "#999";
                                     const weekday = WEEKDAY_SHORT[new Date(`${ds}T00:00:00`).getDay()];
+                                    const dayKey = `${o.outlet_id}|${ds}`;
+                                    const isDayBkExpanded = expandedDailyBkPurchase === dayKey;
+                                    // Same item x date breakdown the monthly BK Purchase drill-down uses
+                                    // (fetched once, shared — see ensureBkPurchaseDetail), just picking
+                                    // out this one date's slice of each item's byDate map.
+                                    const dayBkItems = (bkPurchaseDetail[o.outlet_id]?.items || [])
+                                      .map((it) => ({ name: it.name, unit: it.unit, ...it.byDate[ds] }))
+                                      .filter((it) => it.qty)
+                                      .sort((a, b) => b.amount - a.amount);
                                     return (
-                                      <tr key={ds} style={{ borderBottom: "1px solid #F0F0EC", background: row.net_pnl < 0 ? "#FEF2F2" : "transparent" }}>
+                                      <Fragment key={ds}>
+                                      <tr style={{ borderBottom: "1px solid #F0F0EC", background: row.net_pnl < 0 ? "#FEF2F2" : "transparent" }}>
                                         <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>{weekday} · {ds.slice(5)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt0(row.total_sale)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt0(row.delivery_sale)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>−{fmt0(row.delivery_commission)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{fmt0(row.effective_sale)}</td>
-                                        {FINANCE_EXPENSE_COLS.map((c) => (
+                                        {FINANCE_EXPENSE_COLS.map((c) => c.key === "bk_purchase" ? (
+                                          <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: row.bk_purchase > 0 ? "#991B1B" : "#BBB" }}>
+                                            {row.bk_purchase > 0 ? (
+                                              <span onClick={() => toggleDailyBkPurchase(o.outlet_id, ds)} title="Item-wise breakdown for this day" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                                −{fmt0(row.bk_purchase)}
+                                                <span style={{ fontSize: 9, color: "#2563EB" }}>{isDayBkExpanded ? "▲" : "▼"}</span>
+                                              </span>
+                                            ) : "—"}
+                                          </td>
+                                        ) : (
                                           <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: row[c.key] > 0 ? "#991B1B" : "#BBB" }}>{row[c.key] > 0 ? `−${fmt0(row[c.key])}` : "—"}</td>
                                         ))}
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(row.total_expense)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: dNetColor }}>{row.net_pnl > 0 ? "+" : ""}{fmt0(row.net_pnl)}</td>
                                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: dNetColor }}>{row.margin_pct != null ? `${row.margin_pct}%` : "—"}</td>
                                       </tr>
+                                      {isDayBkExpanded && (
+                                        <tr>
+                                          <td colSpan={8 + FINANCE_EXPENSE_COLS.length} style={{ padding: 0, background: "#FFF7ED", borderBottom: "1px solid #F0F0EC" }}>
+                                            <div style={{ padding: "10px 14px" }}>
+                                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>🏭 BK Purchase — {weekday} {ds}</div>
+                                              {bkPurchaseLoading === o.outlet_id ? (
+                                                <div style={{ fontSize: 11, color: "#999" }}>⏳ Loading...</div>
+                                              ) : dayBkItems.length === 0 ? (
+                                                <div style={{ fontSize: 11, color: "#BBB" }}>No item detail for this day</div>
+                                              ) : (
+                                                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
+                                                  {dayBkItems.map((it) => (
+                                                    <div key={it.name} style={{ fontSize: 11, whiteSpace: "nowrap" }}>
+                                                      <span style={{ color: "#555" }}>{it.name}</span>{" "}
+                                                      <span style={{ color: "#999" }}>({it.qty} {it.unit})</span>{" "}
+                                                      <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(it.amount)}</span>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                      </Fragment>
                                     );
                                   })}
                                 </tbody>
