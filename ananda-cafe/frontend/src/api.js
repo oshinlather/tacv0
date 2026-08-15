@@ -296,6 +296,11 @@ const api = {
   setPayrollOverride: (data) => patch("/api/payroll/override", data),
   finalizePayroll: (data) => post("/api/payroll/finalize", data),
   reopenPayroll: (data) => post("/api/payroll/reopen", data),
+
+  // ── Store Inventory Module (new item master + stock_movements ledger) ──
+  // Stage 1: read-only. Separate from the older getInventory()/inventory_items system.
+  getStoreStock: (params) => get("/api/store/stock", params),
+  getStoreStockMovements: (itemId, location) => get(`/api/store/stock/${itemId}/movements`, location ? { location } : {}),
 };
 
 // ── Helpers ──
