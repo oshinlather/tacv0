@@ -13,6 +13,7 @@ try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Goog
 const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope, getDemandItemSectionMap } = require('./authGuards');
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
+const { applyDispatchStockOut } = require('./stockOutHooks');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -2643,6 +2644,17 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
       if (insertErr) console.error('Failed to create remaining order:', insertErr.message);
       else remainingOrderId = newOrder?.id;
     }
+
+    // Store Inventory Module Stage 3 — auto stock-out against the NEW ledger
+    // (items/stock_movements), on top of the unchanged logic above. Never allowed to
+    // affect this response: a real dispatch that already left the building must not
+    // fail or roll back because the new ledger hookup had a problem.
+    try {
+      await applyDispatchStockOut({
+        demandId: id, type: order.type, outletId: order.outlet_id,
+        dispatchItems: dispatch_items || {}, itemsUnits: mergedItemsUnits, actorName: dispatched_by,
+      });
+    } catch (hookErr) { console.error(`[dispatch ${id}] Stage 3 stock-out hook failed:`, hookErr.message); }
 
     res.json({ ok: true, remaining_order_id: remainingOrderId });
   } catch (e) { res.status(500).json({ error: e.message }); }
