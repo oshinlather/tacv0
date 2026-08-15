@@ -15343,6 +15343,12 @@ const FinancePnL = () => {
   const [expandedMisc, setExpandedMisc] = useState(null); // outlet_id, or null
   const [miscDetail, setMiscDetail] = useState({}); // outlet_id -> { items, total }
   const [miscLoading, setMiscLoading] = useState(null); // outlet_id currently loading
+  // Outlet filter — hide one or more outlets from the table (e.g. drop the franchises to
+  // see just the company's own 4, or isolate a subset for a side conversation) without a
+  // second API call; "All Outlets" recomputes client-side from whatever's still visible,
+  // same fields the backend sums, so it always reads as "total of what's shown".
+  const [hiddenOutlets, setHiddenOutlets] = useState(new Set());
+  const toggleOutletVisible = (outletId) => setHiddenOutlets((p) => { const n = new Set(p); if (n.has(outletId)) n.delete(outletId); else n.add(outletId); return n; });
 
   const range = useMemo(() => {
     const lastDay = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
@@ -15398,6 +15404,18 @@ const FinancePnL = () => {
   const fmt0 = (n) => n == null ? "—" : Math.round(n).toLocaleString("en-IN");
   const monthLabel = useMemo(() => new Date(`${selMonth}-01T00:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" }), [selMonth]);
 
+  const visibleOutlets = useMemo(() => (data?.outlets || []).filter((o) => !hiddenOutlets.has(o.outlet_id)), [data, hiddenOutlets]);
+  // "All Outlets" recomputed from whatever's currently visible, not data.totals (the
+  // server's full-6-outlet sum) — same fields the backend itself sums (see finance.js),
+  // driven off FINANCE_EXPENSE_COLS so a new expense column stays in sync automatically.
+  const computedTotals = useMemo(() => {
+    const sumKeys = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", ...FINANCE_EXPENSE_COLS.map((c) => c.key), "total_expense", "net_pnl"];
+    const t = {};
+    sumKeys.forEach((k) => { t[k] = visibleOutlets.reduce((s, o) => s + (o[k] || 0), 0); });
+    t.margin_pct = t.effective_sale > 0 ? Math.round((t.net_pnl / t.effective_sale) * 1000) / 10 : null;
+    return t;
+  }, [visibleOutlets]);
+
   return (<div>
     <div style={{ marginBottom: 14 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💵 Outlet-wise P&L</h3>
@@ -15430,10 +15448,30 @@ const FinancePnL = () => {
       )}
     </div>
 
+    {/* Outlet filter — tap to drop an outlet out of the table below; tap again to bring it
+        back. Only shown once data's loaded, since it's built off data.outlets. */}
+    {data && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}>Outlets:</span>
+        {data.outlets.map((o) => {
+          const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+          const visible = !hiddenOutlets.has(o.outlet_id);
+          return (
+            <button key={o.outlet_id} onClick={() => toggleOutletVisible(o.outlet_id)} style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11.5, fontWeight: 700, border: visible ? "1px solid #BFDBFE" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: visible ? "#EFF6FF" : "#FAFAF8", color: visible ? "#2563EB" : "#BBB", textDecoration: visible ? "none" : "line-through" }}>
+              {oData?.short || o.outlet_id}
+            </button>
+          );
+        })}
+        {hiddenOutlets.size > 0 && <button onClick={() => setHiddenOutlets(new Set())} style={{ padding: "5px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600, border: "1px solid #E0E0DC", background: "#fff", color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Show all</button>}
+      </div>
+    )}
+
     {loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
     ) : !data ? (
       <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Finance P&L</div>
+    ) : visibleOutlets.length === 0 ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#BBB" }}>Every outlet is filtered out — tap one above to bring it back.</div>
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
@@ -15450,7 +15488,7 @@ const FinancePnL = () => {
               <th style={{ ...thS, textAlign: "right" }}>Margin</th>
             </tr></thead>
             <tbody>
-              {data.outlets.map((o) => {
+              {visibleOutlets.map((o) => {
                 const oData = OUTLETS.find((x) => x.id === o.outlet_id);
                 const netColor = o.net_pnl > 0 ? "#16A34A" : o.net_pnl < 0 ? "#DC2626" : "#999";
                 const isExpanded = expandedBkPurchase === o.outlet_id;
@@ -15559,17 +15597,17 @@ const FinancePnL = () => {
               {/* Totals row — visually separated (heavier border, tinted background) rather
                   than just another row, since it's a sum not a real outlet. */}
               <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E0E0DC" }}>
-                <td style={{ ...tdS, fontWeight: 800, position: "sticky", left: 0, background: "#FAFAF8" }}>All Outlets</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>{fmt0(data.totals.total_sale)}</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#888" }}>{fmt0(data.totals.delivery_sale)}</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>−{fmt0(data.totals.delivery_commission)}</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#2563EB" }}>{fmt0(data.totals.effective_sale)}</td>
+                <td style={{ ...tdS, fontWeight: 800, position: "sticky", left: 0, background: "#FAFAF8" }}>{hiddenOutlets.size > 0 ? `Shown Outlets (${visibleOutlets.length})` : "All Outlets"}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>{fmt0(computedTotals.total_sale)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#888" }}>{fmt0(computedTotals.delivery_sale)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>−{fmt0(computedTotals.delivery_commission)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#2563EB" }}>{fmt0(computedTotals.effective_sale)}</td>
                 {FINANCE_EXPENSE_COLS.map((c) => (
-                  <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: data.totals[c.key] > 0 ? "#991B1B" : "#BBB" }}>{data.totals[c.key] > 0 ? `−${fmt0(data.totals[c.key])}` : "—"}</td>
+                  <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: computedTotals[c.key] > 0 ? "#991B1B" : "#BBB" }}>{computedTotals[c.key] > 0 ? `−${fmt0(computedTotals[c.key])}` : "—"}</td>
                 ))}
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#991B1B" }}>−{fmt0(data.totals.total_expense)}</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: data.totals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{data.totals.net_pnl > 0 ? "+" : ""}{fmt0(data.totals.net_pnl)}</td>
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: data.totals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{data.totals.margin_pct != null ? `${data.totals.margin_pct}%` : "—"}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#991B1B" }}>−{fmt0(computedTotals.total_expense)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: computedTotals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{computedTotals.net_pnl > 0 ? "+" : ""}{fmt0(computedTotals.net_pnl)}</td>
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: computedTotals.net_pnl > 0 ? "#16A34A" : "#DC2626" }}>{computedTotals.margin_pct != null ? `${computedTotals.margin_pct}%` : "—"}</td>
               </tr>
             </tbody>
           </table>
