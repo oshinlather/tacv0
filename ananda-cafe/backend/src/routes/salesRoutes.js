@@ -4608,21 +4608,44 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         let itemName = itemId;
         let itemCategory = 'Other';
         let itemUnit = '';
+        // What unitPrice is actually denominated in — normally identical to itemUnit
+        // (both branches below set them together), UNLESS itemUnit gets overridden further
+        // down for display/consumption purposes while the price stays in its original
+        // rate-card unit (see the Gas Cylinder override). Kept separate so usedCost/rate
+        // below always price the right unit instead of assuming they still match.
+        let priceUnit = '';
 
         if (rate) {
           unitPrice = Number(rate.price);
           itemName = rate.name;
           itemCategory = rate.category || 'Other';
           itemUnit = rate.unit || '';
+          priceUnit = itemUnit;
         } else if (bkRecipe) {
           unitPrice = bkRecipe.costPerKg;
           itemName = bkRecipe.name;
           itemCategory = 'Food';
           itemUnit = 'Kg';
+          priceUnit = 'Kg';
         } else {
           itemName = demandNameMap[itemId] || itemId.replace(/_/g, ' ');
           itemUnit = demandUnitMap[itemId] || '';
+          priceUnit = itemUnit;
         }
+        // Gas Cylinder is priced/ordered by whole cylinder (rate.unit='Pcs') but a
+        // partially-used cylinder's closing stock — and therefore how much gas was
+        // actually consumed today — is naturally a weight, not a whole-Pcs count (same
+        // reasoning as CLOSING_STOCK_UNIT_DEFAULTS on the frontend forcing Kg entry for
+        // it). itemUnit changes to Kg here so prev_closing/closing/dispatched/used —
+        // which feed both /api/stock-usage and RM Audit (computeRMAudit calls this
+        // function) — come out in real Kg instead of a fractional, hard-to-read Pcs
+        // count. priceUnit deliberately stays 'Pcs' (the rate card's real unit) so the
+        // cost math below still prices correctly instead of treating ₹2,100 as a
+        // per-Kg rate. See unit_conversions: 1 Pcs = 19 Kg.
+        if (itemId === 'gas_cylinder') itemUnit = 'Kg';
+        // Converts a quantity already expressed in itemUnit into priceUnit terms — 1 when
+        // they match (every item except the Gas Cylinder override above).
+        const priceConvFactor = convFactorFor(itemId, itemUnit, priceUnit);
 
         // Convert each of the four components using its OWN recorded unit (falls back to
         // the item's default demand unit when an entry didn't override it), then combine —
@@ -4651,7 +4674,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
         // drink items ever have, since Base Kitchen never dispatches them.
         const openingQty = Math.max(0, prevQty - wastageQty) + dispatchedQty + purchasedQty + transferInQty - transferOutQty;
         const usedQty = Math.max(0, openingQty - closingQty);
-        const usedCost = usedQty * unitPrice;
+        // usedQty is in itemUnit terms; unitPrice is in priceUnit terms — priceConvFactor
+        // bridges the two (1 for every item except the Gas Cylinder override above, where
+        // skipping this would price a Kg quantity at the per-cylinder rate, a 19x error).
+        const usedCost = usedQty * priceConvFactor * unitPrice;
 
         // If no conversion was actually needed (demand unit already matches the rate
         // unit), show the item's own unit rather than an unrelated conv-table base unit.
@@ -4678,7 +4704,9 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
             conv_qty: conv ? conv.qty : null,
             conv_base_unit: conv ? conv.baseUnit : null,
             has_rate_card: !!rate,
-            rate: Math.round(unitPrice * 100) / 100,
+            // Shown per displayUnit, not priceUnit — so it reads consistently with the
+            // qty fields above (e.g. Gas Cylinder shows ₹/Kg, not the rate card's ₹/Pcs).
+            rate: Math.round(unitPrice * priceConvFactor * 100) / 100,
             used_cost: Math.round(usedCost * 100) / 100,
           });
           totalUsedCost += usedCost;
