@@ -36,30 +36,34 @@
 const supabase = require("../supabase");
 const { rebuildStockBalances } = require("./store");
 
+// Returns a small summary object (reason it no-op'd, or what it wrote) — mainly so the
+// caller/logs can tell "nothing to do" apart from "silently failed"; not relied on by
+// any real logic.
 async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, itemsUnits, actorName }) {
-  if (!dispatchItems || !Object.keys(dispatchItems).length) return;
-  if (type !== "manual" && type !== "bk_demand") return; // scope: only these two, see header
+  if (!dispatchItems || !Object.keys(dispatchItems).length) return { skipped: "no dispatch_items" };
+  if (type !== "manual" && type !== "bk_demand") return { skipped: `type "${type}" out of scope` };
 
   const demandItemIds = Object.keys(dispatchItems).filter((k) => Number(dispatchItems[k]) > 0);
-  if (!demandItemIds.length) return;
+  if (!demandItemIds.length) return { skipped: "no positive-qty items" };
 
   const { data: items, error: itemsErr } = await supabase.from("items").select("id, base_unit, demand_item_id").in("demand_item_id", demandItemIds);
-  if (itemsErr) { console.error("[stockOutHooks] items lookup failed:", itemsErr.message); return; }
-  const itemByDemandId = new Map(items.map((i) => [i.demand_item_id, i]));
+  if (itemsErr) { console.error("[stockOutHooks] items lookup failed:", itemsErr.message); return { error: itemsErr.message }; }
+  const itemByDemandId = new Map((items || []).map((i) => [i.demand_item_id, i]));
 
-  const neededItemIds = items.map((i) => i.id);
+  const neededItemIds = (items || []).map((i) => i.id);
   const { data: unitRows } = neededItemIds.length ? await supabase.from("item_units").select("item_id, unit, factor").in("item_id", neededItemIds) : { data: [] };
   const factorMap = new Map((unitRows || []).map((u) => [`${u.item_id}::${u.unit}`, Number(u.factor)]));
 
   const movements = [];
   const affected = new Set(); // "item_id::location_id"
+  const skippedItems = [];
 
   for (const demandItemId of demandItemIds) {
     const item = itemByDemandId.get(demandItemId);
-    if (!item) { console.warn(`[stockOutHooks] demand ${demandId}: no items row for demand_item_id "${demandItemId}" — skipped`); continue; }
+    if (!item) { skippedItems.push(`${demandItemId}: no items row`); continue; }
     const unit = (itemsUnits && itemsUnits[demandItemId]) || item.base_unit;
     const factor = unit === item.base_unit ? 1 : factorMap.get(`${item.id}::${unit}`);
-    if (!factor) { console.warn(`[stockOutHooks] demand ${demandId}: no conversion factor for "${item.id}" in unit "${unit}" — skipped`); continue; }
+    if (!factor) { skippedItems.push(`${item.id}: no factor for unit "${unit}"`); continue; }
     const qtyBase = Number(dispatchItems[demandItemId]) * factor;
     if (!(qtyBase > 0)) continue;
 
@@ -73,14 +77,15 @@ async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, 
     }
   }
 
-  if (!movements.length) return;
+  if (!movements.length) return { skipped: "no items mapped to the new ledger", skippedItems };
   const { error: mvErr } = await supabase.from("stock_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-  if (mvErr) { console.error(`[stockOutHooks] demand ${demandId}: failed to write stock_movements:`, mvErr.message); return; }
+  if (mvErr) { console.error(`[stockOutHooks] demand ${demandId}: failed to write stock_movements:`, mvErr.message); return { error: mvErr.message, movements }; }
 
   for (const key of affected) {
     const [itemId, locationId] = key.split("::");
     try { await rebuildStockBalances({ itemId, locationId }); } catch (e) { console.error(`[stockOutHooks] demand ${demandId}: balance rebuild failed for ${key}:`, e.message); }
   }
+  return { wrote: movements.length, movements, skippedItems };
 }
 
 module.exports = { applyDispatchStockOut };
