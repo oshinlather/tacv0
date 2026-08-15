@@ -15420,53 +15420,17 @@ const FinancePnL = () => {
     setExpandedDaily(null);
     setDailyByDate(null);
     setExpandedDailyBkPurchase(null);
-
-    if (basis === "consumption") {
-      // Consumption's per-day formula makes a single whole-month backend call slow (one
-      // request internally bursting up to ~9 Supabase queries × every day at once —
-      // measured 17-40s for just two weeks). N separate single-day requests, fired the
-      // same way the day-by-day drill-down already does, measured ~9s for the identical
-      // work — so fetch day-by-day here too, then sum client-side into the same
-      // {outlets} shape the BK Purchase pill's single call already returns (margin_pct
-      // recomputed after summing, never summed itself — see FINANCE_SUM_FIELDS). This
-      // also matches how DailyPnL's own month view already builds a month from daily
-      // calls, not a range-level shortcut (see computeStockUsageForDate's comment for
-      // why those two aren't the same number). Bonus: since this already fetches every
-      // day, it doubles as dailyByDate — expanding the day-by-day table under this basis
-      // needs no further fetch at all.
-      const dates = [];
-      for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
-        dates.push(d.toISOString().slice(0, 10));
-      }
-      Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds, basis).then((r) => [ds, r]).catch(() => [ds, null])))
-        .then((entries) => {
-          const byDate = {};
-          const sums = {}; // outlet_id -> summed fields across every day
-          let commissionPctFromDay = null;
-          entries.forEach(([ds, r]) => {
-            if (!r) return;
-            if (commissionPctFromDay == null) commissionPctFromDay = r.commission_pct;
-            const byOutlet = {};
-            (r.outlets || []).forEach((o) => {
-              byOutlet[o.outlet_id] = o;
-              if (!sums[o.outlet_id]) { sums[o.outlet_id] = { outlet_id: o.outlet_id }; FINANCE_SUM_FIELDS.forEach((k) => { sums[o.outlet_id][k] = 0; }); }
-              FINANCE_SUM_FIELDS.forEach((k) => { sums[o.outlet_id][k] += o[k] || 0; });
-            });
-            byDate[ds] = byOutlet;
-          });
-          const outlets = OUTLETS.map((o) => sums[o.id]).filter(Boolean).map((o) => ({
-            ...o,
-            margin_pct: o.effective_sale > 0 ? Math.round((o.net_pnl / o.effective_sale) * 1000) / 10 : null,
-          }));
-          setData({ from: range.from, to: range.to, basis, commission_pct: commissionPctFromDay, outlets });
-          setCommissionPct(commissionPctFromDay);
-          setDailyByDate(byDate);
-        })
-        .catch(() => setData(null))
-        .finally(() => setLoading(false));
-    } else {
-      api.getFinanceOutletPnl(range.from, range.to, basis).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
-    }
+    // One whole-range call for BOTH bases — used to fetch Consumption day-by-day and sum
+    // client-side instead (day-by-day was ~9s vs ~18-40s for one request), but that made
+    // Total Sale/Effective Sale drift by a rupee or two from BK Purchase basis's own
+    // figures: delivery commission is round((swiggy+zomato)*pct) — computed ONCE over the
+    // whole range here, vs computed separately per day and SUMMED there, and those two
+    // aren't the same number once you're rounding every single day. Now that
+    // fetchAllDailySales's own pagination bug is fixed (see salesRoutes.js), a single
+    // Consumption request is ~8-9s anyway — close enough to the day-by-day version that
+    // it's not worth carrying a real correctness bug (two pills disagreeing on revenue,
+    // which has nothing to do with either basis) for the difference.
+    api.getFinanceOutletPnl(range.from, range.to, basis).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
   };
   useEffect(load, [range, basis]);
 
