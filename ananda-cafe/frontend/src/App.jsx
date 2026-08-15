@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from "react";
 import api from "./api";
 import StoreInventoryStock from "./StoreInventoryStock";
+import VendorChallans from "./VendorChallans";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -15344,6 +15345,40 @@ const FinancePnL = () => {
   const [expandedMisc, setExpandedMisc] = useState(null); // outlet_id, or null
   const [miscDetail, setMiscDetail] = useState({}); // outlet_id -> { items, total }
   const [miscLoading, setMiscLoading] = useState(null); // outlet_id currently loading
+  // Day-by-day breakdown — one row per calendar day so far this month, same columns as
+  // the outlet's monthly row, to spot which days are actually driving a loss/profit
+  // instead of just the one blended monthly number. Fetched once for the WHOLE month
+  // (every outlet, every day so far) on the first outlet expanded, then every other
+  // outlet's expand just reads its own slice out of that same cache — a second outlet
+  // doesn't refire the whole month's worth of calls. Reuses the exact same
+  // GET /finance/outlet-pnl the monthly row already calls, just with from=to=one day —
+  // no backend changes needed, this is the same formula computed at finer grain.
+  const [expandedDaily, setExpandedDaily] = useState(null); // outlet_id, or null
+  const [dailyByDate, setDailyByDate] = useState(null); // date -> { outlet_id -> row } | null before first load
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const toggleDaily = (outletId) => {
+    if (expandedDaily === outletId) { setExpandedDaily(null); return; }
+    setExpandedDaily(outletId);
+    if (dailyByDate) return; // already loaded this month, whole-month cache covers every outlet
+    setDailyLoading(true);
+    const dates = [];
+    for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds).then((r) => [ds, r]).catch(() => [ds, null])))
+      .then((entries) => {
+        const byDate = {};
+        entries.forEach(([ds, r]) => {
+          if (!r) return;
+          const byOutlet = {};
+          (r.outlets || []).forEach((o) => { byOutlet[o.outlet_id] = o; });
+          byDate[ds] = byOutlet;
+        });
+        setDailyByDate(byDate);
+      })
+      .finally(() => setDailyLoading(false));
+  };
   // Outlet filter — hide one or more outlets from the table (e.g. drop the franchises to
   // see just the company's own 4, or isolate a subset for a side conversation) without a
   // second API call; "All Outlets" recomputes client-side from whatever's still visible,
@@ -15366,6 +15401,8 @@ const FinancePnL = () => {
     setBkPurchaseDetail({});
     setExpandedMisc(null);
     setMiscDetail({});
+    setExpandedDaily(null);
+    setDailyByDate(null);
   };
   useEffect(load, [range]);
 
@@ -15496,10 +15533,16 @@ const FinancePnL = () => {
                 const detail = bkPurchaseDetail[o.outlet_id];
                 const isMiscExpanded = expandedMisc === o.outlet_id;
                 const miscData = miscDetail[o.outlet_id];
+                const isDailyExpanded = expandedDaily === o.outlet_id;
                 return (
                   <Fragment key={o.outlet_id}>
                   <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>{oData?.short || o.outlet_id}</td>
+                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>
+                      <span onClick={() => toggleDaily(o.outlet_id)} title="Day-by-day breakdown" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {oData?.short || o.outlet_id}
+                        <span style={{ fontSize: 9, color: "#2563EB" }}>{isDailyExpanded ? "▲" : "▼"}</span>
+                      </span>
+                    </td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt0(o.total_sale)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt0(o.delivery_sale)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>−{fmt0(o.delivery_commission)}</td>
@@ -15586,6 +15629,59 @@ const FinancePnL = () => {
                                 <span>Total</span>
                                 <span style={{ fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(miscData.total)}</span>
                               </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {isDailyExpanded && (
+                    <tr>
+                      <td colSpan={5 + FINANCE_EXPENSE_COLS.length + 3} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <div style={{ padding: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>📅 Day-by-day — {oData?.short || o.outlet_id} — {monthLabel} — same columns as above, one row per day, to spot which days are driving the month's loss/profit</div>
+                          {dailyLoading ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Computing every day so far this month…</div>
+                          ) : !dailyByDate ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#BBB", fontSize: 12 }}>No data</div>
+                          ) : (
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5, minWidth: 1300 }}>
+                                <thead><tr>
+                                  <th style={{ ...thS, textAlign: "left" }}>Day</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Total Sale</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Delivery Sale</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Commission</th>
+                                  <th style={{ ...thS, textAlign: "right", color: "#2563EB" }}>Effective Sale</th>
+                                  {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+                                  <th style={{ ...thS, textAlign: "right" }}>Total Expense</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Margin</th>
+                                </tr></thead>
+                                <tbody>
+                                  {Object.keys(dailyByDate).sort().map((ds) => {
+                                    const row = dailyByDate[ds]?.[o.outlet_id];
+                                    if (!row) return null;
+                                    const dNetColor = row.net_pnl > 0 ? "#16A34A" : row.net_pnl < 0 ? "#DC2626" : "#999";
+                                    const weekday = WEEKDAY_SHORT[new Date(`${ds}T00:00:00`).getDay()];
+                                    return (
+                                      <tr key={ds} style={{ borderBottom: "1px solid #F0F0EC", background: row.net_pnl < 0 ? "#FEF2F2" : "transparent" }}>
+                                        <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>{weekday} · {ds.slice(5)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{fmt0(row.total_sale)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt0(row.delivery_sale)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>−{fmt0(row.delivery_commission)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{fmt0(row.effective_sale)}</td>
+                                        {FINANCE_EXPENSE_COLS.map((c) => (
+                                          <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: row[c.key] > 0 ? "#991B1B" : "#BBB" }}>{row[c.key] > 0 ? `−${fmt0(row[c.key])}` : "—"}</td>
+                                        ))}
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(row.total_expense)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: dNetColor }}>{row.net_pnl > 0 ? "+" : ""}{fmt0(row.net_pnl)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: dNetColor }}>{row.margin_pct != null ? `${row.margin_pct}%` : "—"}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
                             </div>
                           )}
                         </div>
@@ -16555,6 +16651,7 @@ const SCOPED_ROLE_TABS = {
     { id: "inventory", label: "📦 Inventory" },
     { id: "bk_closing", label: "📊 BK Closing Stock" },
     { id: "bk_audit", label: "🔍 BK Store Audit" },
+    { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)" },
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
@@ -16616,7 +16713,7 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -16631,6 +16728,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "cash" && <CashLedger />}
       {tab === "store" && storeView === "custodian_ledger" && <CustodianLedger />}
       {tab === "store" && storeView === "actions" && <StoreMgr onBack={null} />}
+      {tab === "store" && storeView === "vendor_challans" && <VendorChallans />}
       {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
       {tab === "finance" && <FinancePnL />}
       {tab === "cogs_compare" && <CogsCompare />}
@@ -16645,6 +16743,7 @@ const ScopedDashboard = () => {
       {tab === "inventory" && <Inventory />}
       {tab === "bk_closing" && <BKClosingStock />}
       {tab === "bk_audit" && <BKAudit />}
+      {tab === "vendor_challans" && <VendorChallans />}
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "fines" && <FinesPanel />}
@@ -16876,7 +16975,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -16892,6 +16991,7 @@ export default function AnandaCafe() {
           { id: "bk_audit", label: "🔍 BK Audit", sub: "Demand vs Stock-Out, logged vs expected inventory" },
           { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
+          { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)", sub: "Stage 2 — receive deliveries, auto stock-in" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -16984,6 +17084,7 @@ export default function AnandaCafe() {
       {ownerTab === "bk_audit" && <BKAudit />}
       {ownerTab === "inv_ledger" && <InventoryLedger />}
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
+      {ownerTab === "vendor_challans" && <VendorChallans />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>
@@ -17014,7 +17115,7 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
@@ -17027,6 +17128,7 @@ export default function AnandaCafe() {
       {storeView === "custodian_ledger" && <CustodianLedger />}
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
+      {storeView === "vendor_challans" && <VendorChallans />}
       {storeView === "master" && <MasterData hideRecipes />}
     </div>
   </div>);

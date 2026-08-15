@@ -1,7 +1,9 @@
 // store.js — New Store Inventory Module (item master + stock_movements ledger).
-// Stage 1 only: read-only stock view, backed by the append-only ledger created in
-// 2026_08_15_store_inventory_stage1.sql. Stage 2 (receipts) and Stage 3 (dispatch) will
-// add write endpoints here later — do not add them until the user says go.
+// Read-only stock view + item-units admin, backed by the append-only ledger created in
+// 2026_08_15_store_inventory_stage1.sql. Stage 2's write flow (vendor challans ->
+// receive -> stock-in) lives in vendorChallans.js, mounted at the same /api/store
+// prefix — split out because it's a genuinely separate concern, not because this file
+// got too big. Stage 3 (dispatch) will add another sibling file the same way.
 //
 // This is a NEW, separate system from the existing /api/inventory routes
 // (inventory_items/inventory_stock/inventory_movements) — that module is untouched and
@@ -102,5 +104,35 @@ router.get("/stock/:itemId/movements", async (req, res) => {
   res.json(data || []);
 });
 
+// GET /api/store/items — plain item-master list (for pickers in the challan/receiving
+// UI). Includes item_units so the frontend can offer only units that already have a
+// known conversion factor for that item.
+router.get("/items", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { data: items, error } = await supabase.from("items").select("id, name, category, base_unit, active").eq("active", true).order("category").order("name");
+  if (error) return res.status(500).json({ error: error.message });
+  const { data: units, error: unitsError } = await supabase.from("item_units").select("item_id, unit, factor, is_purchase_unit, is_issue_unit");
+  if (unitsError) return res.status(500).json({ error: unitsError.message });
+  const unitsByItem = new Map();
+  (units || []).forEach((u) => { if (!unitsByItem.has(u.item_id)) unitsByItem.set(u.item_id, []); unitsByItem.get(u.item_id).push(u); });
+  res.json(items.map((it) => ({ ...it, units: unitsByItem.get(it.id) || [{ unit: it.base_unit, factor: 1 }] })));
+});
+
+// POST /api/store/item-units — add or update a purchase-unit conversion factor for an
+// item (e.g. "1 Tin = 15 Kg"). Stage 1 deliberately left this empty rather than guess —
+// this is how an owner/store_mgr fills it in themselves, with a real number they know,
+// the first time they need to receive something in a unit other than its base unit.
+router.post("/item-units", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { item_id, unit, factor, is_purchase_unit = true, is_issue_unit = true } = req.body;
+  if (!item_id || !unit || !(Number(factor) > 0)) return res.status(400).json({ error: "item_id, unit, and a positive factor are required" });
+  const { data, error } = await supabase.from("item_units")
+    .upsert({ item_id, unit, factor: Number(factor), is_purchase_unit, is_issue_unit }, { onConflict: "item_id,unit" })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 module.exports = router;
 module.exports.rebuildStockBalances = rebuildStockBalances;
+module.exports.gate = gate;
