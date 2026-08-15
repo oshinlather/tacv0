@@ -15313,6 +15313,12 @@ const InventoryLedger = () => {
 // misc-detail below — so every head is still fully visible, just one click away.
 const FINANCE_EXPENSE_COLS = [
   { key: "bk_purchase", label: "BK Purchase" },
+  // Only populated under Consumption basis — that formula subtracts wastage OUT of
+  // material cost, so without this line it would vanish from the P&L instead of
+  // showing up as a real expense. Always 0 under BK Purchase basis (the owner's own
+  // deliberately simplified "don't focus on closing and wastage" view) — see
+  // computeWastageCostByOutlet in finance.js.
+  { key: "wastage", label: "Wastage" },
   { key: "bk_fixed_share", label: "BK Fixed Share" },
   { key: "rent", label: "Rent" },
   { key: "salary", label: "Salary" },
