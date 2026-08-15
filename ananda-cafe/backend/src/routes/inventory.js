@@ -5,10 +5,11 @@ const { todayIST } = require("../helpers");
 const { requireRole, requireOwner } = require("./authGuards");
 const { istDate, bucketMovementsByItemAndDay, walkBackwardBalances } = require("../inventoryLedger");
 
-// All inventory operations are BK/store operations — restricted to owner + store_mgr.
-// Tiny helper to keep each route terse.
+// All inventory operations are BK/store operations — restricted to owner + store_mgr
+// (+ avp, bk_manager — both run BK day-to-day and need the same stock in/out/adjust/
+// count screens store_mgr already has). Tiny helper to keep each route terse.
 async function gate(req, res) {
-  return await requireRole(req, res, "owner", "store_mgr", "avp");
+  return await requireRole(req, res, "owner", "store_mgr", "avp", "bk_manager");
 }
 
 const shiftDay = (dateStr, n) => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };

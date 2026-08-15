@@ -9685,7 +9685,12 @@ const OutletMgr = ({ onBack }) => {
   // as Tins — a 15x inflation that fed straight into the next day's consumed-material P&L
   // (e.g. Desi Ghee 8 -> 120). This map overrides just the closing-stock default; ordering
   // still defaults to the container unit since outlets do order whole Tins from BK.
-  const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Ltr" };
+  // Gas Cylinder: a partially-used cylinder is naturally a weight, not a whole-Pcs count —
+  // managers were already entering things like "0.5" as Pcs before this (a guess, not a
+  // real weight). Kg makes the leftover amount, and therefore the consumed-material "gas
+  // used today" figure, actually meaningful. Demand/dispatch stay in Pcs — BK only ever
+  // sends whole cylinders. unit_conversions: 1 Pcs = 19 Kg (added 2026-08-14).
+  const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Ltr", gas_cylinder: "Kg" };
   // Renders either a plain unit label (single unit) or a dropdown (item has an alternate
   // unit via unit_conversions, e.g. Desi Ghee: Tin or Kg)
   const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState, allowBatch = true }) => {
@@ -16501,6 +16506,16 @@ const SCOPED_ROLE_TABS = {
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
+    // Full inventory module — same three screens AVP's "Base Kitchen Manager" tile
+    // bundles (Inventory itself, BK's own daily closing count, and the dispatch/stock-out
+    // reconciliation). Backend gate() in inventory.js widened to admit bk_manager
+    // alongside owner/store_mgr/avp — was 403ing before this. Inventory Ledger
+    // deliberately excluded: that route is owner-only "per explicit request" (store
+    // managers submit counts but don't see the reconciled tally) — same policy applies
+    // here, not something this change should quietly override.
+    { id: "inventory", label: "📦 Inventory" },
+    { id: "bk_closing", label: "📊 BK Closing Stock" },
+    { id: "bk_audit", label: "🔍 BK Store Audit" },
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
@@ -16588,6 +16603,9 @@ const ScopedDashboard = () => {
       {tab === "pp_recipes" && <DishRecipesPanel />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
+      {tab === "inventory" && <Inventory />}
+      {tab === "bk_closing" && <BKClosingStock />}
+      {tab === "bk_audit" && <BKAudit />}
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "fines" && <FinesPanel />}
