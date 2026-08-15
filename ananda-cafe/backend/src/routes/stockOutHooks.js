@@ -64,15 +64,16 @@ async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, 
     const unit = (itemsUnits && itemsUnits[demandItemId]) || item.base_unit;
     const factor = unit === item.base_unit ? 1 : factorMap.get(`${item.id}::${unit}`);
     if (!factor) { skippedItems.push(`${item.id}: no factor for unit "${unit}"`); continue; }
-    const qtyBase = Number(dispatchItems[demandItemId]) * factor;
+    const qtyEntered = Number(dispatchItems[demandItemId]);
+    const qtyBase = qtyEntered * factor;
     if (!(qtyBase > 0)) continue;
 
     if (type === "bk_demand") {
-      movements.push({ item_id: item.id, location_id: "store", movement_type: "TRANSFER", qty_delta: -qtyBase, dest_location_id: "bk", source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:out`, created_by: actorName || "system" });
-      movements.push({ item_id: item.id, location_id: "bk", movement_type: "TRANSFER", qty_delta: qtyBase, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:in`, created_by: actorName || "system" });
+      movements.push({ item_id: item.id, location_id: "store", movement_type: "TRANSFER", qty_delta: -qtyBase, qty_entered: qtyEntered, unit_entered: unit, dest_location_id: "bk", source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:out`, created_by: actorName || "system" });
+      movements.push({ item_id: item.id, location_id: "bk", movement_type: "TRANSFER", qty_delta: qtyBase, qty_entered: qtyEntered, unit_entered: unit, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:in`, created_by: actorName || "system" });
       affected.add(`${item.id}::store`); affected.add(`${item.id}::bk`);
     } else {
-      movements.push({ item_id: item.id, location_id: "bk", movement_type: "DISPATCH", qty_delta: -qtyBase, dest_outlet_id: outletId, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}`, created_by: actorName || "system" });
+      movements.push({ item_id: item.id, location_id: "bk", movement_type: "DISPATCH", qty_delta: -qtyBase, qty_entered: qtyEntered, unit_entered: unit, dest_outlet_id: outletId, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}`, created_by: actorName || "system" });
       affected.add(`${item.id}::bk`);
     }
   }
