@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from "rea
 import api from "./api";
 import StoreInventoryStock from "./StoreInventoryStock";
 import VendorChallans from "./VendorChallans";
+import StoreClosingCount from "./StoreClosingCount";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -15321,6 +15322,14 @@ const FINANCE_EXPENSE_COLS = [
 ];
 const FinancePnL = () => {
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  // Which material-cost figure drives BK Purchase/BK Fixed Share (and therefore Total
+  // Expense/Net P&L/Margin) — 'bk_purchase' (what was dispatched, at rate-card cost) or
+  // 'consumption' (Yesterday Closing + Dispatched − Wastage − Today Closing, same
+  // formula RM Audit/Daily P&L use). Everything else in the table (revenue, Rent/
+  // Salary/Electricity/GST/Misc) is identical either way — see finance.js.
+  const [basis, setBasis] = useState("bk_purchase");
+  const materialCostLabel = basis === "consumption" ? "Consumption" : "BK Purchase";
+  const colLabel = (c) => (c.key === "bk_purchase" ? materialCostLabel : c.label);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [commissionPct, setCommissionPct] = useState(null); // server value, kept separate from data.commission_pct so editing doesn't need a full refetch to reflect
@@ -15366,7 +15375,7 @@ const FinancePnL = () => {
     for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
       dates.push(d.toISOString().slice(0, 10));
     }
-    Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds).then((r) => [ds, r]).catch(() => [ds, null])))
+    Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds, basis).then((r) => [ds, r]).catch(() => [ds, null])))
       .then((entries) => {
         const byDate = {};
         entries.forEach(([ds, r]) => {
@@ -15394,25 +15403,76 @@ const FinancePnL = () => {
 
   const load = () => {
     setLoading(true);
-    api.getFinanceOutletPnl(range.from, range.to).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
-    // Cached detail is keyed by outlet_id only, so a month change needs an explicit reset
-    // or it'd keep showing the previous month's breakdown under the same outlet.
+    // Cached detail is keyed by outlet_id only, so a month OR basis change needs an
+    // explicit reset — a cached BK Purchase breakdown must not show up under the
+    // Consumption pill (or vice versa), and a month change would keep the old month's
+    // breakdown under the same outlet otherwise.
     setExpandedBkPurchase(null);
     setBkPurchaseDetail({});
     setExpandedMisc(null);
     setMiscDetail({});
     setExpandedDaily(null);
     setDailyByDate(null);
-  };
-  useEffect(load, [range]);
+    setExpandedDailyBkPurchase(null);
 
-  // Shared by both the monthly BK Purchase drill-down and each day row's own drill-down
-  // below — same item x date breakdown either way, so a day-row expand doesn't refetch
-  // if the monthly one (or another day) already pulled this outlet's detail in.
+    if (basis === "consumption") {
+      // Consumption's per-day formula makes a single whole-month backend call slow (one
+      // request internally bursting up to ~9 Supabase queries × every day at once —
+      // measured 17-40s for just two weeks). N separate single-day requests, fired the
+      // same way the day-by-day drill-down already does, measured ~9s for the identical
+      // work — so fetch day-by-day here too, then sum client-side into the same
+      // {outlets} shape the BK Purchase pill's single call already returns (margin_pct
+      // recomputed after summing, never summed itself — see FINANCE_SUM_FIELDS). This
+      // also matches how DailyPnL's own month view already builds a month from daily
+      // calls, not a range-level shortcut (see computeStockUsageForDate's comment for
+      // why those two aren't the same number). Bonus: since this already fetches every
+      // day, it doubles as dailyByDate — expanding the day-by-day table under this basis
+      // needs no further fetch at all.
+      const dates = [];
+      for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
+        dates.push(d.toISOString().slice(0, 10));
+      }
+      Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds, basis).then((r) => [ds, r]).catch(() => [ds, null])))
+        .then((entries) => {
+          const byDate = {};
+          const sums = {}; // outlet_id -> summed fields across every day
+          let commissionPctFromDay = null;
+          entries.forEach(([ds, r]) => {
+            if (!r) return;
+            if (commissionPctFromDay == null) commissionPctFromDay = r.commission_pct;
+            const byOutlet = {};
+            (r.outlets || []).forEach((o) => {
+              byOutlet[o.outlet_id] = o;
+              if (!sums[o.outlet_id]) { sums[o.outlet_id] = { outlet_id: o.outlet_id }; FINANCE_SUM_FIELDS.forEach((k) => { sums[o.outlet_id][k] = 0; }); }
+              FINANCE_SUM_FIELDS.forEach((k) => { sums[o.outlet_id][k] += o[k] || 0; });
+            });
+            byDate[ds] = byOutlet;
+          });
+          const outlets = OUTLETS.map((o) => sums[o.id]).filter(Boolean).map((o) => ({
+            ...o,
+            margin_pct: o.effective_sale > 0 ? Math.round((o.net_pnl / o.effective_sale) * 1000) / 10 : null,
+          }));
+          setData({ from: range.from, to: range.to, basis, commission_pct: commissionPctFromDay, outlets });
+          setCommissionPct(commissionPctFromDay);
+          setDailyByDate(byDate);
+        })
+        .catch(() => setData(null))
+        .finally(() => setLoading(false));
+    } else {
+      api.getFinanceOutletPnl(range.from, range.to, basis).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
+    }
+  };
+  useEffect(load, [range, basis]);
+
+  // Shared by both the monthly BK Purchase/Consumption drill-down and each day row's own
+  // drill-down below — same item x date breakdown either way, so a day-row expand
+  // doesn't refetch if the monthly one (or another day) already pulled this outlet's
+  // detail in. Which endpoint it hits follows the active basis pill.
   const ensureBkPurchaseDetail = (outletId) => {
     if (bkPurchaseDetail[outletId] || bkPurchaseLoading === outletId) return;
     setBkPurchaseLoading(outletId);
-    api.getBkPurchaseDetail(outletId, range.from, range.to)
+    const fetchDetail = basis === "consumption" ? api.getConsumptionDetail : api.getBkPurchaseDetail;
+    fetchDetail(outletId, range.from, range.to)
       .then((d) => setBkPurchaseDetail((p) => ({ ...p, [outletId]: d })))
       .catch(() => setBkPurchaseDetail((p) => ({ ...p, [outletId]: { dates: [], items: [] } })))
       .finally(() => setBkPurchaseLoading(null));
@@ -15455,14 +15515,17 @@ const FinancePnL = () => {
   const fmt0 = (n) => n == null ? "—" : Math.round(n).toLocaleString("en-IN");
   const monthLabel = useMemo(() => new Date(`${selMonth}-01T00:00:00`).toLocaleDateString("en-IN", { month: "long", year: "numeric" }), [selMonth]);
 
+  // Every numeric field that's safe to plain-sum across outlets (or across days, for
+  // Consumption basis's client-side day-by-day aggregation below) — margin_pct is
+  // deliberately excluded, it's a ratio recomputed AFTER summing, never summed itself.
+  const FINANCE_SUM_FIELDS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", ...FINANCE_EXPENSE_COLS.map((c) => c.key), "total_expense", "net_pnl"];
   const visibleOutlets = useMemo(() => (data?.outlets || []).filter((o) => !hiddenOutlets.has(o.outlet_id)), [data, hiddenOutlets]);
   // "All Outlets" recomputed from whatever's currently visible, not data.totals (the
   // server's full-6-outlet sum) — same fields the backend itself sums (see finance.js),
   // driven off FINANCE_EXPENSE_COLS so a new expense column stays in sync automatically.
   const computedTotals = useMemo(() => {
-    const sumKeys = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", ...FINANCE_EXPENSE_COLS.map((c) => c.key), "total_expense", "net_pnl"];
     const t = {};
-    sumKeys.forEach((k) => { t[k] = visibleOutlets.reduce((s, o) => s + (o[k] || 0), 0); });
+    FINANCE_SUM_FIELDS.forEach((k) => { t[k] = visibleOutlets.reduce((s, o) => s + (o[k] || 0), 0); });
     t.margin_pct = t.effective_sale > 0 ? Math.round((t.net_pnl / t.effective_sale) * 1000) / 10 : null;
     return t;
   }, [visibleOutlets]);
@@ -15470,7 +15533,7 @@ const FinancePnL = () => {
   return (<div>
     <div style={{ marginBottom: 14 }}>
       <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💵 Outlet-wise P&L</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus BK Purchase (what was dispatched, at rate-card cost), BK Fixed Share (BK's own rent/salary/etc, split proportional to each outlet's BK Purchase — not equally), and fixed costs = Net P&L.</p>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus {materialCostLabel} ({basis === "consumption" ? "Yesterday Closing + Dispatched − Wastage − Today Closing, the actual-consumption formula" : "what was dispatched, at rate-card cost"}), BK Fixed Share (BK's own rent/salary/etc, split proportional to each outlet's {materialCostLabel} — not equally), and fixed costs = Net P&L.</p>
     </div>
 
     {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} /> : (<>
@@ -15497,6 +15560,15 @@ const FinancePnL = () => {
       {getCurrentUser()?.role === "owner" && (
         <button onClick={() => setShowFixedCosts(true)} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🏢 Fixed Costs</button>
       )}
+    </div>
+
+    {/* Basis pill — same table, same columns, just which material-cost figure drives
+        BK Purchase/BK Fixed Share/Total Expense/Net P&L/Margin. Switching clears every
+        drill-down cache below (see load()'s [range, basis] effect) since a BK-Purchase
+        breakdown cached under one basis is meaningless under the other. */}
+    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      <button onClick={() => setBasis("bk_purchase")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_purchase" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_purchase" ? "#1A1A1A" : "#fff", color: basis === "bk_purchase" ? "#fff" : "#888" }}>💰 BK Purchase</button>
+      <button onClick={() => setBasis("consumption")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "consumption" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "consumption" ? "#1A1A1A" : "#fff", color: basis === "consumption" ? "#fff" : "#888" }}>📊 Consumption</button>
     </div>
 
     {/* Outlet filter — tap to drop an outlet out of the table below; tap again to bring it
@@ -15533,7 +15605,7 @@ const FinancePnL = () => {
               <th style={{ ...thS, textAlign: "right" }}>Delivery Sale</th>
               <th style={{ ...thS, textAlign: "right" }}>Commission</th>
               <th style={{ ...thS, textAlign: "right", color: "#2563EB" }}>Effective Sale</th>
-              {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+              {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{colLabel(c)}</th>)}
               <th style={{ ...thS, textAlign: "right" }}>Total Expense</th>
               <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
               <th style={{ ...thS, textAlign: "right" }}>Margin</th>
@@ -15589,7 +15661,7 @@ const FinancePnL = () => {
                     <tr>
                       <td colSpan={5 + FINANCE_EXPENSE_COLS.length + 3} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
                         <div style={{ padding: 14 }}>
-                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>🏭 BK Purchase — {oData?.short || o.outlet_id} — {monthLabel} — amount (qty) per day</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>🏭 {materialCostLabel} — {oData?.short || o.outlet_id} — {monthLabel} — amount (qty) per day</div>
                           {bkPurchaseLoading === o.outlet_id ? (
                             <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>
                           ) : !detail || detail.items.length === 0 ? (
@@ -15666,7 +15738,7 @@ const FinancePnL = () => {
                                   <th style={{ ...thS, textAlign: "right" }}>Delivery Sale</th>
                                   <th style={{ ...thS, textAlign: "right" }}>Commission</th>
                                   <th style={{ ...thS, textAlign: "right", color: "#2563EB" }}>Effective Sale</th>
-                                  {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+                                  {FINANCE_EXPENSE_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{colLabel(c)}</th>)}
                                   <th style={{ ...thS, textAlign: "right" }}>Total Expense</th>
                                   <th style={{ ...thS, textAlign: "right" }}>Net P&L</th>
                                   <th style={{ ...thS, textAlign: "right" }}>Margin</th>
@@ -15714,7 +15786,7 @@ const FinancePnL = () => {
                                         <tr>
                                           <td colSpan={8 + FINANCE_EXPENSE_COLS.length} style={{ padding: 0, background: "#FFF7ED", borderBottom: "1px solid #F0F0EC" }}>
                                             <div style={{ padding: "10px 14px" }}>
-                                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>🏭 BK Purchase — {weekday} {ds}</div>
+                                              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#92400E", marginBottom: 6 }}>🏭 {materialCostLabel} — {weekday} {ds}</div>
                                               {bkPurchaseLoading === o.outlet_id ? (
                                                 <div style={{ fontSize: 11, color: "#999" }}>⏳ Loading...</div>
                                               ) : dayBkItems.length === 0 ? (
@@ -15768,7 +15840,7 @@ const FinancePnL = () => {
         </div>
       </div>
     )}
-    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/GST/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above. Misc is everything that isn't Rent/Salary/Electricity/GST — Transport, Water, Internet, Mala Decoration, Staff Room Rent, Waste Collection, and any other configured cost head — click its ▼ to see exactly which heads make it up and how much each one is. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's BK Purchase — an outlet that bought nothing from BK this period carries none of it.</p>
+    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Rent/Salary/Electricity/GST/Misc are prorated from each outlet's monthly Fixed Costs entry (owner-only editable there) across the days shown above. Misc is everything that isn't Rent/Salary/Electricity/GST — Transport, Water, Internet, Mala Decoration, Staff Room Rent, Waste Collection, and any other configured cost head — click its ▼ to see exactly which heads make it up and how much each one is. GST has no entries yet — add a "GST" fixed cost head to populate that column. BK Fixed Share is Base Kitchen's own Fixed Costs entry (outlet "BK"), prorated the same way, then split across outlets proportional to each one's {materialCostLabel} — an outlet that bought/consumed nothing this period carries none of it.</p>
     </>)}
   </div>);
 };
@@ -16709,6 +16781,7 @@ const SCOPED_ROLE_TABS = {
     { id: "bk_closing", label: "📊 BK Closing Stock" },
     { id: "bk_audit", label: "🔍 BK Store Audit" },
     { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)" },
+    { id: "stock_counts", label: "🔢 Closing Counts (Beta)" },
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
@@ -16770,7 +16843,7 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -16786,6 +16859,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "custodian_ledger" && <CustodianLedger />}
       {tab === "store" && storeView === "actions" && <StoreMgr onBack={null} />}
       {tab === "store" && storeView === "vendor_challans" && <VendorChallans />}
+      {tab === "store" && storeView === "stock_counts" && <StoreClosingCount />}
       {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
       {tab === "finance" && <FinancePnL />}
       {tab === "cogs_compare" && <CogsCompare />}
@@ -16801,6 +16875,7 @@ const ScopedDashboard = () => {
       {tab === "bk_closing" && <BKClosingStock />}
       {tab === "bk_audit" && <BKAudit />}
       {tab === "vendor_challans" && <VendorChallans />}
+      {tab === "stock_counts" && <StoreClosingCount />}
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "fines" && <FinesPanel />}
@@ -17032,7 +17107,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -17049,6 +17124,7 @@ export default function AnandaCafe() {
           { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
           { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)", sub: "Stage 2 — receive deliveries, auto stock-in" },
+          { id: "stock_counts", label: "🔢 Closing Counts (Beta)", sub: "Stage 4 — blind count, variance, rollup" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -17142,6 +17218,7 @@ export default function AnandaCafe() {
       {ownerTab === "inv_ledger" && <InventoryLedger />}
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
       {ownerTab === "vendor_challans" && <VendorChallans />}
+      {ownerTab === "stock_counts" && <StoreClosingCount />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>
@@ -17172,7 +17249,7 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
@@ -17186,6 +17263,7 @@ export default function AnandaCafe() {
       {storeView === "recipes" && <StoreRecipesView />}
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "vendor_challans" && <VendorChallans />}
+      {storeView === "stock_counts" && <StoreClosingCount />}
       {storeView === "master" && <MasterData hideRecipes />}
     </div>
   </div>);

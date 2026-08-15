@@ -202,12 +202,14 @@ const api = {
   addFixedCostHead: (label) => post("/api/fixed-cost-heads", { label }),
   deleteFixedCostHead: (label) => del(`/api/fixed-cost-heads?label=${encodeURIComponent(label)}`),
 
-  // ── Finance — outlet-wise P&L (simplified: BK Purchase = dispatched value, not
-  // consumed-material) ──
-  getFinanceOutletPnl: (from, to) => get("/api/finance/outlet-pnl", { from, to }),
+  // ── Finance — outlet-wise P&L. Two bases: bk_purchase (default, dispatched value at
+  // rate-card cost) or consumption (Yesterday Closing + Dispatched − Wastage − Today
+  // Closing, same formula RM Audit/Daily P&L use) ──
+  getFinanceOutletPnl: (from, to, basis) => get("/api/finance/outlet-pnl", { from, to, basis }),
   getFinanceCommissionPct: () => get("/api/finance/commission-pct"),
   setFinanceCommissionPct: (pct) => patch("/api/finance/commission-pct", { pct }),
   getBkPurchaseDetail: (outlet_id, from, to) => get("/api/finance/bk-purchase-detail", { outlet_id, from, to }),
+  getConsumptionDetail: (outlet_id, from, to) => get("/api/finance/consumption-detail", { outlet_id, from, to }),
   getMiscDetail: (outlet_id, from, to) => get("/api/finance/misc-detail", { outlet_id, from, to }),
 
   // ── Live P&L ──
@@ -315,6 +317,15 @@ const api = {
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),
   getItemPriceHistory: (itemId) => get(`/api/store/items/${itemId}/price-history`),
+
+  // Stage 4: blind closing count -> audit/variance -> owner rollup.
+  startStockCount: (data) => post("/api/store/counts", data),
+  getStockCounts: (params) => get("/api/store/counts", params),
+  getStockCount: (id) => get(`/api/store/counts/${id}`),
+  saveStockCountItems: (id, items) => patch(`/api/store/counts/${id}/items`, { items }),
+  submitStockCount: (id) => post(`/api/store/counts/${id}/submit`, {}),
+  cancelStockCount: (id) => post(`/api/store/counts/${id}/cancel`, {}),
+  getVarianceRollup: (params) => get("/api/store/variance-rollup", params),
 };
 
 // ── Helpers ──

@@ -4462,25 +4462,21 @@ router.get('/punch-status/:date', async (req, res) => {
 // the caller needs it separately too (computeRMAudit used to call buildCostingContext()
 // a second time after this function's own internal call, duplicating six queries for
 // nothing); omit it and this fetches its own, same as before.
-// `dateOrRange` is either a single 'YYYY-MM-DD' string (every existing caller — Daily
-// P&L, RM Audit, /api/stock-usage/:date) or a { from, to } range (Finance's Consumption
-// pill, which needs a whole month's worth of consumed-material cost in one shot instead
-// of N single-day calls — see finance.js's computeConsumptionByOutlet). Only the four
-// FLOW tables (wastage/dispatched/transfers/purchases) actually widen to the range;
-// closing stock stays two single boundary reads — opening balance from the day before
-// `from`, closing balance from `to` — exactly the telescoping identity that makes
-// summing this formula day-by-day across a range equal computing it once over the whole
-// range: Consumed(range) = Opening(from−1) + ΣDispatched − ΣWastage − Closing(to). When
-// dateOrRange is a plain string, from===to===date, so every .gte(from).lte(to) below is
-// exactly equivalent to the single .eq(date) it replaces — zero behavior change for any
-// existing single-day caller.
-async function computeStockUsageForDate(dateOrRange, outlet, costingContext) {
+// Tried generalizing this to accept a { from, to } range once (so Finance's
+// Consumption pill could compute a whole month in one shot instead of summing N
+// single-day calls) — reverted. The Math.max(0, opening − closing) floor further down
+// is NOT telescoping-safe: summing each day's floored usage is a genuinely different
+// number from flooring once over the whole range whenever any individual day's balance
+// dips (transfers, corrections, a same-day purchase landing oddly) — verified against
+// real data, a 12-day range differed from the sum of its 12 daily calls by ~46,000 on a
+// ~450,000 base. Since RM Audit/Daily P&L's own month view already IS "sum of daily
+// calls" (DailyPnL's fetchMonthlyPnl does exactly that), that's the definition every
+// other monthly figure in this app already uses — so Finance's Consumption pill sums
+// day-by-day too (see computeConsumptionByOutlet in finance.js), just with bounded
+// concurrency instead of firing every day's queries at once.
+async function computeStockUsageForDate(date, outlet, costingContext) {
   {
-    const isRange = typeof dateOrRange === 'object' && dateOrRange !== null;
-    const date = isRange ? dateOrRange.to : dateOrRange; // reporting-date label on the response, unchanged for single-day callers
-    const from = isRange ? dateOrRange.from : dateOrRange;
-    const to = isRange ? dateOrRange.to : dateOrRange;
-    const prevDate = new Date(from);
+    const prevDate = new Date(date);
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = prevDate.toISOString().split('T')[0];
 
@@ -4504,31 +4500,29 @@ async function computeStockUsageForDate(dateOrRange, outlet, costingContext) {
       // filter excludes a still-in-progress Chef/Bainmarry draft from being treated as the
       // day's real closing figure.
       supabase.from('closing_stocks').select('outlet_id, items, items_units').eq('date', prevDateStr).eq('status', 'submitted'),
-      // 3. Today (or range-end) closing stock
-      supabase.from('closing_stocks').select('outlet_id, items, items_units').eq('date', to).eq('status', 'submitted'),
-      // Draft-status closing stock (same boundary dates) — queried separately so the P&L
-      // can tell the owner "someone punched this but it was never finalized" apart from
-      // "nobody touched it at all". Both read as has_..._submitted: false above, but they
-      // call for very different action (nudge the outlet manager to finalize vs. chase
-      // the outlet for numbers), so collapsing them into one generic "missing" warning
-      // was misleading.
+      // 3. Today closing stock
+      supabase.from('closing_stocks').select('outlet_id, items, items_units').eq('date', date).eq('status', 'submitted'),
+      // Draft-status closing stock (same dates) — queried separately so the P&L can tell
+      // the owner "someone punched this but it was never finalized" apart from "nobody
+      // touched it at all". Both read as has_..._submitted: false above, but they call for
+      // very different action (nudge the outlet manager to finalize vs. chase the outlet
+      // for numbers), so collapsing them into one generic "missing" warning was misleading.
       supabase.from('closing_stocks').select('outlet_id').eq('date', prevDateStr).eq('status', 'draft'),
-      supabase.from('closing_stocks').select('outlet_id').eq('date', to).eq('status', 'draft'),
-      // 4. Wastage across [from, to] — status filter excludes a still-in-progress
-      // Chef/Bainmarry draft from being treated as real wastage until the manager
-      // finalizes it.
-      supabase.from('demands').select('outlet_id, items, items_units').eq('type', 'wastage').gte('date', from).lte('date', to).eq('status', 'submitted'),
-      // 5. Dispatched across [from, to]
-      supabase.from('demands').select('outlet_id, items, items_units, dispatch_items, status').gte('date', from).lte('date', to),
-      // 6. Confirmed inter-outlet transfers across [from, to] — a pending (unconfirmed)
-      // transfer deliberately doesn't show up here at all, so it can't affect either
-      // outlet's numbers until the receiver has actually confirmed what arrived.
-      supabase.from('outlet_transfers').select('from_outlet_id, to_outlet_id, received_items').gte('date', from).lte('date', to).eq('status', 'confirmed'),
-      // 7. Dairy/Cold Drink Purchase across [from, to] — these items are never dispatched
-      // from Base Kitchen (outlets buy them directly), so without this the formula's only
-      // inbound leg is Dispatched, which is always 0 for them — "actual consumed"
-      // silently ignored every litre of milk/paneer/cold drink actually bought.
-      supabase.from('purchases').select('outlet_id, items').gte('date', from).lte('date', to),
+      supabase.from('closing_stocks').select('outlet_id').eq('date', date).eq('status', 'draft'),
+      // 4. Today wastage — status filter excludes a still-in-progress Chef/Bainmarry draft
+      // from being treated as real wastage until the manager finalizes it.
+      supabase.from('demands').select('outlet_id, items, items_units').eq('type', 'wastage').eq('date', date).eq('status', 'submitted'),
+      // 5. Today dispatched
+      supabase.from('demands').select('outlet_id, items, items_units, dispatch_items, status').eq('date', date),
+      // 6. Today's confirmed inter-outlet transfers — a pending (unconfirmed) transfer
+      // deliberately doesn't show up here at all, so it can't affect either outlet's
+      // numbers until the receiver has actually confirmed what arrived.
+      supabase.from('outlet_transfers').select('from_outlet_id, to_outlet_id, received_items').eq('date', date).eq('status', 'confirmed'),
+      // 7. Today's Dairy/Cold Drink Purchase — these items are never dispatched from Base
+      // Kitchen (outlets buy them directly), so without this the formula's only inbound
+      // leg is Dispatched, which is always 0 for them — "actual consumed" silently
+      // ignored every litre of milk/paneer/cold drink actually bought that day.
+      supabase.from('purchases').select('outlet_id, items').eq('date', date),
     ]);
     const nameToItemId = {};
     Object.entries(demandNameMap).forEach(([id, name]) => { nameToItemId[(name || '').trim().toLowerCase()] = id; });
