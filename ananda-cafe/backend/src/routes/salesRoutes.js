@@ -2649,14 +2649,15 @@ router.patch('/orders/:id/dispatch', async (req, res) => {
     // (items/stock_movements), on top of the unchanged logic above. Never allowed to
     // affect this response: a real dispatch that already left the building must not
     // fail or roll back because the new ledger hookup had a problem.
+    let __stage3Debug = null;
     try {
-      await applyDispatchStockOut({
+      __stage3Debug = await applyDispatchStockOut({
         demandId: id, type: order.type, outletId: order.outlet_id,
         dispatchItems: dispatch_items || {}, itemsUnits: mergedItemsUnits, actorName: dispatched_by,
       });
-    } catch (hookErr) { console.error(`[dispatch ${id}] Stage 3 stock-out hook failed:`, hookErr.message); }
+    } catch (hookErr) { console.error(`[dispatch ${id}] Stage 3 stock-out hook failed:`, hookErr.message); __stage3Debug = { error: hookErr.message, stack: hookErr.stack }; }
 
-    res.json({ ok: true, remaining_order_id: remainingOrderId });
+    res.json({ ok: true, remaining_order_id: remainingOrderId, __stage3Debug });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5458,3 +5459,7 @@ module.exports.buildCostingContext = buildCostingContext;
 module.exports.computeBkPurchaseByOutlet = computeBkPurchaseByOutlet;
 module.exports.computeBkPurchaseDetail = computeBkPurchaseDetail;
 module.exports.resolveFixedCostsForMonth = resolveFixedCostsForMonth;
+// Exported for finance.js's Consumption-basis pill — same Yesterday Closing + Dispatched
+// − Wastage − Today Closing formula Daily P&L/RM Audit already use, reused per-day
+// instead of a second, possibly-drifting copy of this logic.
+module.exports.computeStockUsageForDate = computeStockUsageForDate;
