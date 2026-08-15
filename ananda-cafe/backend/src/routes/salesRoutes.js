@@ -35,20 +35,35 @@ const OUTLET_MAP = {
 // Supabase/PostgREST caps a single select at 1000 rows — a single busy day's line items
 // across 6 outlets can easily exceed that, and a plain .select() silently truncates
 // instead of erroring, undercounting revenue/theoretical-consumption with no warning.
-// Every daily_sales read needs to page through with .range() until a page comes back short.
+// Every daily_sales read needs to page through with .range() until every row's in.
+//
+// Fetches every page IN PARALLEL instead of one at a time — daily_sales is one row per
+// LINE ITEM (not per order), so a real multi-outlet range gets big fast: a 14-day/
+// 6-outlet range measured 30,367 rows, meaning the old sequential version (one .range()
+// call, await its result, THEN fire the next) did ~31 round trips back to back — this
+// alone was almost the entire ~13s Finance's BK Purchase basis took for a 2-week range
+// (computeDailySalesRevenue calls this). Getting the row count first (one cheap
+// head-only query) means every page's .range() bounds are known upfront, so they can
+// all fire together — total time becomes "however long the slowest single page takes",
+// not "the sum of all of them".
 async function fetchAllDailySales({ date, from, to, outlet_code, select }) {
-  const rows = [];
   const PAGE = 1000;
-  for (let pageFrom = 0; ; pageFrom += PAGE) {
-    let query = supabase.from('daily_sales').select(select || '*').range(pageFrom, pageFrom + PAGE - 1);
-    query = date ? query.eq('sale_date', date) : query.gte('sale_date', from).lte('sale_date', to);
-    if (outlet_code) query = query.eq('outlet_code', outlet_code);
-    const { data: page, error } = await query;
+  const scopeQuery = (q) => {
+    q = date ? q.eq('sale_date', date) : q.gte('sale_date', from).lte('sale_date', to);
+    if (outlet_code) q = q.eq('outlet_code', outlet_code);
+    return q;
+  };
+  const { count, error: countError } = await scopeQuery(supabase.from('daily_sales').select('*', { count: 'exact', head: true }));
+  if (countError) throw countError;
+  if (!count) return [];
+  const pageStarts = [];
+  for (let pageFrom = 0; pageFrom < count; pageFrom += PAGE) pageStarts.push(pageFrom);
+  const pages = await Promise.all(pageStarts.map(async (pageFrom) => {
+    const { data, error } = await scopeQuery(supabase.from('daily_sales').select(select || '*')).range(pageFrom, pageFrom + PAGE - 1);
     if (error) throw error;
-    rows.push(...page);
-    if (page.length < PAGE) break;
-  }
-  return rows;
+    return data;
+  }));
+  return pages.flat();
 }
 
 // Per-outlet revenue for a date, computed straight from PetPooja billing data
