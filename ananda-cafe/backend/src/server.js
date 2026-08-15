@@ -34,8 +34,13 @@ app.use(express.json({ limit: "50mb" }));
 app.use('/api', salesRoutes);
 
 // Health check (public — no auth)
+// TEMP DEBUG (Stage 3 verification, remove after): boot_time + git commit so we can
+// tell from outside whether a deploy actually landed, and whether stockOutHooks loads.
+const __bootTime = new Date().toISOString();
+let __stockOutHooksLoadError = null;
+try { require("./routes/stockOutHooks"); } catch (e) { __stockOutHooksLoadError = e.message; }
 app.get("/", (req, res) => {
-  res.json({ status: "ok", app: "Ananda Cafe API", time: new Date().toISOString() });
+  res.json({ status: "ok", app: "Ananda Cafe API", time: new Date().toISOString(), boot_time: __bootTime, git_commit: process.env.RENDER_GIT_COMMIT || null, stockOutHooksLoadError: __stockOutHooksLoadError });
 });
 
 // Routes
