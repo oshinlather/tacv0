@@ -3780,143 +3780,31 @@ router.get('/pnl/live/:date', async (req, res) => {
       // Effective sale = store sale + 60% of (Swiggy+Zomato) + other delivery - complimentary
       const effectiveSale = storeSale + netDeliverySale - complimentaryAmt;
 
-      // ── VARIABLE COST (from dispatched items × rate card) ──
-      // Unit-aware: if item is dispatched in Gm but rate is per Kg, convert
-      const outletOrders = orders.filter(o => o.outlet_id === oid);
+      // ── VARIABLE COST (dispatched items × rate card, BK-recipe fallback) — computed via
+      // the SAME shared computeBkPurchaseByOutlet/computeBkPurchaseDetail functions
+      // Finance's outlet-pnl uses, instead of this route's own separate hand-rolled
+      // per-item loop (unit-conversion chain, BK-recipe cost/Kg resolution, etc.) that
+      // used to live here. The two had quietly drifted apart over time — this route's own
+      // bk_purchase field (below) already matched Finance's figure, but variable_cost/
+      // total_expense/net_profit still came from this old loop and DIDN'T, so the same
+      // Daily P&L card showed two disagreeing "what did we buy from BK" numbers at once.
+      // Seeding totalVariableCost directly from bkPurchaseByOutlet[oid] (not re-summing
+      // bkPurchaseDetail's own items) guarantees variable_cost and bk_purchase are
+      // identical below, not just close.
+      const bkPurchaseDetail = await computeBkPurchaseDetail(oid, date, date, bkPurchaseCostingContext);
       const variableByCategory = {};
-      let totalVariableCost = 0;
       const itemBreakdown = [];
-
-      // Helper: get demand item unit
-      const getDemandUnit = (itemId) => demandUnitMap[itemId] || null;
-
-      // Unit conversion factor: demand unit → rate card unit
-      // Rule: SI units (Gm↔Kg, ml↔Ltr) hardcoded. Everything else from unit_conversions table.
-      // unit_conversions may only take the demand unit to an intermediate base unit
-      // (e.g. Pkt → Gm) — chain an SI step on top when that base unit still
-      // doesn't match the rate card's unit (e.g. Pkt → Gm → Kg).
-      const getUnitConv = (demandUnit, rateUnit, itemId) => {
-        const du = (demandUnit || '').toLowerCase();
-        const ru = (rateUnit || '').toLowerCase();
-        if (du === ru) return 1;
-        // Check unit_conversions table first
-        const conv = convMap[itemId];
-        let factor = 1;
-        let fromUnit = du;
-        if (conv && du === conv.fromUnit.toLowerCase()) {
-          factor = conv.qty;
-          fromUnit = (conv.baseUnit || '').toLowerCase();
-        } else if (conv && conv.baseUnit && du === conv.baseUnit.toLowerCase()) {
-          // Recorded directly in the conversion's base unit (e.g. "Piece" for an item
-          // whose custom unit is Pkt) — invert instead of silently 1:1-matching it.
-          factor = 1 / (Number(conv.qty) || 1);
-          fromUnit = conv.fromUnit.toLowerCase();
-        }
-        if (fromUnit === ru) return factor;
-        // Standard SI conversions
-        if ((fromUnit === 'gm' || fromUnit === 'g' || fromUnit === 'gram' || fromUnit === 'grams') && ru === 'kg') return factor * 0.001;
-        if (fromUnit === 'kg' && (ru === 'gm' || ru === 'g' || ru === 'gram' || ru === 'grams')) return factor * 1000;
-        if ((fromUnit === 'ml' || fromUnit === 'milliliter') && (ru === 'ltr' || ru === 'l' || ru === 'liter' || ru === 'litre')) return factor * 0.001;
-        if ((fromUnit === 'ltr' || fromUnit === 'l') && (ru === 'ml')) return factor * 1000;
-        return factor;
-      };
-
-      outletOrders.forEach(order => {
-        const dispItems = order.dispatch_items || order.items || {};
-        Object.entries(dispItems).forEach(([itemId, qty]) => {
-          if (!qty || qty <= 0) return;
-
-          // Check if this is a BK prepared item FIRST (before rate card)
-          // BUT: if item has a direct rate card entry, use that instead of recipe
-          // (e.g., roasted_chana has rate ₹120/Kg — use it, don't explode recipe)
-          // Recipe pricing only for items that DON'T have a rate card entry (sambhar, dosa_batter)
-          const rate = rateMap[itemId];
-          const recipe = bkRecipeMap[itemId];
-
-          if (rate) {
-            // Direct rate card item — use rate card price
-            const demandUnit = getDemandUnit(itemId);
-            const factor = demandUnit ? getUnitConv(demandUnit, rate.unit, itemId) : 1;
-            const convertedQty = Number(qty) * factor;
-            const cost = convertedQty * Number(rate.price);
-            totalVariableCost += cost;
-            const cat = rate.category || 'Food';
-            variableByCategory[cat] = (variableByCategory[cat] || 0) + cost;
-            itemBreakdown.push({
-              demand_id: order.id,
-              raw_qty: Number(qty),
-              raw_unit: demandUnit || rate.unit,
-              item_id: itemId,
-              name: rate.name,
-              category: cat,
-              qty: convertedQty,
-              unit: rate.unit,
-              rate: Number(rate.price),
-              cost,
-            });
-          } else if (recipe && recipe.ingredients) {
-            // BK prepared item with NO rate card — price using recipe cost per Kg
-            const demandUnit = getDemandUnit(itemId);
-            // Reuse the same chained conversion helper as the rate-card branch above
-            // (unit_conversions base unit, then an SI step if that base unit isn't Kg)
-            // instead of a separate ad-hoc lookup, so this stays consistent if the
-            // conversion table ever adds a non-Kg base unit for a Batch/Tin item.
-            const conv = convMap[itemId];
-            let qtyKg;
-            if (conv && demandUnit && demandUnit.toLowerCase() === conv.fromUnit.toLowerCase()) {
-              qtyKg = Number(qty) * getUnitConv(demandUnit, 'Kg', itemId);
-            } else if (demandUnit && demandUnit.toLowerCase() === 'batch' && recipe.yieldQty) {
-              // Fallback to recipe yield if no conversion entry
-              qtyKg = Number(qty) * recipe.yieldQty;
-            } else {
-              qtyKg = Number(qty);
-            }
-            const batches = recipe.yieldQty > 0 ? qtyKg / recipe.yieldQty : 0;
-            let itemCost = 0;
-            recipe.ingredients.forEach(ing => {
-              const rmId = ing.inv_id || ing.rawId;
-              const rateId = findRateId(rmId);
-              const ingRate = rateId ? rateMap[rateId] : null;
-              if (ingRate) {
-                const ingQty = ing.qty * batches;
-                const ingFactor = getUnitConv(ing.unit || 'kg', ingRate.unit);
-                const ingCost = ingQty * ingFactor * Number(ingRate.price);
-                itemCost += ingCost;
-              } else if (rmId !== itemId && bkRecipeMap[rmId]) {
-                // No rate-card price, but this ingredient is itself another BK recipe's
-                // output (e.g. this recipe uses Dosa Batter) — price via that recipe's own
-                // cost per Kg instead of silently contributing ₹0.
-                const nested = bkCostPerKg(rmId);
-                if (nested != null) itemCost += ing.qty * batches * nested;
-              }
-            });
-            if (itemCost > 0) {
-              totalVariableCost += itemCost;
-              const cat = 'Food';
-              variableByCategory[cat] = (variableByCategory[cat] || 0) + itemCost;
-              itemBreakdown.push({
-                demand_id: order.id,
-                raw_qty: Number(qty),
-                raw_unit: demandUnit || 'Kg',
-                item_id: itemId,
-                name: getDemandItemName(itemId) || itemId,
-                category: cat,
-                qty: qtyKg,
-                unit: 'Kg',
-                rate: Math.round(itemCost / qtyKg * 100) / 100,
-                cost: itemCost,
-              });
-            }
-          }
+      let totalVariableCost = bkPurchaseByOutlet[oid] || 0;
+      bkPurchaseDetail.items.forEach(it => {
+        const cat = bkPurchaseCostingContext.rateMap[it.item_id]?.category || 'Food';
+        variableByCategory[cat] = (variableByCategory[cat] || 0) + it.total_amount;
+        itemBreakdown.push({
+          item_id: it.item_id, name: it.name, category: cat,
+          qty: it.total_qty, raw_qty: it.total_qty, unit: it.unit, raw_unit: it.unit,
+          rate: it.total_qty > 0 ? Math.round(it.total_amount / it.total_qty * 100) / 100 : null,
+          cost: it.total_amount,
         });
       });
-
-      // ── BK SHARE (proportional base kitchen cost) ──
-      // BK costs split across outlets based on their food demand proportion
-      const bkOrders = orders.filter(o => o.outlet_id === oid);
-      let bkCost = 0;
-      // BK food items are dispatched via issuances — tracked separately in inventory_movements
-      // For now, BK cost is included in variable cost if items have rates
 
       // ── DAILY PURCHASES ── split by line-item type (vendor_payment vs new_purchase).
       // Existing records predate the type field — treat those as new_purchase.
