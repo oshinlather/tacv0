@@ -305,6 +305,8 @@ const api = {
   getStoreStockMovements: (itemId, location) => get(`/api/store/stock/${itemId}/movements`, location ? { location } : {}),
   getStoreItems: () => get("/api/store/items"),
   addItemUnit: (data) => post("/api/store/item-units", data),
+  getRmOrderSuggestNew: () => get("/api/store/rm-order-suggest"),
+  adjustStoreStock: (data) => post("/api/store/adjust", data),
 
   // Stage 2: vendor challans (receiving) — write flow on top of the same ledger.
   getVendors: () => get("/api/store/vendors"),
@@ -313,6 +315,7 @@ const api = {
   getChallan: (id) => get(`/api/store/challans/${id}`),
   createChallan: (data) => post("/api/store/challans", data),
   updateChallan: (id, data) => patch(`/api/store/challans/${id}`, data),
+  updateChallanItems: (id, items) => patch(`/api/store/challans/${id}/items`, { items }),
   uploadChallanBill: (id, base64) => post(`/api/store/challans/${id}/bill`, { base64 }),
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),

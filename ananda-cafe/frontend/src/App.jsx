@@ -15326,6 +15326,211 @@ const FINANCE_EXPENSE_COLS = [
   { key: "gst", label: "GST" },
   { key: "misc", label: "Misc" },
 ];
+// Third Finance pill — "if we're taking opening from the same demand data, and the same
+// closing/wastage every day, how can BK Purchase and Consumption's expense differ?"
+// They measure genuinely different things (what LEFT the shelf vs. what's estimated to
+// have been consumed via day-by-day stock-taking), and per-day swings can be large in
+// either direction — verified against real data, one outlet swung from −44k to +25k
+// day to day over a two-week span, net difference only ~8k once those largely
+// cancelled out over the month. This view puts both bases + Wastage + the resulting
+// Variance side by side, with day-by-day drill-down, so a big swing on a specific day
+// can actually be chased down (a real dispatch spike, a missed/late closing-stock
+// submission, etc.) instead of staying a mystery. Fetches both bases independently —
+// doesn't touch FinancePnL's own `data`/`load()` state, which is built around showing
+// one basis at a time.
+const PurchaseVsConsumptionAudit = ({ range, monthLabel, hiddenOutlets, toggleOutletVisible, setHiddenOutlets }) => {
+  const [bkData, setBkData] = useState(null);
+  const [consData, setConsData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  // Fixed Costs — combined into one column (Rent+Salary+Electricity+GST+Misc, the
+  // outlet's own fixed costs, identical either basis) with a dropdown instead of 5
+  // separate columns, since this view's whole point is the Purchase/Consumption/
+  // Variance comparison, not a fixed-cost breakdown (that's what the other two pills'
+  // own columns are for). No extra fetch needed — every figure shown here already came
+  // down with the two outlet-pnl calls below.
+  const [expandedFixed, setExpandedFixed] = useState(null); // outlet_id, or null
+  const [expandedDaily, setExpandedDaily] = useState(null); // outlet_id, or null
+  const [dailyByDate, setDailyByDate] = useState(null); // date -> { outlet_id -> { bk, cons } }
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const fmt0 = (n) => n == null ? "—" : Math.round(n).toLocaleString("en-IN");
+
+  useEffect(() => {
+    setLoading(true);
+    setExpandedFixed(null);
+    setExpandedDaily(null);
+    setDailyByDate(null);
+    Promise.all([
+      api.getFinanceOutletPnl(range.from, range.to, "bk_purchase"),
+      api.getFinanceOutletPnl(range.from, range.to, "consumption"),
+    ]).then(([bk, cons]) => { setBkData(bk); setConsData(cons); })
+      .catch(() => { setBkData(null); setConsData(null); })
+      .finally(() => setLoading(false));
+  }, [range]);
+
+  const toggleDaily = (outletId) => {
+    if (expandedDaily === outletId) { setExpandedDaily(null); return; }
+    setExpandedDaily(outletId);
+    if (dailyByDate) return; // already loaded this month, whole-month cache covers every outlet
+    setDailyLoading(true);
+    const dates = [];
+    for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    Promise.all(dates.map((ds) =>
+      Promise.all([
+        api.getFinanceOutletPnl(ds, ds, "bk_purchase"),
+        api.getFinanceOutletPnl(ds, ds, "consumption"),
+      ]).then(([bk, cons]) => [ds, bk, cons]).catch(() => [ds, null, null])
+    )).then((entries) => {
+      const byDate = {};
+      entries.forEach(([ds, bk, cons]) => {
+        if (!bk || !cons) return;
+        const byOutlet = {};
+        (bk.outlets || []).forEach((o) => { byOutlet[o.outlet_id] = { bk: o }; });
+        (cons.outlets || []).forEach((o) => { (byOutlet[o.outlet_id] || (byOutlet[o.outlet_id] = {})).cons = o; });
+        byDate[ds] = byOutlet;
+      });
+      setDailyByDate(byDate);
+    }).finally(() => setDailyLoading(false));
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s comparison...</div>;
+  if (!bkData || !consData) return <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load the comparison</div>;
+
+  const visibleOutlets = bkData.outlets.filter((o) => !hiddenOutlets.has(o.outlet_id));
+  const COLS = 9;
+
+  return (<div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}>Outlets:</span>
+      {bkData.outlets.map((o) => {
+        const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+        const visible = !hiddenOutlets.has(o.outlet_id);
+        return (
+          <button key={o.outlet_id} onClick={() => toggleOutletVisible(o.outlet_id)} style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11.5, fontWeight: 700, border: visible ? "1px solid #BFDBFE" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: visible ? "#EFF6FF" : "#FAFAF8", color: visible ? "#2563EB" : "#BBB", textDecoration: visible ? "none" : "line-through" }}>
+            {oData?.short || o.outlet_id}
+          </button>
+        );
+      })}
+      {hiddenOutlets.size > 0 && <button onClick={() => setHiddenOutlets(new Set())} style={{ padding: "5px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600, border: "1px solid #E0E0DC", background: "#fff", color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Show all</button>}
+    </div>
+
+    {visibleOutlets.length === 0 ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#BBB" }}>Every outlet is filtered out — tap one above to bring it back.</div>
+    ) : (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 1100 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 }}>Outlet</th>
+              <th style={{ ...thS, textAlign: "right", color: "#2563EB" }}>Effective Sale</th>
+              <th style={{ ...thS, textAlign: "right" }}>BK Purchase</th>
+              <th style={{ ...thS, textAlign: "right" }}>Consumption</th>
+              <th style={{ ...thS, textAlign: "right" }}>Wastage</th>
+              <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+              <th style={{ ...thS, textAlign: "right" }}>Fixed Costs</th>
+              <th style={{ ...thS, textAlign: "right" }}>Net P&L (BKP)</th>
+              <th style={{ ...thS, textAlign: "right" }}>Net P&L (Cons)</th>
+            </tr></thead>
+            <tbody>
+              {visibleOutlets.map((bkO) => {
+                const consO = consData.outlets.find((o) => o.outlet_id === bkO.outlet_id) || {};
+                const variance = (bkO.bk_purchase || 0) - (consO.bk_purchase || 0) - (consO.wastage || 0);
+                const fixedTotal = (bkO.rent || 0) + (bkO.salary || 0) + (bkO.electricity || 0) + (bkO.gst || 0) + (bkO.misc || 0);
+                const isFixedExpanded = expandedFixed === bkO.outlet_id;
+                const isDailyExpanded = expandedDaily === bkO.outlet_id;
+                const oData = OUTLETS.find((x) => x.id === bkO.outlet_id);
+                return (
+                  <Fragment key={bkO.outlet_id}>
+                  <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>
+                      <span onClick={() => toggleDaily(bkO.outlet_id)} title="Day-by-day breakdown" style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        {oData?.short || bkO.outlet_id}
+                        <span style={{ fontSize: 9, color: "#2563EB" }}>{isDailyExpanded ? "▲" : "▼"}</span>
+                      </span>
+                    </td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{fmt0(bkO.effective_sale)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(bkO.bk_purchase)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(consO.bk_purchase)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: consO.wastage > 0 ? "#991B1B" : "#BBB" }}>{consO.wastage > 0 ? `−${fmt0(consO.wastage)}` : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: variance >= 0 ? "#16A34A" : "#DC2626" }}>{variance >= 0 ? "+" : ""}{fmt0(variance)}</td>
+                    <td style={{ ...tdS, textAlign: "right" }}>
+                      <span onClick={() => setExpandedFixed(isFixedExpanded ? null : bkO.outlet_id)} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>
+                        −{fmt0(fixedTotal)}
+                        <span style={{ fontSize: 9, color: "#2563EB" }}>{isFixedExpanded ? "▲" : "▼"}</span>
+                      </span>
+                    </td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: bkO.net_pnl >= 0 ? "#16A34A" : "#DC2626" }}>{bkO.net_pnl >= 0 ? "+" : ""}{fmt0(bkO.net_pnl)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: consO.net_pnl >= 0 ? "#16A34A" : "#DC2626" }}>{consO.net_pnl >= 0 ? "+" : ""}{fmt0(consO.net_pnl)}</td>
+                  </tr>
+                  {isFixedExpanded && (
+                    <tr>
+                      <td colSpan={COLS} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <div style={{ padding: 14, display: "flex", flexWrap: "wrap", gap: "6px 20px" }}>
+                          {[["Rent", bkO.rent], ["Salary", bkO.salary], ["Electricity", bkO.electricity], ["GST", bkO.gst], ["Misc", bkO.misc]].map(([label, v]) => (
+                            <div key={label} style={{ fontSize: 11.5 }}><span style={{ color: "#555" }}>{label}:</span> <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(v)}</span></div>
+                          ))}
+                          <div style={{ fontSize: 11.5 }}><span style={{ color: "#555" }}>BK Fixed Share (BK Purchase basis):</span> <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(bkO.bk_fixed_share)}</span></div>
+                          <div style={{ fontSize: 11.5 }}><span style={{ color: "#555" }}>BK Fixed Share (Consumption basis):</span> <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#991B1B" }}>−{fmt0(consO.bk_fixed_share)}</span></div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {isDailyExpanded && (
+                    <tr>
+                      <td colSpan={COLS} style={{ padding: 0, background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <div style={{ padding: 14 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8 }}>📅 Day-by-day — {oData?.short || bkO.outlet_id} — {monthLabel}</div>
+                          {dailyLoading ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>
+                          ) : !dailyByDate ? (
+                            <div style={{ textAlign: "center", padding: 16, color: "#BBB", fontSize: 12 }}>No data</div>
+                          ) : (
+                            <div style={{ overflowX: "auto" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                                <thead><tr>
+                                  <th style={{ ...thS, textAlign: "left" }}>Day</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>BK Purchase</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Consumption</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Wastage</th>
+                                  <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+                                </tr></thead>
+                                <tbody>
+                                  {Object.keys(dailyByDate).sort().map((ds) => {
+                                    const row = dailyByDate[ds]?.[bkO.outlet_id];
+                                    if (!row?.bk || !row?.cons) return null;
+                                    const weekday = WEEKDAY_SHORT[new Date(`${ds}T00:00:00`).getDay()];
+                                    const dVariance = (row.bk.bk_purchase || 0) - (row.cons.bk_purchase || 0) - (row.cons.wastage || 0);
+                                    return (
+                                      <tr key={ds} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                        <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>{weekday} · {ds.slice(5)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(row.bk.bk_purchase)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>−{fmt0(row.cons.bk_purchase)}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: row.cons.wastage > 0 ? "#991B1B" : "#BBB" }}>{row.cons.wastage > 0 ? `−${fmt0(row.cons.wastage)}` : "—"}</td>
+                                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: dVariance >= 0 ? "#16A34A" : "#DC2626" }}>{dVariance >= 0 ? "+" : ""}{fmt0(dVariance)}</td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )}
+    <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>Variance = BK Purchase − Consumption − Wastage. Positive means more was dispatched than was consumed+wasted this period (stock likely building up at the outlet); negative means more was consumed+wasted than was dispatched (stock likely drawn down — or a missed/late closing-stock submission inflated a day's "consumed" figure, since a day with no submitted closing reads as zero on hand. Check the day-by-day breakdown for the specific day driving a big swing). Fixed Costs combines Rent/Salary/Electricity/GST/Misc — the outlet's own fixed costs, identical either basis; BK Fixed Share differs by basis (it's prorated by BK Purchase or Consumption, whichever pill), shown separately inside the same dropdown. Net P&L in both columns here matches that same pill's own table exactly — BK Fixed Share is already included in each.</p>
+  </div>);
+};
 const FinancePnL = () => {
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
   // Which material-cost figure drives BK Purchase/BK Fixed Share (and therefore Total
@@ -15408,11 +15613,11 @@ const FinancePnL = () => {
   }, [selMonth]);
 
   const load = () => {
-    setLoading(true);
-    // Cached detail is keyed by outlet_id only, so a month OR basis change needs an
-    // explicit reset — a cached BK Purchase breakdown must not show up under the
-    // Consumption pill (or vice versa), and a month change would keep the old month's
-    // breakdown under the same outlet otherwise.
+    // The third pill (audit — Purchase vs Consumption side by side) manages its own
+    // fetching entirely in PurchaseVsConsumptionAudit below, since it needs BOTH bases
+    // at once rather than the single-basis shape this component's own `data` state is
+    // built around. Still clear the two-pill drill-down caches below so switching back
+    // doesn't show stale state, just skip the actual outlet-pnl fetch.
     setExpandedBkPurchase(null);
     setBkPurchaseDetail({});
     setExpandedMisc(null);
@@ -15420,6 +15625,8 @@ const FinancePnL = () => {
     setExpandedDaily(null);
     setDailyByDate(null);
     setExpandedDailyBkPurchase(null);
+    if (basis === "audit") { setLoading(false); return; }
+    setLoading(true);
     // One whole-range call for BOTH bases — used to fetch Consumption day-by-day and sum
     // client-side instead (day-by-day was ~9s vs ~18-40s for one request), but that made
     // Total Sale/Effective Sale drift by a rupee or two from BK Purchase basis's own
@@ -15539,6 +15746,7 @@ const FinancePnL = () => {
     <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
       <button onClick={() => setBasis("bk_purchase")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_purchase" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_purchase" ? "#1A1A1A" : "#fff", color: basis === "bk_purchase" ? "#fff" : "#888" }}>💰 BK Purchase</button>
       <button onClick={() => setBasis("consumption")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "consumption" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "consumption" ? "#1A1A1A" : "#fff", color: basis === "consumption" ? "#fff" : "#888" }}>📊 Consumption</button>
+      <button onClick={() => setBasis("audit")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "audit" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "audit" ? "#1A1A1A" : "#fff", color: basis === "audit" ? "#fff" : "#888" }}>🔍 Purchase vs Consumption</button>
     </div>
 
     {/* Outlet filter — tap to drop an outlet out of the table below; tap again to bring it
@@ -15559,7 +15767,9 @@ const FinancePnL = () => {
       </div>
     )}
 
-    {loading ? (
+    {basis === "audit" ? (
+      <PurchaseVsConsumptionAudit range={range} monthLabel={monthLabel} hiddenOutlets={hiddenOutlets} toggleOutletVisible={toggleOutletVisible} setHiddenOutlets={setHiddenOutlets} />
+    ) : loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
     ) : !data ? (
       <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Finance P&L</div>

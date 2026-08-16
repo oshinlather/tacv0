@@ -133,6 +133,55 @@ router.post("/item-units", async (req, res) => {
   res.json(data);
 });
 
+// GET /api/store/rm-order-suggest — Stage 5 migration: same "10-day usage" reorder
+// hint the old Order Challan screen showed, ported to read from the new ledger instead
+// of the old inventory_movements table. Sums every NEGATIVE movement at 'store' (not
+// filtered to one movement_type) — Store's only outbound leg today is a TRANSFER to BK
+// (dispatch straight from Store to an outlet isn't a real flow BK/outlet demand uses),
+// so hardcoding 'DISPATCH' here would silently return zero for everything. Any future
+// movement type that reduces Store's balance (a direct dispatch, an adjustment) is
+// picked up the same way without needing another change here.
+router.get("/rm-order-suggest", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const tenDaysAgo = new Date();
+  tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+  const { data: movements, error } = await supabase.from("stock_movements")
+    .select("item_id, qty_delta")
+    .eq("location_id", "store")
+    .lt("qty_delta", 0)
+    .gte("created_at", tenDaysAgo.toISOString());
+  if (error) return res.status(500).json({ error: error.message });
+  const usage = {};
+  (movements || []).forEach((m) => { usage[m.item_id] = (usage[m.item_id] || 0) + Math.abs(Number(m.qty_delta) || 0); });
+  res.json(usage);
+});
+
+// POST /api/store/adjust — Stage 5, Step 3: the old manual "Stock Out" screen's one
+// real remaining use case once Dispatch (Stage 3) auto-covers everything bound for an
+// outlet and Closing Count (Stage 4) covers periodic reconciliation — an ad-hoc
+// write-off (breakage, spoilage, expiry) that isn't tied to either of those. A reason
+// is required (unlike a closing count's variance, this ISN'T a blind physical
+// recount — it's a direct, deliberate correction, so it's logged as such).
+router.post("/adjust", async (req, res) => {
+  const user = await gate(req, res);
+  if (!user) return;
+  const { item_id, location_id, qty, reason } = req.body;
+  if (!item_id) return res.status(400).json({ error: "item_id is required" });
+  if (!location_id || !["store", "bk"].includes(location_id)) return res.status(400).json({ error: "location_id must be 'store' or 'bk'" });
+  const qtyDelta = Number(qty);
+  if (!qtyDelta || isNaN(qtyDelta)) return res.status(400).json({ error: "qty must be a non-zero number (negative for a write-off, positive for a found-stock correction)" });
+  if (!reason || !reason.trim()) return res.status(400).json({ error: "A reason is required for a manual adjustment" });
+
+  const { data: movement, error } = await supabase.from("stock_movements").insert({
+    item_id, location_id, movement_type: "ADJUSTMENT", qty_delta: qtyDelta,
+    source_type: "manual_adjustment", reason: reason.trim(), created_by: user.name,
+  }).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  await rebuildStockBalances({ itemId: item_id, locationId: location_id });
+  res.json(movement);
+});
+
 module.exports = router;
 module.exports.rebuildStockBalances = rebuildStockBalances;
 module.exports.gate = gate;

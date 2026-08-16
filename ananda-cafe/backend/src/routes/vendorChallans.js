@@ -129,9 +129,7 @@ router.post("/challans", async (req, res) => {
   res.json(challan);
 });
 
-// PATCH /:id — edit a draft (vendor, notes, challan_number, no_bill_reason). Line items
-// aren't editable after creation in this stage — delete and recreate the draft instead;
-// keeps the "what got received" trail unambiguous.
+// PATCH /:id — edit a draft (vendor, notes, challan_number, no_bill_reason).
 router.patch("/challans/:id", async (req, res) => {
   if (!await gate(req, res)) return;
   const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
@@ -144,6 +142,48 @@ router.patch("/challans/:id", async (req, res) => {
   if (notes !== undefined) patch.notes = notes;
   if (no_bill_reason !== undefined) patch.no_bill_reason = no_bill_reason;
   const { data, error } = await supabase.from("vendor_challans").update(patch).eq("id", req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// PATCH /:id/items — Stage 5 migration: update qty_entered/unit_price on a draft's
+// existing lines. Needed because ordering and pricing happen at different times, same
+// as the old Order Challan flow (you place the order not knowing the exact price; the
+// vendor/driver fills in what was actually bought and for how much once goods arrive,
+// before Receive is pressed) — {item_id: {qty_entered?, unit_price?}}. Recomputes
+// total_amount from all lines afterward. Not a general item-add/remove — that's still
+// "cancel this draft, start a fresh one" (source of the note in the comment above), to
+// keep the mapping from a challan to what it always claimed to represent unambiguous.
+router.patch("/challans/:id/items", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
+  if (!existing) return res.status(404).json({ error: "Challan not found" });
+  if (existing.status !== "draft") return res.status(400).json({ error: "Only a draft challan can be edited" });
+  const { items } = req.body; // { item_id: { qty_entered?, unit_price? } }
+  if (!items || !Object.keys(items).length) return res.status(400).json({ error: "items is required" });
+
+  for (const [itemId, patch] of Object.entries(items)) {
+    const linePatch = {};
+    if (patch.qty_entered != null) linePatch.qty_entered = Number(patch.qty_entered);
+    if (patch.unit_price != null) linePatch.unit_price = Number(patch.unit_price);
+    if (!Object.keys(linePatch).length) continue;
+    const { data: line } = await supabase.from("vendor_challan_items").select("qty_entered, qty_base, unit_entered").eq("challan_id", req.params.id).eq("item_id", itemId).maybeSingle();
+    if (!line) continue;
+    if (linePatch.qty_entered != null) {
+      const factor = line.qty_entered ? Number(line.qty_base) / Number(line.qty_entered) : 1;
+      linePatch.qty_base = linePatch.qty_entered * factor;
+    }
+    if (linePatch.unit_price != null || linePatch.qty_base != null) {
+      const qtyBase = linePatch.qty_base != null ? linePatch.qty_base : line.qty_base;
+      const price = linePatch.unit_price != null ? linePatch.unit_price : null;
+      if (price != null) linePatch.line_total = Number((qtyBase * price).toFixed(2));
+    }
+    await supabase.from("vendor_challan_items").update(linePatch).eq("challan_id", req.params.id).eq("item_id", itemId);
+  }
+
+  const { data: allLines } = await supabase.from("vendor_challan_items").select("line_total").eq("challan_id", req.params.id);
+  const total = (allLines || []).reduce((s, l) => s + (Number(l.line_total) || 0), 0);
+  const { data, error } = await supabase.from("vendor_challans").update({ total_amount: total || null }).eq("id", req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
