@@ -5362,17 +5362,21 @@ router.get('/franchise-billing/summary', async (req, res) => {
 
     const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
 
-    const [{ rateMap, bkRecipeMap, demandUnitMap, convFactorFor }, { data: demands, error: demandsErr }, { data: agreements, error: agreementsErr }, { data: bkFixed, error: bkFixedErr }, { data: outletSales, error: salesErr }] = await Promise.all([
+    const [{ rateMap, bkRecipeMap, demandUnitMap, convFactorFor }, { data: demands, error: demandsErr }, { data: agreements, error: agreementsErr }, { data: bkFixed, error: bkFixedErr }, salesByOutlet] = await Promise.all([
       buildCostingContext(),
       supabase.from('demands').select('outlet_id, dispatch_items').eq('type', 'manual').neq('status', 'draft').gte('date', monthStart).lte('date', monthEnd),
       supabase.from('franchise_settings').select('*').eq('outlet_id', outlet_id).lte('effective_from', monthEnd).order('effective_from', { ascending: false }).limit(1),
       supabase.from('fixed_costs').select('amount').eq('outlet_id', 'bk').eq('active', true),
-      supabase.from('daily_outlet_sales').select('total_sale').eq('outlet_id', outlet_id).gte('date', monthStart).lte('date', monthEnd),
+      // Real PetPooja billing (daily_sales), not daily_outlet_sales — that table is the
+      // outlet manager's old manual "Daily Sales & Cash" entry, abandoned once the app
+      // switched to syncing real billing data. It was still wired in here: Elan had ZERO
+      // daily_outlet_sales rows for August despite ₹8.25L in real revenue that month, so
+      // Royalty (revenue × royalty_pct) was silently billing ₹0 royalty every month.
+      computeDailySalesRevenue({ from: monthStart, to: monthEnd }),
     ]);
     if (demandsErr) throw demandsErr;
     if (agreementsErr) throw agreementsErr;
     if (bkFixedErr) throw bkFixedErr;
-    if (salesErr) throw salesErr;
 
     // Material cost per outlet — dispatched qty × rate card price (BK-recipe fallback for
     // items with no rate card row), same pricing rule as /pnl/live's variable-cost block
@@ -5401,7 +5405,7 @@ router.get('/franchise-billing/summary', async (req, res) => {
     const bkShareRatio = rawMaterialCostAllOutlets > 0 ? rawOutletMaterialCost / rawMaterialCostAllOutlets : 0;
 
     const bkMonthlyFixed = (bkFixed || []).reduce((s, f) => s + Number(f.amount || 0), 0);
-    const revenue = (outletSales || []).reduce((s, r) => s + Number(r.total_sale || 0), 0);
+    const revenue = salesByOutlet[outlet_id]?.total_sale || 0;
 
     const agreement = agreements && agreements[0]
       ? { markup_pct: Number(agreements[0].markup_pct), royalty_pct: Number(agreements[0].royalty_pct), effective_from: agreements[0].effective_from, notes: agreements[0].notes }

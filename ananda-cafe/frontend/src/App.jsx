@@ -7565,7 +7565,11 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
     rows.push(["", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
-    rows.push(["", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue ₹${Math.round(revenue)})`, Math.round(royaltyAmount * 100) / 100]);
+    // Revenue as its own line (not just inside the Royalty row's label text) — so the
+    // figure royalty was actually calculated from is visible/auditable on its own,
+    // straight from the exported file, not just implied by the % applied to it.
+    rows.push(["", "", "", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
+    rows.push(["", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
     exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
   };
