@@ -7605,9 +7605,21 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
                   <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
                 </div>
-                <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>
-                  {fmt(franchiseAmountTotal)}
-                  {markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>
+                    {fmt(franchiseAmountTotal)}
+                    {markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
+                  </div>
+                  {/* BK Fixed Share/Royalty/Total Payable already existed further down (the
+                      "Billing Summary" breakdown, after the full item list) — but that meant
+                      scrolling past up to ~80 item rows to see them at all. Surfaced here too,
+                      right next to the main total, so they're visible without scrolling —
+                      this is what was actually missing, not the numbers themselves. */}
+                  <div style={{ fontSize: 11, color: "#888", marginTop: 2, fontFamily: "'JetBrains Mono'" }}>
+                    + BK Share <strong style={{ color: "#7C3AED" }}>{fmt(bkShareAmount)}</strong>
+                    {" · "}+ Royalty ({royaltyPct}%) <strong style={{ color: "#7C3AED" }}>{fmt(royaltyAmount)}</strong>
+                    {" · "}<span style={{ color: "#166534", fontWeight: 700 }}>Total Payable {fmt(totalPayable)}</span>
+                  </div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
