@@ -3204,19 +3204,74 @@ router.get('/sales', async (req, res) => {
     const outlet = scopedOutletFilter(user, req.query.outlet);
     if (!date && !(from && to)) return res.status(400).json({ error: 'date, or from+to, query param required' });
 
-    const data = await fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined });
+    const [data, costingContext] = await Promise.all([
+      fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined }),
+      buildCostingContext(),
+    ]);
+    const { rateMap, convFactorFor } = costingContext;
 
-    // Aggregate by item
+    // Dine In vs Packaging (Pickup + Delivery combined — both need a box/cutlery the same
+    // way, unlike Dine In) — same order_type convention used everywhere else in this file
+    // (computeDailySalesRevenue, computeCrockeryPackagingItems, the outlet-level counts below).
+    const bucketOf = (row) => row.order_type === 'Dine In' ? 'dine_in'
+      : (row.order_type === 'Pick Up' || row.order_type?.includes('Delivery')) ? 'packaging' : null;
+
+    // Packaging/Crockery add-on cost per item — the fixed per-outlet-per-day operational
+    // allowance (see computeCrockeryPackagingItems) isn't a per-dish recipe, so there's no
+    // dish-specific "this parcel needs 1 box" fact to attach directly. Instead it's averaged:
+    // every Dine-in unit sold at that outlet that day shares that day's total crockery cost
+    // equally, every Packaging (Pickup/Delivery) unit shares that day's total packaging cost
+    // equally — the same rule already used for the outlet-day aggregate, just divided down to
+    // a ₹/unit rate instead of left as one lump sum. Only real at the 4 outlets that rule
+    // already covers (sec23/sec56/elan/gaursid) — sec31/sec14 come out to ₹0 add-on, same gap
+    // as everywhere else this rule is used.
+    const byOutletDay = {};
+    (data || []).forEach((r) => {
+      const key = `${r.outlet_code}|${r.sale_date}`;
+      (byOutletDay[key] || (byOutletDay[key] = [])).push(r);
+    });
+    const addonPerUnit = {}; // "outlet|date" -> { dine_in, packaging } — ₹ per unit sold
+    Object.entries(byOutletDay).forEach(([key, rows]) => {
+      const [oid] = key.split('|');
+      const dineInQty = rows.filter((r) => r.order_type === 'Dine In').reduce((s, r) => s + Number(r.item_quantity || 0), 0);
+      const packagingQty = rows.filter((r) => r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
+      const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor);
+      let dineInCost = 0, packagingCost = 0;
+      crockeryItems.forEach((it) => {
+        if (it.rate == null) return;
+        (it.should_consume_breakdown || []).forEach((b) => {
+          const c = b.per_dish * b.qty_sold * it.rate;
+          if (b.dish === 'Dine-in items (crockery)') dineInCost += c;
+          else if (b.dish === 'Pickup/Delivery orders (packaging)') packagingCost += c;
+        });
+      });
+      addonPerUnit[key] = { dine_in: dineInQty > 0 ? dineInCost / dineInQty : 0, packaging: packagingQty > 0 ? packagingCost / packagingQty : 0 };
+    });
+
+    // Aggregate by item — split into Dine In / Packaging (Pickup + Delivery) sub-totals too,
+    // each carrying its own packaging/crockery add-on cost, so the Sales tab can show a true
+    // all-in cost per item depending on how it was actually sold, not just recipe food cost.
     const itemMap = {};
     const outletMap = {};
     let totalOrders = new Set();
 
     (data || []).forEach(row => {
       if (!itemMap[row.item_name]) {
-        itemMap[row.item_name] = { item_name: row.item_name, category: row.category_name, qty: 0, revenue: 0 };
+        itemMap[row.item_name] = {
+          item_name: row.item_name, category: row.category_name, qty: 0, revenue: 0,
+          dine_in_qty: 0, dine_in_revenue: 0, dine_in_addon_cost: 0,
+          packaging_qty: 0, packaging_revenue: 0, packaging_addon_cost: 0,
+        };
       }
       itemMap[row.item_name].qty += row.item_quantity;
       itemMap[row.item_name].revenue += row.item_total;
+      const bucket = bucketOf(row);
+      if (bucket) {
+        const rate = addonPerUnit[`${row.outlet_code}|${row.sale_date}`]?.[bucket] || 0;
+        itemMap[row.item_name][`${bucket}_qty`] += Number(row.item_quantity || 0);
+        itemMap[row.item_name][`${bucket}_revenue`] += Number(row.item_total || 0);
+        itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * rate;
+      }
 
       if (!outletMap[row.outlet_code]) {
         outletMap[row.outlet_code] = { outlet_code: row.outlet_code, outlet_name: row.outlet, orders: new Set(), revenue: 0, dine_in: 0, delivery: 0, pickup: 0, dine_in_revenue: 0, delivery_revenue: 0, pickup_revenue: 0 };
@@ -3247,7 +3302,9 @@ router.get('/sales', async (req, res) => {
 
     Object.values(outletMap).forEach(o => { o.orders = o.orders.size; });
 
-    const items = Object.values(itemMap).sort((a, b) => b.revenue - a.revenue);
+    const items = Object.values(itemMap)
+      .map((i) => ({ ...i, dine_in_addon_cost: Math.round(i.dine_in_addon_cost * 100) / 100, packaging_addon_cost: Math.round(i.packaging_addon_cost * 100) / 100 }))
+      .sort((a, b) => b.revenue - a.revenue);
     const outlets = Object.values(outletMap);
 
     res.json({

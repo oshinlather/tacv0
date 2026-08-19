@@ -84,11 +84,20 @@ router.post("/challans", async (req, res) => {
   }
 
   // Inline "new vendor" support — the UI can send vendor_name instead of vendor_id.
+  // Reuses an existing vendor with the same name (case-insensitive) rather than always
+  // inserting a fresh row — the Order flow's vendor-category tiles (e.g. "🥬
+  // Vegetables") call this on every single order, so without the lookup this would
+  // spam a duplicate vendor row per order instead of accumulating history on one.
   let resolvedVendorId = vendor_id || null;
   if (!resolvedVendorId && vendor_name && vendor_name.trim()) {
-    const { data: v, error: vErr } = await supabase.from("vendors").insert({ name: vendor_name.trim() }).select().single();
-    if (vErr) return res.status(500).json({ error: vErr.message });
-    resolvedVendorId = v.id;
+    const { data: existingVendor } = await supabase.from("vendors").select("id").ilike("name", vendor_name.trim()).maybeSingle();
+    if (existingVendor) {
+      resolvedVendorId = existingVendor.id;
+    } else {
+      const { data: v, error: vErr } = await supabase.from("vendors").insert({ name: vendor_name.trim() }).select().single();
+      if (vErr) return res.status(500).json({ error: vErr.message });
+      resolvedVendorId = v.id;
+    }
   }
 
   const itemIds = items.map((l) => l.item_id);

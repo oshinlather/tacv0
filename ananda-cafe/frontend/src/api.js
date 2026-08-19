@@ -329,6 +329,11 @@ const api = {
   submitStockCount: (id) => post(`/api/store/counts/${id}/submit`, {}),
   cancelStockCount: (id) => post(`/api/store/counts/${id}/cancel`, {}),
   getVarianceRollup: (params) => get("/api/store/variance-rollup", params),
+
+  // Stage 5: BK production stock-in (recipe outputs, e.g. sambhar/batters/chutneys).
+  getProductionRecipes: () => get("/api/store/production/recipes"),
+  recordProduction: (data) => post("/api/store/production", data),
+  getProductionRuns: (params) => get("/api/store/production", params),
 };
 
 // ── Helpers ──

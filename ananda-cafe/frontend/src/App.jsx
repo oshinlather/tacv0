@@ -3,6 +3,7 @@ import api from "./api";
 import StoreInventoryStock from "./StoreInventoryStock";
 import VendorChallans from "./VendorChallans";
 import StoreClosingCount from "./StoreClosingCount";
+import BKProduction from "./BKProduction";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -11813,7 +11814,12 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const itemsWithCost = useMemo(() => (sales?.items || []).map((item) => {
     const costInfo = dishCosts[normalizeDishName(item.item_name)];
     const unitCost = costInfo ? costInfo.total_cost : null;
-    const cost = unitCost != null ? unitCost * item.qty : null;
+    // Packaging/crockery add-on (see GET /api/sales) is already a real ₹ total for this
+    // item's Dine In + Packaging qty — folded into the main Cost/Margin here so the
+    // collapsed row and its own Dine In/Packaging breakdown below always reconcile,
+    // instead of the row showing food-cost-only while the breakdown shows a fuller number.
+    const addonCost = (item.dine_in_addon_cost || 0) + (item.packaging_addon_cost || 0);
+    const cost = unitCost != null ? unitCost * item.qty + addonCost : null;
     const margin = cost != null ? item.revenue - cost : null;
     const marginPct = margin != null && item.revenue > 0 ? (margin / item.revenue) * 100 : null;
     const recipe = recipeByNormName[normalizeDishName(item.item_name)];
@@ -11957,9 +11963,9 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       const details = item.recipeId ? costDetails[item.recipeId] : null;
                       const isLoadingDetails = costDetailsLoading === item.recipeId;
                       return (<Fragment key={i}>
-                        <tr onClick={() => item.recipeId && toggleExpand(item.item_name, item.recipeId)} style={{ borderBottom: "1px solid #F0F0EC", cursor: item.recipeId ? "pointer" : "default" }}>
+                        <tr onClick={() => toggleExpand(item.item_name, item.recipeId)} style={{ borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
                           <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
-                          <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name} {item.recipeId && <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>}</td>
+                          <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name} <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span></td>
                           <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
                           <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
                           <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
@@ -11970,6 +11976,36 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                         {isOpen && (
                           <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                             <td colSpan={8} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                              {/* Dine In vs Packaging (Pickup + Delivery) — packaging/crockery add-on
+                                  cost is only real at S-23/S-56/Elan/GSID today (see backend's
+                                  CROCKERY_PACKAGING_OUTLETS); shows as ₹0 add-on for S-31/S-14. */}
+                              <div style={{ display: "flex", gap: 10, margin: "8px 0 14px", flexWrap: "wrap" }}>
+                                {[
+                                  { key: "dine_in", label: "🍽️ Dine In", addonLabel: "Crockery" },
+                                  { key: "packaging", label: "📦 Packaging (Pickup + Delivery)", addonLabel: "Packaging & Disposal" },
+                                ].map((b) => {
+                                  const qty = item[`${b.key}_qty`] || 0;
+                                  const revenue = item[`${b.key}_revenue`] || 0;
+                                  const addonCost = item[`${b.key}_addon_cost`] || 0;
+                                  const foodCost = item.unitCost != null ? item.unitCost * qty : null;
+                                  const totalCost = foodCost != null ? foodCost + addonCost : null;
+                                  const margin = totalCost != null ? revenue - totalCost : null;
+                                  return (
+                                    <div key={b.key} style={{ flex: "1 1 240px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{b.label}</div>
+                                      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Qty</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{qty}</span></div>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Revenue</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmt(revenue)}</span></div>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Food Cost</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{foodCost != null ? fmt(foodCost) : "—"}</span></div>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>{b.addonLabel}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{qty > 0 ? fmt(addonCost) : "—"}</span></div>
+                                        <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 4, borderTop: "1px solid #F0F0EC" }}><span style={{ fontWeight: 700 }}>Total Cost</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{totalCost != null ? fmt(totalCost) : "—"}</span></div>
+                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ fontWeight: 700 }}>Margin</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, color: margin != null ? (margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{margin != null ? fmt(margin) : "—"}</span></div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {!item.recipeId && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>No recipe linked for this item — Food Cost unavailable, only the Packaging/Crockery add-on above is a real number.</div>}
                               {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
                               {!isLoadingDetails && details && (
                                 <>
@@ -16962,6 +16998,7 @@ const SCOPED_ROLE_TABS = {
     { id: "bk_audit", label: "🔍 BK Store Audit" },
     { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)" },
     { id: "stock_counts", label: "🔢 Closing Counts (Beta)" },
+    { id: "bk_production", label: "🏭 Production (Beta)" },
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
@@ -17023,7 +17060,7 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -17040,6 +17077,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "actions" && <StoreMgr onBack={null} />}
       {tab === "store" && storeView === "vendor_challans" && <VendorChallans />}
       {tab === "store" && storeView === "stock_counts" && <StoreClosingCount />}
+      {tab === "bk_production" && <BKProduction />}
       {tab === "store" && storeView === "master" && <MasterData hideRecipes />}
       {tab === "finance" && <FinancePnL />}
       {tab === "cogs_compare" && <CogsCompare />}
@@ -17287,7 +17325,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -17305,6 +17343,7 @@ export default function AnandaCafe() {
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
           { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)", sub: "Stage 2 — receive deliveries, auto stock-in" },
           { id: "stock_counts", label: "🔢 Closing Counts (Beta)", sub: "Stage 4 — blind count, variance, rollup" },
+          { id: "bk_production", label: "🏭 Production (Beta)", sub: "Stage 5 — record a batch (sambhar, batters, chutneys) as stock-in" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -17399,6 +17438,7 @@ export default function AnandaCafe() {
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
       {ownerTab === "vendor_challans" && <VendorChallans />}
       {ownerTab === "stock_counts" && <StoreClosingCount />}
+      {ownerTab === "bk_production" && <BKProduction />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>
@@ -17429,7 +17469,7 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
@@ -17444,6 +17484,7 @@ export default function AnandaCafe() {
       {storeView === "actions" && <StoreMgr onBack={urlRole ? null : () => setApp("launcher")} />}
       {storeView === "vendor_challans" && <VendorChallans />}
       {storeView === "stock_counts" && <StoreClosingCount />}
+      {storeView === "bk_production" && <BKProduction />}
       {storeView === "master" && <MasterData hideRecipes />}
     </div>
   </div>);
