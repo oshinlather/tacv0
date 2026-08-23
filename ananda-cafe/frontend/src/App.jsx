@@ -17587,7 +17587,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ownerTab === "payroll" || ownerTab === "pnl" || ownerTab === "finance" ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
