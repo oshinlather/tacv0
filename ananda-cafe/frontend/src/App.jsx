@@ -11677,6 +11677,9 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   // itself (only one row's panel is ever mounted at a time).
   const [foodCostOpen, setFoodCostOpen] = useState(false);
   const [packagingOpen, setPackagingOpen] = useState(false);
+  // Item-wise Sales table column sort — click a header to sort by it, click again to flip
+  // direction. Defaults to unsorted (backend's own item order).
+  const [itemSort, setItemSort] = useState({ key: null, dir: "desc" });
   // "+ Add Item" — appends a rate-card item to the GLOBAL crockery/packaging rule (not
   // per-dish; see backend's computeCrockeryPackagingItems), owner-only same as rate_card
   // writes. addPkgItemFor: 'dine_in' | 'takeaway' | null — which rule's add-row is open.
@@ -11875,7 +11878,12 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
     // collapsed row and its own Dine In/Packaging breakdown below always reconcile,
     // instead of the row showing food-cost-only while the breakdown shows a fuller number.
     const addonCost = (item.dine_in_addon_cost || 0) + (item.pickup_addon_cost || 0) + (item.delivery_addon_cost || 0);
-    const cost = unitCost != null ? unitCost * item.qty + addonCost : null;
+    // Swiggy/Zomato's 40% commission (see backend's delivery_commission_cost) is real
+    // money the outlet never receives — folded in as a cost here so this row's Margin
+    // reflects revenue actually collected, same as the Unit Economics delivery column's
+    // net-of-commission Unit Selling Price below.
+    const commissionCost = item.delivery_commission_cost || 0;
+    const cost = unitCost != null ? unitCost * item.qty + addonCost + commissionCost : null;
     const margin = cost != null ? item.revenue - cost : null;
     const marginPct = margin != null && item.revenue > 0 ? (margin / item.revenue) * 100 : null;
     const recipe = recipeByNormName[normalizeDishName(item.item_name)];
@@ -11894,6 +11902,24 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const tableTotalMargin = tableTotalRevenue - totalCogs;
   const tableTotalMarginPct = tableTotalRevenue > 0 ? (tableTotalMargin / tableTotalRevenue) * 100 : null;
   const tableTotalCostPct = tableTotalRevenue > 0 ? (totalCogs / tableTotalRevenue) * 100 : null;
+
+  // Sortable columns for the Item-wise Sales table — nulls always sort last regardless of
+  // direction, so unpriced items don't scatter to the top of a descending Cost/Margin sort.
+  const ITEM_SORT_FIELDS = { item: "item_name", category: "category", qty: "qty", revenue: "revenue", cost: "cost", margin: "margin", marginPct: "marginPct" };
+  const sortedItemsWithCost = useMemo(() => {
+    if (!itemSort.key) return itemsWithCost;
+    const field = ITEM_SORT_FIELDS[itemSort.key];
+    const dir = itemSort.dir === "asc" ? 1 : -1;
+    return [...itemsWithCost].sort((a, b) => {
+      const av = a[field], bv = b[field];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  }, [itemsWithCost, itemSort]);
+  const toggleItemSort = (key) => setItemSort((s) => s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -12017,10 +12043,18 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>
-                    <th style={thS}>#</th><th style={thS}>Item</th><th style={thS}>Category</th>
-                    <th style={{ ...thS, textAlign: "left" }}>Qty</th><th style={{ ...thS, textAlign: "left" }}>Revenue</th>
-                    <th style={{ ...thS, textAlign: "left" }}>Cost</th><th style={{ ...thS, textAlign: "left" }}>Margin</th>
-                    <th style={{ ...thS, textAlign: "left" }}>Margin %</th>
+                    <th style={thS}>#</th>
+                    {[
+                      { key: "item", label: "Item" }, { key: "category", label: "Category" },
+                      { key: "qty", label: "Qty" }, { key: "revenue", label: "Revenue" },
+                      { key: "cost", label: "Cost" }, { key: "margin", label: "Margin" },
+                      { key: "marginPct", label: "Margin %" },
+                    ].map((c) => (
+                      <th key={c.key} onClick={() => toggleItemSort(c.key)} style={{ ...thS, textAlign: "left", cursor: "pointer", userSelect: "none" }}>
+                        {c.label}
+                        <span style={{ marginLeft: 4, color: itemSort.key === c.key ? "#1A1A1A" : "#CCC" }}>{itemSort.key === c.key ? (itemSort.dir === "desc" ? "▼" : "▲") : "⇅"}</span>
+                      </th>
+                    ))}
                   </tr></thead>
                   <tbody>
                     <tr style={{ background: "#FAFAF8", borderBottom: "2px solid #E0E0DC" }}>
@@ -12031,7 +12065,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
                       <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
                     </tr>
-                    {itemsWithCost.map((item, i) => {
+                    {sortedItemsWithCost.map((item, i) => {
                       const isOpen = expandedItem === item.item_name;
                       const details = item.recipeId ? costDetails[item.recipeId] : null;
                       const isLoadingDetails = costDetailsLoading === item.recipeId;
@@ -12334,18 +12368,25 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                   const qty = item[`${key}_qty`] || 0;
                                   const revenue = item[`${key}_revenue`] || 0;
                                   const addonCost = item[`${key}_addon_cost`] || 0;
-                                  const unitPrice = qty > 0 ? revenue / qty : null;
+                                  const grossUnitPrice = qty > 0 ? revenue / qty : null;
+                                  // Swiggy/Zomato take 40% commission — margin must be judged against what
+                                  // the outlet actually receives, not the gross billed price, so Delivery's
+                                  // Unit Selling Price is shown net of commission (see backend's
+                                  // delivery_commission_cost). Dine In/Pickup have no commission, unaffected.
+                                  const commissionCost = key === "delivery" ? (item.delivery_commission_cost || 0) : 0;
+                                  const unitCommission = qty > 0 ? commissionCost / qty : 0;
+                                  const unitPrice = key === "delivery" && qty > 0 ? (revenue - commissionCost) / qty : grossUnitPrice;
                                   const unitFoodCost = item.unitCost;
                                   const unitAddon = qty > 0 ? addonCost / qty : 0;
                                   const unitTotalCost = unitFoodCost != null ? unitFoodCost + unitAddon : null;
                                   const unitMargin = unitTotalCost != null && unitPrice != null ? unitPrice - unitTotalCost : null;
                                   const marginPct = unitMargin != null && unitPrice > 0 ? (unitMargin / unitPrice) * 100 : null;
-                                  return { key, qty, unitPrice, unitFoodCost, unitAddon, unitTotalCost, unitMargin, marginPct };
+                                  return { key, qty, grossUnitPrice, unitCommission, unitPrice, unitFoodCost, unitAddon, unitTotalCost, unitMargin, marginPct };
                                 });
                                 const COL_LABEL = { dine_in: "🍽️ Dine In", pickup: "🥡 Pickup", delivery: "🛵 Delivery" };
                                 const ROWS = [
                                   { label: "Qty", get: (c) => c.qty, fmt: (v) => v, color: "#2563EB" },
-                                  { label: "Unit Selling Price", get: (c) => c.unitPrice, fmt: fmt, color: "#16A34A" },
+                                  { label: "Unit Selling Price", get: (c) => c.unitPrice, fmt: fmt, color: "#16A34A", sub: (c) => c.key === "delivery" && c.unitCommission > 0 ? `net of ₹${fmt(c.unitCommission)} commission` : null },
                                   { label: "Unit Food Cost", get: (c) => c.unitFoodCost, fmt: fmt, color: "#1A1A1A", expandKey: "food" },
                                   { label: "Packaging/Crockery Add-on", get: (c) => c.qty > 0 ? c.unitAddon : null, fmt: fmt, color: "#1A1A1A", expandKey: "packaging" },
                                   { label: "Unit Total Cost", get: (c) => c.unitTotalCost, fmt: fmt, color: "#DC2626", bold: true },
@@ -12378,7 +12419,13 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                                   {cols.map((c) => {
                                                     const v = row.get(c);
                                                     const color = typeof row.color === "function" ? (v != null ? row.color(v) : "#BBB") : row.color;
-                                                    return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: row.bold ? 800 : 700, color: v != null ? color : "#BBB" }}>{v != null ? row.fmt(v) : "—"}</td>;
+                                                    const sub = row.sub ? row.sub(c) : null;
+                                                    return (
+                                                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: row.bold ? 800 : 700, color: v != null ? color : "#BBB" }}>
+                                                        {v != null ? row.fmt(v) : "—"}
+                                                        {sub && <div style={{ fontSize: 9, fontWeight: 500, color: "#BBB", fontFamily: "'Outfit'" }}>{sub}</div>}
+                                                      </td>
+                                                    );
                                                   })}
                                                 </tr>
                                                 {row.expandKey && rowOpen && (
