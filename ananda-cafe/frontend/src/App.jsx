@@ -881,6 +881,19 @@ const EmployeeMasterPanel = () => {
   const [editDraft, setEditDraft] = useState(EMPLOYEE_FORM_DEFAULTS);
   const [attendanceOpenId, setAttendanceOpenId] = useState(null);
   const [profileId, setProfileId] = useState(null);
+  // Give Advance / Impose Fine — same actions TeamPanel already has (Outlet/BK Manager),
+  // added here so Owner/AVP/Head Chef don't have to leave Employee Master to do either.
+  // Backend already permitted all three roles on both routes (ALL_EMPLOYEE_ROLES /
+  // OWNER_LEVEL_ROLES include owner+avp+head_chef) — this was purely a missing UI gap.
+  const [advanceId, setAdvanceId] = useState(null);
+  const [advanceAmount, setAdvanceAmount] = useState("");
+  const [advanceNote, setAdvanceNote] = useState("");
+  const [advanceSaving, setAdvanceSaving] = useState(false);
+  const [fineId, setFineId] = useState(null);
+  const [fineAmount, setFineAmount] = useState("");
+  const [fineReason, setFineReason] = useState("");
+  const [fineSaving, setFineSaving] = useState(false);
+  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
 
   const load = () => {
     Promise.all([api.getEmployees(), api.getUsers().catch(() => [])])
@@ -889,6 +902,32 @@ const EmployeeMasterPanel = () => {
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+
+  const openAdvance = (id) => { setAdvanceId(id); setAdvanceAmount(""); setAdvanceNote(""); };
+  const giveAdvance = async (id) => {
+    if (!advanceAmount || Number(advanceAmount) <= 0) { alert("Enter an amount"); return; }
+    setAdvanceSaving(true);
+    try {
+      await api.giveEmployeeAdvance(id, { amount: Number(advanceAmount), note: advanceNote || null });
+      setAdvanceId(null); setAdvanceAmount(""); setAdvanceNote("");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setAdvanceSaving(false); }
+  };
+
+  const openFine = (id) => { setFineId(id); setFineAmount(""); setFineReason(""); };
+  const imposeFine = async (id) => {
+    if (!fineAmount || Number(fineAmount) <= 0) { alert("Enter an amount"); return; }
+    if (!fineReason.trim()) { alert("A reason is required to impose a fine"); return; }
+    setFineSaving(true);
+    try {
+      await api.imposeEmployeeFine(id, { amount: Number(fineAmount), reason: fineReason.trim() });
+      setFineId(null); setFineAmount(""); setFineReason("");
+      alert("Fine submitted — pending owner approval");
+      load();
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setFineSaving(false); }
+  };
 
   if (profileId) return <EmployeeProfile employeeId={profileId} onBack={() => { setProfileId(null); load(); }} />;
 
@@ -957,6 +996,23 @@ const EmployeeMasterPanel = () => {
                   <button onClick={() => saveEdit(emp.id)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✓ Save</button>
                   <button onClick={() => setEditId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
                 </div>
+              </>) : advanceId === emp.id ? (<>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{emp.name}</div>
+                <input type="number" inputMode="numeric" placeholder="₹ amount" value={advanceAmount} onChange={(e) => setAdvanceAmount(e.target.value)} autoFocus style={inputStyle} />
+                <input placeholder="Note (optional)" value={advanceNote} onChange={(e) => setAdvanceNote(e.target.value)} style={inputStyle} />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => giveAdvance(emp.id)} disabled={advanceSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{advanceSaving ? "⏳..." : "✓ Save"}</button>
+                  <button onClick={() => setAdvanceId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              </>) : fineId === emp.id ? (<>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>{emp.name}</div>
+                <input type="number" inputMode="numeric" placeholder="₹ amount" value={fineAmount} onChange={(e) => setFineAmount(e.target.value)} autoFocus style={inputStyle} />
+                <input placeholder="Reason (required)" value={fineReason} onChange={(e) => setFineReason(e.target.value)} style={inputStyle} />
+                <div style={{ fontSize: 10.5, color: "#999", marginBottom: 8 }}>Goes to the owner-approval queue (P&L → Fines) before it's deducted as an advance — same as any other fine, including ones you submit yourself.</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => imposeFine(emp.id)} disabled={fineSaving} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#DC2626", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{fineSaving ? "⏳..." : "✓ Submit"}</button>
+                  <button onClick={() => setFineId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                </div>
               </>) : (<>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1 }}>
@@ -971,10 +1027,12 @@ const EmployeeMasterPanel = () => {
                     {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                  <button onClick={() => startEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
-                  <button onClick={() => setAttendanceOpenId(attendanceOpenId === emp.id ? null : emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: attendanceOpenId === emp.id ? "#EDE9FE" : "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>📅 Attendance</button>
-                  <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: 1, padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚫 Disable" : "✅ Enable"}</button>
+                <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                  <button onClick={() => startEdit(emp)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+                  <button onClick={() => setAttendanceOpenId(attendanceOpenId === emp.id ? null : emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: attendanceOpenId === emp.id ? "#EDE9FE" : "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>📅 Attendance</button>
+                  <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚫 Disable" : "✅ Enable"}</button>
+                  <button onClick={() => openAdvance(emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
+                  <button onClick={() => openFine(emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
                 </div>
                 {attendanceOpenId === emp.id && <EmployeeAttendance employee={emp} />}
               </>)}
