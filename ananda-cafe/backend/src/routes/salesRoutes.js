@@ -1389,9 +1389,22 @@ async function computeRMAudit(date, outletFilter) {
       if (BK_INGREDIENT_TO_RATE[rmId] && bkRecipesById[BK_INGREDIENT_TO_RATE[rmId]]) return BK_INGREDIENT_TO_RATE[rmId];
       return null;
     };
+    // BUG FIX (was silently corrupting COGS Leakage): a leaf like Desi Ghee is BOTH a
+    // direct dish ingredient (Ghee Masala Dosa etc. list "Desi Ghee" themselves, ~30g
+    // each — already a full recipeItems entry above) AND an ingredient INSIDE Sambhar/
+    // Pineapple Halwa's own BK recipe. Without this guard, the walk below added a SECOND
+    // 'desi_ghee' row from just that BK-internal usage (a few hundred grams) and compared
+    // the outlet's full real ghee consumption (drizzled on every dosa, several Kg/day)
+    // against that tiny nested-only figure — a "leak" that isn't real, since Sambhar is
+    // received pre-made from Base Kitchen (the ghee that went into making it was BK's own
+    // consumption, already priced inside Sambhar's costPerKg, never the outlet's). Coconut
+    // (the case this feature was built for) has no direct recipeItems entry at all, so it
+    // still gets its nested row exactly as before — only leafs that ALREADY have their own
+    // direct, outlet-comparable should-consume figure are skipped here.
+    const directItemIds = new Set(recipeItems.map((it) => it.item_id));
     const nestedTheoretical = {}; // item_id -> { raw_material, item_id, qty, breakdown }
     const addNested = (leafId, label, qty, viaLabel) => {
-      if (!leafId || qty <= 0) return;
+      if (!leafId || qty <= 0 || directItemIds.has(leafId)) return;
       if (!nestedTheoretical[leafId]) nestedTheoretical[leafId] = { raw_material: label, item_id: leafId, qty: 0, breakdown: [] };
       nestedTheoretical[leafId].qty += qty;
       nestedTheoretical[leafId].breakdown.push({ dish: `via ${viaLabel}`, qty_sold: null, per_dish: null, subtotal: Math.round(qty * 1000) / 1000 });
