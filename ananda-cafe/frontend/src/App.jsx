@@ -12231,6 +12231,10 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                         const field = c.matchField === "category" ? item.category : item.item_name;
                         return (field || "").toLowerCase().includes(c.match);
                       });
+                      // Sambhar (250ML) + Chutney (50ML) — once per order for orders containing
+                      // a Dosa/Idli/Vada item, see backend's SAMBHAR_CHUTNEY_SIDES. Rice doesn't
+                      // get sides, so matchedCategoryContainer.key === "rice" is excluded here.
+                      const isDosaIdliVada = !!matchedCategoryContainer && matchedCategoryContainer.key !== "rice";
                       const renderPackagingContent = () => {
                         const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
                         const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
@@ -12285,6 +12289,20 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                               )}
                               <div style={{ fontSize: 10, color: "#BBB", marginTop: 6 }}>Fixed mapping, not editable here — matched by dish category (dosa/idli/rice/vada each use their own container).</div>
                             </div>
+                            {isDosaIdliVada && (
+                              <div style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>🍲 Sides on orders with {item.item_name}</div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                  <span>250ML Container (Sambhar) <span style={{ color: "#999" }}>× 1</span></span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf("container_250ml") != null ? `₹${priceOf("container_250ml")}/${unitOf("container_250ml")}` : "no price"}</span>
+                                </div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                  <span>50ML Container (Chutney) <span style={{ color: "#999" }}>× 2</span></span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf("container_50ml") != null ? `₹${priceOf("container_50ml")}/${unitOf("container_50ml")}` : "no price"}</span>
+                                </div>
+                                <div style={{ fontSize: 10, color: "#BBB", marginTop: 6 }}>Once per order (not per dish) — shared cost split only across Dosa/Idli/Vada units, not Rice.</div>
+                              </div>
+                            )}
                           </div>
                         );
                       };
