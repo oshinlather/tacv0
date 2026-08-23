@@ -11892,6 +11892,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const tableTotalRevenue = itemsWithCost.reduce((s, i) => s + (i.revenue || 0), 0);
   const tableTotalMargin = tableTotalRevenue - totalCogs;
   const tableTotalMarginPct = tableTotalRevenue > 0 ? (tableTotalMargin / tableTotalRevenue) * 100 : null;
+  const tableTotalCostPct = tableTotalRevenue > 0 ? (totalCogs / tableTotalRevenue) * 100 : null;
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -12025,7 +12026,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
                       <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
                       <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}{tableTotalCostPct != null && ` (${tableTotalCostPct.toFixed(1)}%)`}</td>
                       <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
                     </tr>
