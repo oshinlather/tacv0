@@ -1527,10 +1527,14 @@ async function computeRMAudit(date, outletFilter) {
 
 // Raw-material-id → rate-card id, for BK-prepared items' OWN ingredients (Dosa Batter's
 // rice/urad dal/etc, not the dish's ingredients). This is a separate, deliberate copy of
-// the mapping the live P&L uses internally (salesRoutes.js ~line 2313) rather than a shared
-// import — P&L pricing is safety-critical (real money, tied to actual dispatch that day),
-// so this dish-costing tool (a "what would this cost right now" browsing calculator,
-// decoupled from any day's dispatch) is kept intentionally independent of it.
+// the mapping the live P&L uses internally (KNOWN_MAPPINGS, inside GET /pnl/live/:date)
+// rather than a shared import — P&L pricing is safety-critical (real money, tied to actual
+// dispatch that day), so this dish-costing tool (a "what would this cost right now"
+// browsing calculator, decoupled from any day's dispatch) is kept intentionally
+// independent of it. buildCostingContext()'s rawToRate is a third, equally-independent copy
+// (that function feeds RM Audit / Finance / stock-usage, so it gets the same isolation).
+// All three are currently byte-identical; if you add/change an item, mirror it in the
+// other two by hand — do not alias these into a shared object.
 const BK_INGREDIENT_TO_RATE = {
   amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
   chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
@@ -3992,6 +3996,18 @@ router.get('/pnl/live/:date', async (req, res) => {
     
     // Complete raw material → rate card mapping
     // Recipe ingredients use _raw suffix IDs; rate card uses clean IDs.
+    // This map resolves every known mismatch.
+    //
+    // NOT aliased to BK_INGREDIENT_TO_RATE (a byte-identical copy, module-level, near
+    // computeRMAudit) even though the two currently agree — BK_INGREDIENT_TO_RATE's own
+    // comment says it's "a separate, deliberate copy of the mapping the live P&L uses
+    // internally... P&L pricing is safety-critical... kept intentionally independent" of
+    // that dish-costing browsing tool. This IS that live P&L mapping (this whole block
+    // lives inside GET /pnl/live/:date), so sharing a reference with the thing it was
+    // deliberately kept apart from would be exactly backwards — a stray edit to the
+    // browsing tool's table could then silently change real P&L numbers. Left as its own
+    // copy; if you add/change an item here, mirror it in BK_INGREDIENT_TO_RATE and
+    // buildCostingContext's own rawToRate by hand — three places, on purpose.
     const KNOWN_MAPPINGS = {
       amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
       chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
@@ -4019,7 +4035,7 @@ router.get('/pnl/live/:date', async (req, res) => {
       upma_sooji_raw: 'upma_sooji', urad_daal: 'urad_daal_whole',
       whole_red_chilli_raw: 'whole_red_chilli',
     };
-    
+
     const findRateId = (rmId) => {
       if (rateMap[rmId]) return rmId;
       if (KNOWN_MAPPINGS[rmId] && rateMap[KNOWN_MAPPINGS[rmId]]) return KNOWN_MAPPINGS[rmId];
@@ -4360,6 +4376,16 @@ async function buildCostingContext() {
     // Explicit raw material → rate card mapping
     // Recipe ingredients use _raw suffix IDs; rate card uses clean IDs.
     // This map resolves every known mismatch.
+    //
+    // Byte-identical to BK_INGREDIENT_TO_RATE (module-level, near computeRMAudit) and to
+    // KNOWN_MAPPINGS (inside GET /pnl/live/:date) — three copies of the same table. Left
+    // separate on purpose rather than aliased to a shared object: BK_INGREDIENT_TO_RATE's
+    // own comment says it's deliberately kept independent of the live P&L route for
+    // safety (real money, tied to actual dispatch), and this function — buildCostingContext
+    // — is arguably even more safety-critical, since it feeds RM Audit, Finance's
+    // outlet-pnl, and stock-usage in addition to P&L. Coupling it to the browsing-tool's
+    // table would risk the same thing that comment was written to prevent, just one hop
+    // further out. If you add/change an item here, mirror it in the other two by hand.
     const rawToRate = {
       amchoor_raw: 'amchoor_powder', arhar_dal_raw: 'arhar_dal', besan: 'besan',
       chana_dal_raw: 'chana_dal', coconut_crush_raw: 'coconut_crush', coconut_raw: 'coconut',
