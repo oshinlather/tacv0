@@ -11670,11 +11670,12 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
     }
   }, [lockedOutlet]);
   // Food Cost (recipe ingredients) and Packaging/Crockery (what's covered by that add-on)
-  // — two nested dropdowns inside each item's expanded row, both default open. Shared
-  // across rows rather than per-item, same simplification as expandedItem itself (only one
-  // row's panel is ever mounted at a time).
-  const [foodCostOpen, setFoodCostOpen] = useState(true);
-  const [packagingOpen, setPackagingOpen] = useState(true);
+  // — triggered by clicking the "Unit Food Cost" / "Packaging/Crockery Add-on" rows inside
+  // the Unit Economics table itself (not a separate section below it), both folded by
+  // default. Shared across rows rather than per-item, same simplification as expandedItem
+  // itself (only one row's panel is ever mounted at a time).
+  const [foodCostOpen, setFoodCostOpen] = useState(false);
+  const [packagingOpen, setPackagingOpen] = useState(false);
   // "+ Add Item" — appends a rate-card item to the GLOBAL crockery/packaging rule (not
   // per-dish; see backend's computeCrockeryPackagingItems), owner-only same as rate_card
   // writes. addPkgItemFor: 'dine_in' | 'takeaway' | null — which rule's add-row is open.
@@ -12016,6 +12017,229 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       const isOpen = expandedItem === item.item_name;
                       const details = item.recipeId ? costDetails[item.recipeId] : null;
                       const isLoadingDetails = costDetailsLoading === item.recipeId;
+                      // Food Cost — recipe ingredient breakdown. Rendered as an inline expansion
+                      // directly under the "Unit Food Cost" row inside the Unit Economics table
+                      // below (not a separate section), folded by default.
+                      const renderFoodCostContent = () => (<>
+                        {!item.recipeId && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>No recipe linked for this item — Food Cost unavailable, only the Packaging/Crockery add-on is a real number.</div>}
+                        {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
+                        {!isLoadingDetails && details && (
+                          <>
+                            {details.unpriced_count > 0 && (
+                              <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", margin: "8px 0" }}>
+                                ⚠️ {details.unpriced_count} ingredient(s) below have no usable price — cost/margin above are understated. Fix them here.
+                              </div>
+                            )}
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
+                              <thead><tr>
+                                <th style={{ ...thS, background: "transparent" }}>Ingredient</th>
+                                <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Qty</th>
+                                <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Rate</th>
+                                <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Cost</th>
+                              </tr></thead>
+                              <tbody>
+                                {(details.ingredients || []).map((ing, j) => {
+                                  const isEditingThis = !lockedOutlet && editingRate === ing.rate_card_id;
+                                  const role = getCurrentUser()?.role;
+                                  const canAddPrice = !lockedOutlet && role === "owner";
+                                  const canAddRecipe = !lockedOutlet && ["owner", "avp", "head_chef"].includes(role) && ing.mapped_id;
+                                  // Editing/removing an ingredient (or adding a new one below) changes the recipe
+                                  // itself, not just its rate-card price — same role gate as "+ Recipe" above,
+                                  // matching the backend's own PATCH/DELETE/POST /recipes/ingredients gating.
+                                  const canEditRecipe = !lockedOutlet && ["owner", "avp", "head_chef"].includes(role) && ing.id;
+                                  const isEditingQty = editingQtyFor === j;
+                                  return (<Fragment key={j}>
+                                    <tr style={{ borderBottom: "1px solid #F0F0EC", background: ing.priced ? "#fff" : "#FFFBEB" }}>
+                                      <td style={{ ...tdS, fontWeight: 600 }}>
+                                        {ing.raw_material}{ing.via_bk_recipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (via BK recipe)</span>}
+                                        {canEditRecipe && <span onClick={() => removeDishIngredient(ing, item.recipeId)} title="Remove from recipe" style={{ marginLeft: 6, color: "#DC2626", cursor: removingIngId === ing.id ? "default" : "pointer", fontSize: 10 }}>{removingIngId === ing.id ? "⏳" : "🗑️"}</span>}
+                                      </td>
+                                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                                        {isEditingQty ? (
+                                          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                            <input autoFocus type="number" inputMode="decimal" value={editQtyValue} onChange={(e) => setEditQtyValue(e.target.value)}
+                                              onKeyDown={(e) => { if (e.key === "Enter") submitEditQty(ing, item.recipeId); if (e.key === "Escape") resetAddForms(); }}
+                                              style={{ width: 55, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                                            <select value={editQtyUnit} onChange={(e) => setEditQtyUnit(e.target.value)} style={{ padding: "4px 2px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "inherit" }}>
+                                              {["GM", "Kg", "ML", "Ltr", "Pcs", "Piece"].map((u) => <option key={u} value={u}>{u}</option>)}
+                                            </select>
+                                            <button onClick={() => submitEditQty(ing, item.recipeId)} disabled={addSaving} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                                          </span>
+                                        ) : canEditRecipe ? (
+                                          <span onClick={() => { resetAddForms(); setEditingQtyFor(j); setEditQtyValue(String(ing.qty)); setEditQtyUnit(ing.unit); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit quantity">
+                                            {ing.qty} {ing.unit}
+                                          </span>
+                                        ) : `${ing.qty} ${ing.unit}`}
+                                      </td>
+                                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                                        {isEditingThis ? (
+                                          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                                            <input autoFocus type="number" inputMode="decimal" value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                                              onKeyDown={(e) => { if (e.key === "Enter") saveIngredientRate(ing.rate_card_id, item.recipeId); if (e.key === "Escape") setEditingRate(null); }}
+                                              style={{ width: 60, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
+                                            <button onClick={() => saveIngredientRate(ing.rate_card_id, item.recipeId)} disabled={savingRate} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
+                                          </span>
+                                        ) : ing.rate_card_id && !lockedOutlet ? (
+                                          <span onClick={() => { setEditingRate(ing.rate_card_id); setEditValue(String(ing.rate)); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit rate card price">
+                                            ₹{ing.rate}/{ing.rate_unit}
+                                          </span>
+                                        ) : ing.rate != null ? `₹${ing.rate}/${ing.rate_unit}` : "—"}
+                                      </td>
+                                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ing.priced ? "#B45309" : "#DC2626" }}>
+                                        {ing.priced ? `₹${ing.cost}` : (<>
+                                          <div>{ing.reason || "no price"}</div>
+                                          {(canAddPrice || canAddRecipe) && (
+                                            <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
+                                              {canAddPrice && <button onClick={() => { resetAddForms(); setAddPriceFor(j); setNewPriceUnit(/gm|kg/i.test(ing.unit) ? "Kg" : /ml|ltr/i.test(ing.unit) ? "Ltr" : ing.unit); }} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Price</button>}
+                                              {canAddRecipe && <button onClick={() => { resetAddForms(); setAddRecipeFor(j); }} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Recipe</button>}
+                                            </div>
+                                          )}
+                                        </>)}
+                                      </td>
+                                    </tr>
+                                    {addPriceFor === j && (
+                                      <tr style={{ background: "#F0F9FF" }}>
+                                        <td colSpan={4} style={{ padding: "10px 12px" }}>
+                                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: 11, fontWeight: 700, color: "#2563EB" }}>💲 New price for "{ing.raw_material}":</span>
+                                            <input autoFocus type="number" inputMode="decimal" placeholder="₹ price" value={newPriceValue} onChange={(e) => setNewPriceValue(e.target.value)}
+                                              style={{ width: 80, padding: "5px 8px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                            <span style={{ fontSize: 11, color: "#888" }}>per</span>
+                                            <select value={newPriceUnit} onChange={(e) => setNewPriceUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit" }}>
+                                              {["Kg", "Ltr", "Pcs", "Pkt", "Box", "Tin", "Can", "Bundle"].map((u) => <option key={u} value={u}>{u}</option>)}
+                                            </select>
+                                            <select value={newPriceCategory} onChange={(e) => setNewPriceCategory(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit" }}>
+                                              {["Food", "Dairy", "Vegetable", "Grocery", "Masala", "Packaging", "Cleaning", "Gas"].map((c) => <option key={c} value={c}>{c}</option>)}
+                                            </select>
+                                            <button onClick={() => submitAddPrice(ing, item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save"}</button>
+                                            <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                    {addRecipeFor === j && (
+                                      <tr style={{ background: "#FFFBEB" }}>
+                                        <td colSpan={4} style={{ padding: "10px 12px" }}>
+                                          <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍲 New BK recipe for "{ing.raw_material}":</div>
+                                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                                            <span style={{ fontSize: 11, color: "#888" }}>Yields</span>
+                                            <input type="number" inputMode="decimal" placeholder="Qty" value={newRecipeYieldQty} onChange={(e) => setNewRecipeYieldQty(e.target.value)}
+                                              style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                            <select value={newRecipeYieldUnit} onChange={(e) => setNewRecipeYieldUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                                              {["Kg", "Ltr", "Pcs"].map((u) => <option key={u} value={u}>{u}</option>)}
+                                            </select>
+                                          </div>
+                                          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                                            <select value={newRecipeIngRawId} onChange={(e) => setNewRecipeIngRawId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
+                                              <option value="">Pick ingredient...</option>
+                                              {(() => {
+                                                const byId = {};
+                                                RAW_MATERIALS.forEach((r) => { byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+                                                rateCardItems.forEach((r) => { if (!byId[r.id]) byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
+                                                // A BK recipe (Onion Masala, Sambhar, Dosa Batter...) can itself be an ingredient of
+                                                // another BK recipe being built here, same as Manage Recipes' own ingredient picker —
+                                                // without this, only raw/rate-card items were selectable, silently excluding every
+                                                // already-prepared item.
+                                                Object.entries(RECIPES).forEach(([id, r]) => { if (!byId[id]) byId[id] = { id, name: r.name, unit: "Kg" }; });
+                                                return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>);
+                                              })()}
+                                            </select>
+                                            <input type="number" inputMode="decimal" placeholder="Qty" value={newRecipeIngQty} onChange={(e) => setNewRecipeIngQty(e.target.value)}
+                                              style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                            <button onClick={() => { if (!newRecipeIngRawId || !newRecipeIngQty) return; setNewRecipeIngredients((p) => [...p, { rawId: newRecipeIngRawId, qty: Number(newRecipeIngQty) }]); setNewRecipeIngRawId(""); setNewRecipeIngQty(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", color: "#B45309", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
+                                          </div>
+                                          {newRecipeIngredients.length > 0 && (
+                                            <div style={{ marginBottom: 8 }}>
+                                              {newRecipeIngredients.map((ri, ri_i) => {
+                                                const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId) || rateCardItems.find((r) => r.id === ri.rawId) || (RECIPES[ri.rawId] && { name: RECIPES[ri.rawId].name, unit: "Kg" });
+                                                return (<div key={ri_i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 6px", background: "#fff", borderRadius: 5, marginBottom: 3 }}>
+                                                  <span>{rm?.name || ri.rawId} — {ri.qty} {rm?.unit}</span>
+                                                  <span onClick={() => setNewRecipeIngredients((p) => p.filter((_, idx) => idx !== ri_i))} style={{ color: "#DC2626", cursor: "pointer", fontWeight: 700 }}>✕</span>
+                                                </div>);
+                                              })}
+                                            </div>
+                                          )}
+                                          <div style={{ display: "flex", gap: 6 }}>
+                                            <button onClick={() => submitAddRecipe(ing, item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save Recipe"}</button>
+                                            <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </Fragment>);
+                                })}
+                              </tbody>
+                            </table>
+                            {!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role) && (
+                              addIngFor === item.recipeId ? (
+                                <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                  <input autoFocus type="text" placeholder="Ingredient name" value={newDishIngName} onChange={(e) => setNewDishIngName(e.target.value)}
+                                    style={{ flex: "1 1 140px", padding: "5px 8px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "inherit" }} />
+                                  <input type="number" inputMode="decimal" placeholder="Qty" value={newDishIngQty} onChange={(e) => setNewDishIngQty(e.target.value)}
+                                    style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
+                                  <select value={newDishIngUnit} onChange={(e) => setNewDishIngUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "inherit" }}>
+                                    {["GM", "Kg", "ML", "Ltr", "Pcs", "Piece"].map((u) => <option key={u} value={u}>{u}</option>)}
+                                  </select>
+                                  <button onClick={() => submitAddDishIngredient(item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save"}</button>
+                                  <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                </div>
+                              ) : (
+                                <button onClick={() => { resetAddForms(); setAddIngFor(item.recipeId); }} style={{ marginTop: 8, padding: "5px 10px", borderRadius: 6, border: "1px dashed #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Ingredient</button>
+                              )
+                            )}
+                          </>
+                        )}
+                      </>);
+                      // Packaging/Crockery — what's covered by the add-on shown in Unit Economics.
+                      // Rendered inline under the "Packaging/Crockery Add-on" row. The rule is
+                      // GLOBAL (every dish shares it, see backend's computeCrockeryPackagingItems),
+                      // not per-dish — "+ Add Item" here adds to that shared rule, same as editing
+                      // a rate-card price affects every recipe that uses it.
+                      const renderPackagingContent = () => {
+                        const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
+                        const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
+                        const unitOf = (id) => rateCardItems.find((r) => r.id === id)?.unit || "";
+                        const canEditPkgRule = !lockedOutlet && getCurrentUser()?.role === "owner";
+                        const pkgCategoryItems = rateCardItems.filter((r) => r.category === "Packaging");
+                        return (
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            {[
+                              { key: "dine_in", label: "🍽️ Per Dine-in item sold" },
+                              { key: "takeaway", label: "🥡🛵 Per Pickup/Delivery order" },
+                            ].map((grp) => (
+                              <div key={grp.key} style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>{grp.label}</div>
+                                {(rules[grp.key] || []).length === 0 && <div style={{ fontSize: 11, color: "#BBB", marginBottom: 6 }}>No items configured</div>}
+                                {(rules[grp.key] || []).map((r) => (
+                                  <div key={r.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                    <span>{r.name} <span style={{ color: "#999" }}>× {r.qty}</span></span>
+                                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                      <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(r.item_id) != null ? `₹${priceOf(r.item_id)}/${unitOf(r.item_id)}` : "no price"}</span>
+                                      {canEditPkgRule && <span onClick={() => removePackagingRuleItem(grp.key, r.item_id)} title="Remove from rule" style={{ color: "#DC2626", cursor: pkgRuleSaving ? "default" : "pointer", fontSize: 10 }}>🗑️</span>}
+                                    </span>
+                                  </div>
+                                ))}
+                                {canEditPkgRule && (
+                                  addPkgItemFor === grp.key ? (
+                                    <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                      <select autoFocus value={newPkgItemId} onChange={(e) => setNewPkgItemId(e.target.value)} style={{ flex: "1 1 120px", padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "inherit" }}>
+                                        <option value="">Select item from store…</option>
+                                        {pkgCategoryItems.map((it) => <option key={it.id} value={it.id}>{it.name} (₹{it.price}/{it.unit})</option>)}
+                                      </select>
+                                      <input type="number" inputMode="decimal" placeholder="Qty (pieces)" value={newPkgItemQty} onChange={(e) => setNewPkgItemQty(e.target.value)}
+                                        style={{ width: 90, padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "'JetBrains Mono'" }} />
+                                      <button onClick={() => addPackagingRuleItem(grp.key)} disabled={pkgRuleSaving} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{pkgRuleSaving ? "⏳..." : "Save"}</button>
+                                      <button onClick={() => setAddPkgItemFor(null)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                    </div>
+                                  ) : (
+                                    <button onClick={() => { setAddPkgItemFor(grp.key); setNewPkgItemId(""); setNewPkgItemQty(""); }} style={{ marginTop: 8, padding: "5px 10px", borderRadius: 6, border: "1px dashed #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Item</button>
+                                  )
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      };
                       return (<Fragment key={i}>
                         <tr onClick={() => toggleExpand(item.item_name, item.recipeId)} style={{ borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
                           <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
@@ -12056,8 +12280,8 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                 const ROWS = [
                                   { label: "Qty", get: (c) => c.qty, fmt: (v) => v, color: "#2563EB" },
                                   { label: "Unit Selling Price", get: (c) => c.unitPrice, fmt: fmt, color: "#16A34A" },
-                                  { label: "Unit Food Cost", get: (c) => c.unitFoodCost, fmt: fmt, color: "#1A1A1A" },
-                                  { label: "Packaging/Crockery Add-on", get: (c) => c.qty > 0 ? c.unitAddon : null, fmt: fmt, color: "#1A1A1A" },
+                                  { label: "Unit Food Cost", get: (c) => c.unitFoodCost, fmt: fmt, color: "#1A1A1A", expandKey: "food" },
+                                  { label: "Packaging/Crockery Add-on", get: (c) => c.qty > 0 ? c.unitAddon : null, fmt: fmt, color: "#1A1A1A", expandKey: "packaging" },
                                   { label: "Unit Total Cost", get: (c) => c.unitTotalCost, fmt: fmt, color: "#DC2626", bold: true },
                                   { label: "Unit Margin", get: (c) => c.unitMargin, fmt: fmt, color: (v) => v >= 0 ? "#16A34A" : "#DC2626", bold: true },
                                   { label: "Margin %", get: (c) => c.marginPct, fmt: (v) => `${v.toFixed(1)}%`, color: (v) => v >= 0 ? "#16A34A" : "#DC2626" },
@@ -12072,253 +12296,38 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                           {cols.map((c) => <th key={c.key} style={{ ...thS, background: "transparent", textAlign: "right" }}>{COL_LABEL[c.key]}</th>)}
                                         </tr></thead>
                                         <tbody>
-                                          {ROWS.map((row) => (
-                                            <tr key={row.label} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                                              <td style={{ ...tdS, color: "#888", fontWeight: row.bold ? 700 : 400 }}>{row.label}</td>
-                                              {cols.map((c) => {
-                                                const v = row.get(c);
-                                                const color = typeof row.color === "function" ? (v != null ? row.color(v) : "#BBB") : row.color;
-                                                return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: row.bold ? 800 : 700, color: v != null ? color : "#BBB" }}>{v != null ? row.fmt(v) : "—"}</td>;
-                                              })}
-                                            </tr>
-                                          ))}
+                                          {ROWS.map((row) => {
+                                            // "Unit Food Cost" and "Packaging/Crockery Add-on" are themselves the
+                                            // dropdown trigger — clicking either expands an inline breakdown row
+                                            // directly underneath it, inside this same table, folded by default.
+                                            const rowOpen = row.expandKey === "food" ? foodCostOpen : row.expandKey === "packaging" ? packagingOpen : false;
+                                            const toggleRow = row.expandKey === "food" ? () => setFoodCostOpen((v) => !v) : row.expandKey === "packaging" ? () => setPackagingOpen((v) => !v) : undefined;
+                                            return (
+                                              <Fragment key={row.label}>
+                                                <tr onClick={toggleRow} style={{ borderBottom: "1px solid #F0F0EC", cursor: toggleRow ? "pointer" : "default" }}>
+                                                  <td style={{ ...tdS, color: "#888", fontWeight: row.bold ? 700 : 400 }}>
+                                                    {row.label}
+                                                    {row.expandKey && <span style={{ fontSize: 9, color: "#BBB", marginLeft: 5 }}>{rowOpen ? "▲" : "▼"}</span>}
+                                                  </td>
+                                                  {cols.map((c) => {
+                                                    const v = row.get(c);
+                                                    const color = typeof row.color === "function" ? (v != null ? row.color(v) : "#BBB") : row.color;
+                                                    return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: row.bold ? 800 : 700, color: v != null ? color : "#BBB" }}>{v != null ? row.fmt(v) : "—"}</td>;
+                                                  })}
+                                                </tr>
+                                                {row.expandKey && rowOpen && (
+                                                  <tr>
+                                                    <td colSpan={cols.length + 1} style={{ padding: "10px 12px 14px", background: "#FAFAF8" }}>
+                                                      {row.expandKey === "food" ? renderFoodCostContent() : renderPackagingContent()}
+                                                    </td>
+                                                  </tr>
+                                                )}
+                                              </Fragment>
+                                            );
+                                          })}
                                         </tbody>
                                       </table>
                                     </div>
-                                  </div>
-                                );
-                              })()}
-                              <div onClick={() => setFoodCostOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: foodCostOpen ? 6 : 0 }}>
-                                <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>🍲 Food Cost — Ingredients</span>
-                                <span style={{ fontSize: 9, color: "#BBB" }}>{foodCostOpen ? "▲" : "▼"}</span>
-                              </div>
-                              {foodCostOpen && (<>
-                              {!item.recipeId && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>No recipe linked for this item — Food Cost unavailable, only the Packaging/Crockery add-on above is a real number.</div>}
-                              {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
-                              {!isLoadingDetails && details && (
-                                <>
-                                  {details.unpriced_count > 0 && (
-                                    <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11, color: "#991B1B", margin: "8px 0" }}>
-                                      ⚠️ {details.unpriced_count} ingredient(s) below have no usable price — cost/margin above are understated. Fix them here.
-                                    </div>
-                                  )}
-                                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 8 }}>
-                                    <thead><tr>
-                                      <th style={{ ...thS, background: "transparent" }}>Ingredient</th>
-                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Qty</th>
-                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Rate</th>
-                                      <th style={{ ...thS, background: "transparent", textAlign: "right" }}>Cost</th>
-                                    </tr></thead>
-                                    <tbody>
-                                      {(details.ingredients || []).map((ing, j) => {
-                                        const isEditingThis = !lockedOutlet && editingRate === ing.rate_card_id;
-                                        const role = getCurrentUser()?.role;
-                                        const canAddPrice = !lockedOutlet && role === "owner";
-                                        const canAddRecipe = !lockedOutlet && ["owner", "avp", "head_chef"].includes(role) && ing.mapped_id;
-                                        // Editing/removing an ingredient (or adding a new one below) changes the recipe
-                                        // itself, not just its rate-card price — same role gate as "+ Recipe" above,
-                                        // matching the backend's own PATCH/DELETE/POST /recipes/ingredients gating.
-                                        const canEditRecipe = !lockedOutlet && ["owner", "avp", "head_chef"].includes(role) && ing.id;
-                                        const isEditingQty = editingQtyFor === j;
-                                        return (<Fragment key={j}>
-                                          <tr style={{ borderBottom: "1px solid #F0F0EC", background: ing.priced ? "#fff" : "#FFFBEB" }}>
-                                            <td style={{ ...tdS, fontWeight: 600 }}>
-                                              {ing.raw_material}{ing.via_bk_recipe && <span style={{ color: "#999", fontSize: 10, fontWeight: 400 }}> (via BK recipe)</span>}
-                                              {canEditRecipe && <span onClick={() => removeDishIngredient(ing, item.recipeId)} title="Remove from recipe" style={{ marginLeft: 6, color: "#DC2626", cursor: removingIngId === ing.id ? "default" : "pointer", fontSize: 10 }}>{removingIngId === ing.id ? "⏳" : "🗑️"}</span>}
-                                            </td>
-                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
-                                              {isEditingQty ? (
-                                                <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                                                  <input autoFocus type="number" inputMode="decimal" value={editQtyValue} onChange={(e) => setEditQtyValue(e.target.value)}
-                                                    onKeyDown={(e) => { if (e.key === "Enter") submitEditQty(ing, item.recipeId); if (e.key === "Escape") resetAddForms(); }}
-                                                    style={{ width: 55, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-                                                  <select value={editQtyUnit} onChange={(e) => setEditQtyUnit(e.target.value)} style={{ padding: "4px 2px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 11, fontFamily: "inherit" }}>
-                                                    {["GM", "Kg", "ML", "Ltr", "Pcs", "Piece"].map((u) => <option key={u} value={u}>{u}</option>)}
-                                                  </select>
-                                                  <button onClick={() => submitEditQty(ing, item.recipeId)} disabled={addSaving} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
-                                                </span>
-                                              ) : canEditRecipe ? (
-                                                <span onClick={() => { resetAddForms(); setEditingQtyFor(j); setEditQtyValue(String(ing.qty)); setEditQtyUnit(ing.unit); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit quantity">
-                                                  {ing.qty} {ing.unit}
-                                                </span>
-                                              ) : `${ing.qty} ${ing.unit}`}
-                                            </td>
-                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
-                                              {isEditingThis ? (
-                                                <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
-                                                  <input autoFocus type="number" inputMode="decimal" value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                                                    onKeyDown={(e) => { if (e.key === "Enter") saveIngredientRate(ing.rate_card_id, item.recipeId); if (e.key === "Escape") setEditingRate(null); }}
-                                                    style={{ width: 60, padding: "4px 6px", borderRadius: 5, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right" }} />
-                                                  <button onClick={() => saveIngredientRate(ing.rate_card_id, item.recipeId)} disabled={savingRate} style={{ padding: "3px 7px", borderRadius: 5, border: "none", background: "#16A34A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✓</button>
-                                                </span>
-                                              ) : ing.rate_card_id && !lockedOutlet ? (
-                                                <span onClick={() => { setEditingRate(ing.rate_card_id); setEditValue(String(ing.rate)); }} style={{ cursor: "pointer", borderBottom: "1px dashed #BBB" }} title="Click to edit rate card price">
-                                                  ₹{ing.rate}/{ing.rate_unit}
-                                                </span>
-                                              ) : ing.rate != null ? `₹${ing.rate}/${ing.rate_unit}` : "—"}
-                                            </td>
-                                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: ing.priced ? "#B45309" : "#DC2626" }}>
-                                              {ing.priced ? `₹${ing.cost}` : (<>
-                                                <div>{ing.reason || "no price"}</div>
-                                                {(canAddPrice || canAddRecipe) && (
-                                                  <div style={{ display: "flex", gap: 4, justifyContent: "flex-end", marginTop: 3 }}>
-                                                    {canAddPrice && <button onClick={() => { resetAddForms(); setAddPriceFor(j); setNewPriceUnit(/gm|kg/i.test(ing.unit) ? "Kg" : /ml|ltr/i.test(ing.unit) ? "Ltr" : ing.unit); }} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Price</button>}
-                                                    {canAddRecipe && <button onClick={() => { resetAddForms(); setAddRecipeFor(j); }} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Recipe</button>}
-                                                  </div>
-                                                )}
-                                              </>)}
-                                            </td>
-                                          </tr>
-                                          {addPriceFor === j && (
-                                            <tr style={{ background: "#F0F9FF" }}>
-                                              <td colSpan={4} style={{ padding: "10px 12px" }}>
-                                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#2563EB" }}>💲 New price for "{ing.raw_material}":</span>
-                                                  <input autoFocus type="number" inputMode="decimal" placeholder="₹ price" value={newPriceValue} onChange={(e) => setNewPriceValue(e.target.value)}
-                                                    style={{ width: 80, padding: "5px 8px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
-                                                  <span style={{ fontSize: 11, color: "#888" }}>per</span>
-                                                  <select value={newPriceUnit} onChange={(e) => setNewPriceUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit" }}>
-                                                    {["Kg", "Ltr", "Pcs", "Pkt", "Box", "Tin", "Can", "Bundle"].map((u) => <option key={u} value={u}>{u}</option>)}
-                                                  </select>
-                                                  <select value={newPriceCategory} onChange={(e) => setNewPriceCategory(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit" }}>
-                                                    {["Food", "Dairy", "Vegetable", "Grocery", "Masala", "Packaging", "Cleaning", "Gas"].map((c) => <option key={c} value={c}>{c}</option>)}
-                                                  </select>
-                                                  <button onClick={() => submitAddPrice(ing, item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save"}</button>
-                                                  <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                                                </div>
-                                              </td>
-                                            </tr>
-                                          )}
-                                          {addRecipeFor === j && (
-                                            <tr style={{ background: "#FFFBEB" }}>
-                                              <td colSpan={4} style={{ padding: "10px 12px" }}>
-                                                <div style={{ fontSize: 11, fontWeight: 700, color: "#B45309", marginBottom: 6 }}>🍲 New BK recipe for "{ing.raw_material}":</div>
-                                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
-                                                  <span style={{ fontSize: 11, color: "#888" }}>Yields</span>
-                                                  <input type="number" inputMode="decimal" placeholder="Qty" value={newRecipeYieldQty} onChange={(e) => setNewRecipeYieldQty(e.target.value)}
-                                                    style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
-                                                  <select value={newRecipeYieldUnit} onChange={(e) => setNewRecipeYieldUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
-                                                    {["Kg", "Ltr", "Pcs"].map((u) => <option key={u} value={u}>{u}</option>)}
-                                                  </select>
-                                                </div>
-                                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
-                                                  <select value={newRecipeIngRawId} onChange={(e) => setNewRecipeIngRawId(e.target.value)} style={{ flex: "1 1 140px", padding: "5px 6px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "inherit" }}>
-                                                    <option value="">Pick ingredient...</option>
-                                                    {(() => {
-                                                      const byId = {};
-                                                      RAW_MATERIALS.forEach((r) => { byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
-                                                      rateCardItems.forEach((r) => { if (!byId[r.id]) byId[r.id] = { id: r.id, name: r.name, unit: r.unit }; });
-                                                      // A BK recipe (Onion Masala, Sambhar, Dosa Batter...) can itself be an ingredient of
-                                                      // another BK recipe being built here, same as Manage Recipes' own ingredient picker —
-                                                      // without this, only raw/rate-card items were selectable, silently excluding every
-                                                      // already-prepared item.
-                                                      Object.entries(RECIPES).forEach(([id, r]) => { if (!byId[id]) byId[id] = { id, name: r.name, unit: "Kg" }; });
-                                                      return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name)).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.unit})</option>);
-                                                    })()}
-                                                  </select>
-                                                  <input type="number" inputMode="decimal" placeholder="Qty" value={newRecipeIngQty} onChange={(e) => setNewRecipeIngQty(e.target.value)}
-                                                    style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #FDE68A", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
-                                                  <button onClick={() => { if (!newRecipeIngRawId || !newRecipeIngQty) return; setNewRecipeIngredients((p) => [...p, { rawId: newRecipeIngRawId, qty: Number(newRecipeIngQty) }]); setNewRecipeIngRawId(""); setNewRecipeIngQty(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #FDE68A", background: "#fff", color: "#B45309", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
-                                                </div>
-                                                {newRecipeIngredients.length > 0 && (
-                                                  <div style={{ marginBottom: 8 }}>
-                                                    {newRecipeIngredients.map((ri, ri_i) => {
-                                                      const rm = RAW_MATERIALS.find((r) => r.id === ri.rawId) || rateCardItems.find((r) => r.id === ri.rawId) || (RECIPES[ri.rawId] && { name: RECIPES[ri.rawId].name, unit: "Kg" });
-                                                      return (<div key={ri_i} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 6px", background: "#fff", borderRadius: 5, marginBottom: 3 }}>
-                                                        <span>{rm?.name || ri.rawId} — {ri.qty} {rm?.unit}</span>
-                                                        <span onClick={() => setNewRecipeIngredients((p) => p.filter((_, idx) => idx !== ri_i))} style={{ color: "#DC2626", cursor: "pointer", fontWeight: 700 }}>✕</span>
-                                                      </div>);
-                                                    })}
-                                                  </div>
-                                                )}
-                                                <div style={{ display: "flex", gap: 6 }}>
-                                                  <button onClick={() => submitAddRecipe(ing, item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save Recipe"}</button>
-                                                  <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                                                </div>
-                                              </td>
-                                            </tr>
-                                          )}
-                                        </Fragment>);
-                                      })}
-                                    </tbody>
-                                  </table>
-                                  {!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role) && (
-                                    addIngFor === item.recipeId ? (
-                                      <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                        <input autoFocus type="text" placeholder="Ingredient name" value={newDishIngName} onChange={(e) => setNewDishIngName(e.target.value)}
-                                          style={{ flex: "1 1 140px", padding: "5px 8px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "inherit" }} />
-                                        <input type="number" inputMode="decimal" placeholder="Qty" value={newDishIngQty} onChange={(e) => setNewDishIngQty(e.target.value)}
-                                          style={{ width: 60, padding: "5px 8px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "'JetBrains Mono'" }} />
-                                        <select value={newDishIngUnit} onChange={(e) => setNewDishIngUnit(e.target.value)} style={{ padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 12, fontFamily: "inherit" }}>
-                                          {["GM", "Kg", "ML", "Ltr", "Pcs", "Piece"].map((u) => <option key={u} value={u}>{u}</option>)}
-                                        </select>
-                                        <button onClick={() => submitAddDishIngredient(item.recipeId)} disabled={addSaving} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{addSaving ? "⏳..." : "Save"}</button>
-                                        <button onClick={resetAddForms} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                                      </div>
-                                    ) : (
-                                      <button onClick={() => { resetAddForms(); setAddIngFor(item.recipeId); }} style={{ marginTop: 8, padding: "5px 10px", borderRadius: 6, border: "1px dashed #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Ingredient</button>
-                                    )
-                                  )}
-                                </>
-                              )}
-                              </>)}
-                              {/* Packaging/Crockery — what's actually covered by the add-on shown in Unit
-                                  Economics above. The rule is GLOBAL (every dish shares it, see backend's
-                                  computeCrockeryPackagingItems), not per-dish — so "+ Add Item" here adds to
-                                  that shared rule, same as editing a rate-card price affects every recipe
-                                  that uses it. Qty is always a literal piece count (the rule's own
-                                  convention — "2 spoons", not "2 Pkt"), converted server-side into whatever
-                                  unit the item is actually tracked in. */}
-                              {(() => {
-                                const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
-                                const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
-                                const unitOf = (id) => rateCardItems.find((r) => r.id === id)?.unit || "";
-                                const canEditPkgRule = !lockedOutlet && getCurrentUser()?.role === "owner";
-                                const pkgCategoryItems = rateCardItems.filter((r) => r.category === "Packaging");
-                                return (
-                                  <div style={{ marginTop: 14 }}>
-                                    <div onClick={() => setPackagingOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: packagingOpen ? 6 : 0 }}>
-                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>📦 Packaging/Crockery — What's Covered</span>
-                                      <span style={{ fontSize: 9, color: "#BBB" }}>{packagingOpen ? "▲" : "▼"}</span>
-                                    </div>
-                                    {packagingOpen && (
-                                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                        {[
-                                          { key: "dine_in", label: "🍽️ Per Dine-in item sold" },
-                                          { key: "takeaway", label: "🥡🛵 Per Pickup/Delivery order" },
-                                        ].map((grp) => (
-                                          <div key={grp.key} style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
-                                            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>{grp.label}</div>
-                                            {(rules[grp.key] || []).length === 0 && <div style={{ fontSize: 11, color: "#BBB", marginBottom: 6 }}>No items configured</div>}
-                                            {(rules[grp.key] || []).map((r) => (
-                                              <div key={r.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
-                                                <span>{r.name} <span style={{ color: "#999" }}>× {r.qty}</span></span>
-                                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(r.item_id) != null ? `₹${priceOf(r.item_id)}/${unitOf(r.item_id)}` : "no price"}</span>
-                                                  {canEditPkgRule && <span onClick={() => removePackagingRuleItem(grp.key, r.item_id)} title="Remove from rule" style={{ color: "#DC2626", cursor: pkgRuleSaving ? "default" : "pointer", fontSize: 10 }}>🗑️</span>}
-                                                </span>
-                                              </div>
-                                            ))}
-                                            {canEditPkgRule && (
-                                              addPkgItemFor === grp.key ? (
-                                                <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                                                  <select autoFocus value={newPkgItemId} onChange={(e) => setNewPkgItemId(e.target.value)} style={{ flex: "1 1 120px", padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "inherit" }}>
-                                                    <option value="">Select item from store…</option>
-                                                    {pkgCategoryItems.map((it) => <option key={it.id} value={it.id}>{it.name} (₹{it.price}/{it.unit})</option>)}
-                                                  </select>
-                                                  <input type="number" inputMode="decimal" placeholder="Qty (pieces)" value={newPkgItemQty} onChange={(e) => setNewPkgItemQty(e.target.value)}
-                                                    style={{ width: 90, padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "'JetBrains Mono'" }} />
-                                                  <button onClick={() => addPackagingRuleItem(grp.key)} disabled={pkgRuleSaving} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{pkgRuleSaving ? "⏳..." : "Save"}</button>
-                                                  <button onClick={() => setAddPkgItemFor(null)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                                                </div>
-                                              ) : (
-                                                <button onClick={() => { setAddPkgItemFor(grp.key); setNewPkgItemId(""); setNewPkgItemQty(""); }} style={{ marginTop: 8, padding: "5px 10px", borderRadius: 6, border: "1px dashed #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Item</button>
-                                              )
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
                                   </div>
                                 );
                               })()}
