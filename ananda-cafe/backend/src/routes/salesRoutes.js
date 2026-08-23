@@ -1413,20 +1413,29 @@ async function computeRMAudit(date, outletFilter) {
     // (a dish's share of White Chutney splits into that same share of Coconut Crush, then
     // of Coconut) so the leaf's breakdown reads "12 × Rawa Paneer Dosa (via White Chutney
     // → Coconut Crush) = 0.84 Pcs" instead of an anonymous "via Coconut Crush".
+    // `chain` carries the full step-by-step trail for this dish's share, ending at the
+    // CURRENT row's own quantity — e.g. for Coconut's row: [White Chutney 9.8 Kg, Coconut
+    // Crush 1.96 Kg, Coconut 19.6 Pcs] — so nothing is left implicit (see `path`, which
+    // stays one step behind `chain` on purpose: it excludes the current row itself, since
+    // "via White Chutney → Coconut Crush → Coconut" on Coconut's OWN row would be a
+    // redundant self-reference).
     const addNestedLine = (leafId, label, line) => {
       if (!leafId || line.subtotal <= 0 || directItemIds.has(leafId)) return;
       if (!nestedTheoretical[leafId]) nestedTheoretical[leafId] = { raw_material: label, item_id: leafId, qty: 0, breakdown: [] };
       nestedTheoretical[leafId].qty += line.subtotal;
       const subtotal = Math.round(line.subtotal * 1000) / 1000;
       nestedTheoretical[leafId].breakdown.push({
-        dish: `${line.dish} (via ${line.path.join(' → ')})`,
+        dish: line.dish,
         qty_sold: line.qty_sold,
         per_dish: line.qty_sold > 0 ? Math.round((subtotal / line.qty_sold) * 100000) / 100000 : null,
         subtotal,
+        via: line.path.length > 0 ? line.path.join(' → ') : null,
+        chain: line.chain,
       });
     };
     // sourceLines: [{ dish, qty_sold, subtotal (Kg of `recipeId` this dish's own sales
-    // account for), path: [names walked so far] }]
+    // account for), path: [ancestor names, excluding recipeId itself],
+    // chain: [{label, qty, unit}, ...] up to and including recipeId itself }]
     const expandNestedRecipe = (recipeId, sourceLines, visited) => {
       if (visited.has(recipeId) || visited.size > 8) return; // cycle/runaway guard
       const nextVisited = new Set(visited); nextVisited.add(recipeId);
@@ -1437,27 +1446,35 @@ async function computeRMAudit(date, outletFilter) {
         const rmId = ing.raw_material_id;
         const perBatchQty = Number(ing.qty || 0);
         if (perBatchQty <= 0) return;
+        const nestedRecipeId = bareRecipeId(rmId);
+        const leafId = nestedRecipeId ? null : resolveRateId(rmId);
+        const label = nestedRecipeId ? (bkRecipesById[nestedRecipeId]?.name || nestedRecipeId) : (leafId ? (rateMap[leafId]?.name || leafId) : null);
+        const unit = nestedRecipeId ? 'Kg' : (leafId ? (rateMap[leafId]?.unit || 'Kg') : 'Kg');
+        if (!nestedRecipeId && !leafId) return;
         // This ingredient's total need, split back across each source dish proportional
         // to how much of `recipeId` that dish's own sales required (batches = that dish's
         // subtotal / yieldQty) — sums back to the same total the old scalar math gave.
+        // chain gets this row's own {label, qty, unit} appended now, ending at itself.
         const childLines = sourceLines
-          .map((l) => ({ dish: l.dish, qty_sold: l.qty_sold, subtotal: perBatchQty * (l.subtotal / yieldQty), path: l.path }))
+          .map((l) => {
+            const subtotal = perBatchQty * (l.subtotal / yieldQty);
+            return {
+              dish: l.dish, qty_sold: l.qty_sold, subtotal, path: l.path,
+              chain: [...l.chain, { label, qty: Math.round(subtotal * 1000) / 1000, unit }],
+            };
+          })
           .filter((l) => l.subtotal > 0);
         if (childLines.length === 0) return;
-        const nestedRecipeId = bareRecipeId(rmId);
         if (nestedRecipeId) {
-          // addNestedLine for THIS row (Coconut Crush) uses the path up to and including
-          // the CURRENT recipe (White Chutney) — "via White Chutney", not a self-
-          // referencing "via White Chutney → Coconut Crush". The hop is appended only for
-          // what gets passed one level deeper, so Coconut Crush's own children correctly
-          // read "via White Chutney → Coconut Crush".
-          const label = bkRecipesById[nestedRecipeId]?.name || nestedRecipeId;
+          // addNestedLine for THIS row (Coconut Crush) uses `path` up to and including
+          // the CURRENT recipe (White Chutney) only — "via White Chutney", not a self-
+          // referencing "via White Chutney → Coconut Crush". Extended to include this
+          // row's own name only for what gets passed one level deeper.
           childLines.forEach((l) => addNestedLine(nestedRecipeId, label, l));
           const withHop = childLines.map((l) => ({ ...l, path: [...l.path, label] }));
           expandNestedRecipe(nestedRecipeId, withHop, nextVisited);
         } else {
-          const leafId = resolveRateId(rmId);
-          if (leafId) childLines.forEach((l) => addNestedLine(leafId, rateMap[leafId]?.name || leafId, l));
+          childLines.forEach((l) => addNestedLine(leafId, label, l));
         }
       });
     };
@@ -1466,11 +1483,15 @@ async function computeRMAudit(date, outletFilter) {
     // sourceLines seeded straight from this recipe's OWN dish-level breakdown (e.g. White
     // Chutney's should_consume_breakdown already says "12 × Rawa Paneer Dosa = 0.84 Kg"),
     // so real dish names/quantities carry all the way down instead of being lost the
-    // moment we start walking the recipe further.
+    // moment we start walking the recipe further. chain's first hop is the top recipe
+    // itself, e.g. "White Chutney: 9.8 Kg for this dish".
     recipeItems.forEach((it) => {
       if (it.unit === 'Kg' && bkRecipesById[it.item_id] && it.should_consume > 0) {
         const sourceLines = (it.should_consume_breakdown || [])
-          .map((b) => ({ dish: b.dish, qty_sold: b.qty_sold, subtotal: b.subtotal, path: [it.raw_material] }))
+          .map((b) => ({
+            dish: b.dish, qty_sold: b.qty_sold, subtotal: b.subtotal, path: [it.raw_material],
+            chain: [{ label: it.raw_material, qty: Math.round(b.subtotal * 1000) / 1000, unit: 'Kg' }],
+          }))
           .filter((l) => l.subtotal > 0);
         if (sourceLines.length > 0) expandNestedRecipe(it.item_id, sourceLines, new Set());
       }
