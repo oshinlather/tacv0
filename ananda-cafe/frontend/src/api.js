@@ -194,6 +194,11 @@ const api = {
   updateRate: (id, data) => patch(`/api/rate-card/${id}`, data),
   deleteRate: (id) => del(`/api/rate-card/${id}`),
 
+  // ── Crockery/Packaging rule (what's covered by the Sales tab's Packaging/Crockery add-on) ──
+  getCrockeryPackagingRules: () => get("/api/crockery-packaging-rules"),
+  addCrockeryPackagingRuleItem: (data) => post("/api/crockery-packaging-rules", data),
+  deleteCrockeryPackagingRuleItem: (rule_type, item_id) => del(`/api/crockery-packaging-rules?rule_type=${rule_type}&item_id=${item_id}`),
+
   // ── Fixed Costs ──
   getFixedCosts: (params) => get("/api/fixed-costs", params),
   saveFixedCost: (data) => post("/api/fixed-costs", data),

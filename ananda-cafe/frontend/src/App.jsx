@@ -269,6 +269,8 @@ const DEMAND_SECTIONS = [
       { id: "hand_gloves", name: "Hand Gloves", unit: "Pkt" },
       { id: "kitchen_wipes", name: "Kitchen Wipes", unit: "Pkt" },
       { id: "rasam_glass", name: "Rasam Glass", unit: "Pkt" },
+      // 1 Pkt = 100 Pcs sachets, ₹814/Pkt — see unit_conversions/rate_card (2026-08-23).
+      { id: "sugar_sachet", name: "Sugar Sachet", unit: "Pkt" },
     ]},
   { id: "cleaning", titleHi: "Cleaning", emoji: "🧹", color: "#9333EA", bg: "#FAF5FF", border: "#E9D5FF",
     items: [
@@ -11667,6 +11669,19 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
       api.getRateCard().then(setRateCardItems).catch(() => setRateCardItems([]));
     }
   }, [lockedOutlet]);
+  // Food Cost (recipe ingredients) and Packaging/Crockery (what's covered by that add-on)
+  // — two nested dropdowns inside each item's expanded row, both default open. Shared
+  // across rows rather than per-item, same simplification as expandedItem itself (only one
+  // row's panel is ever mounted at a time).
+  const [foodCostOpen, setFoodCostOpen] = useState(true);
+  const [packagingOpen, setPackagingOpen] = useState(true);
+  // "+ Add Item" — appends a rate-card item to the GLOBAL crockery/packaging rule (not
+  // per-dish; see backend's computeCrockeryPackagingItems), owner-only same as rate_card
+  // writes. addPkgItemFor: 'dine_in' | 'takeaway' | null — which rule's add-row is open.
+  const [addPkgItemFor, setAddPkgItemFor] = useState(null);
+  const [newPkgItemId, setNewPkgItemId] = useState("");
+  const [newPkgItemQty, setNewPkgItemQty] = useState("");
+  const [pkgRuleSaving, setPkgRuleSaving] = useState(false);
   const fileRef = useRef(null);
 
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
@@ -11824,6 +11839,29 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
 
   useEffect(loadSales, [loadSales]);
   const periodLabel = selMonth ? (monthOptions.find((m) => m.value === selMonth)?.label || selMonth) : (selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr);
+
+  const addPackagingRuleItem = async (ruleType) => {
+    if (!newPkgItemId) { alert("Pick an item"); return; }
+    if (!(Number(newPkgItemQty) > 0)) { alert("Enter a quantity"); return; }
+    const item = rateCardItems.find((r) => r.id === newPkgItemId);
+    if (!item) { alert("Item not found"); return; }
+    setPkgRuleSaving(true);
+    try {
+      await api.addCrockeryPackagingRuleItem({ rule_type: ruleType, item_id: item.id, name: item.name, qty: Number(newPkgItemQty) });
+      setAddPkgItemFor(null); setNewPkgItemId(""); setNewPkgItemQty("");
+      loadSales();
+    } catch (e) { alert("Failed to add: " + e.message); }
+    finally { setPkgRuleSaving(false); }
+  };
+  const removePackagingRuleItem = async (ruleType, itemId) => {
+    if (!window.confirm(`Remove this item from the ${ruleType === "dine_in" ? "Dine In" : "Pickup/Delivery"} packaging rule? This affects every outlet/dish, not just this one.`)) return;
+    setPkgRuleSaving(true);
+    try {
+      await api.deleteCrockeryPackagingRuleItem(ruleType, itemId);
+      loadSales();
+    } catch (e) { alert("Failed to remove: " + e.message); }
+    finally { setPkgRuleSaving(false); }
+  };
 
   // Each sales row priced from the bulk dish-cost map — unpriced dishes (no recipe match)
   // show as "—" rather than a guessed cost, same convention as the RM Audit / P&L screens.
@@ -12050,6 +12088,11 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                   </div>
                                 );
                               })()}
+                              <div onClick={() => setFoodCostOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: foodCostOpen ? 6 : 0 }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>🍲 Food Cost — Ingredients</span>
+                                <span style={{ fontSize: 9, color: "#BBB" }}>{foodCostOpen ? "▲" : "▼"}</span>
+                              </div>
+                              {foodCostOpen && (<>
                               {!item.recipeId && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>No recipe linked for this item — Food Cost unavailable, only the Packaging/Crockery add-on above is a real number.</div>}
                               {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
                               {!isLoadingDetails && details && (
@@ -12218,6 +12261,67 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                   )}
                                 </>
                               )}
+                              </>)}
+                              {/* Packaging/Crockery — what's actually covered by the add-on shown in Unit
+                                  Economics above. The rule is GLOBAL (every dish shares it, see backend's
+                                  computeCrockeryPackagingItems), not per-dish — so "+ Add Item" here adds to
+                                  that shared rule, same as editing a rate-card price affects every recipe
+                                  that uses it. Qty is always a literal piece count (the rule's own
+                                  convention — "2 spoons", not "2 Pkt"), converted server-side into whatever
+                                  unit the item is actually tracked in. */}
+                              {(() => {
+                                const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
+                                const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
+                                const unitOf = (id) => rateCardItems.find((r) => r.id === id)?.unit || "";
+                                const canEditPkgRule = !lockedOutlet && getCurrentUser()?.role === "owner";
+                                const pkgCategoryItems = rateCardItems.filter((r) => r.category === "Packaging");
+                                return (
+                                  <div style={{ marginTop: 14 }}>
+                                    <div onClick={() => setPackagingOpen((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", marginBottom: packagingOpen ? 6 : 0 }}>
+                                      <span style={{ fontSize: 11, fontWeight: 700, color: "#555" }}>📦 Packaging/Crockery — What's Covered</span>
+                                      <span style={{ fontSize: 9, color: "#BBB" }}>{packagingOpen ? "▲" : "▼"}</span>
+                                    </div>
+                                    {packagingOpen && (
+                                      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                        {[
+                                          { key: "dine_in", label: "🍽️ Per Dine-in item sold" },
+                                          { key: "takeaway", label: "🥡🛵 Per Pickup/Delivery order" },
+                                        ].map((grp) => (
+                                          <div key={grp.key} style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
+                                            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>{grp.label}</div>
+                                            {(rules[grp.key] || []).length === 0 && <div style={{ fontSize: 11, color: "#BBB", marginBottom: 6 }}>No items configured</div>}
+                                            {(rules[grp.key] || []).map((r) => (
+                                              <div key={r.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                                <span>{r.name} <span style={{ color: "#999" }}>× {r.qty}</span></span>
+                                                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(r.item_id) != null ? `₹${priceOf(r.item_id)}/${unitOf(r.item_id)}` : "no price"}</span>
+                                                  {canEditPkgRule && <span onClick={() => removePackagingRuleItem(grp.key, r.item_id)} title="Remove from rule" style={{ color: "#DC2626", cursor: pkgRuleSaving ? "default" : "pointer", fontSize: 10 }}>🗑️</span>}
+                                                </span>
+                                              </div>
+                                            ))}
+                                            {canEditPkgRule && (
+                                              addPkgItemFor === grp.key ? (
+                                                <div style={{ marginTop: 8, padding: 8, borderRadius: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                                                  <select autoFocus value={newPkgItemId} onChange={(e) => setNewPkgItemId(e.target.value)} style={{ flex: "1 1 120px", padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "inherit" }}>
+                                                    <option value="">Select item from store…</option>
+                                                    {pkgCategoryItems.map((it) => <option key={it.id} value={it.id}>{it.name} (₹{it.price}/{it.unit})</option>)}
+                                                  </select>
+                                                  <input type="number" inputMode="decimal" placeholder="Qty (pieces)" value={newPkgItemQty} onChange={(e) => setNewPkgItemQty(e.target.value)}
+                                                    style={{ width: 90, padding: "5px 6px", borderRadius: 6, border: "1px solid #BBF7D0", fontSize: 11, fontFamily: "'JetBrains Mono'" }} />
+                                                  <button onClick={() => addPackagingRuleItem(grp.key)} disabled={pkgRuleSaving} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#16A34A", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{pkgRuleSaving ? "⏳..." : "Save"}</button>
+                                                  <button onClick={() => setAddPkgItemFor(null)} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                                                </div>
+                                              ) : (
+                                                <button onClick={() => { setAddPkgItemFor(grp.key); setNewPkgItemId(""); setNewPkgItemQty(""); }} style={{ marginTop: 8, padding: "5px 10px", borderRadius: 6, border: "1px dashed #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Item</button>
+                                              )
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                           </tr>
                         )}

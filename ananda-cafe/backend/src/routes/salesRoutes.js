@@ -1088,23 +1088,40 @@ const CROCKERY_PACKAGING_OUTLETS = new Set(['sec23', 'sec31', 'sec56', 'sec14', 
 // convFactorFor + unit_conversions below, same as the recipe path already does for
 // count-based ingredients — NOT a hardcoded pack size here, so it stays correct if the
 // owner ever changes a pack size in Master Data without a code change.
-const CROCKERY_PER_DINE_IN_ITEM = [
-  { item_id: 'wooden_plates', name: 'Wooden Plates', qty: 1 },
-  { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
-  { item_id: 'paper_bowl', name: 'Paper Bowl', qty: 1 },
-];
-const PACKAGING_PER_TAKEAWAY_ORDER = [
-  { item_id: 'dosa_box_small', name: 'Dosa Box Small', qty: 1 },
-  { item_id: 'container_50ml', name: '50ML Container', qty: 2 },
-  { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
-  { item_id: 'podi_idli_container', name: 'Podi Idli Container', qty: 1 },
-];
+//
+// The rule ITSELF (which items, how many) is owner-editable — stored in app_config
+// (key 'crockery_packaging_rules', see GET/POST/DELETE /api/crockery-packaging-rules
+// below), same JSON-blob-in-app_config pattern as fixed_cost_heads. These two arrays
+// are only the seed/fallback for a brand-new install with no app_config row yet.
+const DEFAULT_CROCKERY_PACKAGING_RULES = {
+  dine_in: [
+    { item_id: 'wooden_plates', name: 'Wooden Plates', qty: 1 },
+    { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
+    { item_id: 'paper_bowl', name: 'Paper Bowl', qty: 1 },
+  ],
+  takeaway: [
+    { item_id: 'dosa_box_small', name: 'Dosa Box Small', qty: 1 },
+    { item_id: 'container_50ml', name: '50ML Container', qty: 2 },
+    { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
+    { item_id: 'podi_idli_container', name: 'Podi Idli Container', qty: 1 },
+  ],
+};
+async function getCrockeryPackagingRules() {
+  const { data } = await supabase.from('app_config').select('value').eq('key', 'crockery_packaging_rules').maybeSingle();
+  if (!data?.value) return DEFAULT_CROCKERY_PACKAGING_RULES;
+  try {
+    const parsed = JSON.parse(data.value);
+    return { dine_in: Array.isArray(parsed.dine_in) ? parsed.dine_in : [], takeaway: Array.isArray(parsed.takeaway) ? parsed.takeaway : [] };
+  } catch (e) { return DEFAULT_CROCKERY_PACKAGING_RULES; }
+}
 // Builds should-consume entries for the crockery/packaging items in the exact same
 // shape computeRMAudit's recipe-matched items use, so they slot into the same list
 // (RM Audit, COGS Compare, P&L) with should_consume_cost/actual_consumed/variance all
 // computed the same way — actualById/rateMap/convFactorFor are the same per-outlet
 // lookups the recipe path already built, just reused here instead of re-fetched.
-function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap, convFactorFor) {
+// `rules` (from getCrockeryPackagingRules) defaults to the seed values so existing
+// callers that haven't been updated yet keep working unchanged.
+function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap, convFactorFor, rules = DEFAULT_CROCKERY_PACKAGING_RULES) {
   if (!CROCKERY_PACKAGING_OUTLETS.has(oid)) return [];
 
   let dineInItems = 0;
@@ -1125,8 +1142,8 @@ function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap
     acc[rule.item_id].qty += subtotal;
     acc[rule.item_id].breakdown.push({ dish: sourceLabel, qty_sold: sourceQty, per_dish: perUnit, subtotal });
   };
-  CROCKERY_PER_DINE_IN_ITEM.forEach((rule) => addRule(rule, 'Dine-in items (crockery)', dineInItems));
-  PACKAGING_PER_TAKEAWAY_ORDER.forEach((rule) => addRule(rule, 'Pickup/Delivery orders (packaging)', takeawayOrders));
+  (rules.dine_in || []).forEach((rule) => addRule(rule, 'Dine-in items (crockery)', dineInItems));
+  (rules.takeaway || []).forEach((rule) => addRule(rule, 'Pickup/Delivery orders (packaging)', takeawayOrders));
 
   return Object.entries(acc).map(([itemId, data]) => {
     const actualItem = actualById[itemId];
@@ -1165,13 +1182,14 @@ async function computeRMAudit(date, outletFilter) {
 
   // Independent of each other — fired concurrently. costingContext is reused below instead
   // of computeStockUsageForDate fetching its own copy of the same six tables a second time.
-  const [sales, { data: recipes }, costingContext] = await Promise.all([
+  const [sales, { data: recipes }, costingContext, crockeryPackagingRules] = await Promise.all([
     // order_type + invoice_no are only needed for the crockery/packaging rule below
     // (dine-in item count, distinct pickup/delivery order count) — the recipe path only
     // ever used outlet_code/item_name/item_quantity.
     fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity, order_type, invoice_no' }),
     supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
     buildCostingContext(),
+    getCrockeryPackagingRules(),
   ]);
 
   const recipeByNormName = {};
@@ -1271,7 +1289,7 @@ async function computeRMAudit(date, outletFilter) {
     // Crockery/Packaging — fixed per-item/per-order rule, not recipe-driven (see
     // computeCrockeryPackagingItems above), so it's computed separately and merged in
     // here rather than going through the theoretical/resolveIngredientRateId path above.
-    const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor);
+    const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor, crockeryPackagingRules);
     const allItems = [...recipeItems, ...crockeryPackagingItems]
       .sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
@@ -3206,9 +3224,10 @@ router.get('/sales', async (req, res) => {
     const outlet = scopedOutletFilter(user, req.query.outlet);
     if (!date && !(from && to)) return res.status(400).json({ error: 'date, or from+to, query param required' });
 
-    const [data, costingContext] = await Promise.all([
+    const [data, costingContext, crockeryPackagingRules] = await Promise.all([
       fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined }),
       buildCostingContext(),
+      getCrockeryPackagingRules(),
     ]);
     const { rateMap, convFactorFor } = costingContext;
 
@@ -3240,7 +3259,7 @@ router.get('/sales', async (req, res) => {
       const [oid] = key.split('|');
       const dineInQty = rows.filter((r) => r.order_type === 'Dine In').reduce((s, r) => s + Number(r.item_quantity || 0), 0);
       const takeawayQty = rows.filter((r) => r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
-      const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor);
+      const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor, crockeryPackagingRules);
       let dineInCost = 0, takeawayCost = 0;
       crockeryItems.forEach((it) => {
         if (it.rate == null) return;
@@ -3322,6 +3341,9 @@ router.get('/sales', async (req, res) => {
       total_revenue: items.reduce((s, i) => s + i.revenue, 0),
       items,
       outlets,
+      // What's covered by the Packaging/Crockery add-on above — sent alongside so the
+      // Sales tab's "what's included" dropdown doesn't need a second round trip.
+      crockery_packaging_rules: crockeryPackagingRules,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -3619,6 +3641,55 @@ router.delete('/fixed-cost-heads', async (req, res) => {
     const { error } = await supabase.from('app_config').upsert({ key: 'fixed_cost_heads', value: JSON.stringify(heads) }, { onConflict: 'key' });
     if (error) throw error;
     res.json({ ok: true, heads });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/crockery-packaging-rules — what's covered by the Packaging/Crockery
+// add-on shown on the Sales tab and folded into RM Audit/P&L (see
+// computeCrockeryPackagingItems above). avp/head_chef get read access too, same tier
+// as rate-card (the Sales tab's "what's included" dropdown is visible to both).
+router.get('/crockery-packaging-rules', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    res.json(await getCrockeryPackagingRules());
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/crockery-packaging-rules — add an item to the Dine In or Pickup/Delivery
+// rule, or update its quantity if already present (upsert by item_id within that rule
+// only — the SAME item can appear in both rules independently, e.g. Bio Spoon already
+// does). Owner-only, same tier as every other master-data write in this file.
+router.post('/crockery-packaging-rules', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { rule_type, item_id, name, qty } = req.body;
+    if (!['dine_in', 'takeaway'].includes(rule_type)) return res.status(400).json({ error: "rule_type must be 'dine_in' or 'takeaway'" });
+    if (!item_id || !name) return res.status(400).json({ error: 'item_id and name are required' });
+    if (!(Number(qty) > 0)) return res.status(400).json({ error: 'qty must be a positive number' });
+    const rules = await getCrockeryPackagingRules();
+    const list = rules[rule_type];
+    const existing = list.find((r) => r.item_id === item_id);
+    if (existing) existing.qty = Number(qty);
+    else list.push({ item_id, name, qty: Number(qty) });
+    const { error } = await supabase.from('app_config').upsert({ key: 'crockery_packaging_rules', value: JSON.stringify(rules) }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json(rules);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/crockery-packaging-rules?rule_type=&item_id= — remove an item from one
+// rule (a mistaken addition, or a packaging item the outlet stopped using).
+router.delete('/crockery-packaging-rules', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { rule_type, item_id } = req.query;
+    if (!['dine_in', 'takeaway'].includes(rule_type)) return res.status(400).json({ error: "rule_type must be 'dine_in' or 'takeaway'" });
+    if (!item_id) return res.status(400).json({ error: 'item_id is required' });
+    const rules = await getCrockeryPackagingRules();
+    rules[rule_type] = rules[rule_type].filter((r) => r.item_id !== item_id);
+    const { error } = await supabase.from('app_config').upsert({ key: 'crockery_packaging_rules', value: JSON.stringify(rules) }, { onConflict: 'key' });
+    if (error) throw error;
+    res.json(rules);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
