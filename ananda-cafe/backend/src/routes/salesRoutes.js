@@ -3481,7 +3481,7 @@ router.get('/sales', async (req, res) => {
           item_name: row.item_name, category: row.category_name, qty: 0, revenue: 0,
           dine_in_qty: 0, dine_in_revenue: 0, dine_in_addon_cost: 0,
           pickup_qty: 0, pickup_revenue: 0, pickup_addon_cost: 0,
-          delivery_qty: 0, delivery_revenue: 0, delivery_addon_cost: 0,
+          delivery_qty: 0, delivery_revenue: 0, delivery_addon_cost: 0, delivery_commission_cost: 0,
         };
       }
       itemMap[row.item_name].qty += row.item_quantity;
@@ -3498,6 +3498,14 @@ router.get('/sales', async (req, res) => {
         itemMap[row.item_name][`${bucket}_qty`] += Number(row.item_quantity || 0);
         itemMap[row.item_name][`${bucket}_revenue`] += Number(row.item_total || 0);
         itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * (rate + categoryRate + sidesRate);
+        // Swiggy/Zomato charge 40% commission on the order value — same rate P&L's
+        // deliveryCommission uses (see computeDailySalesRevenue's swiggy/zomato split by
+        // `area`). "Other" aggregator delivery (area not Zomato/Swiggy — e.g. own-fleet)
+        // pays no platform commission, so it's excluded here, matching P&L's own_delivery
+        // treatment.
+        if (bucket === 'delivery' && (row.area === 'Zomato' || row.area === 'Swiggy')) {
+          itemMap[row.item_name].delivery_commission_cost += Number(row.item_total || 0) * 0.4;
+        }
       }
 
       if (!outletMap[row.outlet_code]) {
