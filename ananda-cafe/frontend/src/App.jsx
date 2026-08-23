@@ -12021,6 +12021,14 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                     <th style={{ ...thS, textAlign: "right" }}>Margin %</th>
                   </tr></thead>
                   <tbody>
+                    <tr style={{ background: "#FAFAF8", borderBottom: "2px solid #E0E0DC" }}>
+                      <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
+                    </tr>
                     {itemsWithCost.map((item, i) => {
                       const isOpen = expandedItem === item.item_name;
                       const details = item.recipeId ? costDetails[item.recipeId] : null;
@@ -12344,14 +12352,6 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                         )}
                       </Fragment>);
                     })}
-                    <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E0E0DC" }}>
-                      <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
