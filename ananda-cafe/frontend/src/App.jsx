@@ -12017,18 +12017,18 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>
                     <th style={thS}>#</th><th style={thS}>Item</th><th style={thS}>Category</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Qty</th><th style={{ ...thS, textAlign: "right" }}>Revenue</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Cost</th><th style={{ ...thS, textAlign: "right" }}>Margin</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Margin %</th>
+                    <th style={{ ...thS, textAlign: "left" }}>Qty</th><th style={{ ...thS, textAlign: "left" }}>Revenue</th>
+                    <th style={{ ...thS, textAlign: "left" }}>Cost</th><th style={{ ...thS, textAlign: "left" }}>Margin</th>
+                    <th style={{ ...thS, textAlign: "left" }}>Margin %</th>
                   </tr></thead>
                   <tbody>
                     <tr style={{ background: "#FAFAF8", borderBottom: "2px solid #E0E0DC" }}>
                       <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}{tableTotalCostPct != null && ` (${tableTotalCostPct.toFixed(1)}%)`}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
-                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
+                      <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
+                      <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
+                      <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}{tableTotalCostPct != null && ` (${tableTotalCostPct.toFixed(1)}%)`}</td>
+                      <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
+                      <td style={{ ...tdS, textAlign: "left", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
                     </tr>
                     {itemsWithCost.map((item, i) => {
                       const isOpen = expandedItem === item.item_name;
@@ -12262,11 +12262,11 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                           <td style={{ ...tdS, color: "#999" }}>{i + 1}</td>
                           <td style={{ ...tdS, fontWeight: 600 }}>{item.item_name} <span style={{ color: "#BBB", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span></td>
                           <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.marginPct != null ? (item.marginPct >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.marginPct != null ? `${item.marginPct.toFixed(1)}%` : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.marginPct != null ? (item.marginPct >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.marginPct != null ? `${item.marginPct.toFixed(1)}%` : "—"}</td>
                         </tr>
                         {isOpen && (
                           <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
