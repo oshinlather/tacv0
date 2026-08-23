@@ -11834,7 +11834,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
     // item's Dine In + Packaging qty — folded into the main Cost/Margin here so the
     // collapsed row and its own Dine In/Packaging breakdown below always reconcile,
     // instead of the row showing food-cost-only while the breakdown shows a fuller number.
-    const addonCost = (item.dine_in_addon_cost || 0) + (item.packaging_addon_cost || 0);
+    const addonCost = (item.dine_in_addon_cost || 0) + (item.pickup_addon_cost || 0) + (item.delivery_addon_cost || 0);
     const cost = unitCost != null ? unitCost * item.qty + addonCost : null;
     const margin = cost != null ? item.revenue - cost : null;
     const marginPct = margin != null && item.revenue > 0 ? (margin / item.revenue) * 100 : null;
@@ -11992,35 +11992,64 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                         {isOpen && (
                           <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
                             <td colSpan={8} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
-                              {/* Dine In vs Packaging (Pickup + Delivery) — packaging/crockery add-on
-                                  cost is only real at S-23/S-56/Elan/GSID today (see backend's
-                                  CROCKERY_PACKAGING_OUTLETS); shows as ₹0 add-on for S-31/S-14. */}
-                              <div style={{ display: "flex", gap: 10, margin: "8px 0 14px", flexWrap: "wrap" }}>
-                                {[
-                                  { key: "dine_in", label: "🍽️ Dine In", addonLabel: "Crockery" },
-                                  { key: "packaging", label: "📦 Packaging (Pickup + Delivery)", addonLabel: "Packaging & Disposal" },
-                                ].map((b) => {
-                                  const qty = item[`${b.key}_qty`] || 0;
-                                  const revenue = item[`${b.key}_revenue`] || 0;
-                                  const addonCost = item[`${b.key}_addon_cost`] || 0;
-                                  const foodCost = item.unitCost != null ? item.unitCost * qty : null;
-                                  const totalCost = foodCost != null ? foodCost + addonCost : null;
-                                  const margin = totalCost != null ? revenue - totalCost : null;
-                                  return (
-                                    <div key={b.key} style={{ flex: "1 1 240px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12 }}>
-                                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{b.label}</div>
-                                      <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5 }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Qty</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB" }}>{qty}</span></div>
-                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Revenue</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#16A34A" }}>{fmt(revenue)}</span></div>
-                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>Food Cost</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{foodCost != null ? fmt(foodCost) : "—"}</span></div>
-                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: "#888" }}>{b.addonLabel}</span><span style={{ fontFamily: "'JetBrains Mono'" }}>{qty > 0 ? fmt(addonCost) : "—"}</span></div>
-                                        <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 4, borderTop: "1px solid #F0F0EC" }}><span style={{ fontWeight: 700 }}>Total Cost</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#DC2626" }}>{totalCost != null ? fmt(totalCost) : "—"}</span></div>
-                                        <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ fontWeight: 700 }}>Margin</span><span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, color: margin != null ? (margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{margin != null ? fmt(margin) : "—"}</span></div>
-                                      </div>
+                              {/* Unit economics — Dine In / Pickup / Delivery as 3 columns, everything
+                                  per single unit sold (not aggregate totals), so cost/margin per item
+                                  is directly comparable across channels regardless of how many of each
+                                  were sold. Packaging/crockery add-on is only real at S-23/S-56/Elan/GSID
+                                  today (see backend's CROCKERY_PACKAGING_OUTLETS) — shows ₹0 add-on for
+                                  S-31/S-14. Pickup and Delivery share the identical add-on rate (the
+                                  underlying rule doesn't distinguish a customer pickup from a Swiggy/
+                                  Zomato delivery — same box either way), Unit Selling Price still differs
+                                  per column since it's each channel's own real revenue ÷ its own qty. */}
+                              {(() => {
+                                const cols = ["dine_in", "pickup", "delivery"].map((key) => {
+                                  const qty = item[`${key}_qty`] || 0;
+                                  const revenue = item[`${key}_revenue`] || 0;
+                                  const addonCost = item[`${key}_addon_cost`] || 0;
+                                  const unitPrice = qty > 0 ? revenue / qty : null;
+                                  const unitFoodCost = item.unitCost;
+                                  const unitAddon = qty > 0 ? addonCost / qty : 0;
+                                  const unitTotalCost = unitFoodCost != null ? unitFoodCost + unitAddon : null;
+                                  const unitMargin = unitTotalCost != null && unitPrice != null ? unitPrice - unitTotalCost : null;
+                                  const marginPct = unitMargin != null && unitPrice > 0 ? (unitMargin / unitPrice) * 100 : null;
+                                  return { key, qty, unitPrice, unitFoodCost, unitAddon, unitTotalCost, unitMargin, marginPct };
+                                });
+                                const COL_LABEL = { dine_in: "🍽️ Dine In", pickup: "🥡 Pickup", delivery: "🛵 Delivery" };
+                                const ROWS = [
+                                  { label: "Qty", get: (c) => c.qty, fmt: (v) => v, color: "#2563EB" },
+                                  { label: "Unit Selling Price", get: (c) => c.unitPrice, fmt: fmt, color: "#16A34A" },
+                                  { label: "Unit Food Cost", get: (c) => c.unitFoodCost, fmt: fmt, color: "#1A1A1A" },
+                                  { label: "Packaging/Crockery Add-on", get: (c) => c.qty > 0 ? c.unitAddon : null, fmt: fmt, color: "#1A1A1A" },
+                                  { label: "Unit Total Cost", get: (c) => c.unitTotalCost, fmt: fmt, color: "#DC2626", bold: true },
+                                  { label: "Unit Margin", get: (c) => c.unitMargin, fmt: fmt, color: (v) => v >= 0 ? "#16A34A" : "#DC2626", bold: true },
+                                  { label: "Margin %", get: (c) => c.marginPct, fmt: (v) => `${v.toFixed(1)}%`, color: (v) => v >= 0 ? "#16A34A" : "#DC2626" },
+                                ];
+                                return (
+                                  <div style={{ marginBottom: 14 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 6 }}>Unit Economics</div>
+                                    <div style={{ overflowX: "auto", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4" }}>
+                                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                                        <thead><tr style={{ background: "#FAFAF8" }}>
+                                          <th style={{ ...thS, background: "transparent" }}></th>
+                                          {cols.map((c) => <th key={c.key} style={{ ...thS, background: "transparent", textAlign: "right" }}>{COL_LABEL[c.key]}</th>)}
+                                        </tr></thead>
+                                        <tbody>
+                                          {ROWS.map((row) => (
+                                            <tr key={row.label} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                              <td style={{ ...tdS, color: "#888", fontWeight: row.bold ? 700 : 400 }}>{row.label}</td>
+                                              {cols.map((c) => {
+                                                const v = row.get(c);
+                                                const color = typeof row.color === "function" ? (v != null ? row.color(v) : "#BBB") : row.color;
+                                                return <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: row.bold ? 800 : 700, color: v != null ? color : "#BBB" }}>{v != null ? row.fmt(v) : "—"}</td>;
+                                              })}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
                                     </div>
-                                  );
-                                })}
-                              </div>
+                                  </div>
+                                );
+                              })()}
                               {!item.recipeId && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 10 }}>No recipe linked for this item — Food Cost unavailable, only the Packaging/Crockery add-on above is a real number.</div>}
                               {isLoadingDetails && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading ingredients...</div>}
                               {!isLoadingDetails && details && (
