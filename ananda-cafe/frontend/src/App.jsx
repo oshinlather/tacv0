@@ -12217,12 +12217,20 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       // list like dine_in/takeaway below) — see backend's TAKEAWAY_CATEGORY_CONTAINERS.
                       // Dosa Box Small only applies to dosas, Podi Idli Container only to idlis, etc.,
                       // so these are shown read-only here rather than mixed into the generic rule editor.
+                      // Dosa/Rice match by category (item names vary too much within those
+                      // categories), Idli/Vada match by item name (PetPooja doesn't split their
+                      // shared "Idli And Vada" category) — same priority order as the backend's
+                      // TAKEAWAY_CATEGORY_CONTAINERS/matchTakeawayCategoryContainer.
                       const CATEGORY_CONTAINERS_DISPLAY = [
-                        { item_id: "dosa_box_small", name: "Dosa Box Small", forLabel: "Dosa items" },
-                        { item_id: "podi_idli_container", name: "Podi Idli Container", forLabel: "Idli items" },
-                        { item_id: "container_500ml", name: "500ML Container", forLabel: "Rice items" },
-                        { item_id: "vada_lifafa", name: "Vada Lifafa", forLabel: "Vada items" },
+                        { key: "dosa", matchField: "category", match: "dosa", item_id: "dosa_box_small", name: "Dosa Box Small", forLabel: "Dosa items" },
+                        { key: "rice", matchField: "category", match: "rice", item_id: "container_500ml", name: "500ML Container", forLabel: "Rice items" },
+                        { key: "idli", matchField: "item_name", match: "idli", item_id: "podi_idli_container", name: "Podi Idli Container", forLabel: "Idli items" },
+                        { key: "vada", matchField: "item_name", match: "vada", item_id: "vada_lifafa", name: "Vada Lifafa", forLabel: "Vada items" },
                       ];
+                      const matchedCategoryContainer = CATEGORY_CONTAINERS_DISPLAY.find((c) => {
+                        const field = c.matchField === "category" ? item.category : item.item_name;
+                        return (field || "").toLowerCase().includes(c.match);
+                      });
                       const renderPackagingContent = () => {
                         const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
                         const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
@@ -12266,14 +12274,16 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                               </div>
                             ))}
                             <div style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
-                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>🍱 Per Pickup/Delivery item (category-matched, 1 per dish)</div>
-                              {CATEGORY_CONTAINERS_DISPLAY.map((c) => (
-                                <div key={c.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
-                                  <span>{c.name} <span style={{ color: "#999" }}>— {c.forLabel} only</span></span>
-                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(c.item_id) != null ? `₹${priceOf(c.item_id)}/${unitOf(c.item_id)}` : "no price"}</span>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>🍱 Per Pickup/Delivery unit of {item.item_name}</div>
+                              {matchedCategoryContainer ? (
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                  <span>{matchedCategoryContainer.name} <span style={{ color: "#999" }}>× 1</span></span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(matchedCategoryContainer.item_id) != null ? `₹${priceOf(matchedCategoryContainer.item_id)}/${unitOf(matchedCategoryContainer.item_id)}` : "no price"}</span>
                                 </div>
-                              ))}
-                              <div style={{ fontSize: 10, color: "#BBB", marginTop: 6 }}>Fixed mapping, not editable here — only one applies per dish, matched by category.</div>
+                              ) : (
+                                <div style={{ fontSize: 11, color: "#BBB", marginBottom: 6 }}>No category container applies to this item</div>
+                              )}
+                              <div style={{ fontSize: 10, color: "#BBB", marginTop: 6 }}>Fixed mapping, not editable here — matched by dish category (dosa/idli/rice/vada each use their own container).</div>
                             </div>
                           </div>
                         );
