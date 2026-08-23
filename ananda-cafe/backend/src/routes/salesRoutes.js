@@ -1074,12 +1074,14 @@ function resolveIngredientRateId(key, rateByName, bkRecipeByName) {
 
 // Crockery/Packaging — a fixed operational rule the owner sets, not a dish recipe, so
 // it can't be captured by the usual sales × recipe_ingredients path (no single dish
-// "contains" a wooden plate). Applies only at these 4 outlets: every DINE-IN item sold
-// (each line item counts individually — a table ordering 3 dosas is 3 plates) gets 1
-// Wooden Plate + 2 Bio Spoon + 1 Paper Bowl; every PICKUP/DELIVERY order (once per
-// order, not per item in it) gets 1 Dosa Box Small + 2×50ML Container + 2 Bio Spoon +
-// 1 Podi Idli Container. Bio Spoon is used by both rules and combines into one figure.
-const CROCKERY_PACKAGING_OUTLETS = new Set(['sec23', 'sec56', 'elan', 'gaursid']);
+// "contains" a wooden plate). Applies at all 6 outlets (originally only sec23/sec56/
+// elan/gaursid — extended to sec31/sec14 per the owner's own request, same rule, no
+// outlet-specific variation): every DINE-IN item sold (each line item counts
+// individually — a table ordering 3 dosas is 3 plates) gets 1 Wooden Plate + 2 Bio
+// Spoon + 1 Paper Bowl; every PICKUP/DELIVERY order (once per order, not per item in
+// it) gets 1 Dosa Box Small + 2×50ML Container + 2 Bio Spoon + 1 Podi Idli Container.
+// Bio Spoon is used by both rules and combines into one figure.
+const CROCKERY_PACKAGING_OUTLETS = new Set(['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid']);
 // Rule quantities are always literal PIECE counts (1 plate, 2 spoons, ...) — converted
 // into whatever unit each item is actually tracked/priced in (Pkt for Bio Spoon/Paper
 // Bowl/50ML Container/Podi Idli Container, Pcs for Wooden Plates/Dosa Box Small) via
@@ -3220,15 +3222,14 @@ router.get('/sales', async (req, res) => {
       : row.order_type?.includes('Delivery') ? 'delivery' : null;
 
     // Packaging/Crockery add-on cost per item — the fixed per-outlet-per-day operational
-    // allowance (see computeCrockeryPackagingItems) isn't a per-dish recipe, so there's no
-    // dish-specific "this parcel needs 1 box" fact to attach directly. Instead it's averaged:
-    // every Dine-in unit sold at that outlet that day shares that day's total crockery cost
-    // equally; every Pickup/Delivery unit shares that day's total packaging cost equally
-    // (computed once across BOTH, since the rule itself doesn't distinguish a customer pickup
-    // from a Swiggy/Zomato delivery — same box either way — so Pickup and Delivery get the
-    // identical ₹/unit rate here, just kept as separate columns downstream). Only real at the
-    // 4 outlets that rule already covers (sec23/sec56/elan/gaursid) — sec31/sec14 come out to
-    // ₹0 add-on, same gap as everywhere else this rule is used.
+    // allowance (see computeCrockeryPackagingItems, now covering all 6 outlets) isn't a
+    // per-dish recipe, so there's no dish-specific "this parcel needs 1 box" fact to attach
+    // directly. Instead it's averaged: every Dine-in unit sold at that outlet that day shares
+    // that day's total crockery cost equally; every Pickup/Delivery unit shares that day's
+    // total packaging cost equally (computed once across BOTH, since the rule itself doesn't
+    // distinguish a customer pickup from a Swiggy/Zomato delivery — same box either way — so
+    // Pickup and Delivery get the identical ₹/unit rate here, just kept as separate columns
+    // downstream).
     const byOutletDay = {};
     (data || []).forEach((r) => {
       const key = `${r.outlet_code}|${r.sale_date}`;

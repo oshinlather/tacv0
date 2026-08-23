@@ -11995,11 +11995,11 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                               {/* Unit economics — Dine In / Pickup / Delivery as 3 columns, everything
                                   per single unit sold (not aggregate totals), so cost/margin per item
                                   is directly comparable across channels regardless of how many of each
-                                  were sold. Packaging/crockery add-on is only real at S-23/S-56/Elan/GSID
-                                  today (see backend's CROCKERY_PACKAGING_OUTLETS) — shows ₹0 add-on for
-                                  S-31/S-14. Pickup and Delivery share the identical add-on rate (the
-                                  underlying rule doesn't distinguish a customer pickup from a Swiggy/
-                                  Zomato delivery — same box either way), Unit Selling Price still differs
+                                  were sold. Packaging/crockery add-on now applies at all 6 outlets (see
+                                  backend's CROCKERY_PACKAGING_OUTLETS). Pickup and Delivery share the
+                                  identical add-on rate (the underlying rule doesn't distinguish a
+                                  customer pickup from a Swiggy/Zomato delivery — same box either way),
+                                  Unit Selling Price still differs
                                   per column since it's each channel's own real revenue ÷ its own qty. */}
                               {(() => {
                                 const cols = ["dine_in", "pickup", "delivery"].map((key) => {
