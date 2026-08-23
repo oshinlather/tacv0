@@ -11884,6 +11884,14 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   const totalCogs = itemsWithCost.reduce((s, i) => s + (i.cost || 0), 0);
   const pricedRevenue = itemsWithCost.filter((i) => i.cost != null).reduce((s, i) => s + (i.revenue || 0), 0);
   const totalMargin = pricedRevenue - totalCogs;
+  // Item-wise Sales table's own Total row — straight column sums (every item's revenue,
+  // regardless of whether it's priced) rather than the Est. Margin card's pricedRevenue-only
+  // figure above, so Total Margin = Total Revenue − Total Cost reconciles exactly with what's
+  // visually summable from the table itself.
+  const tableTotalQty = itemsWithCost.reduce((s, i) => s + (i.qty || 0), 0);
+  const tableTotalRevenue = itemsWithCost.reduce((s, i) => s + (i.revenue || 0), 0);
+  const tableTotalMargin = tableTotalRevenue - totalCogs;
+  const tableTotalMarginPct = tableTotalRevenue > 0 ? (tableTotalMargin / tableTotalRevenue) * 100 : null;
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -12336,6 +12344,14 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                         )}
                       </Fragment>);
                     })}
+                    <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E0E0DC" }}>
+                      <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{tableTotalQty}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(tableTotalRevenue)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{fmt(totalCogs)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{fmt(tableTotalMargin)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", color: tableTotalMargin >= 0 ? "#16A34A" : "#DC2626" }}>{tableTotalMarginPct != null ? `${tableTotalMarginPct.toFixed(1)}%` : "—"}</td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
