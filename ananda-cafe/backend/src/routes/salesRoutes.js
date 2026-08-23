@@ -1403,38 +1403,76 @@ async function computeRMAudit(date, outletFilter) {
     // direct, outlet-comparable should-consume figure are skipped here.
     const directItemIds = new Set(recipeItems.map((it) => it.item_id));
     const nestedTheoretical = {}; // item_id -> { raw_material, item_id, qty, breakdown }
-    const addNested = (leafId, label, qty, viaLabel) => {
-      if (!leafId || qty <= 0 || directItemIds.has(leafId)) return;
+    // Each recursion level used to collapse down to a single scalar qty + the IMMEDIATE
+    // parent's name ("via Coconut Crush"), so three completely different root causes
+    // (White Chutney, Sambhar, Red Chutney all needing Coconut Crush) landed as three
+    // identical, unlabeled "via Coconut Crush" lines — no way to tell them apart or trace
+    // back to an actual dish. Threading real dish-level lines through instead: each line
+    // carries the ORIGINAL dish name/qty_sold (from the top recipe's own should_consume_
+    // breakdown) plus the full path walked so far, split proportionally at every level
+    // (a dish's share of White Chutney splits into that same share of Coconut Crush, then
+    // of Coconut) so the leaf's breakdown reads "12 × Rawa Paneer Dosa (via White Chutney
+    // → Coconut Crush) = 0.84 Pcs" instead of an anonymous "via Coconut Crush".
+    const addNestedLine = (leafId, label, line) => {
+      if (!leafId || line.subtotal <= 0 || directItemIds.has(leafId)) return;
       if (!nestedTheoretical[leafId]) nestedTheoretical[leafId] = { raw_material: label, item_id: leafId, qty: 0, breakdown: [] };
-      nestedTheoretical[leafId].qty += qty;
-      nestedTheoretical[leafId].breakdown.push({ dish: `via ${viaLabel}`, qty_sold: null, per_dish: null, subtotal: Math.round(qty * 1000) / 1000 });
+      nestedTheoretical[leafId].qty += line.subtotal;
+      const subtotal = Math.round(line.subtotal * 1000) / 1000;
+      nestedTheoretical[leafId].breakdown.push({
+        dish: `${line.dish} (via ${line.path.join(' → ')})`,
+        qty_sold: line.qty_sold,
+        per_dish: line.qty_sold > 0 ? Math.round((subtotal / line.qty_sold) * 100000) / 100000 : null,
+        subtotal,
+      });
     };
-    const expandNestedRecipe = (recipeId, qtyKg, viaLabel, visited) => {
+    // sourceLines: [{ dish, qty_sold, subtotal (Kg of `recipeId` this dish's own sales
+    // account for), path: [names walked so far] }]
+    const expandNestedRecipe = (recipeId, sourceLines, visited) => {
       if (visited.has(recipeId) || visited.size > 8) return; // cycle/runaway guard
       const nextVisited = new Set(visited); nextVisited.add(recipeId);
       const recipe = bkRecipesById[recipeId];
       const yieldQty = Number(recipe?.yield_qty) || 1;
-      const batches = yieldQty > 0 ? qtyKg / yieldQty : 0;
+      if (yieldQty <= 0) return;
       (bkIngredientsByRecipeId[recipeId] || []).forEach((ing) => {
         const rmId = ing.raw_material_id;
-        const childQty = Number(ing.qty || 0) * batches;
-        if (childQty <= 0) return;
+        const perBatchQty = Number(ing.qty || 0);
+        if (perBatchQty <= 0) return;
+        // This ingredient's total need, split back across each source dish proportional
+        // to how much of `recipeId` that dish's own sales required (batches = that dish's
+        // subtotal / yieldQty) — sums back to the same total the old scalar math gave.
+        const childLines = sourceLines
+          .map((l) => ({ dish: l.dish, qty_sold: l.qty_sold, subtotal: perBatchQty * (l.subtotal / yieldQty), path: l.path }))
+          .filter((l) => l.subtotal > 0);
+        if (childLines.length === 0) return;
         const nestedRecipeId = bareRecipeId(rmId);
         if (nestedRecipeId) {
+          // addNestedLine for THIS row (Coconut Crush) uses the path up to and including
+          // the CURRENT recipe (White Chutney) — "via White Chutney", not a self-
+          // referencing "via White Chutney → Coconut Crush". The hop is appended only for
+          // what gets passed one level deeper, so Coconut Crush's own children correctly
+          // read "via White Chutney → Coconut Crush".
           const label = bkRecipesById[nestedRecipeId]?.name || nestedRecipeId;
-          addNested(nestedRecipeId, label, childQty, viaLabel);
-          expandNestedRecipe(nestedRecipeId, childQty, label, nextVisited);
+          childLines.forEach((l) => addNestedLine(nestedRecipeId, label, l));
+          const withHop = childLines.map((l) => ({ ...l, path: [...l.path, label] }));
+          expandNestedRecipe(nestedRecipeId, withHop, nextVisited);
         } else {
           const leafId = resolveRateId(rmId);
-          if (leafId) addNested(leafId, rateMap[leafId]?.name || leafId, childQty, viaLabel);
+          if (leafId) childLines.forEach((l) => addNestedLine(leafId, rateMap[leafId]?.name || leafId, l));
         }
       });
     };
     // Kg-yielding recipes only — a Pcs/count-based top-level item (should_consume's own
     // unit branch above) isn't a batch-yield recipe in the same sense, nothing to expand.
+    // sourceLines seeded straight from this recipe's OWN dish-level breakdown (e.g. White
+    // Chutney's should_consume_breakdown already says "12 × Rawa Paneer Dosa = 0.84 Kg"),
+    // so real dish names/quantities carry all the way down instead of being lost the
+    // moment we start walking the recipe further.
     recipeItems.forEach((it) => {
       if (it.unit === 'Kg' && bkRecipesById[it.item_id] && it.should_consume > 0) {
-        expandNestedRecipe(it.item_id, it.should_consume, it.raw_material, new Set());
+        const sourceLines = (it.should_consume_breakdown || [])
+          .map((b) => ({ dish: b.dish, qty_sold: b.qty_sold, subtotal: b.subtotal, path: [it.raw_material] }))
+          .filter((l) => l.subtotal > 0);
+        if (sourceLines.length > 0) expandNestedRecipe(it.item_id, sourceLines, new Set());
       }
     });
     const nestedItems = Object.values(nestedTheoretical).map((n) => {
