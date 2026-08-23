@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import api from "./api";
 
-// Store Inventory Module — Stage 5: BK Production stock-in. Records "BK cooked a batch
-// of X" as a real ledger event (consumes ingredients, produces the output), fixing the
-// gap the migration-comparison tool found — BK-prepared items had no stock-in path at
-// all before this, only Vendor Challans (external purchases). New, separate file per
-// the "don't rewrite App.jsx" rule.
+// Store Inventory Module — Stage 5: BK Production log. Records "BK cooked a batch of X"
+// — what, when, and roughly which ingredients — as history. REVISED: this is no longer
+// a live stock-in/stock-out — BK isn't a tracked ledger location (confirmed with the
+// owner: the old "BK Closing Stock" count has only ever been Store's, and BK
+// operationally works like an outlet — demand, receive, no live per-movement ledger).
+// New, separate file per the "don't rewrite App.jsx" rule.
 
 const fmtQty = (n) => { const v = Number(n) || 0; return Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toLocaleString("en-IN", { maximumFractionDigits: 3 }); };
 const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330); return d.toISOString().slice(0, 10); };
@@ -30,7 +31,7 @@ function RunList({ onNew }) {
   return (
     <div>
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400E" }}>
-        🆕 New Store Inventory Module — Stage 5 (Beta). Records BK-prepared batches (sambhar, batters, chutneys) as real stock-in — the gap between "dispatched out" and "never replenished" this fixes.
+        🆕 New Store Inventory Module — Stage 5 (Beta). Logs BK-prepared batches (sambhar, batters, chutneys) — what was made, when, and roughly what it used. This is a history log, not a live stock count — BK doesn't carry a tracked balance.
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
         <button onClick={onNew} style={{ ...btnPrimary, background: "#B45309" }}>🏭 Record a Batch</button>
@@ -121,8 +122,8 @@ function NewRun({ onDone, onCancel }) {
           <input type="number" min="0" step="any" value={yieldOverride} onChange={(e) => setYieldOverride(e.target.value)} placeholder={String(computedYield)} style={inputStyle} />
 
           <div style={{ marginTop: 14, padding: "10px 12px", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#166534", marginBottom: 6 }}>Will produce: +{fmtQty(actualYield)} {recipe.yield_unit}</div>
-            <div style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>Will consume from BK stock:</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#166534", marginBottom: 6 }}>Yield: +{fmtQty(actualYield)} {recipe.yield_unit}</div>
+            <div style={{ fontSize: 11, color: "#666", marginBottom: 4 }}>Approx. ingredients used (log only, doesn't affect any stock count):</div>
             {recipe.ingredients.map((ing) => (
               <div key={ing.item_id} style={{ fontSize: 11, color: "#888", display: "flex", justifyContent: "space-between" }}>
                 <span>{ing.item_id}</span><span>−{fmtQty(ing.qty_per_batch * batchNum)}</span>
@@ -137,7 +138,7 @@ function NewRun({ onDone, onCancel }) {
 
       {error && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={submit} disabled={!recipe || saving} style={{ ...btnPrimary, background: "#B45309", opacity: recipe && !saving ? 1 : 0.5 }}>{saving ? "Saving…" : "✅ Record Batch → Stock In"}</button>
+        <button onClick={submit} disabled={!recipe || saving} style={{ ...btnPrimary, background: "#B45309", opacity: recipe && !saving ? 1 : 0.5 }}>{saving ? "Saving…" : "✅ Log This Batch"}</button>
         <button onClick={onCancel} style={btnGhost}>Cancel</button>
       </div>
     </div>

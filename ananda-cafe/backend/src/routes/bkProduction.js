@@ -23,7 +23,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
-const { gate, rebuildStockBalances } = require("./store");
+const { gate } = require("./store");
 
 // Resolves a recipe's output item id and each ingredient's item id. Returns
 // { outputItemId, ingredients: [{raw_material_id, item_id, qty_per_batch}], unresolved: [...] }.
@@ -118,22 +118,16 @@ router.post("/production", async (req, res) => {
     if (riErr) return res.status(500).json({ error: riErr.message });
   }
 
-  const movements = ingredientRows.map((ing) => ({
-    item_id: ing.item_id, location_id: "bk", movement_type: "PRODUCTION", qty_delta: -ing.qty_consumed,
-    source_type: "production", source_id: String(run.id), idempotency_key: `production:${run.id}:consume:${ing.item_id}`, created_by: user.name,
-  }));
-  movements.push({
-    item_id: outputItemId, location_id: "bk", movement_type: "PRODUCTION", qty_delta: actualYield,
-    qty_entered: actualYield, unit_entered: r.yield_unit, source_type: "production", source_id: String(run.id),
-    idempotency_key: `production:${run.id}:yield:${outputItemId}`, created_by: user.name,
-  });
-  const { error: mvErr } = await supabase.from("stock_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
-  if (mvErr) return res.status(500).json({ error: mvErr.message });
-
-  for (const itemId of new Set(movements.map((m) => m.item_id))) {
-    await rebuildStockBalances({ itemId, locationId: "bk" });
-  }
-
+  // REVISED (Stage 5 course-correction): no stock_movements are written here any more.
+  // BK isn't a tracked location — confirmed directly with the owner that the old "BK
+  // Closing Stock" count has only ever been Store's real count, mislabeled, and BK
+  // operationally works like an outlet (demand -> receive -> no live ledger). The raw
+  // materials "consumed" here already left Store's tracked balance when BK's demand for
+  // them was originally dispatched (see stockOutHooks.js) — decrementing them again at a
+  // 'bk' location with no real balance would be double-counting against nothing. This
+  // stays purely a historical/reporting log now (bk_production_runs +
+  // bk_production_run_ingredients, both still written above) — what was cooked, when,
+  // and from what — without pretending there's a live BK stock number behind it.
   res.json({ ...run, ingredients: ingredientRows });
 });
 

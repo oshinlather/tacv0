@@ -3,26 +3,28 @@
 // than reinventing a parallel dispatch flow. salesRoutes.js only gains one extra
 // function call at the end of that route — this file holds all the new logic.
 //
-// Scope, deliberately: only the DISPATCH action is hooked up here. Wastage
-// (demands.type === 'wastage') is NOT — real wastage rows can be created/edited through
-// several different existing routes (POST /demands, PATCH /demands/:id,
-// PATCH /demands/:id/finalize, the /qty-edit wastage branch), and only the rare
-// outlet_id==='bk' case would even have a tracked location to decrement. Wiring all of
-// those consistently (including edits-after-submission changing a qty already applied
-// to the ledger) is a real, separate piece of work, not something to bolt on here as an
-// afterthought — 'WASTAGE' is already a valid stock_movements.movement_type (added in
-// Stage 1) for whenever that's built.
-//
-// Direction logic, from the already-confirmed demands table shape:
-//   - type === 'bk_demand' (BK demanding from the central Store, via BKDemandForm):
-//     dispatching this fulfils Store -> BK. Both sides are tracked locations, so this is
-//     a TRANSFER: a decrement at 'store' and an increment at 'bk', two ledger rows.
-//   - type === 'manual' (a real outlet's regular demand on BK): dispatching this is
-//     BK -> outlet. The outlet is NOT a tracked location (decided back in Stage 1's
-//     planning), so this is a plain DISPATCH: decrement at 'bk' only, with
-//     dest_outlet_id recorded for reporting/audit, no ledger row for the outlet itself.
-//   - Any other type value (e.g. 'photo') is left alone — not enough was confirmed about
-//     what those represent to assume they mean a real stock movement.
+// REVISED (Stage 5 course-correction): BK is NOT a tracked location. Originally built
+// assuming Store and BK were two separate, independently-stocked places with real
+// transfers between them — confirmed directly with the owner that this was wrong on two
+// counts: (1) the old "BK Closing Stock" daily count has only ever been Store's real
+// physical count, mislabeled — there has never been an independent count of BK at all;
+// (2) operationally BK works exactly like an outlet — it creates a demand, receives a
+// dispatch, and (like outlets) isn't given a live per-movement ledger. The owner
+// explicitly chose "simplify BK to outlet-style" over "keep BK fully tracked" when asked
+// directly. So:
+//   - type === 'bk_demand' (BK demanding from Store): dispatching this is now a plain
+//     DISPATCH out of 'store' only — Store's tracked balance decrements, same shape as
+//     dispatching to any real outlet (dest_outlet_id='bk' for the audit trail). No
+//     ledger row for BK's side, because BK isn't tracked, same as no outlet ever gets one.
+//   - type === 'manual' (BK fulfilling a real outlet's demand): this is BK's OWN
+//     dispatch, out of a location this ledger doesn't track. Nothing to decrement here
+//     any more than there's something to decrement when an outlet consumes what it was
+//     sent — this is now fully out of scope, matching outlets.
+//   - Any other type value is left alone, as before.
+// The historical stock_movements rows this hook wrote for 'bk' before this change
+// (real dispatches, a Stage 1 opening snapshot) are NOT deleted — they're left as
+// history, just no longer added to. store_stock_balances for location='bk' should be
+// treated as stale/informational only from here on, not a live number.
 //
 // Item mapping: dispatch_items/items_units keys are demand_item_id values (the same ids
 // DEMAND_SECTIONS in App.jsx uses). Stage 1's items.demand_item_id column already
@@ -41,7 +43,10 @@ const { rebuildStockBalances } = require("./store");
 // any real logic.
 async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, itemsUnits, actorName }) {
   if (!dispatchItems || !Object.keys(dispatchItems).length) return { skipped: "no dispatch_items" };
-  if (type !== "manual" && type !== "bk_demand") return { skipped: `type "${type}" out of scope` };
+  // 'manual' (BK -> outlet) is no longer tracked at all — neither side is a tracked
+  // location. Only 'bk_demand' (Store -> BK) still touches the ledger, and only on
+  // Store's side.
+  if (type !== "bk_demand") return { skipped: `type "${type}" out of scope` };
 
   const demandItemIds = Object.keys(dispatchItems).filter((k) => Number(dispatchItems[k]) > 0);
   if (!demandItemIds.length) return { skipped: "no positive-qty items" };
@@ -68,14 +73,8 @@ async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, 
     const qtyBase = qtyEntered * factor;
     if (!(qtyBase > 0)) continue;
 
-    if (type === "bk_demand") {
-      movements.push({ item_id: item.id, location_id: "store", movement_type: "TRANSFER", qty_delta: -qtyBase, qty_entered: qtyEntered, unit_entered: unit, dest_location_id: "bk", source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:out`, created_by: actorName || "system" });
-      movements.push({ item_id: item.id, location_id: "bk", movement_type: "TRANSFER", qty_delta: qtyBase, qty_entered: qtyEntered, unit_entered: unit, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}:in`, created_by: actorName || "system" });
-      affected.add(`${item.id}::store`); affected.add(`${item.id}::bk`);
-    } else {
-      movements.push({ item_id: item.id, location_id: "bk", movement_type: "DISPATCH", qty_delta: -qtyBase, qty_entered: qtyEntered, unit_entered: unit, dest_outlet_id: outletId, source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}`, created_by: actorName || "system" });
-      affected.add(`${item.id}::bk`);
-    }
+    movements.push({ item_id: item.id, location_id: "store", movement_type: "DISPATCH", qty_delta: -qtyBase, qty_entered: qtyEntered, unit_entered: unit, dest_outlet_id: "bk", source_type: "dispatch", source_id: demandId, idempotency_key: `dispatch:${demandId}:${item.id}`, created_by: actorName || "system" });
+    affected.add(`${item.id}::store`);
   }
 
   if (!movements.length) return { skipped: "no items mapped to the new ledger", skippedItems };
