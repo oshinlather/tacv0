@@ -1132,6 +1132,19 @@ function matchTakeawayCategoryContainer(row) {
   }
   return null;
 }
+// Sambhar + Chutney sides — every pickup/delivery ORDER (not per line item) that
+// contains at least one Dosa, Idli, or Vada item gets 1 Sambhar (250ML Container) and
+// 2 Chutney (50ML Container) packed once for the whole order, same as Bio Spoon's
+// per-order pattern, not per-dish like TAKEAWAY_CATEGORY_CONTAINERS above. Rice-only
+// orders don't get sides, so this is gated on category, not universal like Bio Spoon.
+const SAMBHAR_CHUTNEY_SIDES = [
+  { item_id: 'container_250ml', name: '250ML Container (Sambhar)', qty: 1 },
+  { item_id: 'container_50ml', name: '50ML Container (Chutney)', qty: 2 },
+];
+function isDosaIdliVadaRow(row) {
+  const match = matchTakeawayCategoryContainer(row);
+  return !!match && match.key !== 'rice';
+}
 async function getCrockeryPackagingRules() {
   const { data } = await supabase.from('app_config').select('value').eq('key', 'crockery_packaging_rules').maybeSingle();
   if (!data?.value) return DEFAULT_CROCKERY_PACKAGING_RULES;
@@ -1190,6 +1203,15 @@ function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap
       addRule({ item_id: itemId, name: containerName, qty: 1 }, `Pickup/Delivery — ${dishName}`, qty);
     });
   });
+
+  // Sambhar + Chutney sides — see SAMBHAR_CHUTNEY_SIDES: once per order (not per dish)
+  // for any pickup/delivery order containing at least one Dosa/Idli/Vada item.
+  const sidesEligibleInvoices = new Set();
+  outletSalesRows.forEach((r) => {
+    if (r.order_type !== 'Pick Up' && !r.order_type?.includes('Delivery')) return;
+    if (isDosaIdliVadaRow(r)) sidesEligibleInvoices.add(r.invoice_no);
+  });
+  SAMBHAR_CHUTNEY_SIDES.forEach((rule) => addRule(rule, 'Pickup/Delivery orders with Dosa/Idli/Vada (sides)', sidesEligibleInvoices.size));
 
   return Object.entries(acc).map(([itemId, data]) => {
     const actualItem = actualById[itemId];
@@ -1334,11 +1356,107 @@ async function computeRMAudit(date, outletFilter) {
       };
     }).filter(Boolean);
 
+    // Nested BK recipes — a dish ingredient like "White Chutney" is itself a BK recipe
+    // made from Coconut Crush, which is itself made from Coconut. resolveIngredientRateId
+    // above stops at White Chutney (it already resolves to a valid, priced item), so
+    // Coconut Crush/Coconut never got their own should_consume figure and stayed
+    // permanently flagged "not in any dish recipe" even though they're genuinely wired
+    // in, just nested two levels deep — verified against real data (coconut is used by
+    // White Chutney, Sambhar, AND Red Chutney, all via Coconut Crush).
+    //
+    // Walked here as ADDITIONAL rows, never replacing the parent (White Chutney is also
+    // tracked directly as its own outlet demand/closing item, dispatched separately from
+    // raw Coconut) and flagged is_nested so ideal_material_cost/actual_material_cost
+    // below don't double-count them: White Chutney's own should_consume_cost already
+    // prices the whole nested chain via bkRecipeMap.costPerKg. These rows exist purely so
+    // a nested raw material's own ACTUAL outlet consumption (Coconut is genuinely
+    // dispatched/closed at outlets in its own right, separate from White Chutney) has a
+    // should-consume figure to compare against instead of no baseline at all.
+    const { bkIngredientsByRecipeId, bkRecipesById, resolveRateId } = costingContext;
+    // Recognizes rmId as pointing to ANOTHER bk recipe, bypassing rate_card entirely — a
+    // raw_material_id can collide with a stray/legacy rate_card row sharing its id
+    // (confirmed: coconut_crush has both a real bk_recipes row AND an old rate_card row,
+    // ₹230/Pcs, that looks like leftover "whole coconuts dispatched under the recipe's id"
+    // data — see CLAUDE.md's own note on this exact collision). That collision must not
+    // block recognizing the real recipe underneath it here; it's a separate PRICING
+    // question (still resolved via resolveRateId/rate-card-first below, unchanged), not a
+    // "does this recipe exist" one.
+    const bareRecipeId = (rmId) => {
+      if (!rmId) return null;
+      if (bkRecipesById[rmId]) return rmId;
+      const stripped = rmId.replace(/_raw$/, '');
+      if (bkRecipesById[stripped]) return stripped;
+      if (BK_INGREDIENT_TO_RATE[rmId] && bkRecipesById[BK_INGREDIENT_TO_RATE[rmId]]) return BK_INGREDIENT_TO_RATE[rmId];
+      return null;
+    };
+    const nestedTheoretical = {}; // item_id -> { raw_material, item_id, qty, breakdown }
+    const addNested = (leafId, label, qty, viaLabel) => {
+      if (!leafId || qty <= 0) return;
+      if (!nestedTheoretical[leafId]) nestedTheoretical[leafId] = { raw_material: label, item_id: leafId, qty: 0, breakdown: [] };
+      nestedTheoretical[leafId].qty += qty;
+      nestedTheoretical[leafId].breakdown.push({ dish: `via ${viaLabel}`, qty_sold: null, per_dish: null, subtotal: Math.round(qty * 1000) / 1000 });
+    };
+    const expandNestedRecipe = (recipeId, qtyKg, viaLabel, visited) => {
+      if (visited.has(recipeId) || visited.size > 8) return; // cycle/runaway guard
+      const nextVisited = new Set(visited); nextVisited.add(recipeId);
+      const recipe = bkRecipesById[recipeId];
+      const yieldQty = Number(recipe?.yield_qty) || 1;
+      const batches = yieldQty > 0 ? qtyKg / yieldQty : 0;
+      (bkIngredientsByRecipeId[recipeId] || []).forEach((ing) => {
+        const rmId = ing.raw_material_id;
+        const childQty = Number(ing.qty || 0) * batches;
+        if (childQty <= 0) return;
+        const nestedRecipeId = bareRecipeId(rmId);
+        if (nestedRecipeId) {
+          const label = bkRecipesById[nestedRecipeId]?.name || nestedRecipeId;
+          addNested(nestedRecipeId, label, childQty, viaLabel);
+          expandNestedRecipe(nestedRecipeId, childQty, label, nextVisited);
+        } else {
+          const leafId = resolveRateId(rmId);
+          if (leafId) addNested(leafId, rateMap[leafId]?.name || leafId, childQty, viaLabel);
+        }
+      });
+    };
+    // Kg-yielding recipes only — a Pcs/count-based top-level item (should_consume's own
+    // unit branch above) isn't a batch-yield recipe in the same sense, nothing to expand.
+    recipeItems.forEach((it) => {
+      if (it.unit === 'Kg' && bkRecipesById[it.item_id] && it.should_consume > 0) {
+        expandNestedRecipe(it.item_id, it.should_consume, it.raw_material, new Set());
+      }
+    });
+    const nestedItems = Object.values(nestedTheoretical).map((n) => {
+      const actualItem = actualById[n.item_id];
+      const shouldConsume = Math.round(n.qty * 1000) / 1000;
+      const actualQty = actualItem ? actualItem.used : null;
+      const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
+      const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
+      const rate = rateMap[n.item_id]?.price ?? (bkRecipeMap[n.item_id]?.costPerKg ?? null);
+      return {
+        raw_material: n.raw_material,
+        item_id: n.item_id,
+        unit: actualItem?.unit || rateMap[n.item_id]?.unit || 'Kg',
+        should_consume: shouldConsume,
+        should_consume_breakdown: n.breakdown,
+        rate,
+        actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
+        actual_consumed_cost: actualQty != null && rate != null ? Math.round(actualQty * rate * 100) / 100 : null,
+        actual_breakdown: actualItem ? {
+          prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
+          purchased: actualItem.purchased, wastage: actualItem.wastage, closing: actualItem.closing,
+        } : null,
+        variance, variance_pct: variancePct,
+        // Excluded from ideal_material_cost/actual_material_cost below — see the comment
+        // above this whole block for why (already priced inside the parent recipe's own
+        // should_consume_cost, via bkRecipeMap.costPerKg).
+        is_nested: true,
+      };
+    });
+
     // Crockery/Packaging — fixed per-item/per-order rule, not recipe-driven (see
     // computeCrockeryPackagingItems above), so it's computed separately and merged in
     // here rather than going through the theoretical/resolveIngredientRateId path above.
     const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor, crockeryPackagingRules);
-    const allItems = [...recipeItems, ...crockeryPackagingItems]
+    const allItems = [...recipeItems, ...crockeryPackagingItems, ...nestedItems]
       .sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
     // Dish-TYPE match count (dishes_matched/dishes_sold below) can look fine even when a
@@ -1373,13 +1491,21 @@ async function computeRMAudit(date, outletFilter) {
     // a demand line, only on whether it resolves to a price at all (see
     // resolveIngredientRateId). Items that don't (should_consume_cost null) are simply
     // excluded, same gap the never_mapped_items/unmapped_ingredients reports above surface
-    // for fixing.
-    const idealMaterialCost = allItems.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
+    // for fixing. Nested items (is_nested — see above) are ALSO excluded here even though
+    // should_consume_cost is already null/absent for them (they naturally sum to 0
+    // already) — explicit on purpose, this total must stay byte-identical to before the
+    // nested-expansion feature existed, not shift because of it.
+    const idealMaterialCost = allItems.reduce((s, it) => s + (it.is_nested ? 0 : (it.should_consume_cost || 0)), 0);
     // Actual side of the same comparison — what these items' ACTUAL consumption cost,
     // priced the same way (rate card / BK recipe cost) ideal_material_cost already is.
     // Used by the outlet Performance Dashboard's COGS Score: how close actual landed to
-    // ideal, both expressed as a share of that day's effective sale.
-    const actualMaterialCost = allItems.reduce((s, it) => s + (it.actual_consumed_cost || 0), 0);
+    // ideal, both expressed as a share of that day's effective sale. Nested items excluded
+    // here too — unlike ideal_material_cost this ISN'T naturally zero for them (a nested
+    // item like Coconut can have real actual_consumed_cost, genuinely separate spending
+    // from its parent recipe's own), but this total needs to stay unchanged by the same
+    // nested-expansion feature for the same reason: it already feeds a live, trusted KPI
+    // (COGS Score) that shouldn't shift just because this diagnostic feature shipped.
+    const actualMaterialCost = allItems.reduce((s, it) => s + (it.is_nested ? 0 : (it.actual_consumed_cost || 0)), 0);
 
     results.push({
       outlet_id: oid, date,
@@ -3307,19 +3433,26 @@ router.get('/sales', async (req, res) => {
       const [oid] = key.split('|');
       const dineInQty = rows.filter((r) => r.order_type === 'Dine In').reduce((s, r) => s + Number(r.item_quantity || 0), 0);
       const takeawayQty = rows.filter((r) => r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
+      // Sambhar/Chutney sides are per-order (see SAMBHAR_CHUTNEY_SIDES) but only for orders
+      // containing a Dosa/Idli/Vada item — so their cost is spread only across THOSE items'
+      // units that day, not all takeaway units (a rice-only order shouldn't absorb a share
+      // of a side it never got).
+      const sidesEligibleQty = rows.filter((r) => (r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')) && isDosaIdliVadaRow(r)).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
       const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor, crockeryPackagingRules);
-      let dineInCost = 0, takeawayCost = 0;
+      let dineInCost = 0, takeawayCost = 0, sidesCost = 0;
       crockeryItems.forEach((it) => {
         if (it.rate == null) return;
         (it.should_consume_breakdown || []).forEach((b) => {
           const c = b.per_dish * b.qty_sold * it.rate;
           if (b.dish === 'Dine-in items (crockery)') dineInCost += c;
           else if (b.dish === 'Pickup/Delivery orders (packaging)') takeawayCost += c;
+          else if (b.dish === 'Pickup/Delivery orders with Dosa/Idli/Vada (sides)') sidesCost += c;
         });
       });
       const dineInRate = dineInQty > 0 ? dineInCost / dineInQty : 0;
       const takeawayRate = takeawayQty > 0 ? takeawayCost / takeawayQty : 0;
-      addonPerUnit[key] = { dine_in: dineInRate, pickup: takeawayRate, delivery: takeawayRate };
+      const sidesRate = sidesEligibleQty > 0 ? sidesCost / sidesEligibleQty : 0;
+      addonPerUnit[key] = { dine_in: dineInRate, pickup: takeawayRate, delivery: takeawayRate, sides: sidesRate };
     });
 
     // Category-matched containers (Dosa Box Small, Podi Idli Container, 500ML Container,
@@ -3356,14 +3489,15 @@ router.get('/sales', async (req, res) => {
       const bucket = bucketOf(row);
       if (bucket) {
         const rate = addonPerUnit[`${row.outlet_code}|${row.sale_date}`]?.[bucket] || 0;
-        let categoryRate = 0;
+        let categoryRate = 0, sidesRate = 0;
         if ((bucket === 'pickup' || bucket === 'delivery') && CROCKERY_PACKAGING_OUTLETS.has(row.outlet_code)) {
           const match = matchTakeawayCategoryContainer(row);
           if (match) categoryRate = categoryContainerRate[match.key] || 0;
+          if (isDosaIdliVadaRow(row)) sidesRate = addonPerUnit[`${row.outlet_code}|${row.sale_date}`]?.sides || 0;
         }
         itemMap[row.item_name][`${bucket}_qty`] += Number(row.item_quantity || 0);
         itemMap[row.item_name][`${bucket}_revenue`] += Number(row.item_total || 0);
-        itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * (rate + categoryRate);
+        itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * (rate + categoryRate + sidesRate);
       }
 
       if (!outletMap[row.outlet_code]) {
@@ -4345,7 +4479,11 @@ async function buildCostingContext() {
       return factor;
     };
 
-    return { rateMap, rateByName, bkRecipeByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor };
+    // bkIngredientsByRecipeId/bkRecipesById/resolveRateId exposed (previously local-only)
+    // so computeRMAudit can walk a nested BK recipe's OWN ingredients (e.g. White Chutney
+    // -> Coconut Crush -> Coconut) for should-consume purposes — see the note there. Purely
+    // additive: every existing caller destructuring this return is unaffected.
+    return { rateMap, rateByName, bkRecipeByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor, bkIngredientsByRecipeId, bkRecipesById, resolveRateId };
 }
 
 // Dispatched items (this period, this outlet) × rate card / BK-recipe cost — same
