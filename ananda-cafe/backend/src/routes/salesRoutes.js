@@ -1078,21 +1078,27 @@ function resolveIngredientRateId(key, rateByName, bkRecipeByName) {
 // elan/gaursid — extended to sec31/sec14 per the owner's own request, same rule, no
 // outlet-specific variation): every DINE-IN item sold (each line item counts
 // individually — a table ordering 3 dosas is 3 plates) gets 1 Wooden Plate + 2 Bio
-// Spoon + 1 Paper Bowl; every PICKUP/DELIVERY order (once per order, not per item in
-// it) gets 1 Dosa Box Small + 2×50ML Container + 2 Bio Spoon + 1 Podi Idli Container.
-// Bio Spoon is used by both rules and combines into one figure.
+// Spoon + 1 Paper Bowl. Every PICKUP/DELIVERY order gets 2 Bio Spoon (once per order,
+// not per item in it) PLUS a container specific to what was actually ordered — see
+// TAKEAWAY_CATEGORY_CONTAINERS below; a Dosa Box was previously being added to every
+// single takeaway order regardless of whether a dosa was even in it, same for the Idli
+// container — fixed to only apply the container that matches what was sold.
 const CROCKERY_PACKAGING_OUTLETS = new Set(['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid']);
 // Rule quantities are always literal PIECE counts (1 plate, 2 spoons, ...) — converted
 // into whatever unit each item is actually tracked/priced in (Pkt for Bio Spoon/Paper
-// Bowl/50ML Container/Podi Idli Container, Pcs for Wooden Plates/Dosa Box Small) via
-// convFactorFor + unit_conversions below, same as the recipe path already does for
-// count-based ingredients — NOT a hardcoded pack size here, so it stays correct if the
-// owner ever changes a pack size in Master Data without a code change.
+// Bowl, Pcs for Wooden Plates) via convFactorFor + unit_conversions below, same as the
+// recipe path already does for count-based ingredients — NOT a hardcoded pack size
+// here, so it stays correct if the owner ever changes a pack size in Master Data
+// without a code change.
 //
 // The rule ITSELF (which items, how many) is owner-editable — stored in app_config
 // (key 'crockery_packaging_rules', see GET/POST/DELETE /api/crockery-packaging-rules
 // below), same JSON-blob-in-app_config pattern as fixed_cost_heads. These two arrays
 // are only the seed/fallback for a brand-new install with no app_config row yet.
+// Dosa Box Small/Podi Idli Container/500ML Container/Vada Lifafa are DELIBERATELY not
+// listed here anymore (see TAKEAWAY_CATEGORY_CONTAINERS) — they're category-matched per
+// item now, not a flat per-order allowance, so they don't belong in a generic
+// add-any-item list the way Bio Spoon (genuinely universal) does.
 const DEFAULT_CROCKERY_PACKAGING_RULES = {
   dine_in: [
     { item_id: 'wooden_plates', name: 'Wooden Plates', qty: 1 },
@@ -1100,12 +1106,32 @@ const DEFAULT_CROCKERY_PACKAGING_RULES = {
     { item_id: 'paper_bowl', name: 'Paper Bowl', qty: 1 },
   ],
   takeaway: [
-    { item_id: 'dosa_box_small', name: 'Dosa Box Small', qty: 1 },
-    { item_id: 'container_50ml', name: '50ML Container', qty: 2 },
     { item_id: 'bio_spoon', name: 'Bio Spoon', qty: 2 },
-    { item_id: 'podi_idli_container', name: 'Podi Idli Container', qty: 1 },
   ],
 };
+// Category-matched takeaway containers — exactly ONE of these applies per pickup/
+// delivery LINE ITEM (not per order — a parcel with 2 dosas needs 2 boxes), chosen by
+// matching that item's own category_name or item_name. Checked in this fixed order,
+// first match wins, so a rare combo dish naming both (e.g. "Idli Vada Combo") doesn't
+// try to claim two containers. Dosa/Rice match on category_name (PetPooja's own "Dosas"/
+// "Dosa"/"Dosas [o]" and "Rice & Upma"/"Rice & Upma [o]" categories — verified against
+// real sales data, covers Uttapam/Appe/Upma too since they share the category); Idli/
+// Vada match on item_name instead, since PetPooja lumps both into one "Idli And Vada"
+// category with no further split. A dish matching none of these (Beverages, etc.) gets
+// no category container — only the universal Bio Spoon still applies to it.
+const TAKEAWAY_CATEGORY_CONTAINERS = [
+  { key: 'dosa', matchField: 'category_name', match: 'dosa', item_id: 'dosa_box_small', name: 'Dosa Box Small' },
+  { key: 'rice', matchField: 'category_name', match: 'rice', item_id: 'container_500ml', name: '500ML Container' },
+  { key: 'idli', matchField: 'item_name', match: 'idli', item_id: 'podi_idli_container', name: 'Podi Idli Container' },
+  { key: 'vada', matchField: 'item_name', match: 'vada', item_id: 'vada_lifafa', name: 'Vada Lifafa' },
+];
+function matchTakeawayCategoryContainer(row) {
+  for (const rule of TAKEAWAY_CATEGORY_CONTAINERS) {
+    const field = rule.matchField === 'category_name' ? row.category_name : row.item_name;
+    if ((field || '').toLowerCase().includes(rule.match)) return rule;
+  }
+  return null;
+}
 async function getCrockeryPackagingRules() {
   const { data } = await supabase.from('app_config').select('value').eq('key', 'crockery_packaging_rules').maybeSingle();
   if (!data?.value) return DEFAULT_CROCKERY_PACKAGING_RULES;
@@ -1144,6 +1170,26 @@ function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap
   };
   (rules.dine_in || []).forEach((rule) => addRule(rule, 'Dine-in items (crockery)', dineInItems));
   (rules.takeaway || []).forEach((rule) => addRule(rule, 'Pickup/Delivery orders (packaging)', takeawayOrders));
+
+  // Category-matched containers — see TAKEAWAY_CATEGORY_CONTAINERS: grouped by dish name
+  // (not summed into one blanket "per order" figure) so should_consume_breakdown still
+  // shows which specific dish drove how much of each container, same as the recipe path.
+  const categoryQtyByItemAndDish = {}; // container item_id -> { dish_name -> qty }
+  outletSalesRows.forEach((r) => {
+    if (r.order_type !== 'Pick Up' && !r.order_type?.includes('Delivery')) return;
+    const match = matchTakeawayCategoryContainer(r);
+    if (!match) return;
+    const qty = Number(r.item_quantity || 0);
+    if (qty <= 0) return;
+    const byDish = categoryQtyByItemAndDish[match.item_id] || (categoryQtyByItemAndDish[match.item_id] = {});
+    byDish[r.item_name] = (byDish[r.item_name] || 0) + qty;
+  });
+  Object.entries(categoryQtyByItemAndDish).forEach(([itemId, byDish]) => {
+    const containerName = TAKEAWAY_CATEGORY_CONTAINERS.find((c) => c.item_id === itemId)?.name || itemId;
+    Object.entries(byDish).forEach(([dishName, qty]) => {
+      addRule({ item_id: itemId, name: containerName, qty: 1 }, `Pickup/Delivery — ${dishName}`, qty);
+    });
+  });
 
   return Object.entries(acc).map(([itemId, data]) => {
     const actualItem = actualById[itemId];
@@ -1185,8 +1231,10 @@ async function computeRMAudit(date, outletFilter) {
   const [sales, { data: recipes }, costingContext, crockeryPackagingRules] = await Promise.all([
     // order_type + invoice_no are only needed for the crockery/packaging rule below
     // (dine-in item count, distinct pickup/delivery order count) — the recipe path only
-    // ever used outlet_code/item_name/item_quantity.
-    fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity, order_type, invoice_no' }),
+    // ever used outlet_code/item_name/item_quantity. category_name is also only for that
+    // rule — matching a takeaway line item to its correct container (see
+    // TAKEAWAY_CATEGORY_CONTAINERS).
+    fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity, order_type, invoice_no, category_name' }),
     supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
     buildCostingContext(),
     getCrockeryPackagingRules(),
@@ -3274,6 +3322,19 @@ router.get('/sales', async (req, res) => {
       addonPerUnit[key] = { dine_in: dineInRate, pickup: takeawayRate, delivery: takeawayRate };
     });
 
+    // Category-matched containers (Dosa Box Small, Podi Idli Container, 500ML Container,
+    // Vada Lifafa) are deterministic per single unit sold — unlike the averaged Bio Spoon
+    // rate above, there's no need to spread these across the outlet-day; a dosa parcel
+    // always needs exactly 1 Dosa Box Small regardless of what else sold that day. Computed
+    // once here (₹ per unit of a matching dish) and added on top of addonPerUnit per row below.
+    const categoryContainerRate = {}; // TAKEAWAY_CATEGORY_CONTAINERS key -> ₹ per matching unit sold
+    TAKEAWAY_CATEGORY_CONTAINERS.forEach((rule) => {
+      const trackedUnit = rateMap[rule.item_id]?.unit || 'Pcs';
+      const perUnit = convFactorFor(rule.item_id, 'Piece', trackedUnit);
+      const price = rateMap[rule.item_id]?.price;
+      categoryContainerRate[rule.key] = price != null ? perUnit * price : 0;
+    });
+
     // Aggregate by item — split into Dine In / Pickup / Delivery sub-totals too, each
     // carrying its own packaging/crockery add-on cost, so the Sales tab can show true
     // per-unit economics depending on how an item was actually sold, not just recipe food cost.
@@ -3295,9 +3356,14 @@ router.get('/sales', async (req, res) => {
       const bucket = bucketOf(row);
       if (bucket) {
         const rate = addonPerUnit[`${row.outlet_code}|${row.sale_date}`]?.[bucket] || 0;
+        let categoryRate = 0;
+        if ((bucket === 'pickup' || bucket === 'delivery') && CROCKERY_PACKAGING_OUTLETS.has(row.outlet_code)) {
+          const match = matchTakeawayCategoryContainer(row);
+          if (match) categoryRate = categoryContainerRate[match.key] || 0;
+        }
         itemMap[row.item_name][`${bucket}_qty`] += Number(row.item_quantity || 0);
         itemMap[row.item_name][`${bucket}_revenue`] += Number(row.item_total || 0);
-        itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * rate;
+        itemMap[row.item_name][`${bucket}_addon_cost`] += Number(row.item_quantity || 0) * (rate + categoryRate);
       }
 
       if (!outletMap[row.outlet_code]) {

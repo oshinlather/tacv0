@@ -339,6 +339,9 @@ const api = {
   getProductionRecipes: () => get("/api/store/production/recipes"),
   recordProduction: (data) => post("/api/store/production", data),
   getProductionRuns: (params) => get("/api/store/production", params),
+
+  // Stage 5 course-correction: Store-only ledger-vs-real-count history.
+  getStoreLedgerHistory: () => get("/api/store/store-ledger-history"),
 };
 
 // ── Helpers ──

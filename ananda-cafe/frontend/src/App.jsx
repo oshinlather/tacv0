@@ -4,6 +4,7 @@ import StoreInventoryStock from "./StoreInventoryStock";
 import VendorChallans from "./VendorChallans";
 import StoreClosingCount from "./StoreClosingCount";
 import BKProduction from "./BKProduction";
+import StoreLedgerHistory from "./StoreLedgerHistory";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -12212,6 +12213,16 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                       // GLOBAL (every dish shares it, see backend's computeCrockeryPackagingItems),
                       // not per-dish — "+ Add Item" here adds to that shared rule, same as editing
                       // a rate-card price affects every recipe that uses it.
+                      // One container per matching dish category (not a shared, owner-editable
+                      // list like dine_in/takeaway below) — see backend's TAKEAWAY_CATEGORY_CONTAINERS.
+                      // Dosa Box Small only applies to dosas, Podi Idli Container only to idlis, etc.,
+                      // so these are shown read-only here rather than mixed into the generic rule editor.
+                      const CATEGORY_CONTAINERS_DISPLAY = [
+                        { item_id: "dosa_box_small", name: "Dosa Box Small", forLabel: "Dosa items" },
+                        { item_id: "podi_idli_container", name: "Podi Idli Container", forLabel: "Idli items" },
+                        { item_id: "container_500ml", name: "500ML Container", forLabel: "Rice items" },
+                        { item_id: "vada_lifafa", name: "Vada Lifafa", forLabel: "Vada items" },
+                      ];
                       const renderPackagingContent = () => {
                         const rules = sales?.crockery_packaging_rules || { dine_in: [], takeaway: [] };
                         const priceOf = (id) => rateCardItems.find((r) => r.id === id)?.price;
@@ -12254,6 +12265,16 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                                 )}
                               </div>
                             ))}
+                            <div style={{ flex: "1 1 260px", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 6, color: "#555" }}>🍱 Per Pickup/Delivery item (category-matched, 1 per dish)</div>
+                              {CATEGORY_CONTAINERS_DISPLAY.map((c) => (
+                                <div key={c.item_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: "1px solid #F0F0EC", fontSize: 11.5 }}>
+                                  <span>{c.name} <span style={{ color: "#999" }}>— {c.forLabel} only</span></span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{priceOf(c.item_id) != null ? `₹${priceOf(c.item_id)}/${unitOf(c.item_id)}` : "no price"}</span>
+                                </div>
+                              ))}
+                              <div style={{ fontSize: 10, color: "#BBB", marginTop: 6 }}>Fixed mapping, not editable here — only one applies per dish, matched by category.</div>
+                            </div>
                           </div>
                         );
                       };
@@ -17500,7 +17521,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -17518,7 +17539,8 @@ export default function AnandaCafe() {
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
           { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)", sub: "Stage 2 — receive deliveries, auto stock-in" },
           { id: "stock_counts", label: "🔢 Closing Counts (Beta)", sub: "Stage 4 — blind count, variance, rollup" },
-          { id: "bk_production", label: "🏭 Production (Beta)", sub: "Stage 5 — record a batch (sambhar, batters, chutneys) as stock-in" },
+          { id: "bk_production", label: "🏭 Production (Beta)", sub: "Stage 5 — log a batch cooked (sambhar, batters, chutneys)" },
+          { id: "store_ledger_history", label: "📜 Store Ledger History", sub: "Old Stock In/Out log checked against real counts" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -17614,6 +17636,7 @@ export default function AnandaCafe() {
       {ownerTab === "vendor_challans" && <VendorChallans />}
       {ownerTab === "stock_counts" && <StoreClosingCount />}
       {ownerTab === "bk_production" && <BKProduction />}
+      {ownerTab === "store_ledger_history" && <StoreLedgerHistory />}
       {AUDIT_TABS.includes(ownerTab) && !auditUnlocked && (
         <div style={{ textAlign: "center", padding: 60 }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔒</div>

@@ -21,8 +21,11 @@ const financeRouter = require("./routes/finance");
 const storeRouter = require("./routes/store");
 const vendorChallansRouter = require("./routes/vendorChallans");
 const stockCountsRouter = require("./routes/stockCounts");
-const pnlMigrationCompareRouter = require("./routes/pnlMigrationCompare"); // Stage 5 migration tool, temporary
 const bkProductionRouter = require("./routes/bkProduction");
+// storeLedgerHistory replaces pnlMigrationCompare (removed) — that tool assumed
+// bk_closing_stock was BK's own data; confirmed with the owner it's actually always
+// been Store's real physical count, mislabeled. This one reflects that correction.
+const storeLedgerHistoryRouter = require("./routes/storeLedgerHistory");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -58,8 +61,8 @@ app.use("/api/finance", financeRouter);
 app.use("/api/store", storeRouter);
 app.use("/api/store", vendorChallansRouter);
 app.use("/api/store", stockCountsRouter);
-app.use("/api/store", pnlMigrationCompareRouter);
 app.use("/api/store", bkProductionRouter);
+app.use("/api/store", storeLedgerHistoryRouter);
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {
