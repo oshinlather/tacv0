@@ -12313,7 +12313,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
                           <td style={{ ...tdS, color: "#888" }}>{item.category}</td>
                           <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{item.qty}</td>
                           <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#16A34A" }}>{fmt(item.revenue)}</td>
-                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}</td>
+                          <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#DC2626" }}>{item.cost != null ? fmt(item.cost) : "—"}{item.cost != null && item.revenue > 0 && ` (${((item.cost / item.revenue) * 100).toFixed(1)}%)`}</td>
                           <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.margin != null ? (item.margin >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.margin != null ? fmt(item.margin) : "—"}</td>
                           <td style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: item.marginPct != null ? (item.marginPct >= 0 ? "#16A34A" : "#DC2626") : "#BBB" }}>{item.marginPct != null ? `${item.marginPct.toFixed(1)}%` : "—"}</td>
                         </tr>
