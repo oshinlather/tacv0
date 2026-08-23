@@ -291,6 +291,7 @@ const DEMAND_SECTIONS = [
   { id: "gas", titleHi: "Gas", emoji: "🔥", color: "#EA580C", bg: "#FFF7ED", border: "#FED7AA",
     items: [
       { id: "gas_cylinder", name: "Gas Cylinder", unit: "Pcs" },
+      { id: "gas_lighter", name: "Gas Lighter", unit: "Pcs" }, // ₹130/Pcs — added 2026-08-23
     ]},
   { id: "cold_drink", titleHi: "Cold Drink & Water", emoji: "🥤", color: "#0EA5E9", bg: "#F0F9FF", border: "#BAE6FD",
     items: [
