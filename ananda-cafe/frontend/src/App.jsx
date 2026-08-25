@@ -3501,6 +3501,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             // COGS Compare/etc, which is only ever correct here by coincidence.
             if (t.key === "demand_vs_closing") { setSelDay(0); setSelMonth(null); }
             else if (pnlTab === "demand_vs_closing") { setSelDay(1); }
+            // BK Store Audit is day-only (no month view) and now owns its own date
+            // control instead of sharing the row above — clear a carried-over month
+            // selection so it always has a valid single day to show.
+            if (t.key === "storeaudit" && selMonth) setSelMonth(null);
           }} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: pnlTab === t.key ? 700 : 500, border: pnlTab === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: pnlTab === t.key ? "#1A1A1A" : "#fff", color: pnlTab === t.key ? "#fff" : "#888", whiteSpace: "nowrap", flexShrink: 0 }}>{t.label}</button>
         ))}
       </div>
@@ -3511,7 +3515,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           selOutlet at all), so both this single-day "Yesterday" control AND the outlet
           picker would just sit there doing nothing on that tab — the whole row is skipped
           there instead of showing controls with no effect. */}
-      {pnlTab !== "mgr_perf" && (
+      {pnlTab !== "mgr_perf" && pnlTab !== "storeaudit" && (
         <div style={{ display: "flex", gap: 6, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
           <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
           {!lockedOutlet && (<>
@@ -4257,13 +4261,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           </div>
         ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
       )}
-      {pnlTab === "storeaudit" && !lockedOutlet && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for BK Store Audit.
-          </div>
-        ) : <BKStoreAudit dateStr={dateStr} />
-      )}
+      {pnlTab === "storeaudit" && !lockedOutlet && <BKStoreAudit dateStr={dateStr} selDay={selDay} setSelDay={setSelDay} />}
     </div>
   );
 };
@@ -15774,7 +15772,7 @@ const BKAudit = () => {
 //  the separately-logged, rarely-used Inventory "Stock Out" screen the way BKAudit's
 //  dispatch check does) — backed by GET /api/inventory/store-audit/:date.
 // ═════════════════════════════════════════════════════════════════════════════
-const BKStoreAudit = ({ dateStr }) => {
+const BKStoreAudit = ({ dateStr, selDay, setSelDay }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
@@ -15794,10 +15792,18 @@ const BKStoreAudit = ({ dateStr }) => {
   const visibleCount = visibleCategories.reduce((s, c) => s + c.items.length, 0);
   const dayBefore = useMemo(() => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }, [dateStr]);
 
+  // Date filter + category pills share one row — no outlet picker (this isn't
+  // outlet-scoped) and no title/description/anchor-explanation text above the table,
+  // per request: just the controls, then the data.
   return (<div>
-    <div style={{ marginBottom: 14 }}>
-      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🏪 BK Store Audit</h3>
-      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Prior Closing + Purchases − BK Demand − Outlet Demand (excl. food prepared in BK) = Should-Be Closing, vs what was actually logged.</p>
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={null} setSelMonth={() => {}} marginBottom={0} />
+      {!loading && data && totalFlagged > 0 && (<>
+        <button onClick={() => setSelCat(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({totalFlagged})</button>
+        {data.categories.map((c) => (
+          <button key={c.category} onClick={() => setSelCat(c.category)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selCat === c.category ? 700 : 500, border: selCat === c.category ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.category ? "#1A1A1A" : "#fff", color: selCat === c.category ? "#fff" : "#888" }}>{c.category} ({c.items.length})</button>
+        ))}
+      </>)}
     </div>
 
     {loading ? (
@@ -15810,19 +15816,6 @@ const BKStoreAudit = ({ dateStr }) => {
       // Also flagged in Missing Punches so it doesn't just sit here silently.
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Yesterday's ({dayBefore}) BK Closing Stock wasn't submitted — nothing to audit {dateStr} from until it is.</div>
     ) : (<>
-      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
-        ℹ️ Anchored to yesterday's submitted count, {data.prev_date}.
-        {!data.actual_submitted && !data.is_today && " No count was submitted for " + dateStr + " itself — variance can't be computed, only Should-Be Closing is shown."}
-        {data.is_today && !data.actual_submitted && " Today's Actual Closing uses the live system balance until a count is submitted."}
-      </div>
-      {totalFlagged > 0 && (
-        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-          <button onClick={() => setSelCat(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({totalFlagged})</button>
-          {data.categories.map((c) => (
-            <button key={c.category} onClick={() => setSelCat(c.category)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: selCat === c.category ? 700 : 500, border: selCat === c.category ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.category ? "#1A1A1A" : "#fff", color: selCat === c.category ? "#fff" : "#888" }}>{c.category} ({c.items.length})</button>
-          ))}
-        </div>
-      )}
       {visibleCount === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing to flag for {dateStr}</div></div>
       ) : visibleCategories.map((cat) => (
