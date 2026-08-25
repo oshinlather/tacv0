@@ -74,7 +74,11 @@ export default function BKClosingWastage() {
     setError("");
     try {
       if (mode === "closing") {
-        await api.submitClosingStock({ outlet_id: "bk", items, items_units, submitted_by: getCurrentUserName(), date: todayStr() });
+        // submitted_by deliberately omitted — closing_stocks.submitted_by is a UUID
+        // column the real OutletMgr closing-stock screen never populates either
+        // (confirmed against real data: always null there); demands.submitted_by below
+        // is a plain text column, different from this one despite the similar name.
+        await api.submitClosingStock({ outlet_id: "bk", items, items_units, date: todayStr() });
       } else {
         await api.createDemand({ outlet_id: "bk", type: "wastage", items, items_units, submitted_by: getCurrentUserName(), date: todayStr(), status: "submitted" });
       }
