@@ -3469,6 +3469,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // table has no way to scope to just one outlet, and Cold Drink cost is now
           // visible to franchise anyway via P&L's own Material Cost breakdown below.
           ...(lockedOutlet ? [] : [{ key: "cogs", label: "📊 COGS Compare" }]),
+          // Cross-outlet manager scorecard (COGS/Punch/Discipline/Wastage), same reasoning
+          // as COGS Compare above for why it's owner-only — every other outlet's numbers
+          // are visible side by side, meaningless on a locked single-outlet view.
+          ...(lockedOutlet ? [] : [{ key: "mgr_perf", label: "🏆 Managers Performance" }]),
           { key: "compare", label: "📊 4-Week Comparison" },
           // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
           // don't punch through this system (they manage their own cash/stock), so this
@@ -4213,6 +4217,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         })()}
       </>)}
       {pnlTab === "cogs" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={lockedOutlet} />}
+      {pnlTab === "mgr_perf" && <ManagersPerformance />}
       {pnlTab === "compare" && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
@@ -13149,6 +13154,305 @@ const OutletPerformanceDashboard = ({ outlet, hideDiscipline = false }) => {
           )}
         </div>
       )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  MANAGERS PERFORMANCE — cross-outlet scorecard for a Week or Month
+// ═════════════════════════════════════════════════════════════════════════════
+// Same COGS Score / Punch Score / Discipline Score methodology the Outlet Performance
+// Dashboard above already scores each manager on for a single fixed Yesterday (see
+// COGS_SCORE_THRESHOLDS/PUNCH_* constants above it) — just summed/averaged across every
+// day in a Week or Month instead of one day, with all outlets side by side. Review Score
+// is deliberately left out here — it reflects the outlet's PetPooja reputation more than
+// a manager's own operational discipline, and scoring it over a range needs a per-day,
+// per-outlet fetch that isn't worth the added request volume for this cross-outlet view.
+const managersScoreColor = (score) => score == null ? "#999" : score >= COGS_SCORE_THRESHOLDS.good ? "#16A34A" : score >= COGS_SCORE_THRESHOLDS.ok ? "#B45309" : "#DC2626";
+
+// Pure integer/UTC date math throughout, deliberately never `new Date(y,m,d).toISOString()`
+// on a locally-constructed Date — that's timezone-sensitive (can roll the date by ±1 depending
+// on the browser's local offset). Same safety CogsCompare's own monthDates already relies on
+// via plain zero-padded string building instead.
+const ymdToUTCDate = (ymd) => { const [y, m, d] = ymd.split("-").map(Number); return new Date(Date.UTC(y, m - 1, d)); };
+const utcDateToYmd = (dt) => `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+const addDaysYmd = (ymd, n) => { const dt = ymdToUTCDate(ymd); dt.setUTCDate(dt.getUTCDate() + n); return utcDateToYmd(dt); };
+const mondayOfYmd = (ymd) => { const dow = ymdToUTCDate(ymd).getUTCDay(); return addDaysYmd(ymd, dow === 0 ? -6 : 1 - dow); };
+
+const ManagersPerformance = () => {
+  const [periodType, setPeriodType] = useState("week"); // "week" | "month"
+  const [selWeekStart, setSelWeekStart] = useState(() => mondayOfYmd(today())); // Monday, YYYY-MM-DD
+  const [selMonth, setSelMonth] = useState(() => { const n = istNow(); return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, "0")}`; });
+  const [loading, setLoading] = useState(true);
+  const [scores, setScores] = useState({}); // outlet_id -> { cogs, cogsDetail, punch, discipline, wastage, daily: [{date, cogs, punch, wastage}] }
+  const [sortKey, setSortKey] = useState("cogs");
+  const [sortDir, setSortDir] = useState("desc");
+  const [expandedOutlet, setExpandedOutlet] = useState(null);
+
+  // Last 8 weeks, most recent first, each labeled with its real Mon–Sun dates (not just
+  // "This week"/"Last week") — a manager's week doesn't reset labels the moment it ends.
+  const weekOptions = useMemo(() => {
+    const opts = [];
+    const thisMonday = mondayOfYmd(today());
+    for (let i = 0; i < 8; i++) {
+      const monday = addDaysYmd(thisMonday, -7 * i);
+      const sunday = addDaysYmd(monday, 6);
+      const mondayDt = ymdToUTCDate(monday), sundayDt = ymdToUTCDate(sunday);
+      const mMon = mondayDt.toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" });
+      const mSun = sundayDt.toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" });
+      const label = mMon === mSun ? `${mondayDt.getUTCDate()}–${sundayDt.getUTCDate()} ${mSun}` : `${mondayDt.getUTCDate()} ${mMon} – ${sundayDt.getUTCDate()} ${mSun}`;
+      opts.push({ value: monday, label });
+    }
+    return opts;
+  }, []);
+  // Same month-pill convention CogsCompare/FranchiseBilling/MonthlyPayrollPanel already use.
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      const label = m.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+      opts.push({ value, label });
+    }
+    return opts;
+  }, []);
+
+  // Capped at today, same as CogsCompare's monthDates — a week/month that's still in
+  // progress just scores on however many days of it have happened so far.
+  const dates = useMemo(() => {
+    const todayStr = today();
+    if (periodType === "week") {
+      const result = [];
+      for (let i = 0; i < 7; i++) { const ds = addDaysYmd(selWeekStart, i); if (ds > todayStr) break; result.push(ds); }
+      return result;
+    }
+    const [y, mo] = selMonth.split("-").map(Number);
+    const daysInMo = new Date(y, mo, 0).getDate();
+    const result = [];
+    for (let day = 1; day <= daysInMo; day++) {
+      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      if (ds > todayStr) break;
+      result.push(ds);
+    }
+    return result;
+  }, [periodType, selWeekStart, selMonth]);
+
+  useEffect(() => {
+    if (dates.length === 0) { setScores({}); setLoading(false); return; }
+    setLoading(true);
+    Promise.all([
+      // RM Audit and Punch Status each return every outlet in one call per date (same
+      // pattern CogsCompare's fetchDates already uses) — a week is 7 calls each, a full
+      // month up to 31, not 6x that for a per-outlet loop.
+      Promise.all(dates.map((d) => api.getRMAudit(d).catch(() => null))),
+      Promise.all(dates.map((d) => api.getPunchStatus(d).catch(() => null))),
+      api.getWastageCost(dates[0]).catch(() => null),
+      api.getEmployees().catch(() => []),
+      api.getAttendance({ from: dates[0], to: dates[dates.length - 1] }).catch(() => []),
+    ]).then(([auditByDate, punchByDate, wastage, employees, attendance]) => {
+      const byOutlet = {};
+      const ensure = (oid) => byOutlet[oid] || (byOutlet[oid] = { cogsWinners: 0, cogsItems: 0, punchEarned: 0, punchPossible: 0, wastageTotal: 0, daily: [] });
+
+      // COGS Score — same "% of RM-Audit items within 5% of what the recipe called for"
+      // methodology as the single-day dashboard, counts summed across every day (not an
+      // average of daily %s) so a day with more sold dishes counts for more, same as a
+      // bigger sample should.
+      // Punch Score — same weighted Closing/Demand/Wastage/etc. breakdown, earned/possible
+      // weight summed across every day.
+      dates.forEach((date, i) => {
+        const audit = auditByDate[i];
+        const punch = punchByDate[i];
+        OUTLETS.forEach((o) => {
+          const b = ensure(o.id);
+          const outletAudit = audit?.outlets?.find((x) => x.outlet_id === o.id);
+          const items = (outletAudit?.items || []).filter((it) => it.variance_pct != null);
+          const winners = items.filter((it) => Math.abs(it.variance_pct) < 5);
+          const dayCogs = items.length > 0 ? Math.round(winners.length / items.length * 100) : null;
+          b.cogsItems += items.length; b.cogsWinners += winners.length;
+
+          const punchOutlet = punch?.outlets?.find((x) => x.outlet_id === o.id);
+          let dayPunch = null;
+          if (punchOutlet) {
+            const missing = new Set(punchOutlet.missing || []);
+            const closingCats = punchOutlet.closing_categories || {};
+            const breakdown = [
+              ...CLOSING_CATEGORY_META.map((c) => ({ weight: PUNCH_CLOSING_SUB_WEIGHT, done: !!closingCats[c.key] })),
+              ...Object.entries(PUNCH_OTHER_WEIGHTS).map(([key, weight]) => ({ weight, done: !missing.has(key) })),
+            ];
+            const earned = breakdown.reduce((s, x) => s + (x.done ? x.weight : 0), 0);
+            b.punchEarned += earned; b.punchPossible += PUNCH_TOTAL_WEIGHT;
+            dayPunch = Math.round(earned / PUNCH_TOTAL_WEIGHT * 100);
+          }
+          b.daily.push({ date, cogs: dayCogs, punch: dayPunch, wastage: 0 });
+        });
+      });
+
+      // Wastage — one range call (getWastageCost supports `from`, returns through today),
+      // filtered client-side to just this period's dates and summed per outlet/day.
+      (wastage || []).forEach((r) => {
+        if (!dates.includes(r.date)) return;
+        const b = ensure(r.outlet_id);
+        b.wastageTotal += r.cost || 0;
+        const row = b.daily.find((d) => d.date === r.date);
+        if (row) row.wastage += r.cost || 0;
+      });
+
+      // Discipline — half Self (Manager-designation staff), half Team, same per-person
+      // attendance-ratio methodology as the single-day dashboard, just flattened across
+      // every (employee, day) pair in the period instead of just people on one day.
+      const attByEmpDate = {};
+      (attendance || []).forEach((a) => { attByEmpDate[`${a.employee_id}|${a.date}`] = a; });
+      const personRatio = (empId, date) => {
+        const a = attByEmpDate[`${empId}|${date}`];
+        if (a?.status === "holiday") return null;
+        if (!a) return 0;
+        if (a.status === "present") return Math.min((Number(a.hours_worked) || 0) / DAILY_STANDARD_HOURS, 1);
+        if (a.status === "half_day") return 0.5;
+        return 0;
+      };
+      const groupRatios = (emps) => { const out = []; emps.forEach((e) => dates.forEach((d) => { const r = personRatio(e.id, d); if (r != null) out.push(r); })); return out; };
+      const avg = (arr) => arr.length > 0 ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length * 100) : null;
+      OUTLETS.forEach((o) => {
+        const b = ensure(o.id);
+        const outletEmployees = (employees || []).filter((e) => e.department === o.id && e.active);
+        const selfScore = avg(groupRatios(outletEmployees.filter((e) => e.designation === "Manager")));
+        const teamScore = avg(groupRatios(outletEmployees.filter((e) => e.designation !== "Manager")));
+        b.disciplineScore = (selfScore != null || teamScore != null) ? Math.round(((selfScore ?? teamScore) + (teamScore ?? selfScore)) / 2) : null;
+      });
+
+      const finalScores = {};
+      OUTLETS.forEach((o) => {
+        const b = ensure(o.id);
+        finalScores[o.id] = {
+          cogs: b.cogsItems > 0 ? Math.round(b.cogsWinners / b.cogsItems * 100) : null,
+          cogsDetail: b.cogsItems > 0 ? `${b.cogsWinners}/${b.cogsItems} within 5%` : "No consumption data",
+          punch: b.punchPossible > 0 ? Math.round(b.punchEarned / b.punchPossible * 100) : null,
+          discipline: b.disciplineScore,
+          wastage: b.wastageTotal,
+          daily: b.daily,
+        };
+      });
+      setScores(finalScores);
+    }).finally(() => setLoading(false));
+  }, [dates]);
+
+  const COLUMNS = [
+    { key: "cogs", label: "COGS Score", isScore: true },
+    { key: "punch", label: "Punch Score", isScore: true },
+    { key: "discipline", label: "Discipline", isScore: true },
+    { key: "wastage", label: "Wastage ₹", isScore: false },
+  ];
+
+  const rows = useMemo(() => {
+    const list = OUTLETS.map((o) => ({ outlet: o, ...(scores[o.id] || {}) }));
+    const dir = sortDir === "desc" ? -1 : 1;
+    return [...list].sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return (av - bv) * dir;
+    });
+  }, [scores, sortKey, sortDir]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) { setSortDir((d) => d === "desc" ? "asc" : "desc"); return; }
+    setSortKey(key);
+    setSortDir(key === "wastage" ? "asc" : "desc"); // lower wastage is better, everything else higher is better
+  };
+
+  const periodLabel = periodType === "week" ? weekOptions.find((w) => w.value === selWeekStart)?.label : monthOptions.find((m) => m.value === selMonth)?.label;
+  const pillBtn = (active) => ({ flex: "0 0 auto", padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: active ? 700 : 500, border: active ? "1.5px solid #1A1A1A" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#666", whiteSpace: "nowrap" });
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[{ key: "week", label: "🗓️ Week" }, { key: "month", label: "📅 Month" }].map((t) => (
+          <button key={t.key} onClick={() => setPeriodType(t.key)} style={{ padding: "9px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: periodType === t.key ? 700 : 500, border: periodType === t.key ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: periodType === t.key ? "#1A1A1A" : "#fff", color: periodType === t.key ? "#fff" : "#888" }}>{t.label}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto", paddingBottom: 4, WebkitOverflowScrolling: "touch" }}>
+        {(periodType === "week" ? weekOptions : monthOptions).map((opt) => (
+          <button key={opt.value} onClick={() => periodType === "week" ? setSelWeekStart(opt.value) : setSelMonth(opt.value)}
+            style={pillBtn(periodType === "week" ? opt.value === selWeekStart : opt.value === selMonth)}>
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4" }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>🏆 Managers Performance</span>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{periodLabel} · {dates.length} day{dates.length !== 1 ? "s" : ""}</div>
+        </div>
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+        ) : dates.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No days in this period yet</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Manager</th>
+                {COLUMNS.map((c) => (
+                  <th key={c.key} onClick={() => toggleSort(c.key)} style={{ ...thS, textAlign: "left", cursor: "pointer", userSelect: "none" }}>
+                    {c.label}
+                    <span style={{ marginLeft: 4, color: sortKey === c.key ? "#1A1A1A" : "#CCC" }}>{sortKey === c.key ? (sortDir === "desc" ? "▼" : "▲") : "⇅"}</span>
+                  </th>
+                ))}
+                <th style={thS}></th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => {
+                  const isOpen = expandedOutlet === r.outlet.id;
+                  return (
+                    <Fragment key={r.outlet.id}>
+                      <tr onClick={() => setExpandedOutlet(isOpen ? null : r.outlet.id)} style={{ borderBottom: "1px solid #F0F0EC", cursor: "pointer" }}>
+                        <td style={{ ...tdS, fontWeight: 600 }}>{r.outlet.name}</td>
+                        {COLUMNS.map((c) => {
+                          const v = r[c.key];
+                          const color = c.isScore ? managersScoreColor(v) : (v > 0 ? "#DC2626" : "#16A34A");
+                          return (
+                            <td key={c.key} style={{ ...tdS, textAlign: "left", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: v != null ? color : "#BBB" }}>
+                              {v != null ? (c.isScore ? v : fmt(v)) : "—"}
+                            </td>
+                          );
+                        })}
+                        <td style={{ ...tdS, color: "#999", fontSize: 10 }}>{isOpen ? "▲" : "▼"}</td>
+                      </tr>
+                      {isOpen && (
+                        <tr>
+                          <td colSpan={COLUMNS.length + 2} style={{ padding: "4px 16px 14px", background: "#FAFAF8" }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 6 }}>Day-by-day — {r.outlet.name} <span style={{ fontWeight: 500, color: "#999" }}>({r.cogsDetail})</span></div>
+                            <div style={{ overflowX: "auto", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4" }}>
+                              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                                <thead><tr style={{ background: "#FAFAF8" }}>
+                                  <th style={thS}>Date</th><th style={{ ...thS, textAlign: "left" }}>COGS</th><th style={{ ...thS, textAlign: "left" }}>Punch</th><th style={{ ...thS, textAlign: "left" }}>Wastage</th>
+                                </tr></thead>
+                                <tbody>
+                                  {(r.daily || []).map((d) => (
+                                    <tr key={d.date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                      <td style={tdS}>{ymdToUTCDate(d.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}</td>
+                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.cogs != null ? managersScoreColor(d.cogs) : "#BBB" }}>{d.cogs != null ? d.cogs : "—"}</td>
+                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.punch != null ? managersScoreColor(d.punch) : "#BBB" }}>{d.punch != null ? d.punch : "—"}</td>
+                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.wastage > 0 ? "#DC2626" : "#16A34A" }}>{fmt(d.wastage || 0)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
