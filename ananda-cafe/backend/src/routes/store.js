@@ -46,7 +46,13 @@ async function rebuildStockBalances({ itemId, locationId } = {}) {
 
   const rows = Array.from(totals.entries()).map(([key, v]) => {
     const [item_id, location_id] = key.split("::");
-    return { item_id, location_id, current_qty: v.qty, last_movement_id: v.lastMovementId, updated_at: new Date().toISOString() };
+    // Rounded to 6dp — plain JS float addition/subtraction across many movements drifts
+    // (0.1 + 0.2 style noise), and left unrounded it was visibly leaking into the UI as
+    // e.g. "0.1000000000000863" (found by clicking through the real Order screen, not
+    // guessed) — 6dp is far finer than any real Kg/Ltr/Pcs quantity needs, so nothing
+    // real gets truncated, only the float noise beyond it.
+    const qty = Math.round(v.qty * 1e6) / 1e6;
+    return { item_id, location_id, current_qty: qty, last_movement_id: v.lastMovementId, updated_at: new Date().toISOString() };
   });
   if (!rows.length) return 0;
   const { error: upsertError } = await supabase.from("store_stock_balances").upsert(rows, { onConflict: "item_id,location_id" });
