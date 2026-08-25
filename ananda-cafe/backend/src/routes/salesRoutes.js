@@ -637,12 +637,23 @@ router.get('/audit/cold-drink/:date', async (req, res) => {
     const prevDate = new Date(date);
     prevDate.setDate(prevDate.getDate() - 1);
     const prevDateStr = prevDate.toISOString().split('T')[0];
+    // Cold drinks have no rate_card entry — outlets buy them directly at whatever price
+    // that vendor/day had, not off a fixed card (see the Daily P&L Cold Drink category
+    // comment for the same reasoning). Costing "should have been consumed" vs "actually
+    // consumed" here (so it can rank alongside RM Audit's leaks in Flags' COGS Leakage —
+    // "staff drink and don't bill" was previously invisible there) needs SOME per-unit
+    // ₹ figure, so it's derived from a trailing 30-day average of real purchases
+    // (amount ÷ qty), per outlet+item — a single day's purchase price is too noisy
+    // (bulk-buy days skew it), and a day with zero purchases would have no price at all.
+    const purchaseLookbackStart = new Date(date); purchaseLookbackStart.setDate(purchaseLookbackStart.getDate() - 30);
+    const purchaseLookbackStr = purchaseLookbackStart.toISOString().split('T')[0];
 
-    const [{ data: prevClosing }, { data: todayClosing }, { data: todayPurchases }, salesRows] = await Promise.all([
+    const [{ data: prevClosing }, { data: todayClosing }, { data: todayPurchases }, salesRows, { data: purchaseHistory }] = await Promise.all([
       supabase.from('closing_stocks').select('outlet_id, items').eq('date', prevDateStr).eq('status', 'submitted'),
       supabase.from('closing_stocks').select('outlet_id, items').eq('date', date).eq('status', 'submitted'),
       supabase.from('purchases').select('outlet_id, items').eq('date', date),
       fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity' }),
+      supabase.from('purchases').select('outlet_id, date, items').gte('date', purchaseLookbackStr).lte('date', date),
     ]);
 
     const prevClosingByOutlet = {};
@@ -659,6 +670,36 @@ router.get('/audit/cold-drink/:date', async (req, res) => {
         purchasedByOutlet[p.outlet_id][item.id] = (purchasedByOutlet[p.outlet_id][item.id] || 0) + (Number(i.quantity) || 0);
       });
     });
+
+    // Trailing 30-day average purchase price per outlet+item: sum(amount)/sum(qty).
+    // Falls back to an all-outlet average for an outlet+item with zero purchase history
+    // in the window (e.g. a newly-opened outlet), so a leak is still costed rather than
+    // silently dropped.
+    const purchaseAgg = {}; // outlet_id -> item_id -> { amount, qty }
+    const purchaseAggAllOutlets = {}; // item_id -> { amount, qty }
+    (purchaseHistory || []).forEach((p) => {
+      (p.items || []).filter((i) => i.type === 'cold_drink_purchase').forEach((i) => {
+        const item = COLD_DRINK_ITEMS.find((ci) => ci.name.toLowerCase() === (i.item_name || '').toLowerCase());
+        if (!item) return;
+        const qty = Number(i.quantity) || 0;
+        const amount = Number(i.amount) || 0;
+        if (qty <= 0) return;
+        purchaseAgg[p.outlet_id] = purchaseAgg[p.outlet_id] || {};
+        purchaseAgg[p.outlet_id][item.id] = purchaseAgg[p.outlet_id][item.id] || { amount: 0, qty: 0 };
+        purchaseAgg[p.outlet_id][item.id].amount += amount;
+        purchaseAgg[p.outlet_id][item.id].qty += qty;
+        purchaseAggAllOutlets[item.id] = purchaseAggAllOutlets[item.id] || { amount: 0, qty: 0 };
+        purchaseAggAllOutlets[item.id].amount += amount;
+        purchaseAggAllOutlets[item.id].qty += qty;
+      });
+    });
+    const rateFor = (oid, itemId) => {
+      const own = purchaseAgg[oid]?.[itemId];
+      if (own && own.qty > 0) return Math.round((own.amount / own.qty) * 100) / 100;
+      const all = purchaseAggAllOutlets[itemId];
+      if (all && all.qty > 0) return Math.round((all.amount / all.qty) * 100) / 100;
+      return null;
+    };
 
     const billedByOutlet = {}; // outlet_id -> item_id -> qty
     const unmatchedByOutlet = {}; // outlet_id -> { item_name -> qty }
@@ -693,11 +734,21 @@ router.get('/audit/cold-drink/:date', async (req, res) => {
         const purchase = Number(purchased[ci.id] || 0);
         const consumed = Math.round((prev + purchase - closing) * 100) / 100;
         const billedQty = Math.round((billed[ci.id] || 0) * 100) / 100;
+        const rate = rateFor(oid, ci.id);
+        // Mirrors RM Audit's should_consume_cost / actual_consumed_cost naming so the
+        // frontend can merge these rows into the same ranked leakage list: "should
+        // consume" here means "should have shown up as billed sales", "actual
+        // consumed" is what physically left the fridge.
+        const shouldConsumeCost = (hasClosingData && rate != null) ? Math.round(billedQty * rate * 100) / 100 : null;
+        const actualConsumedCost = (hasClosingData && rate != null) ? Math.round(consumed * rate * 100) / 100 : null;
         return {
           item_id: ci.id, name: ci.name, unit: ci.unit,
           prev_closing: prev, purchased: purchase, closing, consumed,
           billed: billedQty,
           variance: hasClosingData ? Math.round((consumed - billedQty) * 100) / 100 : null,
+          rate,
+          should_consume_cost: shouldConsumeCost,
+          actual_consumed_cost: actualConsumedCost,
         };
       });
       return {

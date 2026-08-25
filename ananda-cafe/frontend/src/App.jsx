@@ -13188,10 +13188,20 @@ const ManagersPerformance = () => {
   const [selWeekStart, setSelWeekStart] = useState(() => mondayOfYmd(today())); // Monday, YYYY-MM-DD
   const [selMonth, setSelMonth] = useState(() => { const n = istNow(); return `${n.getUTCFullYear()}-${String(n.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [loading, setLoading] = useState(true);
-  const [scores, setScores] = useState({}); // outlet_id -> { cogs, cogsDetail, punch, discipline, wastage, daily: [{date, cogs, punch, wastage}] }
+  const [scores, setScores] = useState({}); // outlet_id -> { cogs, cogsDetail, punch, discipline, wastage, daily: [{date, cogs, punch, discipline, wastage}] }
   const [sortKey, setSortKey] = useState("cogs");
   const [sortDir, setSortDir] = useState("desc");
   const [expandedOutlet, setExpandedOutlet] = useState(null);
+  // Raw per-day source data kept around (not just the computed scores) so a single cell's
+  // "how was this calculated" expand can show the real breakdown on demand — same detail
+  // the Outlet Performance Dashboard shows for one day, just looked up for whichever
+  // (outlet, date, metric) the owner clicks instead of being tied to one fixed Yesterday.
+  const [rawData, setRawData] = useState(null); // { dates, auditByDate, punchByDate, wastageRows, employees, attendance }
+  const [expandedCells, setExpandedCells] = useState(() => new Set()); // Set of "outletId|date|metric"
+  const toggleCell = (outletId, date, metric) => {
+    const key = `${outletId}|${date}|${metric}`;
+    setExpandedCells((prev) => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  };
 
   // Last 8 weeks, most recent first, each labeled with its real Mon–Sun dates (not just
   // "This week"/"Last week") — a manager's week doesn't reset labels the moment it ends.
@@ -13320,10 +13330,24 @@ const ManagersPerformance = () => {
       OUTLETS.forEach((o) => {
         const b = ensure(o.id);
         const outletEmployees = (employees || []).filter((e) => e.department === o.id && e.active);
-        const selfScore = avg(groupRatios(outletEmployees.filter((e) => e.designation === "Manager")));
-        const teamScore = avg(groupRatios(outletEmployees.filter((e) => e.designation !== "Manager")));
+        const selfEmployees = outletEmployees.filter((e) => e.designation === "Manager");
+        const teamEmployees = outletEmployees.filter((e) => e.designation !== "Manager");
+        const selfScore = avg(groupRatios(selfEmployees));
+        const teamScore = avg(groupRatios(teamEmployees));
         b.disciplineScore = (selfScore != null || teamScore != null) ? Math.round(((selfScore ?? teamScore) + (teamScore ?? selfScore)) / 2) : null;
+
+        // Same self/team average, just scoped to one day at a time, so the day-by-day
+        // table can show how Discipline moved day to day, not only the period total.
+        dates.forEach((date) => {
+          const dayRatio = (emps) => { const rs = emps.map((e) => personRatio(e.id, date)).filter((r) => r != null); return avg(rs); };
+          const daySelf = dayRatio(selfEmployees), dayTeam = dayRatio(teamEmployees);
+          const dayDiscipline = (daySelf != null || dayTeam != null) ? Math.round(((daySelf ?? dayTeam) + (dayTeam ?? daySelf)) / 2) : null;
+          const row = b.daily.find((d) => d.date === date);
+          if (row) row.discipline = dayDiscipline;
+        });
       });
+
+      setRawData({ dates, auditByDate, punchByDate, wastageRows: wastage || [], employees: employees || [], attendance: attendance || [] });
 
       const finalScores = {};
       OUTLETS.forEach((o) => {
@@ -13364,6 +13388,101 @@ const ManagersPerformance = () => {
     if (sortKey === key) { setSortDir((d) => d === "desc" ? "asc" : "desc"); return; }
     setSortKey(key);
     setSortDir(key === "wastage" ? "asc" : "desc"); // lower wastage is better, everything else higher is better
+  };
+
+  // Per-cell "how was this calculated" detail — same breakdown the Outlet Performance
+  // Dashboard shows for its one fixed Yesterday, just looked up for whichever (outlet,
+  // date) cell the owner expands here, straight off rawData instead of a fresh fetch.
+  const DAY_METRICS = [
+    { key: "cogs", label: "COGS" },
+    { key: "punch", label: "Punch" },
+    { key: "discipline", label: "Discipline" },
+    { key: "wastage", label: "Wastage" },
+  ];
+  const cellRowStyle = { fontSize: 11, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: 6, gap: 8 };
+  const cogsDetailRows = (outletId, date) => {
+    const i = rawData?.dates.indexOf(date);
+    if (i == null || i < 0) return [];
+    const items = (rawData.auditByDate[i]?.outlets?.find((o) => o.outlet_id === outletId)?.items || []).filter((it) => it.variance_pct != null);
+    return [...items].sort((a, b) => Math.abs(b.variance_pct) - Math.abs(a.variance_pct));
+  };
+  const punchDetailRows = (outletId, date) => {
+    const i = rawData?.dates.indexOf(date);
+    const punchOutlet = i != null && i >= 0 ? rawData.punchByDate[i]?.outlets?.find((o) => o.outlet_id === outletId) : null;
+    if (!punchOutlet) return null;
+    const missing = new Set(punchOutlet.missing || []);
+    const closingCats = punchOutlet.closing_categories || {};
+    return [
+      ...CLOSING_CATEGORY_META.map((c) => ({ label: `Closing — ${c.label}`, weight: PUNCH_CLOSING_SUB_WEIGHT, done: !!closingCats[c.key] })),
+      ...Object.entries(PUNCH_OTHER_WEIGHTS).map(([key, weight]) => ({ label: PUNCH_TYPES.find((p) => p.key === key)?.label || key, weight, done: !missing.has(key) })),
+    ];
+  };
+  const disciplineDetailRows = (outletId, date) => {
+    const outletEmployees = (rawData?.employees || []).filter((e) => e.department === outletId && e.active);
+    return outletEmployees.map((e) => {
+      const a = (rawData?.attendance || []).find((x) => x.employee_id === e.id && x.date === date);
+      const isHoliday = a?.status === "holiday";
+      const ratio = isHoliday ? null : !a ? 0 : a.status === "present" ? Math.min((Number(a.hours_worked) || 0) / DAILY_STANDARD_HOURS, 1) : a.status === "half_day" ? 0.5 : 0;
+      return { emp: e, status: a?.status, hours: a?.hours_worked, ratio, isHoliday };
+    });
+  };
+  const wastageDetailRows = (outletId, date) => (rawData?.wastageRows || []).filter((r) => r.outlet_id === outletId && r.date === date).sort((a, b) => (b.cost || 0) - (a.cost || 0));
+
+  const renderCellDetail = (metric, outletId, date) => {
+    if (metric === "cogs") {
+      const items = cogsDetailRows(outletId, date);
+      return items.length === 0 ? <div style={{ fontSize: 11, color: "#999", padding: 6 }}>No consumption data for this date</div> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 280, overflowY: "auto" }}>
+          {items.map((it) => (
+            <div key={it.item_id} style={{ ...cellRowStyle, background: Math.abs(it.variance_pct) < 5 ? "#F0FDF4" : "#FEF2F2" }}>
+              <span style={{ fontWeight: 600, flex: 1 }}>{it.raw_material}</span>
+              <span style={{ color: "#999", fontFamily: "'JetBrains Mono'" }}>{it.should_consume} → {it.actual_consumed} {it.unit}</span>
+              <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'", color: Math.abs(it.variance_pct) < 5 ? "#16A34A" : "#DC2626" }}>{it.variance_pct > 0 ? "+" : ""}{it.variance_pct}%</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (metric === "punch") {
+      const breakdown = punchDetailRows(outletId, date);
+      if (!breakdown) return <div style={{ fontSize: 11, color: "#999", padding: 6 }}>No punch data for this date</div>;
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {breakdown.map((b, i) => (
+            <div key={i} style={{ ...cellRowStyle, background: b.done ? "#F0FDF4" : "#FEF2F2" }}>
+              <span style={{ fontWeight: 600, color: b.done ? "#166534" : "#991B1B" }}>{b.done ? "✅" : "❌"} {b.label}</span>
+              <span style={{ color: "#999", fontFamily: "'JetBrains Mono'" }}>{b.weight.toFixed(1)}%</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (metric === "discipline") {
+      const empRows = disciplineDetailRows(outletId, date);
+      return empRows.length === 0 ? <div style={{ fontSize: 11, color: "#999", padding: 6 }}>No employees on record for this outlet</div> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {empRows.map((rr) => (
+            <div key={rr.emp.id} style={{ ...cellRowStyle, background: rr.isHoliday ? "#F5F5F3" : rr.ratio === 1 ? "#F0FDF4" : rr.ratio === 0 ? "#FEF2F2" : "#FFFBEB" }}>
+              <span style={{ fontWeight: 600, flex: 1 }}>{rr.emp.name} <span style={{ color: "#999", fontWeight: 400 }}>({rr.emp.designation})</span></span>
+              <span style={{ color: "#999", fontFamily: "'JetBrains Mono'" }}>{rr.status ? (rr.status === "present" ? `${rr.hours ?? 0}h worked` : rr.status.replace("_", " ")) : "not marked"}</span>
+              <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'", color: rr.isHoliday ? "#999" : rr.ratio >= 0.9 ? "#16A34A" : rr.ratio > 0 ? "#B45309" : "#DC2626" }}>{rr.isHoliday ? "holiday" : `${Math.round((rr.ratio || 0) * 100)}%`}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    const items = wastageDetailRows(outletId, date);
+    return items.length === 0 ? <div style={{ fontSize: 11, color: "#999", padding: 6 }}>Nothing logged as wasted for this date</div> : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {items.map((r) => (
+          <div key={r.item_id} style={{ ...cellRowStyle, background: "#FEF2F2" }}>
+            <span style={{ fontWeight: 600, flex: 1 }}>{r.name}</span>
+            <span style={{ color: "#999", fontFamily: "'JetBrains Mono'" }}>{r.qty} {r.unit} × {fmt(r.rate)}</span>
+            <span style={{ fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{fmt(r.cost)}</span>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   const periodLabel = periodType === "week" ? weekOptions.find((w) => w.value === selWeekStart)?.label : monthOptions.find((m) => m.value === selMonth)?.label;
@@ -13432,17 +13551,42 @@ const ManagersPerformance = () => {
                             <div style={{ overflowX: "auto", background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4" }}>
                               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
                                 <thead><tr style={{ background: "#FAFAF8" }}>
-                                  <th style={thS}>Date</th><th style={{ ...thS, textAlign: "left" }}>COGS</th><th style={{ ...thS, textAlign: "left" }}>Punch</th><th style={{ ...thS, textAlign: "left" }}>Wastage</th>
+                                  <th style={thS}>Date</th>
+                                  {DAY_METRICS.map((m) => <th key={m.key} style={{ ...thS, textAlign: "left" }}>{m.label}</th>)}
                                 </tr></thead>
                                 <tbody>
-                                  {(r.daily || []).map((d) => (
-                                    <tr key={d.date} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                                      <td style={tdS}>{ymdToUTCDate(d.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })}</td>
-                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.cogs != null ? managersScoreColor(d.cogs) : "#BBB" }}>{d.cogs != null ? d.cogs : "—"}</td>
-                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.punch != null ? managersScoreColor(d.punch) : "#BBB" }}>{d.punch != null ? d.punch : "—"}</td>
-                                      <td style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: d.wastage > 0 ? "#DC2626" : "#16A34A" }}>{fmt(d.wastage || 0)}</td>
-                                    </tr>
-                                  ))}
+                                  {(r.daily || []).map((d) => {
+                                    const dateLabel = ymdToUTCDate(d.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+                                    return (
+                                      <Fragment key={d.date}>
+                                        <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                          <td style={tdS}>{dateLabel}</td>
+                                          {DAY_METRICS.map((m) => {
+                                            const v = d[m.key];
+                                            const isWastage = m.key === "wastage";
+                                            const color = isWastage ? (v > 0 ? "#DC2626" : "#16A34A") : (v != null ? managersScoreColor(v) : "#BBB");
+                                            const cellKey = `${r.outlet.id}|${d.date}|${m.key}`;
+                                            const cellOpen = expandedCells.has(cellKey);
+                                            return (
+                                              <td key={m.key} onClick={() => toggleCell(r.outlet.id, d.date, m.key)}
+                                                style={{ ...tdS, textAlign: "left", fontFamily: "'JetBrains Mono'", fontWeight: 700, color, cursor: "pointer" }}>
+                                                {v != null ? (isWastage ? fmt(v) : v) : "—"}
+                                                <span style={{ marginLeft: 5, fontSize: 9, color: cellOpen ? "#1A1A1A" : "#CCC" }}>{cellOpen ? "▲" : "▼"}</span>
+                                              </td>
+                                            );
+                                          })}
+                                        </tr>
+                                        {DAY_METRICS.filter((m) => expandedCells.has(`${r.outlet.id}|${d.date}|${m.key}`)).map((m) => (
+                                          <tr key={m.key}>
+                                            <td colSpan={DAY_METRICS.length + 1} style={{ padding: "4px 10px 10px 28px", background: "#FAFAF8" }}>
+                                              <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", marginBottom: 4 }}>{m.label} — {dateLabel}</div>
+                                              {renderCellDetail(m.key, r.outlet.id, d.date)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </Fragment>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             </div>
@@ -14355,6 +14499,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
   const [audit, setAudit] = useState(null);
   const [orders, setOrders] = useState([]);
   const [punch, setPunch] = useState(null);
+  const [coldDrink, setColdDrink] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cogsCount, setCogsCount] = useState(5);
   const [expandedCogs, setExpandedCogs] = useState(null); // "outletId|name" whose dishes breakdown is open
@@ -14365,7 +14510,8 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       api.getRMAudit(dateStr).catch(() => null),
       api.getOrders({ date: dateStr }).catch(() => []),
       api.getPunchStatus(dateStr).catch(() => null),
-    ]).then(([a, o, p]) => { setAudit(a); setOrders(o || []); setPunch(p); }).finally(() => setLoading(false));
+      api.getColdDrinkAudit(dateStr).catch(() => null),
+    ]).then(([a, o, p, cd]) => { setAudit(a); setOrders(o || []); setPunch(p); setColdDrink(cd); }).finally(() => setLoading(false));
   }, [dateStr]);
 
   const inScope = (oid) => !selOutlet || oid === selOutlet;
@@ -14378,24 +14524,46 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
   // near-zero should-consume produces a meaningless five-figure %. Only over-consumption
   // (money leaking out) is flagged; using less than the recipe says isn't a leak.
   const cogsAll = useMemo(() => {
-    if (!audit?.outlets) return [];
     const rows = [];
-    audit.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
-      (o.items || []).forEach((it) => {
-        if (it.actual_consumed == null) return; // needs submitted closing stock
-        const leakCost = Number(it.actual_consumed_cost || 0) - Number(it.should_consume_cost || 0);
-        if (!(leakCost > 0)) return;
-        rows.push({
-          outletId: o.outlet_id, name: it.raw_material, unit: it.unit,
-          should: Number(it.should_consume), actual: Number(it.actual_consumed),
-          variance: Number(it.variance), leakCost,
-          variancePct: (it.variance_pct != null && isFinite(it.variance_pct)) ? Number(it.variance_pct) : null,
-          ab: it.actual_breakdown, breakdown: it.should_consume_breakdown || [],
+    if (audit?.outlets) {
+      audit.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
+        (o.items || []).forEach((it) => {
+          if (it.actual_consumed == null) return; // needs submitted closing stock
+          const leakCost = Number(it.actual_consumed_cost || 0) - Number(it.should_consume_cost || 0);
+          if (!(leakCost > 0)) return;
+          rows.push({
+            outletId: o.outlet_id, name: it.raw_material, unit: it.unit,
+            should: Number(it.should_consume), actual: Number(it.actual_consumed),
+            variance: Number(it.variance), leakCost,
+            variancePct: (it.variance_pct != null && isFinite(it.variance_pct)) ? Number(it.variance_pct) : null,
+            ab: it.actual_breakdown, breakdown: it.should_consume_breakdown || [],
+          });
         });
       });
-    });
+    }
+    // Cold Drink section — staff can drink stock without billing it, and since these
+    // items are direct resale (no recipe), RM Audit above never sees them. "Should
+    // consume" here means "should have shown up as a billed sale"; "actual" is what
+    // physically left the fridge (prev closing + purchased − today's closing).
+    if (coldDrink?.outlets) {
+      coldDrink.outlets.filter((o) => inScope(o.outlet_id)).forEach((o) => {
+        (o.items || []).forEach((it) => {
+          if (it.should_consume_cost == null || it.actual_consumed_cost == null) return; // needs closing stock + a known rate
+          const leakCost = Number(it.actual_consumed_cost) - Number(it.should_consume_cost);
+          if (!(leakCost > 0)) return;
+          const variancePct = it.billed > 0 ? Math.round((it.variance / it.billed) * 1000) / 10 : null;
+          rows.push({
+            outletId: o.outlet_id, name: `🥤 ${it.name}`, unit: it.unit,
+            should: it.billed, actual: it.consumed,
+            variance: it.variance, leakCost, variancePct,
+            ab: { prev_closing: it.prev_closing, dispatched: 0, purchased: it.purchased, wastage: 0, closing: it.closing },
+            breakdown: [],
+          });
+        });
+      });
+    }
     return rows.sort((a, b) => b.leakCost - a.leakCost);
-  }, [audit, selOutlet]);
+  }, [audit, coldDrink, selOutlet]);
   const cogsTotalLeak = useMemo(() => cogsAll.reduce((s, r) => s + r.leakCost, 0), [cogsAll]);
   const cogsRows = cogsCount === "all" ? cogsAll : cogsAll.slice(0, cogsCount);
 
