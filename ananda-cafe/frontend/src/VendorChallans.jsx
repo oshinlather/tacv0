@@ -160,7 +160,11 @@ function OrderView({ onCreated, onBack }) {
   const vendorItems = (v) => items.filter((i) => v.categories.includes(i.category)).map((item) => {
     const rmQty = Number(rmConfig[item.id]) || 0;
     const currentQty = Number(stock[item.id]) || 0;
-    return { ...item, rmQty, currentQty, orderQtyCalc: Math.max(0, rmQty - currentQty) };
+    // Rounded to 6dp — found by clicking through this exact screen: plain JS
+    // subtraction leaks float noise into the UI (5 - 3.3 = 1.7000000000000002), same
+    // class of bug as the backend ledger fix, just on the frontend's own arithmetic.
+    const orderQtyCalc = Math.round(Math.max(0, rmQty - currentQty) * 1e6) / 1e6;
+    return { ...item, rmQty, currentQty, orderQtyCalc };
   });
 
   const saveRmConfig = async (v) => {
