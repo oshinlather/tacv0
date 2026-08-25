@@ -13207,12 +13207,12 @@ const ShouldConsumeBreakdown = ({ breakdown, total, unit }) => (<>
         <div key={j} style={{ fontSize: 11.5, color: "#555", fontFamily: "'JetBrains Mono', monospace", padding: "2px 0 2px 10px" }}>
           {b.chain ? (
             // Nested BK-recipe ingredient (e.g. Coconut, reached via White Chutney →
-            // Coconut Crush) — spell out every hop's own quantity instead of collapsing
-            // straight to the final number, so it's traceable back to the real sale.
+            // Coconut Crush) — show each hop's own working (base × multiplier = qty),
+            // not just the final answer, so the math is checkable at every step.
             <>
-              {b.qty_sold} × <span style={{ color: "#999", fontFamily: "inherit" }}>{b.dish}</span>
+              <span style={{ color: "#999", fontFamily: "inherit" }}>{b.dish}</span>
               {b.chain.map((h, k) => (
-                <span key={k}> → {h.qty} {h.unit} <span style={{ color: "#999", fontFamily: "inherit" }}>{h.label}</span></span>
+                <span key={k}> → {h.base}{h.multiplier != null ? ` × ${h.multiplier}` : ""} = {h.qty} {h.unit} <span style={{ color: "#999", fontFamily: "inherit" }}>{h.label}</span></span>
               ))}
             </>
           ) : (

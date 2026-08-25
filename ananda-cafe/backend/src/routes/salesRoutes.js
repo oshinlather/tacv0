@@ -1454,13 +1454,16 @@ async function computeRMAudit(date, outletFilter) {
         // This ingredient's total need, split back across each source dish proportional
         // to how much of `recipeId` that dish's own sales required (batches = that dish's
         // subtotal / yieldQty) — sums back to the same total the old scalar math gave.
-        // chain gets this row's own {label, qty, unit} appended now, ending at itself.
+        // chain gets this row's own {label, qty, unit, base, multiplier} appended now,
+        // ending at itself — base × multiplier = qty, so each hop shows its own working
+        // (9.8 × 0.4 = 3.92), not just the answer.
+        const perParentUnit = Math.round((perBatchQty / yieldQty) * 100000) / 100000;
         const childLines = sourceLines
           .map((l) => {
             const subtotal = perBatchQty * (l.subtotal / yieldQty);
             return {
               dish: l.dish, qty_sold: l.qty_sold, subtotal, path: l.path,
-              chain: [...l.chain, { label, qty: Math.round(subtotal * 1000) / 1000, unit }],
+              chain: [...l.chain, { label, qty: Math.round(subtotal * 1000) / 1000, unit, base: l.chain[l.chain.length - 1].qty, multiplier: perParentUnit }],
             };
           })
           .filter((l) => l.subtotal > 0);
@@ -1490,7 +1493,7 @@ async function computeRMAudit(date, outletFilter) {
         const sourceLines = (it.should_consume_breakdown || [])
           .map((b) => ({
             dish: b.dish, qty_sold: b.qty_sold, subtotal: b.subtotal, path: [it.raw_material],
-            chain: [{ label: it.raw_material, qty: Math.round(b.subtotal * 1000) / 1000, unit: 'Kg' }],
+            chain: [{ label: it.raw_material, qty: Math.round(b.subtotal * 1000) / 1000, unit: 'Kg', base: b.qty_sold, multiplier: b.per_dish }],
           }))
           .filter((l) => l.subtotal > 0);
         if (sourceLines.length > 0) expandNestedRecipe(it.item_id, sourceLines, new Set());
