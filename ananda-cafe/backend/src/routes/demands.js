@@ -64,7 +64,10 @@ router.post("/:id/photos", async (req, res) => {
 router.post("/closing-stock", async (req, res) => {
   const user = await requireAuth(req, res);
   if (!user) return;
-  if (!["owner", "store_mgr", "outlet_mgr", "chef", "bainmarry"].includes(user.role)) {
+  // bk_manager/avp added — BK now submits its own closing stock the same way outlets
+  // do (outlet_id='bk'), per the Stage 5 course-correction: BK isn't a live-tracked
+  // ledger location, it works like an outlet (demand -> receive -> periodic count).
+  if (!["owner", "store_mgr", "outlet_mgr", "chef", "bainmarry", "bk_manager", "avp"].includes(user.role)) {
     return res.status(403).json({ error: "Insufficient permissions" });
   }
   let { outlet_id, items, items_units, submitted_by, date, status } = req.body;

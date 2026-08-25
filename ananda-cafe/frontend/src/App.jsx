@@ -5,6 +5,7 @@ import VendorChallans from "./VendorChallans";
 import StoreClosingCount from "./StoreClosingCount";
 import BKProduction from "./BKProduction";
 import StoreLedgerHistory from "./StoreLedgerHistory";
+import BKClosingWastage from "./BKClosingWastage";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ANANDA CAFE — COMPLETE SYSTEM
@@ -121,7 +122,10 @@ const PNL_OTHER_EXPENSES = [
 const ALL_EXPENSES = [...PNL_FIXED_EXPENSES, ...PNL_VARIABLE_EXPENSES, ...PNL_OTHER_EXPENSES];
 
 // ─── DEMAND / STORE DATA (from item_list_.xlsx) ─────────────────────────────
-const DEMAND_SECTIONS = [
+// Exported so BKClosingWastage.jsx can reuse the exact same item catalog BK's closing
+// stock / wastage should track — same one outlets already demand from BK with. Only
+// the export keyword changed here; the data itself is untouched.
+export const DEMAND_SECTIONS = [
   { id: "food", titleHi: "Food (Prepared in BK)", emoji: "🍲", color: "#B45309", bg: "#FFFBEB", border: "#FDE68A",
     items: [
       { id: "sambhar", name: "Sambhar", unit: "Kg" },
@@ -17336,7 +17340,13 @@ const SCOPED_ROLE_TABS = {
     // managers submit counts but don't see the reconciled tally) — same policy applies
     // here, not something this change should quietly override.
     { id: "inventory", label: "📦 Inventory" },
-    { id: "bk_closing", label: "📊 BK Closing Stock" },
+    // Relabeled, not removed — this screen has always submitted Store's real physical
+    // count (confirmed with the owner; the table name "bk_closing_stock" was a historical
+    // mislabel from when Store and BK were one physical site). Kept available since it's
+    // still real historical record and the mechanism the Store re-baseline used, but
+    // "BK Closing & Wastage" below is BK's own, new, correctly-scoped equivalent.
+    { id: "bk_closing", label: "📊 Store Closing Stock (legacy entry)" },
+    { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" },
     { id: "bk_audit", label: "🔍 BK Store Audit" },
     { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)" },
     { id: "stock_counts", label: "🔢 Closing Counts (Beta)" },
@@ -17402,7 +17412,7 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Store Closing (legacy)" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing", "finance"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -17412,6 +17422,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "demands" && <DemandHistory />}
       {tab === "store" && storeView === "inventory" && <Inventory />}
       {tab === "store" && storeView === "bk_closing" && <BKClosingStock />}
+      {tab === "store" && storeView === "bk_closing_wastage" && <BKClosingWastage />}
       {tab === "store" && storeView === "bk_audit" && <BKAudit />}
       {tab === "store" && storeView === "sales" && <SalesUpload />}
       {tab === "store" && storeView === "cash" && <CashLedger />}
@@ -17433,6 +17444,7 @@ const ScopedDashboard = () => {
       {tab === "bk_demand" && <BKDemandForm />}
       {tab === "inventory" && <Inventory />}
       {tab === "bk_closing" && <BKClosingStock />}
+      {tab === "bk_closing_wastage" && <BKClosingWastage />}
       {tab === "bk_audit" && <BKAudit />}
       {tab === "vendor_challans" && <VendorChallans />}
       {tab === "stock_counts" && <StoreClosingCount />}
@@ -17667,7 +17679,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }, { id: "audit", label: "🔍 RM Audit" }, { id: "stock_usage", label: "📦 Stock" }, { id: "demands", label: "📋 Demands" }, { id: "closing_stock_history", label: "📊 Closing Stock" }, { id: "wastage_history", label: "🗑️ Wastage" }, { id: "franchise_billing", label: "🧾 Franchise Billing" }, { id: "todo", label: "✅ To Do" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -17679,7 +17691,8 @@ export default function AnandaCafe() {
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
-          { id: "bk_closing", label: "📊 BK Closing Stock", sub: "Daily count & audit" },
+          { id: "bk_closing", label: "📊 Store Closing Stock (legacy entry)", sub: "Daily count — really Store's, mislabeled historically" },
+          { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage", sub: "New — BK's own closing/wastage, same as outlets" },
           { id: "bk_audit", label: "🔍 BK Audit", sub: "Demand vs Stock-Out, logged vs expected inventory" },
           { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
@@ -17776,6 +17789,7 @@ export default function AnandaCafe() {
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
       {ownerTab === "bk_closing" && <BKClosingStock />}
+      {ownerTab === "bk_closing_wastage" && <BKClosingWastage />}
       {ownerTab === "bk_audit" && <BKAudit />}
       {ownerTab === "inv_ledger" && <InventoryLedger />}
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
@@ -17813,13 +17827,14 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Closing Stock" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Store Closing (legacy)" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "demands" && <DemandHistory />}
       {storeView === "inventory" && <Inventory />}
       {storeView === "bk_closing" && <BKClosingStock />}
+      {storeView === "bk_closing_wastage" && <BKClosingWastage />}
       {storeView === "bk_audit" && <BKAudit />}
       {storeView === "sales" && <SalesUpload />}
       {storeView === "cash" && <CashLedger />}

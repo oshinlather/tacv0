@@ -59,17 +59,16 @@ function CountList({ onOpen }) {
   return (
     <div>
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400E" }}>
-        🆕 New Store Inventory Module — Stage 4 (Beta). Counts are blind — you won't see the system quantity while counting; variance shows only after you submit.
+        🆕 Store Inventory Module. Blind count — you won't see the system quantity while counting; variance shows only after you submit. This is Store only now — BK isn't a tracked live location any more (it works like an outlet: demand, receive, and its own closing stock/wastage under "🏭 BK Closing & Wastage").
       </div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button onClick={() => start("store")} disabled={starting} style={{ ...btnPrimary, flex: 1, opacity: starting ? 0.6 : 1 }}>🏬 Start Store Count</button>
-        <button onClick={() => start("bk")} disabled={starting} style={{ ...btnPrimary, flex: 1, opacity: starting ? 0.6 : 1 }}>🏭 Start BK Count</button>
+        <button onClick={() => start("store")} disabled={starting} style={{ ...btnPrimary, opacity: starting ? 0.6 : 1 }}>🏬 Start Store Count</button>
       </div>
       {error && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{error}</div>}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         {["", "store", "bk"].map((loc) => (
-          <button key={loc || "all"} onClick={() => setLocation(loc)} style={{ padding: "6px 12px", borderRadius: 8, border: location === loc ? "none" : "1px solid #E0E0DC", background: location === loc ? "#1A1A1A" : "#fff", color: location === loc ? "#fff" : "#555", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{loc === "" ? "All" : loc === "store" ? "Store" : "BK"}</button>
+          <button key={loc || "all"} onClick={() => setLocation(loc)} style={{ padding: "6px 12px", borderRadius: 8, border: location === loc ? "none" : "1px solid #E0E0DC", background: location === loc ? "#1A1A1A" : "#fff", color: location === loc ? "#fff" : "#555", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{loc === "" ? "All (incl. history)" : loc === "store" ? "Store" : "BK (history only)"}</button>
         ))}
       </div>
 
