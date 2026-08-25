@@ -526,7 +526,13 @@ router.get("/store-audit/:date", async (req, res) => {
 
     let purchasesByItem = {}, bkDemandByItem = {}, outletDemandByItem = {}, outletBreakdownByItem = {};
     if (prevDate) {
-      const rangeStart = `${prevDate}T00:00:00Z`; // exclusive
+      // Window is exactly `date` (00:00Z through next day's 00:00Z) — purchases/demand
+      // that happened since the prior closing snapshot through end of `date`. Was
+      // previously anchored at prevDate's start instead of date's start, making this a
+      // 2-calendar-day window that always double-counted the entire prior day into both
+      // it and the next day's query — e.g. date=08-23 and date=08-24 both fully included
+      // 08-23's purchases, making "+ Purchases" look identical across adjacent dates.
+      const rangeStart = `${date}T00:00:00Z`; // exclusive
       const rangeEnd = `${nextDay(date)}T00:00:00Z`; // exclusive upper bound (through end of `date`)
 
       // Real purchases are confirmed to come in through the Order Challan flow
