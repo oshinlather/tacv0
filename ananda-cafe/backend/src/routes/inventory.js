@@ -529,10 +529,35 @@ router.get("/store-audit/:date", async (req, res) => {
       const rangeStart = `${prevDate}T00:00:00Z`; // exclusive
       const rangeEnd = `${nextDay(date)}T00:00:00Z`; // exclusive upper bound (through end of `date`)
 
+      // Real purchases are confirmed to come in through the Order Challan flow
+      // (purchase_orders, received via the driver/Stock-In-with-po_id path). Two real
+      // sources can both be populated for the exact same physical receiving event —
+      // /stock-in (inventory.js) writes an inventory_movements row stamped with po_id
+      // AND updates purchase_orders.items[itemId].received_qty together, in one call —
+      // so this has to dedupe by (po_id, item_id), not sum both blindly. Verified against
+      // real data: 2026-08-21's PO-...-002 has both a movement (qty 900, po_id matching
+      // the PO's own id) and received_qty:900 for the same item; summing both without
+      // deduping doubled it to 1800 in an earlier version of this fix, caught by checking
+      // the actual number against the source records before trusting it.
       const { data: movements } = await supabase.from("inventory_movements")
-        .select("item_id, type, quantity, created_at").eq("type", "stock_in")
+        .select("item_id, quantity, po_id, created_at").eq("type", "stock_in")
         .gt("created_at", rangeStart).lt("created_at", rangeEnd);
-      (movements || []).forEach((m) => { purchasesByItem[m.item_id] = (purchasesByItem[m.item_id] || 0) + (Number(m.quantity) || 0); });
+      const movementPoItemPairs = new Set();
+      (movements || []).forEach((m) => {
+        purchasesByItem[m.item_id] = (purchasesByItem[m.item_id] || 0) + (Number(m.quantity) || 0);
+        if (m.po_id) movementPoItemPairs.add(`${m.po_id}::${m.item_id}`);
+      });
+
+      const { data: receivedPOs } = await supabase.from("purchase_orders")
+        .select("id, items, received_at").eq("status", "received")
+        .gt("received_at", rangeStart).lt("received_at", rangeEnd);
+      (receivedPOs || []).forEach((po) => {
+        Object.entries(po.items || {}).forEach(([itemId, item]) => {
+          if (movementPoItemPairs.has(`${po.id}::${itemId}`)) return; // already counted via the movement above
+          const qty = Number(item?.received_qty) || 0;
+          if (qty > 0) purchasesByItem[itemId] = (purchasesByItem[itemId] || 0) + qty;
+        });
+      });
 
       const { data: demandRows } = await supabase.from("demands")
         .select("outlet_id, dispatch_items").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
