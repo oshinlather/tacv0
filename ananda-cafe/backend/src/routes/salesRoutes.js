@@ -1407,182 +1407,27 @@ async function computeRMAudit(date, outletFilter) {
       };
     }).filter(Boolean);
 
-    // Nested BK recipes — a dish ingredient like "White Chutney" is itself a BK recipe
-    // made from Coconut Crush, which is itself made from Coconut. resolveIngredientRateId
-    // above stops at White Chutney (it already resolves to a valid, priced item), so
-    // Coconut Crush/Coconut never got their own should_consume figure and stayed
-    // permanently flagged "not in any dish recipe" even though they're genuinely wired
-    // in, just nested two levels deep — verified against real data (coconut is used by
-    // White Chutney, Sambhar, AND Red Chutney, all via Coconut Crush).
+    // REMOVED: a prior version of this function walked INTO BK sub-recipes (e.g. Sambhar's
+    // own recipe references Deggi Mirch, Coconut Crush, etc.) to give ingredients like
+    // Coconut/Deggi Mirch a should-consume figure instead of "not in any dish recipe".
+    // That was conceptually wrong and got reverted: Sambhar/Red Chutney/White Chutney/
+    // batters/etc. are all prepared AT BASE KITCHEN and dispatched to outlets as FINISHED
+    // goods (confirmed — Sambhar itself already has its own direct, outlet-tracked
+    // should-consume entry above, dispatched/closed like any other item). The Deggi Mirch
+    // that goes into COOKING Sambhar is consumed at Base Kitchen, not at the outlet — the
+    // outlet's own Deggi Mirch stock was never touched to make that Sambhar, so comparing
+    // the outlet's real Deggi Mirch usage against "how much Sambhar's recipe implies"
+    // compares two unrelated things and produced a plausible-looking but false leak
+    // (e.g. Deggi Mirch showing a multi-thousand-percent "leak" at S-56). An ingredient
+    // reached only this way now correctly has no should-consume baseline again — same
+    // honest "not in any dish recipe, needs wiring" state the Managers Performance /
+    // RM Audit unwired-items report already surfaces, rather than a wrong number.
     //
-    // Walked here as ADDITIONAL rows, never replacing the parent (White Chutney is also
-    // tracked directly as its own outlet demand/closing item, dispatched separately from
-    // raw Coconut) and flagged is_nested so ideal_material_cost/actual_material_cost
-    // below don't double-count them: White Chutney's own should_consume_cost already
-    // prices the whole nested chain via bkRecipeMap.costPerKg. These rows exist purely so
-    // a nested raw material's own ACTUAL outlet consumption (Coconut is genuinely
-    // dispatched/closed at outlets in its own right, separate from White Chutney) has a
-    // should-consume figure to compare against instead of no baseline at all.
-    const { bkIngredientsByRecipeId, bkRecipesById, resolveRateId } = costingContext;
-    // Recognizes rmId as pointing to ANOTHER bk recipe, bypassing rate_card entirely — a
-    // raw_material_id can collide with a stray/legacy rate_card row sharing its id
-    // (confirmed: coconut_crush has both a real bk_recipes row AND an old rate_card row,
-    // ₹230/Pcs, that looks like leftover "whole coconuts dispatched under the recipe's id"
-    // data — see CLAUDE.md's own note on this exact collision). That collision must not
-    // block recognizing the real recipe underneath it here; it's a separate PRICING
-    // question (still resolved via resolveRateId/rate-card-first below, unchanged), not a
-    // "does this recipe exist" one.
-    const bareRecipeId = (rmId) => {
-      if (!rmId) return null;
-      if (bkRecipesById[rmId]) return rmId;
-      const stripped = rmId.replace(/_raw$/, '');
-      if (bkRecipesById[stripped]) return stripped;
-      if (BK_INGREDIENT_TO_RATE[rmId] && bkRecipesById[BK_INGREDIENT_TO_RATE[rmId]]) return BK_INGREDIENT_TO_RATE[rmId];
-      return null;
-    };
-    // BUG FIX (was silently corrupting COGS Leakage): a leaf like Desi Ghee is BOTH a
-    // direct dish ingredient (Ghee Masala Dosa etc. list "Desi Ghee" themselves, ~30g
-    // each — already a full recipeItems entry above) AND an ingredient INSIDE Sambhar/
-    // Pineapple Halwa's own BK recipe. Without this guard, the walk below added a SECOND
-    // 'desi_ghee' row from just that BK-internal usage (a few hundred grams) and compared
-    // the outlet's full real ghee consumption (drizzled on every dosa, several Kg/day)
-    // against that tiny nested-only figure — a "leak" that isn't real, since Sambhar is
-    // received pre-made from Base Kitchen (the ghee that went into making it was BK's own
-    // consumption, already priced inside Sambhar's costPerKg, never the outlet's). Coconut
-    // (the case this feature was built for) has no direct recipeItems entry at all, so it
-    // still gets its nested row exactly as before — only leafs that ALREADY have their own
-    // direct, outlet-comparable should-consume figure are skipped here.
-    const directItemIds = new Set(recipeItems.map((it) => it.item_id));
-    const nestedTheoretical = {}; // item_id -> { raw_material, item_id, qty, breakdown }
-    // Each recursion level used to collapse down to a single scalar qty + the IMMEDIATE
-    // parent's name ("via Coconut Crush"), so three completely different root causes
-    // (White Chutney, Sambhar, Red Chutney all needing Coconut Crush) landed as three
-    // identical, unlabeled "via Coconut Crush" lines — no way to tell them apart or trace
-    // back to an actual dish. Threading real dish-level lines through instead: each line
-    // carries the ORIGINAL dish name/qty_sold (from the top recipe's own should_consume_
-    // breakdown) plus the full path walked so far, split proportionally at every level
-    // (a dish's share of White Chutney splits into that same share of Coconut Crush, then
-    // of Coconut) so the leaf's breakdown reads "12 × Rawa Paneer Dosa (via White Chutney
-    // → Coconut Crush) = 0.84 Pcs" instead of an anonymous "via Coconut Crush".
-    // `chain` carries the full step-by-step trail for this dish's share, ending at the
-    // CURRENT row's own quantity — e.g. for Coconut's row: [White Chutney 9.8 Kg, Coconut
-    // Crush 1.96 Kg, Coconut 19.6 Pcs] — so nothing is left implicit (see `path`, which
-    // stays one step behind `chain` on purpose: it excludes the current row itself, since
-    // "via White Chutney → Coconut Crush → Coconut" on Coconut's OWN row would be a
-    // redundant self-reference).
-    const addNestedLine = (leafId, label, line) => {
-      if (!leafId || line.subtotal <= 0 || directItemIds.has(leafId)) return;
-      if (!nestedTheoretical[leafId]) nestedTheoretical[leafId] = { raw_material: label, item_id: leafId, qty: 0, breakdown: [] };
-      nestedTheoretical[leafId].qty += line.subtotal;
-      const subtotal = Math.round(line.subtotal * 1000) / 1000;
-      nestedTheoretical[leafId].breakdown.push({
-        dish: line.dish,
-        qty_sold: line.qty_sold,
-        per_dish: line.qty_sold > 0 ? Math.round((subtotal / line.qty_sold) * 100000) / 100000 : null,
-        subtotal,
-        via: line.path.length > 0 ? line.path.join(' → ') : null,
-        chain: line.chain,
-      });
-    };
-    // sourceLines: [{ dish, qty_sold, subtotal (Kg of `recipeId` this dish's own sales
-    // account for), path: [ancestor names, excluding recipeId itself],
-    // chain: [{label, qty, unit}, ...] up to and including recipeId itself }]
-    const expandNestedRecipe = (recipeId, sourceLines, visited) => {
-      if (visited.has(recipeId) || visited.size > 8) return; // cycle/runaway guard
-      const nextVisited = new Set(visited); nextVisited.add(recipeId);
-      const recipe = bkRecipesById[recipeId];
-      const yieldQty = Number(recipe?.yield_qty) || 1;
-      if (yieldQty <= 0) return;
-      (bkIngredientsByRecipeId[recipeId] || []).forEach((ing) => {
-        const rmId = ing.raw_material_id;
-        const perBatchQty = Number(ing.qty || 0);
-        if (perBatchQty <= 0) return;
-        const nestedRecipeId = bareRecipeId(rmId);
-        const leafId = nestedRecipeId ? null : resolveRateId(rmId);
-        const label = nestedRecipeId ? (bkRecipesById[nestedRecipeId]?.name || nestedRecipeId) : (leafId ? (rateMap[leafId]?.name || leafId) : null);
-        const unit = nestedRecipeId ? 'Kg' : (leafId ? (rateMap[leafId]?.unit || 'Kg') : 'Kg');
-        if (!nestedRecipeId && !leafId) return;
-        // This ingredient's total need, split back across each source dish proportional
-        // to how much of `recipeId` that dish's own sales required (batches = that dish's
-        // subtotal / yieldQty) — sums back to the same total the old scalar math gave.
-        // chain gets this row's own {label, qty, unit, base, multiplier} appended now,
-        // ending at itself — base × multiplier = qty, so each hop shows its own working
-        // (9.8 × 0.4 = 3.92), not just the answer.
-        const perParentUnit = Math.round((perBatchQty / yieldQty) * 100000) / 100000;
-        const childLines = sourceLines
-          .map((l) => {
-            const subtotal = perBatchQty * (l.subtotal / yieldQty);
-            return {
-              dish: l.dish, qty_sold: l.qty_sold, subtotal, path: l.path,
-              chain: [...l.chain, { label, qty: Math.round(subtotal * 1000) / 1000, unit, base: l.chain[l.chain.length - 1].qty, multiplier: perParentUnit }],
-            };
-          })
-          .filter((l) => l.subtotal > 0);
-        if (childLines.length === 0) return;
-        if (nestedRecipeId) {
-          // addNestedLine for THIS row (Coconut Crush) uses `path` up to and including
-          // the CURRENT recipe (White Chutney) only — "via White Chutney", not a self-
-          // referencing "via White Chutney → Coconut Crush". Extended to include this
-          // row's own name only for what gets passed one level deeper.
-          childLines.forEach((l) => addNestedLine(nestedRecipeId, label, l));
-          const withHop = childLines.map((l) => ({ ...l, path: [...l.path, label] }));
-          expandNestedRecipe(nestedRecipeId, withHop, nextVisited);
-        } else {
-          childLines.forEach((l) => addNestedLine(leafId, label, l));
-        }
-      });
-    };
-    // Kg-yielding recipes only — a Pcs/count-based top-level item (should_consume's own
-    // unit branch above) isn't a batch-yield recipe in the same sense, nothing to expand.
-    // sourceLines seeded straight from this recipe's OWN dish-level breakdown (e.g. White
-    // Chutney's should_consume_breakdown already says "12 × Rawa Paneer Dosa = 0.84 Kg"),
-    // so real dish names/quantities carry all the way down instead of being lost the
-    // moment we start walking the recipe further. chain's first hop is the top recipe
-    // itself, e.g. "White Chutney: 9.8 Kg for this dish".
-    recipeItems.forEach((it) => {
-      if (it.unit === 'Kg' && bkRecipesById[it.item_id] && it.should_consume > 0) {
-        const sourceLines = (it.should_consume_breakdown || [])
-          .map((b) => ({
-            dish: b.dish, qty_sold: b.qty_sold, subtotal: b.subtotal, path: [it.raw_material],
-            chain: [{ label: it.raw_material, qty: Math.round(b.subtotal * 1000) / 1000, unit: 'Kg', base: b.qty_sold, multiplier: b.per_dish }],
-          }))
-          .filter((l) => l.subtotal > 0);
-        if (sourceLines.length > 0) expandNestedRecipe(it.item_id, sourceLines, new Set());
-      }
-    });
-    const nestedItems = Object.values(nestedTheoretical).map((n) => {
-      const actualItem = actualById[n.item_id];
-      const shouldConsume = Math.round(n.qty * 1000) / 1000;
-      const actualQty = actualItem ? actualItem.used : null;
-      const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
-      const variancePct = actualQty != null && shouldConsume > 0 ? Math.round((variance / shouldConsume) * 1000) / 10 : null;
-      const rate = rateMap[n.item_id]?.price ?? (bkRecipeMap[n.item_id]?.costPerKg ?? null);
-      return {
-        raw_material: n.raw_material,
-        item_id: n.item_id,
-        unit: actualItem?.unit || rateMap[n.item_id]?.unit || 'Kg',
-        should_consume: shouldConsume,
-        should_consume_breakdown: n.breakdown,
-        rate,
-        actual_consumed: actualQty != null ? Math.round(actualQty * 1000) / 1000 : null,
-        actual_consumed_cost: actualQty != null && rate != null ? Math.round(actualQty * rate * 100) / 100 : null,
-        actual_breakdown: actualItem ? {
-          prev_closing: actualItem.prev_closing, dispatched: actualItem.dispatched,
-          purchased: actualItem.purchased, wastage: actualItem.wastage, closing: actualItem.closing,
-        } : null,
-        variance, variance_pct: variancePct,
-        // Excluded from ideal_material_cost/actual_material_cost below — see the comment
-        // above this whole block for why (already priced inside the parent recipe's own
-        // should_consume_cost, via bkRecipeMap.costPerKg).
-        is_nested: true,
-      };
-    });
-
     // Crockery/Packaging — fixed per-item/per-order rule, not recipe-driven (see
     // computeCrockeryPackagingItems above), so it's computed separately and merged in
     // here rather than going through the theoretical/resolveIngredientRateId path above.
     const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor, crockeryPackagingRules);
-    const allItems = [...recipeItems, ...crockeryPackagingItems, ...nestedItems]
+    const allItems = [...recipeItems, ...crockeryPackagingItems]
       .sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
     // Dish-TYPE match count (dishes_matched/dishes_sold below) can look fine even when a
@@ -1617,21 +1462,13 @@ async function computeRMAudit(date, outletFilter) {
     // a demand line, only on whether it resolves to a price at all (see
     // resolveIngredientRateId). Items that don't (should_consume_cost null) are simply
     // excluded, same gap the never_mapped_items/unmapped_ingredients reports above surface
-    // for fixing. Nested items (is_nested — see above) are ALSO excluded here even though
-    // should_consume_cost is already null/absent for them (they naturally sum to 0
-    // already) — explicit on purpose, this total must stay byte-identical to before the
-    // nested-expansion feature existed, not shift because of it.
-    const idealMaterialCost = allItems.reduce((s, it) => s + (it.is_nested ? 0 : (it.should_consume_cost || 0)), 0);
+    // for fixing.
+    const idealMaterialCost = allItems.reduce((s, it) => s + (it.should_consume_cost || 0), 0);
     // Actual side of the same comparison — what these items' ACTUAL consumption cost,
     // priced the same way (rate card / BK recipe cost) ideal_material_cost already is.
     // Used by the outlet Performance Dashboard's COGS Score: how close actual landed to
-    // ideal, both expressed as a share of that day's effective sale. Nested items excluded
-    // here too — unlike ideal_material_cost this ISN'T naturally zero for them (a nested
-    // item like Coconut can have real actual_consumed_cost, genuinely separate spending
-    // from its parent recipe's own), but this total needs to stay unchanged by the same
-    // nested-expansion feature for the same reason: it already feeds a live, trusted KPI
-    // (COGS Score) that shouldn't shift just because this diagnostic feature shipped.
-    const actualMaterialCost = allItems.reduce((s, it) => s + (it.is_nested ? 0 : (it.actual_consumed_cost || 0)), 0);
+    // ideal, both expressed as a share of that day's effective sale.
+    const actualMaterialCost = allItems.reduce((s, it) => s + (it.actual_consumed_cost || 0), 0);
 
     results.push({
       outlet_id: oid, date,
