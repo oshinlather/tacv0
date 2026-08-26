@@ -39,19 +39,48 @@ const inputStyle = { width: "100%", padding: "9px 10px", borderRadius: 8, border
 const labelStyle = { fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 4, display: "block" };
 
 export default function VendorChallans() {
-  const [screen, setScreen] = useState("list"); // "list" | "new" | "detail" | "order"
+  const [screen, setScreen] = useState("list"); // "list" | "new" | "detail" | "order" | "legacy"
   const [selectedId, setSelectedId] = useState(null);
 
   if (screen === "order") return <OrderView onCreated={(id) => { setSelectedId(id); setScreen("detail"); }} onBack={() => setScreen("list")} />;
   if (screen === "new") return <ChallanForm onDone={(id) => { setSelectedId(id); setScreen("detail"); }} onCancel={() => setScreen("list")} />;
   if (screen === "detail" && selectedId) return <ChallanDetail id={selectedId} onBack={() => setScreen("list")} />;
-  return <ChallanList onNew={() => setScreen("new")} onOrder={() => setScreen("order")} onOpen={(id) => { setSelectedId(id); setScreen("detail"); }} />;
+  if (screen === "legacy" && selectedId) return <LegacyOrderDetail id={selectedId} onBack={() => setScreen("list")} />;
+  return (
+    <ChallanList
+      onNew={() => setScreen("new")}
+      onOrder={() => setScreen("order")}
+      onOpen={(id) => { setSelectedId(id); setScreen("detail"); }}
+      onOpenLegacy={(id) => { setSelectedId(id); setScreen("legacy"); }}
+    />
+  );
 }
 
-function ChallanList({ onNew, onOrder, onOpen }) {
+// Legacy "Order Challan" (purchase_orders table) — the OLD, pre-existing real-purchase
+// system, untouched by the new Stage 2 vendor_challans module above. Real orders
+// (Grocery ~2x/month, Vegetables daily) have always been recorded here, never in the
+// new vendor_challans table (which is genuinely empty until stores start using it).
+// Merged into this same list purely as a read view so there's one place to check old
+// challans' qty/price — nothing here writes back into the new ledger.
+function normalizeLegacyPO(po) {
+  const items = Object.values(po.items || {});
+  let totalAmount = null;
+  items.forEach((it) => { if (it.total_price != null) totalAmount = (totalAmount || 0) + Number(it.total_price); });
+  return {
+    id: po.id, _legacy: true,
+    vendor_name: `📜 Order Challan #${po.order_number || po.id.slice(0, 8)}`,
+    location_id: "store", // legacy orders were always the central Store
+    challan_date: po.date, challan_number: po.order_number,
+    total_amount: totalAmount,
+    status: po.status === "received" ? "received" : po.status === "cancelled" ? "cancelled" : "draft",
+  };
+}
+
+function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   const [location, setLocation] = useState("");
   const [status, setStatus] = useState("");
   const [challans, setChallans] = useState(null);
+  const [legacy, setLegacy] = useState(null);
   const [error, setError] = useState("");
 
   const load = () => {
@@ -60,13 +89,23 @@ function ChallanList({ onNew, onOrder, onOpen }) {
     if (location) params.location = location;
     if (status) params.status = status;
     api.getChallans(params).then(setChallans).catch((e) => setError(e.message));
+    // Old real orders only ever hit Store, so hide them entirely under the BK filter.
+    if (location === "bk") { setLegacy([]); return; }
+    api.getPurchaseOrders({ from: todayStrMinus(30) }).then((rows) => setLegacy((rows || []).map(normalizeLegacyPO))).catch(() => setLegacy([]));
   };
   useEffect(load, [location, status]);
+
+  const merged = useMemo(() => {
+    const list = [...(challans || []), ...(legacy || [])];
+    return status ? list.filter((c) => c.status === status) : list;
+  }, [challans, legacy, status]);
+  merged.sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
+  const loaded = challans !== null && legacy !== null;
 
   return (
     <div>
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400E" }}>
-        🆕 New Store Inventory Module — Stage 2 (Beta). Vendor deliveries received here post directly to the new stock ledger.
+        🆕 New Store Inventory Module — Stage 2 (Beta). Vendor deliveries received here post directly to the new stock ledger. Older real purchases (📜 Order Challan) are shown alongside for reference — read-only, they still live in the old system.
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -89,17 +128,17 @@ function ChallanList({ onNew, onOrder, onOpen }) {
       </div>
 
       {error && <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>}
-      {!error && challans === null && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
-      {!error && challans && challans.length === 0 && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>No challans in the last 30 days.</div>}
+      {!error && !loaded && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
+      {!error && loaded && merged.length === 0 && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>No challans in the last 30 days.</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {(challans || []).map((c) => {
+        {merged.map((c) => {
           const s = STATUS_COLORS[c.status] || STATUS_COLORS.draft;
           return (
-            <div key={c.id} onClick={() => onOpen(c.id)} style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div key={(c._legacy ? "po_" : "vc_") + c.id} onClick={() => (c._legacy ? onOpenLegacy(c.id) : onOpen(c.id))} style={{ background: "#fff", border: c._legacy ? "1px dashed #D0D0CC" : "1px solid #E8E8E4", borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{c.vendor_name || "(no vendor)"} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
-                <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number ? ` · #${c.challan_number}` : ""}</div>
+                <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number && !c._legacy ? ` · #${c.challan_number}` : ""}</div>
               </div>
               <div style={{ textAlign: "right" }}>
                 {c.total_amount != null && <div style={{ fontSize: 13, fontWeight: 700 }}>{fmtMoney(c.total_amount)}</div>}
@@ -108,6 +147,70 @@ function ChallanList({ onNew, onOrder, onOpen }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Read-only detail view for a legacy purchase_orders row. Shows exactly what's on the
+// record: order_qty (what was asked for), bought_qty (what the driver actually bought,
+// present on Vegetables orders — driver-recorded via the old PATCH /purchase-orders/:id
+// flow), received_qty (what store confirmed receiving), and total_price (present on
+// Vegetables orders; Grocery orders in this old system were never priced per-item here —
+// they're invoiced/billed separately, not cash-paid by a driver, so total_price is
+// genuinely absent on those, not a bug).
+function LegacyOrderDetail({ id, onBack }) {
+  const [po, setPo] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => { api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message)); }, [id]);
+
+  if (error) return <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>;
+  if (!po) return <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>;
+
+  const items = Object.entries(po.items || {}).map(([itemId, it]) => ({ itemId, ...it }));
+  const anyPrice = items.some((it) => it.total_price != null);
+  const grandTotal = items.reduce((sum, it) => sum + (Number(it.total_price) || 0), 0);
+  const s = STATUS_COLORS[po.status === "received" ? "received" : po.status === "cancelled" ? "cancelled" : "draft"];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <button onClick={onBack} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
+        <div style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>📜 Order Challan #{po.order_number}</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: s.text, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "3px 8px" }}>{s.label}</div>
+      </div>
+
+      <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#92400E" }}>
+        Old Order Challan system — read-only here. {!anyPrice && "No per-item price was recorded on this order (that's normal for Grocery — it's billed separately, not cash-paid by a driver)."}
+      </div>
+
+      <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>{po.date} · Store</div>
+
+      <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ display: "flex", padding: "8px 14px", background: "#FAFAF8", fontSize: 10, fontWeight: 800, color: "#888", borderBottom: "1px solid #F0F0EE" }}>
+          <div style={{ flex: 2 }}>ITEM</div>
+          <div style={{ flex: 1, textAlign: "right" }}>ORDERED</div>
+          <div style={{ flex: 1, textAlign: "right" }}>BOUGHT</div>
+          <div style={{ flex: 1, textAlign: "right" }}>RECEIVED</div>
+          <div style={{ flex: 1, textAlign: "right" }}>PRICE</div>
+        </div>
+        {items.map((it, idx) => {
+          const bought = it.bought_qty != null ? it.bought_qty : it.received_qty;
+          const perUnit = it.total_price != null && bought > 0 ? it.total_price / bought : null;
+          return (
+            <div key={it.itemId} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderTop: idx === 0 ? "none" : "1px solid #F0F0EE", fontSize: 13 }}>
+              <div style={{ flex: 2, fontWeight: 600 }}>{it.name}</div>
+              <div style={{ flex: 1, textAlign: "right", color: "#999" }}>{fmtQty(it.order_qty)} {it.unit}</div>
+              <div style={{ flex: 1, textAlign: "right" }}>{it.bought_qty != null ? `${fmtQty(it.bought_qty)} ${it.unit}` : "—"}</div>
+              <div style={{ flex: 1, textAlign: "right" }}>{it.received_qty != null ? `${fmtQty(it.received_qty)} ${it.unit}` : "—"}</div>
+              <div style={{ flex: 1, textAlign: "right", fontWeight: 700 }}>
+                {it.total_price != null ? (<>{fmtMoney(it.total_price)}{perUnit != null && <div style={{ fontWeight: 500, fontSize: 10, color: "#999" }}>@₹{perUnit.toLocaleString("en-IN", { maximumFractionDigits: 1 })}/{it.unit}</div>}</>) : "—"}
+              </div>
+            </div>
+          );
+        })}
+        {anyPrice && <div style={{ padding: "10px 14px", textAlign: "right", fontSize: 14, fontWeight: 800, borderTop: "1px solid #F0F0EE" }}>Total: {fmtMoney(grandTotal)}</div>}
       </div>
     </div>
   );
