@@ -56,19 +56,39 @@ export default function VendorChallans() {
   );
 }
 
+// Same 8 categories the rest of the app uses (demand/rate card/P&L) — just an
+// emoji+label lookup for display here, not a source of truth.
+const CATEGORY_META = {
+  Vegetable: { emoji: "🥬", label: "Vegetables" },
+  Dairy: { emoji: "🥛", label: "Dairy" },
+  Grocery: { emoji: "🛒", label: "Grocery" },
+  Masala: { emoji: "🌶️", label: "Masala" },
+  Food: { emoji: "🍛", label: "Food" },
+  Packaging: { emoji: "📦", label: "Packaging" },
+  Cleaning: { emoji: "🧹", label: "Cleaning" },
+  Gas: { emoji: "🔥", label: "Gas" },
+};
+const catMeta = (cat) => CATEGORY_META[cat] || { emoji: "📦", label: cat };
+
 // Legacy "Order Challan" (purchase_orders table) — the OLD, pre-existing real-purchase
 // system, untouched by the new Stage 2 vendor_challans module above. Real orders
 // (Grocery ~2x/month, Vegetables daily) have always been recorded here, never in the
 // new vendor_challans table (which is genuinely empty until stores start using it).
 // Merged into this same list purely as a read view so there's one place to check old
-// challans' qty/price — nothing here writes back into the new ledger.
+// challans' qty/price — nothing here writes back into the new ledger. Every real order
+// checked so far is single-category (a "Vegetables" order, a "Grocery" order, etc — see
+// the /purchase-orders data itself), so deriving categories straight from its own items
+// (rather than needing a separate vendor mapping) is reliable.
 function normalizeLegacyPO(po) {
   const items = Object.values(po.items || {});
   let totalAmount = null;
   items.forEach((it) => { if (it.total_price != null) totalAmount = (totalAmount || 0) + Number(it.total_price); });
+  const categories = [...new Set(items.map((it) => it.category).filter(Boolean))];
+  const catLabel = categories.map((c) => catMeta(c).label).join("/") || null;
+  const catEmoji = categories.map((c) => catMeta(c).emoji).join("") || "📜";
   return {
-    id: po.id, _legacy: true,
-    vendor_name: `📜 Order Challan #${po.order_number || po.id.slice(0, 8)}`,
+    id: po.id, _legacy: true, categories,
+    vendor_name: `${catEmoji} ${catLabel ? catLabel + " — " : ""}Order Challan #${po.order_number || po.id.slice(0, 8)}`,
     location_id: "store", // legacy orders were always the central Store
     challan_date: po.date, challan_number: po.order_number,
     total_amount: totalAmount,
@@ -77,8 +97,8 @@ function normalizeLegacyPO(po) {
 }
 
 function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
-  const [location, setLocation] = useState("");
   const [status, setStatus] = useState("");
+  const [category, setCategory] = useState("");
   const [challans, setChallans] = useState(null);
   const [legacy, setLegacy] = useState(null);
   const [error, setError] = useState("");
@@ -86,46 +106,50 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   const load = () => {
     setError("");
     const params = { from: todayStrMinus(30) };
-    if (location) params.location = location;
     if (status) params.status = status;
     api.getChallans(params).then(setChallans).catch((e) => setError(e.message));
-    // Old real orders only ever hit Store, so hide them entirely under the BK filter.
-    if (location === "bk") { setLegacy([]); return; }
     api.getPurchaseOrders({ from: todayStrMinus(30) }).then((rows) => setLegacy((rows || []).map(normalizeLegacyPO))).catch(() => setLegacy([]));
   };
-  useEffect(load, [location, status]);
+  useEffect(load, [status]);
 
   const merged = useMemo(() => {
-    const list = [...(challans || []), ...(legacy || [])];
-    return status ? list.filter((c) => c.status === status) : list;
-  }, [challans, legacy, status]);
+    let list = [...(challans || []), ...(legacy || [])];
+    if (status) list = list.filter((c) => c.status === status);
+    if (category) list = list.filter((c) => (c.categories || []).includes(category));
+    return list;
+  }, [challans, legacy, status, category]);
   merged.sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
   const loaded = challans !== null && legacy !== null;
+  const availableCategories = useMemo(() => [...new Set((legacy || []).flatMap((c) => c.categories || []))].sort(), [legacy]);
 
   return (
     <div>
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400E" }}>
         🆕 New Store Inventory Module — Stage 2 (Beta). Vendor deliveries received here post directly to the new stock ledger. Older real purchases (📜 Order Challan) are shown alongside for reference — read-only, they still live in the old system.
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {["", "store", "bk"].map((loc) => (
-            <button key={loc || "all"} onClick={() => setLocation(loc)} style={{ padding: "7px 14px", borderRadius: 8, border: location === loc ? "none" : "1px solid #E0E0DC", background: location === loc ? "#1A1A1A" : "#fff", color: location === loc ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-              {loc === "" ? "All" : loc === "store" ? "🏬 Store" : "🏭 BK"}
-            </button>
-          ))}
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
-            <option value="">All Statuses</option>
-            <option value="draft">Draft</option>
-            <option value="received">Received</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-        </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+          <option value="">All Statuses</option>
+          <option value="draft">Draft</option>
+          <option value="received">Received</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onOrder} style={{ ...btnPrimary, background: "#16A34A" }}>📝 Order from Vendor</button>
           <button onClick={onNew} style={btnGhost}>+ Log a Delivery</button>
         </div>
       </div>
+      {availableCategories.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+          <button onClick={() => setCategory("")} style={{ padding: "6px 12px", borderRadius: 8, border: category === "" ? "none" : "1px solid #E0E0DC", background: category === "" ? "#1A1A1A" : "#fff", color: category === "" ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>All</button>
+          {availableCategories.map((c) => {
+            const m = catMeta(c);
+            return (
+              <button key={c} onClick={() => setCategory(c)} style={{ padding: "6px 12px", borderRadius: 8, border: category === c ? "none" : "1px solid #E0E0DC", background: category === c ? "#1A1A1A" : "#fff", color: category === c ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{m.emoji} {m.label}</button>
+            );
+          })}
+        </div>
+      )}
 
       {error && <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>}
       {!error && !loaded && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
