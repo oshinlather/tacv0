@@ -176,18 +176,22 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   );
 }
 
-// Read-only detail view for a legacy purchase_orders row. Shows exactly what's on the
-// record: order_qty (what was asked for), bought_qty (what the driver actually bought,
-// present on Vegetables orders — driver-recorded via the old PATCH /purchase-orders/:id
-// flow), received_qty (what store confirmed receiving), and total_price (present on
-// Vegetables orders; Grocery orders in this old system were never priced per-item here —
-// they're invoiced/billed separately, not cash-paid by a driver, so total_price is
-// genuinely absent on those, not a bug).
+// Detail view for a legacy purchase_orders row. Shows order_qty (what was asked for),
+// bought_qty (what the driver actually bought — Vegetables orders had this recorded live
+// via the old PATCH /purchase-orders/:id flow; Grocery orders mostly don't), received_qty
+// (what store confirmed receiving), and total_price. Grocery orders in particular were
+// never priced per-item in this old system (billed separately, not cash-paid by a
+// driver) — "Edit" lets the owner go back and fill in the real numbers from the actual
+// bill/receipt now, closing that gap rather than leaving it permanently blank.
 function LegacyOrderDetail({ id, onBack }) {
   const [po, setPo] = useState(null);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({}); // itemId -> { bought_qty, received_qty, total_price } strings
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => { api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message)); }, [id]);
+  const load = () => api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message));
+  useEffect(load, [id]);
 
   if (error) return <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>;
   if (!po) return <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>;
@@ -196,6 +200,34 @@ function LegacyOrderDetail({ id, onBack }) {
   const anyPrice = items.some((it) => it.total_price != null);
   const grandTotal = items.reduce((sum, it) => sum + (Number(it.total_price) || 0), 0);
   const s = STATUS_COLORS[po.status === "received" ? "received" : po.status === "cancelled" ? "cancelled" : "draft"];
+
+  const startEdit = () => {
+    const d = {};
+    items.forEach((it) => { d[it.itemId] = { bought_qty: it.bought_qty ?? "", received_qty: it.received_qty ?? "", total_price: it.total_price ?? "" }; });
+    setDraft(d);
+    setEditing(true);
+  };
+
+  const setField = (itemId, field, val) => setDraft((p) => ({ ...p, [itemId]: { ...p[itemId], [field]: val } }));
+
+  const save = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      const newItems = { ...po.items };
+      Object.entries(draft).forEach(([itemId, d]) => {
+        newItems[itemId] = {
+          ...newItems[itemId],
+          bought_qty: d.bought_qty === "" ? undefined : Number(d.bought_qty),
+          received_qty: d.received_qty === "" ? undefined : Number(d.received_qty),
+          total_price: d.total_price === "" ? undefined : Number(d.total_price),
+        };
+      });
+      await api.updatePurchaseOrder(id, { items: newItems });
+      setEditing(false);
+      load();
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
+  };
 
   return (
     <div>
@@ -206,10 +238,21 @@ function LegacyOrderDetail({ id, onBack }) {
       </div>
 
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 14, fontSize: 12, color: "#92400E" }}>
-        Old Order Challan system — read-only here. {!anyPrice && "No per-item price was recorded on this order (that's normal for Grocery — it's billed separately, not cash-paid by a driver)."}
+        Old Order Challan system. {!anyPrice && !editing && "No per-item price was recorded on this order (that's normal for Grocery — it's billed separately, not cash-paid by a driver) — tap Edit to back-fill it from the real bill."}
       </div>
 
-      <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>{po.date} · Store</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "#999" }}>{po.date} · Store</div>
+        {!editing ? (
+          <button onClick={startEdit} style={btnGhost}>✏️ Edit — Back-fill Qty/Price</button>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setEditing(false)} disabled={saving} style={btnGhost}>Cancel</button>
+            <button onClick={save} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "Saving…" : "💾 Save"}</button>
+          </div>
+        )}
+      </div>
+      {error && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 10 }}>{error}</div>}
 
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, overflow: "hidden" }}>
         <div style={{ display: "flex", padding: "8px 14px", background: "#FAFAF8", fontSize: 10, fontWeight: 800, color: "#888", borderBottom: "1px solid #F0F0EE" }}>
@@ -217,24 +260,35 @@ function LegacyOrderDetail({ id, onBack }) {
           <div style={{ flex: 1, textAlign: "right" }}>ORDERED</div>
           <div style={{ flex: 1, textAlign: "right" }}>BOUGHT</div>
           <div style={{ flex: 1, textAlign: "right" }}>RECEIVED</div>
-          <div style={{ flex: 1, textAlign: "right" }}>PRICE</div>
+          <div style={{ flex: editing ? "1 1 100px" : 1, textAlign: "right" }}>PRICE (₹)</div>
         </div>
         {items.map((it, idx) => {
           const bought = it.bought_qty != null ? it.bought_qty : it.received_qty;
           const perUnit = it.total_price != null && bought > 0 ? it.total_price / bought : null;
+          const d = draft[it.itemId] || {};
           return (
             <div key={it.itemId} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderTop: idx === 0 ? "none" : "1px solid #F0F0EE", fontSize: 13 }}>
               <div style={{ flex: 2, fontWeight: 600 }}>{it.name}</div>
               <div style={{ flex: 1, textAlign: "right", color: "#999" }}>{fmtQty(it.order_qty)} {it.unit}</div>
-              <div style={{ flex: 1, textAlign: "right" }}>{it.bought_qty != null ? `${fmtQty(it.bought_qty)} ${it.unit}` : "—"}</div>
-              <div style={{ flex: 1, textAlign: "right" }}>{it.received_qty != null ? `${fmtQty(it.received_qty)} ${it.unit}` : "—"}</div>
-              <div style={{ flex: 1, textAlign: "right", fontWeight: 700 }}>
-                {it.total_price != null ? (<>{fmtMoney(it.total_price)}{perUnit != null && <div style={{ fontWeight: 500, fontSize: 10, color: "#999" }}>@₹{perUnit.toLocaleString("en-IN", { maximumFractionDigits: 1 })}/{it.unit}</div>}</>) : "—"}
-              </div>
+              {editing ? (
+                <>
+                  <div style={{ flex: 1, textAlign: "right" }}><input type="number" min="0" step="any" value={d.bought_qty} onChange={(e) => setField(it.itemId, "bought_qty", e.target.value)} style={{ ...inputStyle, width: 64, textAlign: "right", display: "inline-block" }} /></div>
+                  <div style={{ flex: 1, textAlign: "right" }}><input type="number" min="0" step="any" value={d.received_qty} onChange={(e) => setField(it.itemId, "received_qty", e.target.value)} style={{ ...inputStyle, width: 64, textAlign: "right", display: "inline-block" }} /></div>
+                  <div style={{ flex: "1 1 100px", textAlign: "right" }}><input type="number" min="0" step="any" placeholder="₹ total" value={d.total_price} onChange={(e) => setField(it.itemId, "total_price", e.target.value)} style={{ ...inputStyle, width: 90, textAlign: "right", display: "inline-block" }} /></div>
+                </>
+              ) : (
+                <>
+                  <div style={{ flex: 1, textAlign: "right" }}>{it.bought_qty != null ? `${fmtQty(it.bought_qty)} ${it.unit}` : "—"}</div>
+                  <div style={{ flex: 1, textAlign: "right" }}>{it.received_qty != null ? `${fmtQty(it.received_qty)} ${it.unit}` : "—"}</div>
+                  <div style={{ flex: 1, textAlign: "right", fontWeight: 700 }}>
+                    {it.total_price != null ? (<>{fmtMoney(it.total_price)}{perUnit != null && <div style={{ fontWeight: 500, fontSize: 10, color: "#999" }}>@₹{perUnit.toLocaleString("en-IN", { maximumFractionDigits: 1 })}/{it.unit}</div>}</>) : "—"}
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
-        {anyPrice && <div style={{ padding: "10px 14px", textAlign: "right", fontSize: 14, fontWeight: 800, borderTop: "1px solid #F0F0EE" }}>Total: {fmtMoney(grandTotal)}</div>}
+        {anyPrice && !editing && <div style={{ padding: "10px 14px", textAlign: "right", fontSize: 14, fontWeight: 800, borderTop: "1px solid #F0F0EE" }}>Total: {fmtMoney(grandTotal)}</div>}
       </div>
     </div>
   );

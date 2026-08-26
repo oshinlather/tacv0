@@ -5362,7 +5362,11 @@ router.patch('/purchase-orders/:id', async (req, res) => {
     // Was unguarded. Drivers use this to record bought_qty/total_price per item on
     // their vegetable order (a metadata-only update to purchase_orders.items — it
     // never touches inventory_stock, unlike the actual Stock-In/receive flow).
-    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'driver')) return;
+    // bk_manager added: the Vendor Challans (Beta) screen's legacy Order Challan
+    // back-fill edit uses this same endpoint, and bk_manager has that tab (SCOPED_ROLE_TABS
+    // in App.jsx) — was 403ing on save before this, same class of gap as inventory.js's
+    // gate() needing the same widening earlier in this migration.
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp', 'driver', 'bk_manager')) return;
     const updates = {};
     if (req.body.status !== undefined) updates.status = req.body.status;
     if (req.body.items !== undefined) updates.items = req.body.items;
