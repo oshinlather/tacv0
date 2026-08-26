@@ -17807,24 +17807,19 @@ const SCOPED_ROLE_TABS = {
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
-    // Full inventory module — same three screens AVP's "Base Kitchen Manager" tile
-    // bundles (Inventory itself, BK's own daily closing count, and the dispatch/stock-out
-    // reconciliation). Backend gate() in inventory.js widened to admit bk_manager
-    // alongside owner/store_mgr/avp — was 403ing before this. Inventory Ledger
-    // deliberately excluded: that route is owner-only "per explicit request" (store
-    // managers submit counts but don't see the reconciled tally) — same policy applies
-    // here, not something this change should quietly override.
-    { id: "inventory", label: "📦 Inventory" },
-    // Relabeled, not removed — this screen has always submitted Store's real physical
-    // count (confirmed with the owner; the table name "bk_closing_stock" was a historical
-    // mislabel from when Store and BK were one physical site). Kept available since it's
-    // still real historical record and the mechanism the Store re-baseline used, but
-    // "BK Closing & Wastage" below is BK's own, new, correctly-scoped equivalent.
-    { id: "bk_closing", label: "📊 Store Closing Stock (legacy entry)" },
+    // Old flow (inventory_items/inventory_stock module, and the "bk_closing_stock" legacy
+    // count entry) retired from this role's nav once the new Store Inventory Module
+    // (challans -> receive -> ledger, closing counts) was confirmed working end-to-end —
+    // "everything is working perfectly in new flow so lets hide the old flow". Owner still
+    // has both under "BK & Store" for historical reference; only the day-to-day operator
+    // nav is trimmed. new_store_stock (the new ledger's read-only balance view) added in
+    // their place so removing the old Inventory tab doesn't leave a gap in stock
+    // visibility — same live-numbers job the old tab did, backed by the new system.
+    { id: "new_store_stock", label: "📦 Store Stock" },
     { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" },
     { id: "bk_audit", label: "🔍 BK Store Audit" },
-    { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)" },
-    { id: "stock_counts", label: "🔢 Closing Counts (Beta)" },
+    { id: "vendor_challans", label: "🧾 Vendor Challans" },
+    { id: "stock_counts", label: "🔢 Closing Counts" },
     { id: "bk_production", label: "🏭 Production (Beta)" },
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
@@ -17887,7 +17882,11 @@ const ScopedDashboard = () => {
     </div>
     {tab === "store" ? (
       <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, overflowX: "auto" }}>
-        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Store Closing (legacy)" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+        {/* Old flow (Inventory, Store Closing legacy entry) dropped from AVP's nav for the
+            same reason as bk_manager's above — new_store_stock takes Inventory's spot as
+            the live stock-visibility replacement. Owner's own "BK & Store" dropdown further
+            below is untouched — this is scoped to the day-to-day operator nav only. */}
+        {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "new_store_stock", label: "📦 Store Stock" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
     <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing", "finance"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
@@ -17895,8 +17894,7 @@ const ScopedDashboard = () => {
       {tab === "store" && storeView === "bk" && <BaseKitchen />}
       {tab === "store" && storeView === "dispatch" && <Dispatch />}
       {tab === "store" && storeView === "demands" && <DemandHistory />}
-      {tab === "store" && storeView === "inventory" && <Inventory />}
-      {tab === "store" && storeView === "bk_closing" && <BKClosingStock />}
+      {tab === "store" && storeView === "new_store_stock" && <StoreInventoryStock />}
       {tab === "store" && storeView === "bk_closing_wastage" && <BKClosingWastage />}
       {tab === "store" && storeView === "bk_audit" && <BKAudit />}
       {tab === "store" && storeView === "sales" && <SalesUpload />}
@@ -17917,8 +17915,7 @@ const ScopedDashboard = () => {
       {tab === "pp_recipes" && <DishRecipesPanel />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
-      {tab === "inventory" && <Inventory />}
-      {tab === "bk_closing" && <BKClosingStock />}
+      {tab === "new_store_stock" && <StoreInventoryStock />}
       {tab === "bk_closing_wastage" && <BKClosingWastage />}
       {tab === "bk_audit" && <BKAudit />}
       {tab === "vendor_challans" && <VendorChallans />}
