@@ -183,7 +183,11 @@ export const DEMAND_SECTIONS = [
     ]},
   { id: "grocery", titleHi: "Grocery & Staples", emoji: "🛒", color: "#EA580C", bg: "#FFF7ED", border: "#FED7AA",
     items: [
-      { id: "golden_sela_rice", name: "Rice (Golden Sela)", unit: "Kg" },
+      // Outlets now order Sona Masoori instead of Golden Sela — kept as a distinct id
+      // from the Food section's "sona_masoori_rice" (that one's rate_card row also
+      // prices the Dosa Batter recipe ingredient; this one is purely the Grocery-section
+      // outlet-demand item, ₹50/Kg like the Food one — see rate_card 2026-08-27).
+      { id: "sona_masoori_rice_grocery", name: "Sona Masoori Rice", unit: "Kg" },
       { id: "arhar_dal", name: "Arhar Dal", unit: "Kg" },
       { id: "urad_daal_whole", name: "Urad Daal Whole", unit: "Kg" },
       { id: "chana_dal", name: "Chana Dal", unit: "Kg" },
