@@ -5950,15 +5950,40 @@ router.post('/franchise-settings', async (req, res) => {
   try {
     const user = await requireRole(req, res, 'owner');
     if (!user) return;
-    const { outlet_id, markup_pct, royalty_pct, effective_from, notes } = req.body;
+    const { outlet_id, markup_pct, royalty_pct, effective_from, notes, category_markup } = req.body;
     if (!outlet_id || !effective_from) return res.status(400).json({ error: 'outlet_id and effective_from are required' });
     const markup = Number(markup_pct);
     const royalty = Number(royalty_pct);
     if (!Number.isFinite(markup) || markup < 0 || markup > 100) return res.status(400).json({ error: 'markup_pct must be a number between 0 and 100' });
     if (!Number.isFinite(royalty) || royalty < 0 || royalty > 100) return res.status(400).json({ error: 'royalty_pct must be a number between 0 and 100' });
-    const { error } = await supabase.from('franchise_settings').insert({
+    // Optional per-category override on top of the flat markup_pct above — e.g. a lower
+    // markup on Packaging, higher on prepared Food. Any category not present here just
+    // uses markup_pct, same as before this existed. Validated the same way as the flat
+    // field (a number 0-100) so a bad category override can't silently corrupt a bill.
+    let categoryMarkup = {};
+    if (category_markup && typeof category_markup === 'object') {
+      for (const [catId, pct] of Object.entries(category_markup)) {
+        const n = Number(pct);
+        if (!Number.isFinite(n) || n < 0 || n > 100) return res.status(400).json({ error: `category_markup.${catId} must be a number between 0 and 100` });
+        categoryMarkup[catId] = n;
+      }
+    }
+    let { error } = await supabase.from('franchise_settings').insert({
       outlet_id, markup_pct: markup, royalty_pct: royalty, effective_from, notes: notes || null, created_by: user.name,
+      category_markup: categoryMarkup,
     });
+    // Falls back to inserting without category_markup if the column doesn't exist yet
+    // (migration 2026_08_27_franchise_settings_category_markup.sql not applied to this DB
+    // yet) — without this, every "New Agreement Version" save breaks outright the moment
+    // this route deploys, until someone remembers to run the migration first. PostgREST's
+    // own code for "column not in its schema cache" is PGRST204 (not Postgres's raw
+    // undefined_column 42703 — PostgREST intercepts it before it reaches that far).
+    if (error && error.code === 'PGRST204') {
+      console.warn('[franchise-settings] category_markup column missing — insert retried without it. Run migration 2026_08_27_franchise_settings_category_markup.sql.');
+      ({ error } = await supabase.from('franchise_settings').insert({
+        outlet_id, markup_pct: markup, royalty_pct: royalty, effective_from, notes: notes || null, created_by: user.name,
+      }));
+    }
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6070,7 +6095,7 @@ router.get('/franchise-billing/summary', async (req, res) => {
     const revenue = salesByOutlet[outlet_id]?.total_sale || 0;
 
     const agreement = agreements && agreements[0]
-      ? { markup_pct: Number(agreements[0].markup_pct), royalty_pct: Number(agreements[0].royalty_pct), effective_from: agreements[0].effective_from, notes: agreements[0].notes }
+      ? { markup_pct: Number(agreements[0].markup_pct), royalty_pct: Number(agreements[0].royalty_pct), effective_from: agreements[0].effective_from, notes: agreements[0].notes, category_markup: agreements[0].category_markup || {} }
       : null;
 
     res.json({

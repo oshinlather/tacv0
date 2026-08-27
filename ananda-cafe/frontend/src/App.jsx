@@ -7632,18 +7632,25 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   const hasAgreement = !!billingSummary?.agreement;
   const markupPct = billingSummary?.agreement?.markup_pct ?? 0;
   const royaltyPct = billingSummary?.agreement?.royalty_pct ?? 0;
-  const markupAmount = totalAmount * markupPct / 100;
+  const categoryMarkupMap = billingSummary?.agreement?.category_markup || {};
+  const hasCategoryMarkup = Object.keys(categoryMarkupMap).length > 0;
+  // Per-category override on top of the flat markup — any category not present in
+  // categoryMarkupMap just uses markupPct, same as before this existed.
+  const markupPctFor = (catId) => categoryMarkupMap[catId] ?? markupPct;
+  // Sum of each item's OWN markup % (category-aware) rather than totalAmount*markupPct —
+  // the two are only the same number when every category shares the flat markup.
+  const markupAmount = items.reduce((s, i) => s + i.amount * markupPctFor(i.catId) / 100, 0);
   const bkShareAmount = (billingSummary?.bk_share_ratio || 0) * (billingSummary?.bk_monthly_fixed || 0);
   const billingSubtotal = totalAmount + markupAmount + bkShareAmount;
   const revenue = billingSummary?.revenue || 0;
   const royaltyAmount = revenue * royaltyPct / 100;
   const totalPayable = billingSubtotal + royaltyAmount;
 
-  // Franchise rate = material rate + markup, per line. franchiseRateFor(i) is what the
-  // franchise is charged per unit; summed as franchiseAmountTotal (= material + markup),
-  // shown in the table header and beside the outlet name.
-  const franchiseRateFor = (i) => Math.round(i.billedRate * (1 + markupPct / 100) * 100) / 100;
-  const franchiseAmountTotal = totalAmount * (1 + markupPct / 100);
+  // Franchise rate = material rate + this item's own markup %, per line. franchiseRateFor(i)
+  // is what the franchise is charged per unit; summed as franchiseAmountTotal (= material +
+  // markup), shown in the table header and beside the outlet name.
+  const franchiseRateFor = (i) => Math.round(i.billedRate * (1 + markupPctFor(i.catId) / 100) * 100) / 100;
+  const franchiseAmountTotal = totalAmount + markupAmount;
 
   // Pricing Breakdown view — same 3 numbers the Summary header already shows (Base/
   // Material Amount, Markup, BK Share), just split per item instead of shown only as
@@ -7656,7 +7663,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   // of any demanded material, so it has no per-item meaning; it stays a summary-only line.
   const pricingRows = useMemo(() => visibleItems.map((i) => {
     const baseAmount = i.amount;
-    const markupAmt = baseAmount * markupPct / 100;
+    const markupAmt = baseAmount * markupPctFor(i.catId) / 100;
     const bkShareAmt = totalAmount > 0 ? (baseAmount / totalAmount) * bkShareAmount : 0;
     const totalAmt = baseAmount + markupAmt + bkShareAmt;
     // Final Price must be per RATE-CARD unit (Kg for Dosa Batter, even though it's demanded
@@ -7670,7 +7677,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     const qtyInRateUnit = i.billedRate > 0 ? baseAmount / i.billedRate : i.billedQty;
     const finalPricePerUnit = qtyInRateUnit > 0 ? Math.round((totalAmt / qtyInRateUnit) * 100) / 100 : 0;
     return { ...i, baseAmount, markupAmt, bkShareAmt, totalAmt, finalPricePerUnit };
-  }), [visibleItems, markupPct, bkShareAmount, totalAmount]);
+  }), [visibleItems, markupPct, categoryMarkupMap, bkShareAmount, totalAmount]);
 
   // Every date in the active range up to today (dates with no demand still show as a
   // column) — the whole month for Month mode, just the picked days for Week mode.
@@ -7729,10 +7736,10 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       exportCSV(headers, rows, `franchise_billing_${selOutlet}_${range.from}_to_${range.to}.csv`);
       return;
     }
-    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
+    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", hasCategoryMarkup ? "Franchise Rate (markup varies by category)" : `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
     const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), i.finalPricePerUnit, i.rateUnit, Math.round(i.amount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", hasCategoryMarkup ? "Markup (varies by category — see per-row Franchise Rate)" : `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
     // Revenue as its own line (not just inside the Royalty row's label text) — so the
@@ -7814,7 +7821,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                       showing the full composition, unchanged. */}
                   <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>
                     {fmt(lockedOutlet ? billingSubtotal : franchiseAmountTotal)}
-                    {!lockedOutlet && markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
+                    {!lockedOutlet && markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {hasCategoryMarkup ? "category-wise" : `${markupPct}%`} markup)</span>}
                   </div>
                   <div style={{ fontSize: 11, color: "#888", marginTop: 2, fontFamily: "'JetBrains Mono'" }}>
                     {!lockedOutlet && <>+ BK Share <strong style={{ color: "#7C3AED" }}>{fmt(bkShareAmount)}</strong>{" · "}</>}
@@ -7901,7 +7908,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                     <th style={{ ...thS, textAlign: "right" }}>Base Price</th>
                     <th style={{ ...thS, textAlign: "right" }}>Base Amount<div style={{ fontWeight: 700, color: "#1A1A1A", fontSize: 10 }}>({fmt(totalAmount)})</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>BK Share<div style={{ fontWeight: 700, color: "#7C3AED", fontSize: 10 }}>({fmt(bkShareAmount)})</div></th>
-                    <th style={{ ...thS, textAlign: "right" }}>Markup{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(markupAmount)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>Markup{hasCategoryMarkup ? " (varies)" : markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(markupAmount)})</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>Final Price<div style={{ fontWeight: 500, color: "#999", fontSize: 9 }}>(all 3 combined)</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>Total<div style={{ fontWeight: 700, color: "#166534", fontSize: 10 }}>({fmt(billingSubtotal)})</div></th>
                   </tr></thead>
@@ -7943,7 +7950,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                     <th style={{ ...thS, textAlign: "right" }}>Demanded</th>
                     <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
                     {!lockedOutlet && <th style={{ ...thS, textAlign: "right" }}>Rate</th>}
-                    {!lockedOutlet && <th style={{ ...thS, textAlign: "right" }}>Franchise Rate{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(franchiseAmountTotal)})</div></th>}
+                    {!lockedOutlet && <th style={{ ...thS, textAlign: "right" }}>Franchise Rate{hasCategoryMarkup ? " (varies by category)" : markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(franchiseAmountTotal)})</div></th>}
                     <th style={{ ...thS, textAlign: "right" }}>Final Price{!lockedOutlet && <div style={{ fontWeight: 500, color: "#999", fontSize: 9 }}>(incl. BK Share)</div>}</th>
                     <th style={{ ...thS, textAlign: "right" }}>Amount<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(lockedOutlet ? billingSubtotal : totalAmount)})</div></th>
                   </tr></thead>
@@ -8026,7 +8033,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                     <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(totalAmount)}</span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
-                    <span>+ Markup ({markupPct}% on material cost)</span>
+                    <span>+ Markup ({hasCategoryMarkup ? "varies by category, see Pricing tab" : `${markupPct}% on material cost`})</span>
                     <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(markupAmount)}</span>
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
@@ -18115,6 +18122,11 @@ const FranchiseSettingsPanel = () => {
   const [formRoyalty, setFormRoyalty] = useState("");
   const [formDate, setFormDate] = useState(() => today());
   const [formNotes, setFormNotes] = useState("");
+  // Optional per-category override on top of the flat markup above — e.g. a lower markup
+  // on Packaging, higher on Food. Keyed by DEMAND_SECTIONS id; a blank string means "no
+  // override, use the flat markup %" — only non-blank entries get sent to the server.
+  const [categoryMarkup, setCategoryMarkup] = useState({});
+  const [showCategoryMarkup, setShowCategoryMarkup] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState(null);
   const [saving, setSaving] = useState(false);
 
@@ -18152,6 +18164,13 @@ const FranchiseSettingsPanel = () => {
     setFormRoyalty(cur ? String(cur.royalty_pct) : "0");
     setFormDate(today());
     setFormNotes("");
+    // Seed from the current version's overrides (numbers -> strings for the inputs) so
+    // starting a new version doesn't silently drop them — has to be explicitly cleared,
+    // never lost by accident just from opening the form.
+    const curCatMarkup = {};
+    Object.entries(cur?.category_markup || {}).forEach(([catId, pct]) => { curCatMarkup[catId] = String(pct); });
+    setCategoryMarkup(curCatMarkup);
+    setShowCategoryMarkup(Object.keys(curCatMarkup).length > 0);
     setEditingOutlet(outletId);
   };
 
@@ -18159,9 +18178,18 @@ const FranchiseSettingsPanel = () => {
     const markup = Number(formMarkup), royalty = Number(formRoyalty);
     if (!Number.isFinite(markup) || markup < 0 || markup > 100) return alert("Markup % must be between 0 and 100");
     if (!Number.isFinite(royalty) || royalty < 0 || royalty > 100) return alert("Royalty % must be between 0 and 100");
+    // Only non-blank category rows are sent — a blank input means "no override for this
+    // category," not "override it to 0%".
+    const category_markup = {};
+    for (const [catId, val] of Object.entries(categoryMarkup)) {
+      if (val === "" || val == null) continue;
+      const n = Number(val);
+      if (!Number.isFinite(n) || n < 0 || n > 100) return alert(`Category markup for "${catId}" must be between 0 and 100`);
+      category_markup[catId] = n;
+    }
     setSaving(true);
     try {
-      await api.saveFranchiseSettings({ outlet_id: editingOutlet, markup_pct: markup, royalty_pct: royalty, effective_from: formDate, notes: formNotes.trim() || null });
+      await api.saveFranchiseSettings({ outlet_id: editingOutlet, markup_pct: markup, royalty_pct: royalty, effective_from: formDate, notes: formNotes.trim() || null, category_markup });
       setEditingOutlet(null);
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -18211,6 +18239,14 @@ const FranchiseSettingsPanel = () => {
                 ) : (
                   <div style={{ fontSize: 12, color: "#DC2626", marginBottom: 10 }}>⚠️ No agreement configured yet — Franchise Billing will show 0% markup/royalty until you set one.</div>
                 )}
+                {cur && Object.keys(cur.category_markup || {}).length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                    {Object.entries(cur.category_markup).map(([catId, pct]) => {
+                      const sec = DEMAND_SECTIONS.find((s) => s.id === catId);
+                      return <span key={catId} style={{ fontSize: 10, fontWeight: 700, color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "3px 8px" }}>{sec?.emoji || "📦"} {sec?.titleHi || catId} {pct}%</span>;
+                    })}
+                  </div>
+                )}
                 {cur?.notes && <div style={{ fontSize: 11, color: "#888", marginBottom: 10 }}>{cur.notes}</div>}
 
                 {editingOutlet !== o.id ? (
@@ -18233,6 +18269,25 @@ const FranchiseSettingsPanel = () => {
                         <input type="date" value={formDate} onChange={(e) => setFormDate(e.target.value)} style={{ display: "block", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "'JetBrains Mono'", marginTop: 3 }} />
                       </label>
                     </div>
+                    <button type="button" onClick={() => setShowCategoryMarkup((v) => !v)} style={{ background: "transparent", border: "none", color: "#7C3AED", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", padding: 0, marginBottom: 8, display: "block" }}>
+                      {showCategoryMarkup ? "▾" : "▸"} Category-wise Markup (optional — overrides the flat {formMarkup || 0}% above per category)
+                    </button>
+                    {showCategoryMarkup && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8, marginBottom: 10, padding: 10, background: "#fff", borderRadius: 8, border: "1px solid #E8E8E4" }}>
+                        {DEMAND_SECTIONS.map((s) => (
+                          <label key={s.id} style={{ fontSize: 11, color: "#666" }}>{s.emoji} {s.titleHi}
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3 }}>
+                              <input type="number" placeholder={`${formMarkup || 0}%`} value={categoryMarkup[s.id] ?? ""}
+                                onChange={(e) => setCategoryMarkup((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                                style={{ width: 70, padding: "5px 7px", borderRadius: 6, border: categoryMarkup[s.id] ? "1px solid #7C3AED" : "1px solid #E0E0DC", background: categoryMarkup[s.id] ? "#F5F3FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", color: categoryMarkup[s.id] ? "#7C3AED" : "#1A1A1A" }} />
+                              {categoryMarkup[s.id] !== undefined && categoryMarkup[s.id] !== "" && (
+                                <button type="button" onClick={() => setCategoryMarkup((prev) => { const next = { ...prev }; delete next[s.id]; return next; })} title="Clear override" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12, padding: 0 }}>↺</button>
+                              )}
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
                     <textarea value={formNotes} onChange={(e) => setFormNotes(e.target.value)} placeholder="Notes (optional) — e.g. reason for the change"
                       style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box", resize: "vertical", minHeight: 40 }} />
                     <div style={{ display: "flex", gap: 8 }}>
