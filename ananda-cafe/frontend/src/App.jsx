@@ -18170,7 +18170,7 @@ const ScopedDashboard = () => {
         {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "new_store_stock", label: "📦 Store Stock" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
-    <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing", "finance"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
+    <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing", "finance", "franchise_billing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
       {["avp", "head_chef"].includes(currentUser?.role) && <MissingRecipesSummary />}
       {tab === "store" && storeView === "bk" && <BaseKitchen />}
       {tab === "store" && storeView === "dispatch" && <Dispatch />}
@@ -18245,7 +18245,7 @@ const FranchiseDashboard = () => {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>
       {FRANCHISE_TABS.map((t) => (<button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: tab === t.id ? 700 : 500, color: tab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: tab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
     </div>
-    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "20px 18px" }}>
+    <div style={{ maxWidth: tab === "billing" ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
       {!outletId && <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>No outlet assigned to this account — contact the owner.</div>}
       {outletId && tab === "pnl" && <DailyPnL lockedOutlet={outletId} />}
       {outletId && tab === "sales" && <SalesUpload lockedOutlet={outletId} />}
@@ -18561,7 +18561,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
