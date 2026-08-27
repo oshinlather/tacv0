@@ -50,7 +50,7 @@ router.post("/:id/photos", async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // Get signed URL
-  const { data: urlData } = await supabase.storage.from("photos").createSignedUrl(fileName, 86400);
+  const { data: urlData } = await supabase.storage.from("Photos").createSignedUrl(fileName, 86400);
   res.json({ ...data, url: urlData?.signedUrl });
 });
 

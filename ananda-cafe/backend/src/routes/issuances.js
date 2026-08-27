@@ -38,11 +38,11 @@ router.post("/:id/photos", async (req, res) => {
   const { section, base64 } = req.body;
   const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
   const fileName = `issuances/${id}/${section}_${Date.now()}.jpg`;
-  const { error: uploadError } = await supabase.storage.from("photos").upload(fileName, buffer, { contentType: "image/jpeg" });
+  const { error: uploadError } = await supabase.storage.from("Photos").upload(fileName, buffer, { contentType: "image/jpeg" });
   if (uploadError) return res.status(500).json({ error: uploadError.message });
   const { data, error } = await supabase.from("issuance_photos").insert({ issuance_id: id, section, storage_path: fileName }).select().single();
   if (error) return res.status(500).json({ error: error.message });
-  const { data: urlData } = await supabase.storage.from("photos").createSignedUrl(fileName, 86400);
+  const { data: urlData } = await supabase.storage.from("Photos").createSignedUrl(fileName, 86400);
   res.json({ ...data, url: urlData?.signedUrl });
 });
 

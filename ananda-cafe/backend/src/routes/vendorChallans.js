@@ -70,7 +70,7 @@ router.get("/challans/:id", async (req, res) => {
   if (itemsError) return res.status(500).json({ error: itemsError.message });
   let bill_url = null;
   if (challan.bill_photo_path) {
-    const { data: signed } = await supabase.storage.from("photos").createSignedUrl(challan.bill_photo_path, 86400);
+    const { data: signed } = await supabase.storage.from("Photos").createSignedUrl(challan.bill_photo_path, 86400);
     bill_url = signed?.signedUrl || null;
   }
   res.json({
@@ -228,11 +228,11 @@ router.post("/challans/:id/bill", async (req, res) => {
   if (!existing) return res.status(404).json({ error: "Challan not found" });
   const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ""), "base64");
   const fileName = `challans/${req.params.id}/bill_${Date.now()}.jpg`;
-  const { error: uploadError } = await supabase.storage.from("photos").upload(fileName, buffer, { contentType: "image/jpeg" });
+  const { error: uploadError } = await supabase.storage.from("Photos").upload(fileName, buffer, { contentType: "image/jpeg" });
   if (uploadError) return res.status(500).json({ error: uploadError.message });
   const { data, error } = await supabase.from("vendor_challans").update({ bill_photo_path: fileName }).eq("id", req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
-  const { data: signed } = await supabase.storage.from("photos").createSignedUrl(fileName, 86400);
+  const { data: signed } = await supabase.storage.from("Photos").createSignedUrl(fileName, 86400);
   res.json({ ...data, bill_url: signed?.signedUrl || null });
 });
 
