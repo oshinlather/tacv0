@@ -18377,17 +18377,10 @@ const SCOPED_ROLE_TABS = {
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
-    // Old flow (inventory_items/inventory_stock module, and the "bk_closing_stock" legacy
-    // count entry) retired from this role's nav once the new Store Inventory Module
-    // (challans -> receive -> ledger, closing counts) was confirmed working end-to-end —
-    // "everything is working perfectly in new flow so lets hide the old flow". Owner still
-    // has both under "BK & Store" for historical reference; only the day-to-day operator
-    // nav is trimmed. new_store_stock (the new ledger's read-only balance view) added in
-    // their place so removing the old Inventory tab doesn't leave a gap in stock
-    // visibility — same live-numbers job the old tab did, backed by the new system.
-    { id: "new_store_stock", label: "📦 Store Stock" },
-    { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" },
-    { id: "bk_audit", label: "🔍 BK Store Audit" },
+    { id: "dispatch", label: "🚚 Dispatch" },
+    // Store Stock, BK Closing & Wastage and BK Store Audit intentionally removed from this
+    // role's day-to-day nav (still available to Owner/AVP). Vendor Challans + Closing Counts
+    // remain the operator's stock touchpoints.
     { id: "vendor_challans", label: "🧾 Vendor Challans" },
     { id: "stock_counts", label: "🔢 Closing Counts" },
     { id: "bk_production", label: "🏭 Production (Beta)" },
@@ -18485,6 +18478,7 @@ const ScopedDashboard = () => {
       {tab === "pp_recipes" && <DishRecipesPanel />}
       {tab === "kitchen" && <BaseKitchen />}
       {tab === "bk_demand" && <BKDemandForm />}
+      {tab === "dispatch" && <Dispatch />}
       {tab === "new_store_stock" && <StoreInventoryStock />}
       {tab === "bk_closing_wastage" && <BKClosingWastage />}
       {tab === "bk_audit" && <BKAudit />}

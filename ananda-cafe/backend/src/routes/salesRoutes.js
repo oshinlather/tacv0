@@ -1221,7 +1221,7 @@ async function getCrockeryPackagingRules() {
 // lookups the recipe path already built, just reused here instead of re-fetched.
 // `rules` (from getCrockeryPackagingRules) defaults to the seed values so existing
 // callers that haven't been updated yet keep working unchanged.
-function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap, convFactorFor, rules = DEFAULT_CROCKERY_PACKAGING_RULES) {
+function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap, convFactorFor, rules = DEFAULT_CROCKERY_PACKAGING_RULES, finalPriceMap = null) {
   if (!CROCKERY_PACKAGING_OUTLETS.has(oid)) return [];
 
   let dineInItems = 0;
@@ -1276,7 +1276,9 @@ function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap
 
   return Object.entries(acc).map(([itemId, data]) => {
     const actualItem = actualById[itemId];
-    const rate = rateMap[itemId]?.price ?? null;
+    // Franchise Final Price override — see getFranchiseFinalPriceMap's own comment. null
+    // for every non-franchise outlet, so this is a no-op there.
+    const rate = (finalPriceMap && finalPriceMap[itemId] != null) ? finalPriceMap[itemId] : (rateMap[itemId]?.price ?? null);
     const shouldConsume = Math.round(data.qty * 1000) / 1000;
     const actualQty = actualItem ? actualItem.used : null;
     const variance = actualQty != null ? Math.round((actualQty - shouldConsume) * 1000) / 1000 : null;
@@ -1362,6 +1364,10 @@ async function computeRMAudit(date, outletFilter, sharedCtx) {
 
   const results = [];
   for (const oid of targetOutlets) {
+    // Franchise outlets are billed a Final Price per item, not BK's raw internal cost —
+    // see getFranchiseFinalPriceMap's own comment. null for every non-franchise outlet
+    // (a single small query), so this is a no-op for sec23/31/56/14.
+    const finalPriceMap = await getFranchiseFinalPriceMap(oid, date, costingContext);
     const oidSales = (sales || []).filter(s => s.outlet_code === oid);
     const salesByDish = {};
     oidSales.forEach(s => {
@@ -1414,7 +1420,9 @@ async function computeRMAudit(date, outletFilter, sharedCtx) {
       // rate_card-first-then-BK-recipe-fallback rule the rest of the app uses (P&L, dish
       // costing). Falls back to bkRecipeMap's per-Kg cost, matching should_consume's own
       // unit for these items (qty_kg-based). This is what ideal_material_cost below sums.
-      const rate = rateMap[mappedId]?.price ?? (t.qty_kg > 0 ? (bkRecipeMap[mappedId]?.costPerKg ?? null) : null);
+      // Franchise Final Price override — see getFranchiseFinalPriceMap's own comment. null
+      // for every non-franchise outlet, so this is a no-op there.
+      const rate = (finalPriceMap && finalPriceMap[mappedId] != null) ? finalPriceMap[mappedId] : (rateMap[mappedId]?.price ?? (t.qty_kg > 0 ? (bkRecipeMap[mappedId]?.costPerKg ?? null) : null));
       return {
         raw_material: t.raw_material,
         item_id: mappedId,
@@ -1452,7 +1460,7 @@ async function computeRMAudit(date, outletFilter, sharedCtx) {
     // Crockery/Packaging — fixed per-item/per-order rule, not recipe-driven (see
     // computeCrockeryPackagingItems above), so it's computed separately and merged in
     // here rather than going through the theoretical/resolveIngredientRateId path above.
-    const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor, crockeryPackagingRules);
+    const crockeryPackagingItems = computeCrockeryPackagingItems(oid, oidSales, actualById, rateMap, convFactorFor, crockeryPackagingRules, finalPriceMap);
     const allItems = [...recipeItems, ...crockeryPackagingItems]
       .sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
 
@@ -4847,6 +4855,120 @@ async function buildCostingContext(asOfDate) {
     return contextForDate(asOfDate);
 }
 
+// A franchise outlet (Elan, Gaursid) doesn't actually pay the raw rate_card price for what
+// Base Kitchen sends it — it pays a "Final Price" per item: base cost + that item's slice
+// of BK's shared fixed-cost allocation ("BK Share") + an agreed markup % (which can vary
+// per category). That composition already exists client-side, one-off, in FranchiseBilling's
+// own pricingRows (App.jsx) for the Franchise Billing page itself. This is the same math,
+// server-side, for ONE outlet on ONE specific date, so every other cost-facing surface
+// (Daily P&L, Finance, RM Audit/COGS) can price a franchise outlet's own dispatch the same
+// way it's actually billed, instead of at BK's internal cost.
+//
+// Returns null immediately (a single small query) for any outlet with no franchise_settings
+// agreement configured — i.e. this is a genuine no-op, zero extra cost, for every
+// company-owned outlet and for a franchise outlet before its first agreement is set. Company-
+// owned outlets' own P&L/COGS numbers are completely unaffected by this function existing.
+//
+// Deliberately does NOT touch how /franchise-billing/summary itself computes bk_share_ratio
+// — that calc needs every outlet's material cost priced identically (raw rate_card) to be a
+// fair ratio; swapping Elan's own price in there would make the ratio measure itself, a
+// circular trap. This function reads that same raw-priced material cost as its OWN input
+// (computed fresh here, not reused from that route) and only ever hands back a price to be
+// used for costing THIS outlet's own P&L/COGS display — the ratio itself is untouched.
+async function getFranchiseFinalPriceMap(outletId, date, costingContext) {
+  // select('*') rather than naming columns — category_markup may not exist yet on this DB
+  // (migration 2026_08_27_franchise_settings_category_markup.sql not applied), and unlike
+  // POST's insert (which gets a catchable PGRST204 for an unknown column), a SELECT that
+  // explicitly names a missing column errors immediately, which would break P&L/COGS for
+  // every franchise outlet on every request. select('*') never errors on a missing column —
+  // it just doesn't come back, and agreement.category_markup below already treats that as {}.
+  const { data: agreements, error: agreementErr } = await supabase.from('franchise_settings')
+    .select('*')
+    .eq('outlet_id', outletId).lte('effective_from', date)
+    .order('effective_from', { ascending: false }).limit(1);
+  if (agreementErr) throw agreementErr;
+  const agreement = agreements && agreements[0];
+  if (!agreement) return null;
+
+  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
+  const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+  const [{ data: demands, error: demandsErr }, { data: bkFixed, error: bkFixedErr }, sectionMap] = await Promise.all([
+    supabase.from('demands').select('outlet_id, dispatch_items, items_units').eq('type', 'manual').neq('status', 'draft').eq('date', date),
+    supabase.from('fixed_costs').select('amount').eq('outlet_id', 'bk').eq('active', true),
+    getDemandItemSectionMap(),
+  ]);
+  if (demandsErr) throw demandsErr;
+  if (bkFixedErr) throw bkFixedErr;
+
+  // Raw (rate_card-priced) material cost per outlet, same basis /franchise-billing/summary
+  // uses for its own ratio — computed fresh here rather than shared with that route, since
+  // this needs it broken down per-item for THIS outlet too, not just an outlet-level total.
+  const materialCostByOutlet = {};
+  const outletItemBase = {}; // item_id -> { baseAmount, qtyInRateUnit, unitPrice }
+  allOutletIds.forEach((id) => { materialCostByOutlet[id] = 0; });
+  (demands || []).forEach((d) => {
+    if (!allOutletIds.includes(d.outlet_id)) return;
+    Object.entries(d.dispatch_items || {}).forEach(([itemId, qty]) => {
+      const q = Number(qty) || 0;
+      if (q <= 0) return;
+      const rate = rateMap[itemId];
+      const bkRecipe = bkRecipeMap[itemId];
+      let unitPrice = 0, itemUnit = '';
+      if (rate) { unitPrice = Number(rate.price); itemUnit = rate.unit || ''; }
+      else if (bkRecipe) { unitPrice = bkRecipe.costPerKg; itemUnit = 'Kg'; }
+      else return;
+      const rawUnit = (d.items_units || {})[itemId] || null;
+      const factor = convFactorFor(itemId, rawUnit, itemUnit);
+      const baseAmount = q * factor * unitPrice;
+      materialCostByOutlet[d.outlet_id] += baseAmount;
+      if (d.outlet_id === outletId) {
+        if (!outletItemBase[itemId]) outletItemBase[itemId] = { baseAmount: 0, qtyInRateUnit: 0, unitPrice };
+        outletItemBase[itemId].baseAmount += baseAmount;
+        outletItemBase[itemId].qtyInRateUnit += q * factor;
+      }
+    });
+  });
+
+  const outletMaterialCost = materialCostByOutlet[outletId] || 0;
+  const totalMaterialCost = Object.values(materialCostByOutlet).reduce((s, v) => s + v, 0);
+  const bkShareRatio = totalMaterialCost > 0 ? outletMaterialCost / totalMaterialCost : 0;
+  const bkFixedTotal = (bkFixed || []).reduce((s, f) => s + Number(f.amount || 0), 0);
+  // BK's fixed costs are one flat MONTHLY figure — this is one day, so prorated to 1/days-
+  // in-that-month, same proration GET /franchise-billing/summary uses for its Date/Week pills.
+  const [y, mo] = date.slice(0, 7).split('-').map(Number);
+  const daysInMonth = new Date(y, mo, 0).getDate();
+  const bkShareAmountForOutlet = bkShareRatio * (bkFixedTotal / daysInMonth);
+
+  const markupPct = Number(agreement.markup_pct) || 0;
+  const categoryMarkup = agreement.category_markup || {};
+
+  const priceMap = {};
+  Object.entries(outletItemBase).forEach(([itemId, info]) => {
+    const catId = sectionMap[itemId] || null;
+    const pct = catId && categoryMarkup[catId] != null ? Number(categoryMarkup[catId]) : markupPct;
+    const markupAmt = info.baseAmount * pct / 100;
+    const bkShareAmt = outletMaterialCost > 0 ? (info.baseAmount / outletMaterialCost) * bkShareAmountForOutlet : 0;
+    const totalAmt = info.baseAmount + markupAmt + bkShareAmt;
+    // Per rate-card unit, same unit rateMap[itemId].price / bkRecipeMap[itemId].costPerKg
+    // are already denominated in — a straight drop-in substitute for either at every call
+    // site below, no extra unit handling needed there.
+    priceMap[itemId] = info.qtyInRateUnit > 0 ? totalAmt / info.qtyInRateUnit : info.unitPrice;
+  });
+  return priceMap;
+}
+
+// Batches getFranchiseFinalPriceMap over many (outlet, date) pairs at once — de-duplicated,
+// fetched concurrently. Callers that process a whole date range (Finance's BK Purchase
+// drill-down) would otherwise call this once per dispatch record, hammering the same
+// (outlet, date) pair dozens of times over.
+async function batchFranchisePriceMaps(pairs, costingContext) {
+  const uniquePairs = [...new Map(pairs.map((p) => [`${p.outletId}|${p.date}`, p])).values()];
+  const results = await Promise.all(uniquePairs.map((p) => getFranchiseFinalPriceMap(p.outletId, p.date, costingContext)));
+  const map = new Map();
+  uniquePairs.forEach((p, i) => map.set(`${p.outletId}|${p.date}`, results[i]));
+  return map;
+}
+
 // Dispatched items (this period, this outlet) × rate card / BK-recipe cost — same
 // "rate card first, then BK recipe fallback" pricing rule as everywhere else in the app
 // (see CLAUDE.md), just summed over a date range instead of computed per order for
@@ -4858,12 +4980,20 @@ async function buildCostingContext(asOfDate) {
 // second, possibly-drifting copy of this logic.
 async function computeBkPurchaseByOutlet(from, to, costingContext) {
   const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
-  const { data: orders, error } = await supabase.from("demands").select("outlet_id, items, dispatch_items, status").gte("date", from).lte("date", to);
+  // items_units wasn't actually in this select despite the comment below describing a fix
+  // for it — meaning that fix was a no-op until now; folding it in since `date` is needed
+  // here anyway for the Final Price lookup below.
+  const { data: orders, error } = await supabase.from("demands").select("outlet_id, date, items, dispatch_items, status, items_units").gte("date", from).lte("date", to);
   if (error) throw error;
   const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
+  // Franchise outlets (Elan, Gaursid) are billed a Final Price per item, not BK's raw
+  // internal rate_card cost — see getFranchiseFinalPriceMap's own comment. Returns null for
+  // every non-franchise (outlet, date), so this is a no-op for company-owned outlets.
+  const priceMaps = await batchFranchisePriceMaps(dispatched.map((o) => ({ outletId: o.outlet_id, date: o.date })), costingContext);
   const byOutlet = {};
   dispatched.forEach((o) => {
     const items = o.dispatch_items || o.items || {};
+    const finalPriceMap = priceMaps.get(`${o.outlet_id}|${o.date}`);
     let cost = 0;
     Object.entries(items).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
@@ -4876,11 +5006,12 @@ async function computeBkPurchaseByOutlet(from, to, costingContext) {
       // the core COGS/Material Cost figure below — this function just hadn't been updated
       // to match when the demand form switched to Kg.
       const rawUnit = (o.items_units || {})[itemId] || null;
+      const override = finalPriceMap ? finalPriceMap[itemId] : null;
       const rate = rateMap[itemId];
       if (rate) {
-        cost += q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
+        cost += q * convFactorFor(itemId, rawUnit, rate.unit) * (override != null ? override : Number(rate.price));
       } else if (bkRecipeMap[itemId]) {
-        cost += q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipeMap[itemId].costPerKg;
+        cost += q * convFactorFor(itemId, rawUnit, "Kg") * (override != null ? override : bkRecipeMap[itemId].costPerKg);
       }
     });
     byOutlet[o.outlet_id] = (byOutlet[o.outlet_id] || 0) + cost;
@@ -4895,24 +5026,30 @@ async function computeBkPurchaseByOutlet(from, to, costingContext) {
 // here too, same as the total above, so the two figures always reconcile.
 async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
   const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = costingContext;
-  const { data: orders, error } = await supabase.from("demands").select("outlet_id, date, items, dispatch_items, status").eq("outlet_id", outletId).gte("date", from).lte("date", to);
+  // items_units added — same missing-column fix as computeBkPurchaseByOutlet above.
+  const { data: orders, error } = await supabase.from("demands").select("outlet_id, date, items, dispatch_items, status, items_units").eq("outlet_id", outletId).gte("date", from).lte("date", to);
   if (error) throw error;
   const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
+  // Franchise outlets are billed a Final Price per item, not BK's raw internal cost — see
+  // getFranchiseFinalPriceMap's own comment. No-op (returns null) for company-owned outlets.
+  const priceMaps = await batchFranchisePriceMaps(dispatched.map((o) => ({ outletId: o.outlet_id, date: o.date })), costingContext);
   const itemsById = {};
   const datesSet = new Set();
   dispatched.forEach((o) => {
     const items = o.dispatch_items || o.items || {};
+    const finalPriceMap = priceMaps.get(`${o.outlet_id}|${o.date}`);
     Object.entries(items).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
       if (q <= 0) return;
       // See the same fix in computeBkPurchaseByOutlet above — rawUnit was hardcoded null.
       const rawUnit = (o.items_units || {})[itemId] || null;
+      const override = finalPriceMap ? finalPriceMap[itemId] : null;
       const rate = rateMap[itemId];
       let amount = 0;
       if (rate) {
-        amount = q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
+        amount = q * convFactorFor(itemId, rawUnit, rate.unit) * (override != null ? override : Number(rate.price));
       } else if (bkRecipeMap[itemId]) {
-        amount = q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipeMap[itemId].costPerKg;
+        amount = q * convFactorFor(itemId, rawUnit, "Kg") * (override != null ? override : bkRecipeMap[itemId].costPerKg);
       } else {
         return;
       }
@@ -5144,6 +5281,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
     const results = [];
     const outletLoopList = (!outlet || outlet === 'all') ? outletIds : [outlet];
     for (const oid of outletLoopList) {
+      // Franchise outlets are billed a Final Price per item, not BK's raw internal cost —
+      // see getFranchiseFinalPriceMap's own comment. null for every non-franchise outlet
+      // (a single small query), so this is a no-op for sec23/31/56/14/bk.
+      const finalPriceMap = await getFranchiseFinalPriceMap(oid, date, { rateMap, bkRecipeMap, convFactorFor });
       const prevCS = (prevClosing || []).find(d => d.outlet_id === oid);
       const prevItems = prevCS?.items || {};
       const prevUnits = prevCS?.items_units || {};
@@ -5263,6 +5404,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
           itemUnit = demandUnitMap[itemId] || '';
           priceUnit = itemUnit;
         }
+        // Franchise Final Price override — already denominated in the same unit unitPrice
+        // itself is (priceUnit, set alongside it just above), so it drops straight in with
+        // no extra unit handling needed.
+        if (finalPriceMap && finalPriceMap[itemId] != null) unitPrice = finalPriceMap[itemId];
         // Gas Cylinder is priced/ordered by whole cylinder (rate.unit='Pcs') but a
         // partially-used cylinder's closing stock — and therefore how much gas was
         // actually consumed today — is naturally a weight, not a whole-Pcs count (same
@@ -6051,7 +6196,7 @@ router.get('/franchise-billing/summary', async (req, res) => {
       // prices, and because prices are forward-only a later challan never reprices a past
       // month's franchise bill.
       buildCostingContext(monthEnd),
-      supabase.from('demands').select('outlet_id, dispatch_items').eq('type', 'manual').neq('status', 'draft').gte('date', monthStart).lte('date', monthEnd),
+      supabase.from('demands').select('outlet_id, dispatch_items, items_units').eq('type', 'manual').neq('status', 'draft').gte('date', monthStart).lte('date', monthEnd),
       supabase.from('franchise_settings').select('*').eq('outlet_id', outlet_id).lte('effective_from', monthEnd).order('effective_from', { ascending: false }).limit(1),
       supabase.from('fixed_costs').select('amount').eq('outlet_id', 'bk').eq('active', true),
       // Real PetPooja billing (daily_sales), not daily_outlet_sales — that table is the
@@ -6082,7 +6227,17 @@ router.get('/franchise-billing/summary', async (req, res) => {
         if (rate) { unitPrice = Number(rate.price); itemUnit = rate.unit || ''; }
         else if (bkRecipe) { unitPrice = bkRecipe.costPerKg; itemUnit = 'Kg'; }
         else return;
-        const rawUnit = demandUnitMap[itemId] || itemUnit;
+        // Per-record unit override — was `demandUnitMap[itemId] || itemUnit` (the item's
+        // stale CATALOG DEFAULT unit, "Batch" for dosa/idli batter even though they've been
+        // demanded in Kg since Aug 11, 2026 — see CLAUDE.md), the exact same 9x/8x
+        // overstatement bug computeBkPurchaseByOutlet/computeBkPurchaseDetail already had
+        // fixed elsewhere in this file. This is a THIRD, never-patched copy of that same
+        // calculation, meaning bk_share_ratio — real money, this outlet's actual BK Share
+        // charge — has been overstating any outlet's contribution wherever its dispatch
+        // included Kg-recorded batter, since this route was first built. convFactorFor
+        // already falls back to demandUnitMap[itemId] itself when rawUnit is null/missing,
+        // so passing items_units first here costs nothing for any record that predates it.
+        const rawUnit = (d.items_units || {})[itemId] || null;
         const factor = convFactorFor(itemId, rawUnit, itemUnit);
         materialCostByOutlet[d.outlet_id] += (Number(qty) || 0) * factor * unitPrice;
       });
