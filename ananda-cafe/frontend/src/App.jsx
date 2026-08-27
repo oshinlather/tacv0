@@ -7403,12 +7403,29 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   });
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || franchiseOutlets[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
-  // Single-day mode — the date dropdown's "last 5 days" quick-picks. selMonth is kept in
-  // sync with whichever day is picked (see the dropdown's onChange) purely so corrections
-  // (which are always keyed by outlet+month, day-level edits live inside day_edits) and the
-  // Franchise Settings agreement lookup keep working unchanged; selDay is what actually
-  // switches demands/billing-summary fetches from "whole month" to "this one day".
+  // 3 ways to scope the bill: Date (a single day, the "last 5 days" quick-picks), Week
+  // (an explicit from/to range), or Month (the original/default whole-month view). selMonth
+  // is kept in sync with whichever one is active purely so corrections (always keyed by
+  // outlet+month, day-level edits live inside day_edits) and the Franchise Settings
+  // agreement lookup keep working unchanged regardless of periodMode — periodMode/selDay/
+  // weekFrom/weekTo are what actually switch demands + billing-summary fetches to a
+  // narrower range than "the whole month".
+  const [periodMode, setPeriodMode] = useState("month"); // 'date' | 'week' | 'month'
   const [selDay, setSelDay] = useState(null);
+  const [weekFrom, setWeekFrom] = useState(() => istDateAgo(6));
+  const [weekTo, setWeekTo] = useState(() => istDateAgo(0));
+  // The single {from, to} range everything else (demands fetch, billing-summary fetch, the
+  // Day by Day view's day list) reads off, regardless of which of the 3 pills is active.
+  // Week's from/to can be typed in either order — swapped here so a backwards pick doesn't
+  // silently return zero rows.
+  const range = useMemo(() => {
+    if (periodMode === "date") { const d = selDay || istDateAgo(0); return { from: d, to: d }; }
+    if (periodMode === "week") {
+      return weekFrom <= weekTo ? { from: weekFrom, to: weekTo } : { from: weekTo, to: weekFrom };
+    }
+    const [y, mo] = selMonth.split("-").map(Number);
+    return { from: `${selMonth}-01`, to: new Date(y, mo, 0).toISOString().slice(0, 10) };
+  }, [periodMode, selDay, weekFrom, weekTo, selMonth]);
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rateCard, setRateCard] = useState([]);
@@ -7519,15 +7536,27 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     return factor;
   };
 
+  // The single {from, to} range everything else (demands fetch, billing-summary fetch, the
+  // Day by Day view's day list) reads off, regardless of which of the 3 pills is active.
+  // Week's from/to can be typed in either order — swapped here so a backwards pick doesn't
+  // silently return zero rows.
+  const range = useMemo(() => {
+    if (periodMode === "date") { const d = selDay || istDateAgo(0); return { from: d, to: d }; }
+    if (periodMode === "week") {
+      return weekFrom <= weekTo ? { from: weekFrom, to: weekTo } : { from: weekTo, to: weekFrom };
+    }
+    const [y, mo] = selMonth.split("-").map(Number);
+    return { from: `${selMonth}-01`, to: new Date(y, mo, 0).toISOString().slice(0, 10) };
+  }, [periodMode, selDay, weekFrom, weekTo, selMonth]);
+
   useEffect(() => {
-    if (!selOutlet || !selMonth) return;
+    if (!selOutlet || !range.from) return;
     setLoading(true);
-    const from = selDay || `${selMonth}-01`;
-    api.getOrders(selDay ? { from, to: selDay, outlet_id: selOutlet } : { from, outlet_id: selOutlet })
-      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && (selDay ? d.date === selDay : d.date.startsWith(selMonth)))))
+    api.getOrders({ from: range.from, to: range.to, outlet_id: selOutlet })
+      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && d.date >= range.from && d.date <= range.to)))
       .catch(() => setDemands([]))
       .finally(() => setLoading(false));
-  }, [selOutlet, selMonth, selDay]);
+  }, [selOutlet, range]);
 
   const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
 
@@ -7640,7 +7669,18 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     const baseAmount = i.amount;
     const markupAmt = baseAmount * markupPct / 100;
     const bkShareAmt = totalAmount > 0 ? (baseAmount / totalAmount) * bkShareAmount : 0;
-    return { ...i, baseAmount, markupAmt, bkShareAmt, totalAmt: baseAmount + markupAmt + bkShareAmt };
+    const totalAmt = baseAmount + markupAmt + bkShareAmt;
+    // Final Price must be per RATE-CARD unit (Kg for Dosa Batter, even though it's demanded
+    // in Batch), same unit Rate/Franchise Rate are already shown in — but i.billedQty is in
+    // the DEMAND unit instead (Batch, Tin, ...), so dividing totalAmt straight by billedQty
+    // silently used the wrong denominator whenever those two units differ, inflating Final
+    // Price ~9x for Dosa Batter (1 Batch = 9 Kg), ~15x for Desi Ghee (1 Tin = 15 Kg), etc.
+    // baseAmount and billedRate are already both correctly in the rate-card unit, so
+    // baseAmount / billedRate recovers the right (unit-converted) quantity without needing
+    // to re-derive the demand→rate-card conversion factor a second time.
+    const qtyInRateUnit = i.billedRate > 0 ? baseAmount / i.billedRate : i.billedQty;
+    const finalPricePerUnit = qtyInRateUnit > 0 ? Math.round((totalAmt / qtyInRateUnit) * 100) / 100 : 0;
+    return { ...i, baseAmount, markupAmt, bkShareAmt, totalAmt, finalPricePerUnit };
   }), [visibleItems, markupPct, bkShareAmount, totalAmount]);
 
   // Every date in the month up to today (dates with no demand still show as a column)
@@ -7694,7 +7734,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     // column alongside the existing Rate/Franchise Rate breakdown they already had.
     if (lockedOutlet) {
       const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Final Price", "Amount"];
-      const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, Math.round((i.billedQty > 0 ? i.totalAmt / i.billedQty : 0) * 100) / 100, Math.round(i.totalAmt * 100) / 100]);
+      const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.finalPricePerUnit, Math.round(i.totalAmt * 100) / 100]);
       rows.push(["", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
       rows.push(["", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
       rows.push(["", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
@@ -7703,7 +7743,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       return;
     }
     const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
-    const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), Math.round((i.billedQty > 0 ? i.totalAmt / i.billedQty : 0) * 100) / 100, i.rateUnit, Math.round(i.amount * 100) / 100]);
+    const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), i.finalPricePerUnit, i.rateUnit, Math.round(i.amount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
@@ -7859,6 +7899,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                     <th style={{ ...thS, textAlign: "right" }}>Base Amount<div style={{ fontWeight: 700, color: "#1A1A1A", fontSize: 10 }}>({fmt(totalAmount)})</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>BK Share<div style={{ fontWeight: 700, color: "#7C3AED", fontSize: 10 }}>({fmt(bkShareAmount)})</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>Markup{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(markupAmount)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>Final Price<div style={{ fontWeight: 500, color: "#999", fontSize: 9 }}>(all 3 combined)</div></th>
                     <th style={{ ...thS, textAlign: "right" }}>Total<div style={{ fontWeight: 700, color: "#166534", fontSize: 10 }}>({fmt(billingSubtotal)})</div></th>
                   </tr></thead>
                   <tbody>
@@ -7870,6 +7911,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{fmt(i.baseAmount)}</td>
                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{fmt(i.bkShareAmt)}</td>
                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(i.markupAmt)}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>₹{i.finalPricePerUnit}/{i.rateUnit}</td>
                         <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>{fmt(i.totalAmt)}</td>
                       </tr>
                     ))}
@@ -7880,6 +7922,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>{fmt(totalAmount)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#7C3AED" }}>{fmt(bkShareAmount)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#B45309" }}>{fmt(markupAmount)}</td>
+                      <td style={{ ...tdS }}></td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#166534" }}>{fmt(billingSubtotal)}</td>
                     </tr>
                   </tfoot>
@@ -7904,7 +7947,6 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                   <tbody>
                     {pricingRows.map((i) => {
                       const mismatch = i.dispatchQty != null && Math.abs(i.dispatchQty - i.demandQty) > 0.01;
-                      const finalPrice = i.billedQty > 0 ? Math.round((i.totalAmt / i.billedQty) * 100) / 100 : 0;
                       return (
                         <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC", background: mismatch && !i.dispatchQtyEdited ? "#FEF2F2" : "transparent" }}>
                           <td style={tdS}>{i.name}</td>
@@ -7939,7 +7981,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                             </td>
                           )}
                           {!lockedOutlet && <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A" }}>₹{franchiseRateFor(i)}/{i.rateUnit}</td>}
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>₹{finalPrice}/{i.rateUnit}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>₹{i.finalPricePerUnit}/{i.rateUnit}</td>
                           <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(lockedOutlet ? i.totalAmt : i.amount)}</td>
                         </tr>
                       );

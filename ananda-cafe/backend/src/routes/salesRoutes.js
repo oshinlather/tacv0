@@ -5984,24 +5984,31 @@ router.get('/franchise-billing/summary', async (req, res) => {
     const user = await requireRole(req, res, 'owner', 'avp', 'franchise');
     if (!user) return;
     const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
-    // Single-day mode (?date=YYYY-MM-DD) for the "last 5 days" quick-picks in the date
-    // dropdown — everything below (material cost, revenue, agreement lookup) already
-    // queries an explicit [monthStart, monthEnd] range, so a single day just means passing
-    // the same date for both ends. `month` is still required to derive it (kept as the
-    // response's own `month` field so the caller's corrections/agreement lookups, which are
-    // keyed by month, don't need their own separate day-vs-month branching).
+    // 3 ways to scope this: ?from=&to= (an explicit range — the Week pill), ?date= (a
+    // single day — the Date pill, equivalent to from===to), or ?month= (the Month pill,
+    // the original/default). Everything below (material cost, revenue, agreement lookup)
+    // already queries an explicit [monthStart, monthEnd] range regardless of which of the
+    // three was used, so this just normalizes all three down to that one range. `month` is
+    // still derived either way (from `from` or `date`) since it's kept as the response's own
+    // `month` field — the caller's corrections/agreement lookups are keyed by month, so they
+    // don't need their own separate range-vs-day-vs-month branching.
+    const explicitFrom = req.query.from;
+    const explicitTo = req.query.to;
     const date = req.query.date;
-    const month = date ? date.slice(0, 7) : req.query.month;
-    if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month (or date) are required' });
+    const month = explicitFrom ? explicitFrom.slice(0, 7) : date ? date.slice(0, 7) : req.query.month;
+    if (!outlet_id || !month) return res.status(400).json({ error: 'outlet_id and month (or date, or from/to) are required' });
 
     const [y, mo] = month.split('-').map(Number);
     const daysInMonth = new Date(y, mo, 0).getDate();
-    const monthStart = date || `${month}-01`;
-    const monthEnd = date || new Date(y, mo, 0).toISOString().slice(0, 10);
+    const monthStart = explicitFrom || date || `${month}-01`;
+    const monthEnd = explicitTo || date || new Date(y, mo, 0).toISOString().slice(0, 10);
     // BK's fixed costs (rent, salaries, ...) are stored as one flat MONTHLY figure — fine
     // as-is for a whole-month query (daysInRange === daysInMonth below, so this is a no-op),
-    // but billing a single day off the FULL month's rent would wildly overstate that day's
-    // BK Share. Prorated by the fraction of the month actually being queried.
+    // but billing a single day (or a week) off the FULL month's rent would overstate that
+    // period's BK Share. Prorated by the fraction of the month actually being queried. A
+    // Week range that happens to cross a calendar month boundary uses the FROM date's
+    // month length for this — a known simplification, not exact for that edge case, but
+    // the ratio's numerator (daysInRange) is still exactly right either way.
     const daysInRange = Math.round((new Date(monthEnd) - new Date(monthStart)) / 86400000) + 1;
     const fixedCostProration = daysInRange / daysInMonth;
 
@@ -6060,7 +6067,7 @@ router.get('/franchise-billing/summary', async (req, res) => {
       : null;
 
     res.json({
-      outlet_id, month, date: date || null, agreement,
+      outlet_id, month, date: date || null, from: monthStart, to: monthEnd, agreement,
       bk_share_ratio: bkShareRatio,
       // Already prorated to daysInRange when a single day (or any partial period) was
       // requested — bk_monthly_fixed is a slight misnomer for that case (it's really "BK
