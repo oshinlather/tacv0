@@ -7403,6 +7403,12 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   });
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || franchiseOutlets[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
+  // Single-day mode — the date dropdown's "last 5 days" quick-picks. selMonth is kept in
+  // sync with whichever day is picked (see the dropdown's onChange) purely so corrections
+  // (which are always keyed by outlet+month, day-level edits live inside day_edits) and the
+  // Franchise Settings agreement lookup keep working unchanged; selDay is what actually
+  // switches demands/billing-summary fetches from "whole month" to "this one day".
+  const [selDay, setSelDay] = useState(null);
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [rateCard, setRateCard] = useState([]);
@@ -7438,6 +7444,10 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   // call rather than firing a request per keystroke.
   const [editMode, setEditMode] = useState(false);
   useEffect(() => { setEditMode(false); }, [selOutlet, selMonth]);
+  // "Day by Day" doesn't mean anything for a single already-picked day — if a day gets
+  // picked while that tab is open, fall back to Summary instead of showing an empty/1-column
+  // day-wise table.
+  useEffect(() => { if (selDay) setViewMode((v) => v === "daywise" ? "summary" : v); }, [selDay]);
   const finishEditing = () => {
     setEditMode(false);
     setSavingCorrections(true);
@@ -7476,10 +7486,12 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   useEffect(() => {
     if (!selOutlet || !selMonth) return;
     setBillingSummary(null);
-    api.getFranchiseBillingSummary({ outlet_id: selOutlet, month: selMonth })
+    // Single-day mode: server prorates BK's monthly fixed cost down to that one day (see
+    // GET /franchise-billing/summary) rather than allocating a whole month's rent to it.
+    api.getFranchiseBillingSummary(selDay ? { outlet_id: selOutlet, date: selDay } : { outlet_id: selOutlet, month: selMonth })
       .then(setBillingSummary)
       .catch(() => setBillingSummary(null));
-  }, [selOutlet, selMonth]);
+  }, [selOutlet, selMonth, selDay]);
 
   const rateMap = useMemo(() => { const m = {}; rateCard.forEach((r) => { m[r.id] = r; }); return m; }, [rateCard]);
   const convMap = useMemo(() => {
@@ -7510,12 +7522,12 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   useEffect(() => {
     if (!selOutlet || !selMonth) return;
     setLoading(true);
-    const from = `${selMonth}-01`;
-    api.getOrders({ from, outlet_id: selOutlet })
-      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && d.date.startsWith(selMonth))))
+    const from = selDay || `${selMonth}-01`;
+    api.getOrders(selDay ? { from, to: selDay, outlet_id: selOutlet } : { from, outlet_id: selOutlet })
+      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && (selDay ? d.date === selDay : d.date.startsWith(selMonth)))))
       .catch(() => setDemands([]))
       .finally(() => setLoading(false));
-  }, [selOutlet, selMonth]);
+  }, [selOutlet, selMonth, selDay]);
 
   const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
 
@@ -7580,6 +7592,21 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   const totalAmount = items.reduce((s, i) => s + i.amount, 0);
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
+  // Last 5 days for the date dropdown's quick-picks — "Today"/"Yesterday" for the first two,
+  // then a plain day/month label. Real per-day billing (own BK Share/Markup/Royalty, not a
+  // slice of the month's), not just a navigation shortcut — see selDay's own comment above.
+  const dayOptions = useMemo(() => {
+    const opts = [];
+    for (let i = 0; i < 5; i++) {
+      const ds = istDateAgo(i);
+      const label = i === 0 ? "Today" : i === 1 ? "Yesterday" : new Date(ds + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+      opts.push({ value: ds, label });
+    }
+    return opts;
+  }, []);
+  const periodLabel = selDay ? (dayOptions.find((d) => d.value === selDay)?.label === "Today" || dayOptions.find((d) => d.value === selDay)?.label === "Yesterday"
+    ? `${dayOptions.find((d) => d.value === selDay).label} (${new Date(selDay + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })})`
+    : new Date(selDay + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })) : monthLabel;
 
   // Markup applies to the actual billed Material Cost (totalAmount, corrections and all) —
   // BK Share uses the ratio computed server-side across every outlet's raw material cost,
@@ -7672,7 +7699,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       rows.push(["", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
       rows.push(["", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
       rows.push(["", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
-      exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
+      exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selDay || selMonth}.csv`);
       return;
     }
     const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
@@ -7687,7 +7714,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     rows.push(["", "", "", "", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
-    exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
+    exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selDay || selMonth}.csv`);
   };
 
   return (
@@ -7705,9 +7732,23 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
           {!lockedOutlet && franchiseOutlets.map((o) => (
             <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.name}</button>
           ))}
-          <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+          {/* "day:YYYY-MM-DD" vs "month:YYYY-MM" prefix on the option value tells the
+              handler which state to update — selDay drives real single-day billing (its own
+              BK Share/Markup/Royalty, prorated server-side), selMonth alone is the existing
+              whole-month view. selMonth is always kept pointed at whichever month the current
+              selection falls in, day or month, since corrections/agreement lookups key off it. */}
+          <select value={selDay ? `day:${selDay}` : `month:${selMonth}`} onChange={(e) => {
+              const [kind, val] = e.target.value.split(":");
+              if (kind === "day") { setSelDay(val); setSelMonth(val.slice(0, 7)); }
+              else { setSelDay(null); setSelMonth(val); }
+            }}
             style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
-            {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            <optgroup label="Last 5 Days">
+              {dayOptions.map((d) => <option key={d.value} value={`day:${d.value}`}>{d.label}</option>)}
+            </optgroup>
+            <optgroup label="Months">
+              {monthOptions.map((m) => <option key={m.value} value={`month:${m.value}`}>{m.label}</option>)}
+            </optgroup>
           </select>
         </div>
 
@@ -7719,7 +7760,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
               <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
-                  <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
+                  <div style={{ fontSize: 11, color: "#888" }}>{periodLabel}</div>
                 </div>
                 <div>
                   {/* Franchise's own view (lockedOutlet) never breaks Base/BK Share/Markup out
@@ -7741,7 +7782,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }, ...(lockedOutlet ? [] : [{ id: "pricing", label: "💲 Pricing" }])].map((m) => (
+                  {[{ id: "summary", label: "🧾 Summary" }, ...(selDay ? [] : [{ id: "daywise", label: "📅 Day by Day" }]), ...(lockedOutlet ? [] : [{ id: "pricing", label: "💲 Pricing" }])].map((m) => (
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
@@ -7760,7 +7801,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
             )}
 
             {items.length === 0 ? (
-              <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No demands for {outletName} in {monthLabel}</div>
+              <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No demands for {outletName} in {periodLabel}</div>
             ) : visibleItems.length === 0 ? (
               <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12 }}>No items in this category</div>
             ) : viewMode === "daywise" ? (<>
@@ -7919,7 +7960,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
           {items.length > 0 && (
             <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginTop: 12 }}>
               <div style={{ padding: "10px 16px", background: "#F5F3FF", borderBottom: "1px solid #DDD6FE" }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>💳 Billing Summary — {monthLabel}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#6D28D9" }}>💳 Billing Summary — {periodLabel}</span>
               </div>
               {!hasAgreement && (
                 <div style={{ padding: "10px 16px", fontSize: 12, color: "#DC2626", background: "#FEF2F2", borderBottom: "1px solid #FECACA" }}>⚠️ No franchise agreement configured for {outletName} — markup and royalty are showing as 0%. Set them in Owner → Audit → Franchise Settings.</div>
@@ -18806,7 +18847,12 @@ export default function AnandaCafe() {
             bugs. new_store_stock (with thresholds + batch issue, Stage 6) now covers
             everything this role actually needs day-to-day; Owner's "BK & Store" dropdown
             keeps the old screens reachable for historical reference. */}
-      {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "new_store_stock", label: "📦 Store Stock" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+      {/* Base Kitchen Manager (store role) nav — deliberately trimmed to the store's own
+          operational tabs. Store Stock, BK Closing & Wastage, BK Audit, Sales, Cash,
+          Custodian Ledger, BK Demand, Production and Master Data are intentionally hidden
+          from this role (still available to Owner and AVP, whose fuller store view is a
+          separate nav above). */}
+      {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
