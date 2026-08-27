@@ -11,6 +11,7 @@ const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
 const { gate, rebuildStockBalances } = require("./store");
+const { ingestPrices, resolveByItemIds } = require("./rateCardPrices");
 
 // ── Vendors ──
 // No real vendor entity existed anywhere in the app before this — every prior "vendor"
@@ -251,6 +252,28 @@ router.post("/challans/:id/receive", async (req, res) => {
     .update({ status: "received", received_by: user.name, received_at: new Date().toISOString() })
     .eq("id", challan.id).select().single();
   if (updErr) return res.status(500).json({ error: updErr.message });
+
+  // Push each line's paid price into the rate-card ledger, effective from the receive date
+  // (forward-only — never reprices a day before this challan landed). unit_price is per the
+  // store item's base unit (see the Stage-2 migration); ingestPrices skips any line whose
+  // base unit doesn't match the rate-card unit rather than guessing a conversion. Best-
+  // effort: a failure here must not undo a receive that already moved stock, so it's caught
+  // and logged, never surfaced as an error to the caller.
+  try {
+    const priced = (lines || []).filter((l) => l.unit_price != null && Number(l.unit_price) > 0);
+    if (priced.length) {
+      const targets = await resolveByItemIds(priced.map((l) => l.item_id));
+      const entries = priced.map((l) => ({
+        rateCardId: targets[l.item_id]?.rateCardId || null,
+        price: l.unit_price,
+        priceUnit: targets[l.item_id]?.baseUnit || l.unit_entered,
+        label: l.item_id,
+      }));
+      const { written, skipped } = await ingestPrices(entries, { effectiveDate: todayIST(), source: "challan", sourceId: challan.id, createdBy: user.name });
+      if (skipped.length) console.warn(`[rate-card ledger] challan ${challan.id}: wrote ${written} price(s), skipped ${skipped.length}:`, skipped);
+    }
+  } catch (e) { console.error(`[rate-card ledger] challan ${challan.id} price ingest failed:`, e.message); }
+
   res.json(updated);
 });
 

@@ -88,6 +88,8 @@ const api = {
 
   // ── RM Audit ──
   getRMAudit: (date, outlet) => get(`/api/audit/${date}`, outlet ? { outlet } : {}),
+  // Range/month audit — sum of every day from `from` through `to` (see computeRMAuditRange).
+  getRMAuditRange: (from, to, outlet) => get(`/api/audit/${from}`, { to, ...(outlet ? { outlet } : {}) }),
   getColdDrinkAudit: (date) => get(`/api/audit/cold-drink/${date}`),
   getPackagingAudit: (days) => get("/api/audit/packaging", days ? { days } : {}),
 
@@ -190,6 +192,8 @@ const api = {
 
   // ── Rate Card ──
   getRateCard: () => get("/api/rate-card"),
+  // Dated price ledger for one item (challan/purchase/manual/seed changes), newest first.
+  getRateCardPriceHistory: (id) => get(`/api/rate-card/${id}/price-history`),
   addRate: (data) => post("/api/rate-card", data),
   updateRate: (id, data) => patch(`/api/rate-card/${id}`, data),
   deleteRate: (id) => del(`/api/rate-card/${id}`),
@@ -312,6 +316,8 @@ const api = {
   addItemUnit: (data) => post("/api/store/item-units", data),
   getRmOrderSuggestNew: () => get("/api/store/rm-order-suggest"),
   adjustStoreStock: (data) => post("/api/store/adjust", data),
+  adjustStoreStockBatch: (data) => post("/api/store/adjust-batch", data),
+  saveStoreThresholds: (items) => post("/api/store/thresholds", { items }),
 
   // Stage 2: vendor challans (receiving) — write flow on top of the same ledger.
   getVendors: () => get("/api/store/vendors"),

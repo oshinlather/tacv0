@@ -13700,14 +13700,53 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
   // problems: overstated closing, a missed wastage entry) is its own useful view.
   const [sortBy, setSortBy] = useState("amount_desc"); // amount_desc | amount_asc
 
+  // Beyond the single-day view, the audit can aggregate a whole month or a custom date
+  // range. A range is just the sum of its days server-side (see computeRMAuditRange) — the
+  // numbers, formula lines and breakdowns render identically to one day.
+  const [selMonth, setSelMonth] = useState(null);
+  const [customMode, setCustomMode] = useState(false);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  const monthOptions = useMemo(() => {
+    const opts = [];
+    const now = istNow();
+    for (let i = 0; i < 12; i++) {
+      const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+      const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+      opts.push({ value, label: m.toLocaleDateString("en-IN", { month: "short", year: "numeric" }) });
+    }
+    return opts;
+  }, []);
+
+  // Effective { from, to } when a month or a valid custom range is active — null means the
+  // plain single-day view. A month clamps its end to today so an in-progress month doesn't
+  // ask for dates that don't exist yet.
+  const range = useMemo(() => {
+    if (customMode) return customFrom && customTo && customTo >= customFrom ? { from: customFrom, to: customTo } : null;
+    if (selMonth) {
+      const [y, mo] = selMonth.split("-").map(Number);
+      const lastDay = `${selMonth}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`;
+      const todayStr = today();
+      return { from: `${selMonth}-01`, to: lastDay > todayStr ? todayStr : lastDay };
+    }
+    return null;
+  }, [customMode, customFrom, customTo, selMonth]);
+
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  const periodLabel = range ? `${range.from} → ${range.to}` : dateStr;
+
+  // Day/Month dropdown and Custom mode are mutually exclusive — picking one clears the other.
+  const pickDay = (d) => { setCustomMode(false); setSelDay(d); };
+  const pickMonth = (m) => { setCustomMode(false); setSelMonth(m); };
 
   const loadAudit = () => {
     setLoading(true);
-    api.getRMAudit(dateStr, selOutlet).then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
+    const p = range ? api.getRMAuditRange(range.from, range.to, selOutlet) : api.getRMAudit(dateStr, selOutlet);
+    p.then(setAudit).catch(() => setAudit(null)).finally(() => setLoading(false));
   };
 
-  useEffect(() => { loadAudit(); }, [dateStr, selOutlet]);
+  useEffect(() => { loadAudit(); }, [dateStr, range?.from, range?.to, selOutlet]);
 
   const outletData = audit?.outlets?.[0] || null;
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
@@ -13733,7 +13772,19 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
     <div>
       {!lockedOutlet && <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 12px" }}>🔍 Raw Material Audit</h3>}
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} days={7} marginBottom={0} />
+        {customMode ? (
+          <>
+            <input type="date" value={customFrom} max={customTo || today()} onChange={(e) => setCustomFrom(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#1A1A1A" }} />
+            <span style={{ color: "#999", fontSize: 13 }}>→</span>
+            <input type="date" value={customTo} min={customFrom} max={today()} onChange={(e) => setCustomTo(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, fontSize: 13, fontWeight: 600, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#1A1A1A" }} />
+            <button onClick={() => setCustomMode(false)} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>✕ Day/Month</button>
+          </>
+        ) : (
+          <>
+            <DateRangeDropdown selDay={selDay} setSelDay={pickDay} selMonth={selMonth} setSelMonth={pickMonth} monthOptions={monthOptions} days={7} marginBottom={0} />
+            <button onClick={() => { setSelMonth(null); setCustomMode(true); }} style={{ padding: "9px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>📅 Custom range</button>
+          </>
+        )}
         {!lockedOutlet && OUTLETS.map((o) => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 20, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
         ))}
@@ -13802,11 +13853,11 @@ const RMAuditPanel = ({ lockedOutlet } = {}) => {
           )}
 
           {outletData.items.length === 0 && outletData.dishes_sold === 0 && (
-            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales data uploaded for {outletName} on {dateStr}</div>
+            <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No sales data uploaded for {outletName} on {periodLabel}</div>
           )}
 
           {outletData.items.length > 0 && filteredItems.length === 0 && (
-            <div style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No {RM_AUDIT_CATEGORIES.find((c) => c.id === catFilter)?.label || "Others"} items for {outletName} on {dateStr}</div>
+            <div style={{ padding: "30px 16px", textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No {RM_AUDIT_CATEGORIES.find((c) => c.id === catFilter)?.label || "Others"} items for {outletName} on {periodLabel}</div>
           )}
 
           {filteredItems.length > 0 && (
@@ -17323,9 +17374,18 @@ const RateCardPanel = () => {
   const [selCat, setSelCat] = useState(null);
   const [editId, setEditId] = useState(null);
   const [editPrice, setEditPrice] = useState("");
+  const [historyId, setHistoryId] = useState(null); // item whose price ledger is expanded
+  const [history, setHistory] = useState(null);      // rows for historyId, null while loading
+  const SOURCE_LABEL = { challan: "🚚 Challan", purchase: "🧾 Purchase", manual: "✏️ Manual", seed: "🌱 Opening" };
 
   const load = () => { setLoading(true); api.getRateCard().then(setRates).catch(() => setRates([])).finally(() => setLoading(false)); };
   useEffect(load, []);
+
+  const toggleHistory = (id) => {
+    if (historyId === id) { setHistoryId(null); setHistory(null); return; }
+    setHistoryId(id); setHistory(null);
+    api.getRateCardPriceHistory(id).then((h) => setHistory(h || [])).catch(() => setHistory([]));
+  };
 
   const categories = [...new Set(rates.map((r) => r.category))].sort();
   const filtered = rates.filter((r) => {
@@ -17346,7 +17406,7 @@ const RateCardPanel = () => {
     <div>
       <div style={{ marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>💰 Rate Card</h3>
-        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Item prices used for P&L variable cost calculation. {rates.length} items.</p>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Item prices used for every cost calculation. Auto-updated when a challan/purchase is received; edits and new prices apply from that date forward and never change past P&L. {rates.length} items.</p>
       </div>
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
       <div style={{ display: "flex", gap: 6, marginBottom: 14, overflowX: "auto", paddingBottom: 4 }}>
@@ -17366,10 +17426,12 @@ const RateCardPanel = () => {
                 <th style={{ ...thS, textAlign: "center" }}>Category</th>
                 <th style={{ ...thS, textAlign: "center" }}>Unit</th>
                 <th style={{ ...thS, textAlign: "right" }}>Price (₹)</th>
+                <th style={{ ...thS, textAlign: "center" }}>History</th>
               </tr></thead>
               <tbody>
                 {filtered.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <Fragment key={r.id}>
+                  <tr style={{ borderBottom: historyId === r.id ? "none" : "1px solid #F0F0EC" }}>
                     <td style={{ ...tdS, fontWeight: 600 }}>{r.name}<span style={{ fontSize: 9, color: "#CCC", marginLeft: 6 }}>{r.id}</span></td>
                     <td style={{ ...tdS, textAlign: "center", fontSize: 11, color: "#888" }}>{r.category}</td>
                     <td style={{ ...tdS, textAlign: "center", fontSize: 11, color: "#888" }}>{r.unit}</td>
@@ -17387,7 +17449,40 @@ const RateCardPanel = () => {
                         </span>
                       )}
                     </td>
+                    <td style={{ ...tdS, textAlign: "center" }}>
+                      <button onClick={() => toggleHistory(r.id)} title="Price history — every challan/purchase/manual change" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: historyId === r.id ? "#1A1A1A" : "#fff", color: historyId === r.id ? "#fff" : "#888", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🕑</button>
+                    </td>
                   </tr>
+                  {historyId === r.id && (
+                    <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td colSpan={5} style={{ padding: "4px 16px 12px", background: "#FAFAF8" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", textTransform: "uppercase", letterSpacing: 0.5, margin: "8px 0 6px" }}>Price history — newest first · applies from each effective date forward</div>
+                        {history === null && <div style={{ fontSize: 12, color: "#999" }}>⏳ Loading…</div>}
+                        {history && history.length === 0 && <div style={{ fontSize: 12, color: "#999" }}>No recorded price changes yet.</div>}
+                        {history && history.length > 0 && (
+                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                            <thead><tr style={{ color: "#999" }}>
+                              <th style={{ textAlign: "left", padding: "2px 8px 4px 0", fontWeight: 600 }}>Effective</th>
+                              <th style={{ textAlign: "right", padding: "2px 12px 4px 0", fontWeight: 600 }}>Price</th>
+                              <th style={{ textAlign: "left", padding: "2px 12px 4px 0", fontWeight: 600 }}>Source</th>
+                              <th style={{ textAlign: "left", padding: "2px 0 4px 0", fontWeight: 600 }}>By</th>
+                            </tr></thead>
+                            <tbody>
+                              {history.map((h, i) => (
+                                <tr key={i} style={{ borderTop: "1px solid #EEE" }}>
+                                  <td style={{ padding: "4px 8px 4px 0", fontFamily: "'JetBrains Mono', monospace" }}>{h.effective_date}</td>
+                                  <td style={{ padding: "4px 12px 4px 0", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: i === 0 ? "#B45309" : "#555" }}>₹{Number(h.price).toLocaleString("en-IN")}{r.unit ? `/${r.unit}` : ""}</td>
+                                  <td style={{ padding: "4px 12px 4px 0" }}>{SOURCE_LABEL[h.source] || h.source}</td>
+                                  <td style={{ padding: "4px 0", color: "#999" }}>{h.created_by || "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

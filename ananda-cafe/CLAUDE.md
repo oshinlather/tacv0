@@ -33,7 +33,8 @@ ananda-cafe/
 - `demands` — Outlet demands, dispatch, wastage (type: manual/wastage, status: draft/submitted/fulfilled)
 - `closing_stocks` — Daily closing stock per outlet (separate table, NOT in demands)
 - `daily_sales` — Daily sales data per outlet
-- `rate_card` — Item prices (id, name, category, unit, price, active)
+- `rate_card` — Item prices (id, name, category, unit, price, active). `price` = current/mirrored price; the dated source of truth is `rate_card_prices` (see Date-Effective Pricing)
+- `rate_card_prices` — Price ledger (rate_card_id, effective_date, price, source, source_id). Dated price history; costing resolves as-of each calculation's date
 - `demand_items` — Item definitions for demand form (id, name, section_id, unit, active)
 - `bk_recipes` — BK recipe definitions (id, name, yield_qty, yield_unit)
 - `bk_recipe_ingredients` — Recipe ingredients (recipe_id, raw_material_id, qty, unit)
@@ -72,6 +73,13 @@ ananda-cafe/
 1. **Rate card first**: If item has an active rate_card entry → use rate card price
 2. **Recipe fallback**: If no rate card AND item is a BK recipe → compute cost from recipe ingredients × rate card prices
 3. **Raw material ID mapping**: Recipe ingredients use `_raw` suffix IDs. Complete 55-entry mapping (`rawToRate`) resolves these to rate card IDs.
+
+### Date-Effective Pricing (price ledger)
+- Rate-card prices are **date-effective**, not a single mutable number. Table `rate_card_prices` (id, rate_card_id, effective_date, price, source, source_id) is the ledger; `rate_card.price` is just the mirrored *current* price (what the master screen edits, and what live/dish costing reads).
+- **As-of resolution**: the price of an item on date D = the latest ledger row with `effective_date <= D` (tie-break `created_at DESC` — "latest price paid"), carried forward. `buildCostingContext(asOfDate)` resolves this; every dated read (P&L, RM Audit, stock-usage, wastage, franchise, finance) passes its own date, so **past calculations never change when a new price lands** (forward-only). Omitting `asOfDate` = current price (unchanged behaviour).
+- `ctx.withDate(date)` re-prices rateMap + BK recipe costs (Sambhar etc.) in memory off one ledger load — range/month callers (RM Audit range, finance day-loops) price each day correctly without refetching.
+- **Writers** append rows via `rateCardPrices.js` (`ingestPrices`/`appendRateCardPrice`): vendor **challan receive** (`source='challan'`, per store item base-unit price), **cash/dairy purchase** submit (`source='purchase'`, amount÷qty), and **manual rate-card add/edit** (`source='manual'`, effective today — required, or a dated read wouldn't see the edit). A price is skipped+logged (never guessed) when its unit ≠ the rate-card unit, or no rate-card match. Baseline seed (2000-01-01 = current price) keeps day-1 numbers identical.
+- **Known exception**: legacy `/pnl/computed/:date` (`computeDailyPnL`) still uses the separate `rate_per_kg` column + `bk_costs` table (not the ledger). It's unused by the frontend; left untouched.
 
 ### Consumed Material Formula (P&L)
 ```

@@ -14,6 +14,7 @@ const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutlet
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const { applyDispatchStockOut } = require('./stockOutHooks');
+const { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName: normalizeRateName } = require('./rateCardPrices');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -583,7 +584,16 @@ try {
     const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'bk_manager', 'outlet_mgr', 'chef');
     if (!user) return;
     const { date } = req.params;
-    const outlets = await computeRMAudit(date, scopedOutletFilter(user, req.query.outlet));
+    const outletFilter = scopedOutletFilter(user, req.query.outlet);
+    // ?to=YYYY-MM-DD turns :date into the START of a range — the audit is then the sum of
+    // every day from :date through ?to (a month is just from=1st, to=last-day-so-far).
+    // Absent, it's the single-day audit exactly as before.
+    const to = req.query.to;
+    if (to && /^\d{4}-\d{2}-\d{2}$/.test(to) && to >= date) {
+      const outlets = await computeRMAuditRange(date, to, outletFilter);
+      return res.json({ date, from: date, to, range: true, outlets });
+    }
+    const outlets = await computeRMAudit(date, outletFilter);
     res.json({ date, outlets });
 } catch (err) {
 res.status(500).json({ error: err.message });
@@ -1295,23 +1305,39 @@ function computeCrockeryPackagingItems(oid, outletSalesRows, actualById, rateMap
 // already show (via computeStockUsageForDate), not Base Kitchen's internal issuance
 // records. Computed per outlet so leakage can be compared outlet-to-outlet, since every
 // outlet cooks from the same recipes and dispatches from the same base kitchen.
-async function computeRMAudit(date, outletFilter) {
+// Recipes, costing context and crockery/packaging rules are the SAME for every date, so a
+// range/month caller (computeRMAuditRange) builds them once and passes them into each day's
+// computeRMAudit via sharedCtx instead of this function refetching all three per day — the
+// same reuse computeStockUsageForDate already does for its costingContext.
+async function buildRMAuditSharedCtx(asOfDate) {
+  const [{ data: recipes }, costingContext, crockeryPackagingRules] = await Promise.all([
+    supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
+    // Priced as-of the audit date so an outlet's leakage is valued at the prices in effect
+    // that day, not today's. A range caller passes no date here and re-prices per day via
+    // costingContext.withDate(day) instead (one ledger load, priced 30 different ways).
+    buildCostingContext(asOfDate),
+    getCrockeryPackagingRules(),
+  ]);
+  return { recipes: recipes || [], costingContext, crockeryPackagingRules };
+}
+
+async function computeRMAudit(date, outletFilter, sharedCtx) {
   const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
   const targetOutlets = outletFilter && outletFilter !== 'all' ? [outletFilter] : outletIds;
 
-  // Independent of each other — fired concurrently. costingContext is reused below instead
-  // of computeStockUsageForDate fetching its own copy of the same six tables a second time.
-  const [sales, { data: recipes }, costingContext, crockeryPackagingRules] = await Promise.all([
+  // Only the sales fetch is date-dependent — the rest (recipes/costing/crockery rules) is
+  // built once by a range caller and reused, or fetched here for a single-day call. Both
+  // legs are still fired concurrently so a single-day call is no slower than before.
+  const [sales, ctx] = await Promise.all([
     // order_type + invoice_no are only needed for the crockery/packaging rule below
     // (dine-in item count, distinct pickup/delivery order count) — the recipe path only
     // ever used outlet_code/item_name/item_quantity. category_name is also only for that
     // rule — matching a takeaway line item to its correct container (see
     // TAKEAWAY_CATEGORY_CONTAINERS).
     fetchAllDailySales({ date, select: 'outlet_code, item_name, item_quantity, order_type, invoice_no, category_name' }),
-    supabase.from('recipes').select('id, item_name, recipe_ingredients ( id, raw_material, qty, unit, qty_kg )').eq('status', 'Active'),
-    buildCostingContext(),
-    getCrockeryPackagingRules(),
+    sharedCtx ? Promise.resolve(sharedCtx) : buildRMAuditSharedCtx(date),
   ]);
+  const { recipes, costingContext, crockeryPackagingRules } = ctx;
 
   const recipeByNormName = {};
   (recipes || []).forEach(r => { recipeByNormName[normalizeDishName(r.item_name)] = r; });
@@ -1480,12 +1506,181 @@ async function computeRMAudit(date, outletFilter) {
       actual_material_cost: Math.round(actualMaterialCost * 100) / 100,
       dishes_sold: Object.keys(salesByDish).length,
       dishes_matched: Object.keys(salesByDish).length - unmatchedDishes.length,
+      // Full list of dish names sold, so a range merge can count DISTINCT dish types across
+      // the whole window (a union) instead of summing per-day counts, which would double-
+      // count anything sold on more than one day.
+      dish_names: Object.keys(salesByDish),
       sales_qty_total: qtySoldTotal,
       sales_qty_matched: qtySoldMatched,
       sales_coverage_pct: qtySoldTotal > 0 ? Math.round((qtySoldMatched / qtySoldTotal) * 1000) / 10 : null,
     });
   }
   return results;
+}
+
+// ────────────────────────────────────────────────────────────
+// Range/month RM Audit — sum of daily audits, NOT a single range-level query.
+// This is the same rule every other monthly figure in this app already uses (see the long
+// comment on computeStockUsageForDate): a range's actual consumption is the SUM of each
+// day's own opening→closing consumption, which telescopes correctly (each day's opening =
+// the prior day's closing, so the intermediate closings cancel and only the range's first
+// opening and last closing survive). Summing the daily should-consume (sales × recipe) and
+// daily leakage is likewise exact. costingContext/recipes/crockery rules are built ONCE and
+// reused across every day; days run at bounded concurrency, matching finance.js's month
+// aggregation rather than bursting every day's queries in one tick.
+const RM_AUDIT_DAY_CONCURRENCY = 5;
+function rmAuditDaysInRange(from, to) {
+  const days = [];
+  const d = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (d <= end) { days.push(d.toISOString().slice(0, 10)); d.setUTCDate(d.getUTCDate() + 1); }
+  return days;
+}
+async function rmAuditMapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+const r2 = (n) => Math.round(n * 100) / 100;   // money
+const r3 = (n) => Math.round(n * 1000) / 1000; // qty
+
+async function computeRMAuditRange(from, to, outletFilter) {
+  const days = rmAuditDaysInRange(from, to);
+  if (days.length === 0) return [];
+  // Ledger + recipes loaded ONCE (undated). Each day re-prices its costing context in
+  // memory via withDate(ds) so that day's leakage is valued at the prices in effect then —
+  // a mid-range price change shows up as a real step in per-day cost, and the total is the
+  // honest sum of each day's own-priced audit.
+  const sharedCtx = await buildRMAuditSharedCtx();
+  const dayResults = await rmAuditMapWithConcurrency(days, RM_AUDIT_DAY_CONCURRENCY, (ds) =>
+    computeRMAudit(ds, outletFilter, { ...sharedCtx, costingContext: sharedCtx.costingContext.withDate(ds) }));
+
+  // Merge each outlet's per-day audits into one aggregate for the whole window.
+  const byOutlet = {}; // outlet_id -> aggregate accumulator
+  const ensure = (oid) => {
+    if (!byOutlet[oid]) byOutlet[oid] = {
+      outlet_id: oid,
+      items: {},              // raw_material -> merged item accumulator
+      dishNames: new Set(),   // all dish types sold across the window
+      unmatched: {},          // dish name -> summed qty (union across days)
+      unmapped: new Set(),
+      neverMapped: {},        // item_id -> merged accumulator
+      ideal_material_cost: 0,
+      actual_material_cost: 0,
+      sales_qty_total: 0,
+      sales_qty_matched: 0,
+    };
+    return byOutlet[oid];
+  };
+
+  dayResults.forEach((outlets) => {
+    (outlets || []).forEach((o) => {
+      const acc = ensure(o.outlet_id);
+      (o.dish_names || []).forEach((n) => acc.dishNames.add(n));
+      (o.unmatched_dishes || []).forEach((d) => { acc.unmatched[d.item_name] = (acc.unmatched[d.item_name] || 0) + (d.qty || 0); });
+      (o.unmapped_ingredients || []).forEach((n) => acc.unmapped.add(n));
+      (o.never_mapped_items || []).forEach((it) => {
+        const cur = acc.neverMapped[it.item_id] || { ...it, used: 0, used_cost: 0 };
+        cur.used += it.used || 0;
+        cur.used_cost += it.used_cost || 0;
+        cur.referenced_in_recipe = cur.referenced_in_recipe || it.referenced_in_recipe;
+        acc.neverMapped[it.item_id] = cur;
+      });
+      acc.ideal_material_cost += o.ideal_material_cost || 0;
+      acc.actual_material_cost += o.actual_material_cost || 0;
+      acc.sales_qty_total += o.sales_qty_total || 0;
+      acc.sales_qty_matched += o.sales_qty_matched || 0;
+
+      (o.items || []).forEach((it) => {
+        let m = acc.items[it.raw_material];
+        if (!m) {
+          m = acc.items[it.raw_material] = {
+            raw_material: it.raw_material, item_id: it.item_id, unit: it.unit, rate: it.rate,
+            should_consume: 0, should_consume_cost: 0,
+            actual_consumed: 0, actual_consumed_cost: 0, hasActual: false,
+            ab: { prev_closing: 0, dispatched: 0, purchased: 0, wastage: 0, closing: 0 }, hasAb: false,
+            breakdown: {}, // dish -> merged should-consume breakdown row
+          };
+        }
+        m.should_consume += it.should_consume || 0;
+        if (it.should_consume_cost != null) m.should_consume_cost += it.should_consume_cost;
+        // actual_consumed is null on days with no closing data — those days contribute
+        // nothing (same "missing closing = 0" convention P&L/single-day audit use), but the
+        // aggregate is only marked "has actual" if at least one day actually had it, so an
+        // item with no closing data all window still reads "no closing stock data" rather
+        // than a misleading 0.
+        if (it.actual_consumed != null) {
+          m.hasActual = true;
+          m.actual_consumed += it.actual_consumed;
+          if (it.actual_consumed_cost != null) m.actual_consumed_cost += it.actual_consumed_cost;
+        }
+        if (it.actual_breakdown) {
+          m.hasAb = true;
+          m.ab.prev_closing += it.actual_breakdown.prev_closing || 0;
+          m.ab.dispatched += it.actual_breakdown.dispatched || 0;
+          m.ab.purchased += it.actual_breakdown.purchased || 0;
+          m.ab.wastage += it.actual_breakdown.wastage || 0;
+          m.ab.closing += it.actual_breakdown.closing || 0;
+        }
+        (it.should_consume_breakdown || []).forEach((b) => {
+          const key = b.dish;
+          const bd = m.breakdown[key] || { ...b, qty_sold: 0, subtotal: 0 };
+          bd.qty_sold += b.qty_sold || 0;
+          bd.subtotal += b.subtotal || 0;
+          m.breakdown[key] = bd;
+        });
+      });
+    });
+  });
+
+  // Finalize each outlet: turn accumulators back into the exact same shape a single-day
+  // computeRMAudit returns, so the frontend renders a range identically to one day.
+  return Object.values(byOutlet).map((acc) => {
+    const items = Object.values(acc.items).map((m) => {
+      const should = r3(m.should_consume);
+      const actual = m.hasActual ? r3(m.actual_consumed) : null;
+      const variance = actual != null ? r3(actual - should) : null;
+      const variancePct = actual != null && should > 0 ? Math.round(((actual - should) / should) * 1000) / 10 : null;
+      return {
+        raw_material: m.raw_material, item_id: m.item_id, unit: m.unit, rate: m.rate,
+        should_consume: should,
+        should_consume_cost: r2(m.should_consume_cost),
+        should_consume_breakdown: Object.values(m.breakdown)
+          .map((b) => ({ ...b, qty_sold: r3(b.qty_sold), subtotal: r3(b.subtotal) }))
+          .sort((a, b) => b.subtotal - a.subtotal),
+        actual_consumed: actual,
+        actual_consumed_cost: m.hasActual ? r2(m.actual_consumed_cost) : null,
+        actual_breakdown: m.hasAb ? {
+          prev_closing: r3(m.ab.prev_closing), dispatched: r3(m.ab.dispatched),
+          purchased: r3(m.ab.purchased), wastage: r3(m.ab.wastage), closing: r3(m.ab.closing),
+        } : null,
+        variance, variance_pct: variancePct,
+      };
+    }).sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0));
+
+    const unmatched = Object.entries(acc.unmatched).map(([item_name, qty]) => ({ item_name, qty })).sort((a, b) => b.qty - a.qty);
+    const dishesSold = acc.dishNames.size;
+    const dishesMatched = dishesSold - unmatched.length;
+    return {
+      outlet_id: acc.outlet_id, date: `${from}..${to}`,
+      items,
+      unmatched_dishes: unmatched,
+      unmapped_ingredients: [...acc.unmapped],
+      never_mapped_items: Object.values(acc.neverMapped)
+        .map((it) => ({ ...it, used: r3(it.used), used_cost: r2(it.used_cost) }))
+        .sort((a, b) => b.used_cost - a.used_cost),
+      ideal_material_cost: r2(acc.ideal_material_cost),
+      actual_material_cost: r2(acc.actual_material_cost),
+      dishes_sold: dishesSold,
+      dishes_matched: dishesMatched,
+      sales_qty_total: acc.sales_qty_total,
+      sales_qty_matched: acc.sales_qty_matched,
+      sales_coverage_pct: acc.sales_qty_total > 0 ? Math.round((acc.sales_qty_matched / acc.sales_qty_total) * 1000) / 10 : null,
+    };
+  });
 }
 
 // Raw-material-id → rate-card id, for BK-prepared items' OWN ingredients (Dosa Batter's
@@ -2593,6 +2788,28 @@ router.post('/purchases', async (req, res) => {
       catch (e) { console.error('Cash purchase inventory credit failed:', e.message); }
     }
 
+    // Push each purchased line's paid price (amount ÷ quantity) into the rate-card ledger,
+    // effective from the purchase date. Lines carry either a store item_id (cash-purchase)
+    // or just a display item_name + unit (dairy/cold-drink) — resolve both. ingestPrices
+    // skips anything with no rate-card match or a unit that doesn't match the rate card
+    // (cold drinks have no rate_card entry and drop out here naturally). Best-effort — a
+    // ledger failure never fails the purchase itself.
+    try {
+      const priceLines = (items || []).filter(i => Number(i.quantity) > 0 && Number(i.amount) > 0);
+      if (priceLines.length) {
+        const byId = await resolveByItemIds(priceLines.filter(i => i.item_id).map(i => i.item_id));
+        const byName = await resolveByNames(priceLines.filter(i => !i.item_id && i.item_name).map(i => i.item_name));
+        const entries = priceLines.map(i => ({
+          rateCardId: i.item_id ? (byId[i.item_id]?.rateCardId || null) : (byName[normalizeRateName(i.item_name)] || null),
+          price: Number(i.amount) / Number(i.quantity),
+          priceUnit: i.unit || (i.item_id ? byId[i.item_id]?.baseUnit : null),
+          label: i.item_name || i.item_id,
+        }));
+        const { written, skipped } = await ingestPrices(entries, { effectiveDate: record.date, source: 'purchase', sourceId: result?.id, createdBy: submitted_by });
+        if (skipped.length) console.warn(`[rate-card ledger] purchase ${result?.id}: wrote ${written} price(s), skipped ${skipped.length}:`, skipped);
+      }
+    } catch (e) { console.error(`[rate-card ledger] purchase price ingest failed:`, e.message); }
+
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3369,7 +3586,9 @@ router.get('/sales', async (req, res) => {
 
     const [data, costingContext, crockeryPackagingRules] = await Promise.all([
       fetchAllDailySales({ date, from, to, outlet_code: (outlet && outlet !== 'all') ? outlet : undefined }),
-      buildCostingContext(),
+      // Priced as-of the day (single-date) or the range end (from/to) so packaging/crockery
+      // economics reflect the prices in effect then, not just today's.
+      buildCostingContext(date || to),
       getCrockeryPackagingRules(),
     ]);
     const { rateMap, convFactorFor } = costingContext;
@@ -3666,12 +3885,20 @@ router.get('/rate-card', async (req, res) => {
 // ── POST /api/rate-card — Add/update rate
 router.post('/rate-card', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    const user = await requireRole(req, res, 'owner'); // returns the user object (for created_by), owner-only
+    if (!user) return;
     const { id, name, category, unit, price } = req.body;
     const { error } = await supabase.from('rate_card').upsert({
       id, name, category, unit, price: price || 0, updated_at: new Date().toISOString()
     });
     if (error) throw error;
+    // Record the manual price in the ledger, effective today — REQUIRED, not optional: a
+    // dated read resolves as-of the ledger, so without this row every dated calculation
+    // (P&L, RM Audit) would keep seeing the item's previous ledger price and the owner's
+    // edit would silently not take effect. Forward-only, so it never rewrites the past.
+    if (price != null && Number.isFinite(Number(price))) {
+      await appendRateCardPrice({ rateCardId: id, effectiveDate: todayIST(), price, source: 'manual', createdBy: user.name });
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3679,7 +3906,8 @@ router.post('/rate-card', async (req, res) => {
 // ── PATCH /api/rate-card/:id — Update price
 router.patch('/rate-card/:id', async (req, res) => {
   try {
-    if (!await requireOwner(req, res)) return;
+    const user = await requireRole(req, res, 'owner'); // returns the user object (for created_by), owner-only
+    if (!user) return;
     const updates = {};
     if (req.body.price !== undefined) updates.price = req.body.price;
     if (req.body.name !== undefined) updates.name = req.body.name;
@@ -3688,6 +3916,11 @@ router.patch('/rate-card/:id', async (req, res) => {
     updates.updated_at = new Date().toISOString();
     const { error } = await supabase.from('rate_card').update(updates).eq('id', req.params.id);
     if (error) throw error;
+    // Append a manual ledger row when the price changed, effective today — required for the
+    // edit to take effect under as-of pricing (see POST /rate-card). Forward-only.
+    if (req.body.price !== undefined && Number.isFinite(Number(req.body.price))) {
+      await appendRateCardPrice({ rateCardId: req.params.id, effectiveDate: todayIST(), price: req.body.price, source: 'manual', createdBy: user.name });
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3699,6 +3932,21 @@ router.delete('/rate-card/:id', async (req, res) => {
     const { error } = await supabase.from('rate_card').update({ active: false }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/rate-card/:id/price-history — the dated price ledger for one item, newest
+// first: every challan/purchase/manual/seed price change with its effective date and source.
+// Backs the Rate Card master's "price history" popover and the "last updated" badge.
+router.get('/rate-card/:id/price-history', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const { data, error } = await supabase.from('rate_card_prices')
+      .select('effective_date, price, source, source_id, created_by, created_at')
+      .eq('rate_card_id', req.params.id)
+      .order('effective_date', { ascending: false }).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3917,16 +4165,22 @@ router.get('/pnl/live/:date', async (req, res) => {
       // Own costing context (rate_card/BK-recipe pricing) for computeBkPurchaseByOutlet
       // below — deliberately a separate build rather than reusing this route's own
       // hand-rolled rateMap/convMap (different shape), so the BK Purchase figure here
-      // exactly matches Finance's, not a similar-but-drifting variant.
-      buildCostingContext(),
+      // exactly matches Finance's, not a similar-but-drifting variant. Priced as-of the P&L
+      // date; its .priceAsOf ledger resolver also dates this route's own rateMap below (no
+      // second ledger fetch).
+      buildCostingContext(date),
     ]);
     const bkPurchaseByOutlet = await computeBkPurchaseByOutlet(date, date, bkPurchaseCostingContext);
     // Denominator for BK Fixed Cost's proportional split below (see the "BK FIXED COST
     // SHARE" block inside the per-outlet loop) — total across the same 6-outlet set the
     // equal split used to divide by, computed once here rather than per-outlet iteration.
     const totalBkPurchaseAllOutlets = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'].reduce((s, oid) => s + (bkPurchaseByOutlet[oid] || 0), 0);
+    // Priced as-of the P&L date via the ledger resolver on the context built above, so this
+    // route's dispatch costs and hand-rolled BK recipe costs (bkCostPerKg below reads
+    // rateMap[...].price) reflect the prices in effect that day — and a past P&L never
+    // changes when a new price lands later.
     const rateMap = {};
-    (rates || []).forEach(r => { rateMap[r.id] = r; });
+    (rates || []).forEach(r => { rateMap[r.id] = { ...r, price: bkPurchaseCostingContext.priceAsOf(r.id, date) }; });
     const orders = (allOrders || []).filter(o => o.status === 'fulfilled' || o.dispatch_items);
     const demandUnitMap = {};
     (demandItemsRaw || []).forEach(i => { demandUnitMap[i.id] = i.unit; });
@@ -4292,8 +4546,15 @@ router.get('/pnl/live/:date', async (req, res) => {
 // /api/wastage/cost (and any other per-item costing endpoint) can reuse the exact same
 // rate-card/recipe/conversion resolution instead of a third, possibly-drifting copy of
 // this logic (RecipesPanel and CogsDash on the frontend already each have their own).
-async function buildCostingContext() {
-  // None of these six queries depend on each other's results — fired concurrently instead
+// `asOfDate` ('YYYY-MM-DD', optional) prices everything as of that date via the
+// rate_card_prices ledger — the latest price at-or-before it, carried forward (see the
+// 2026_08_27 migration). Omitted → current rate_card.price, i.e. behaviour identical to
+// before this became date-aware. The full ledger is loaded once; `ctx.withDate(date)` on
+// the returned context re-resolves rateMap + BK recipe costs for a DIFFERENT date entirely
+// in memory (no extra query), so a month/range caller prices each day correctly off a
+// single fetch instead of rebuilding the whole context 30 times.
+async function buildCostingContext(asOfDate) {
+  // None of these queries depend on each other's results — fired concurrently instead
   // of one-at-a-time so this function's total latency is bounded by the slowest single
   // query, not the sum of all of them (this alone was most of /stock-usage and /audit's
   // multi-second load time).
@@ -4304,6 +4565,7 @@ async function buildCostingContext() {
     { data: invItemsList },
     { data: demandItemsRaw },
     { data: unitConversions },
+    { data: priceRows },
   ] = await Promise.all([
     supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
     supabase.from('bk_recipes').select('*'),
@@ -4311,10 +4573,39 @@ async function buildCostingContext() {
     supabase.from('inventory_items').select('id, name, demand_item_id'),
     supabase.from('demand_items').select('id, name, unit').eq('active', true),
     supabase.from('unit_conversions').select('*').eq('active', true),
+    // Whole ledger loaded once — small (one row per item per price change) and reused
+    // across every date a withDate() caller asks for. created_at is the tie-break when two
+    // prices share an effective_date (e.g. two challans the same day) — latest wins.
+    supabase.from('rate_card_prices').select('rate_card_id, effective_date, price, created_at'),
   ]);
-  const rateMap = {};
+  // baseRateMap holds each item's CURRENT price (rate_card.price). The priced rateMap the
+  // context exposes is derived from it per-date below; resolveRateId/convFactorFor only ever
+  // read KEYS/units off it (never the price), so they stay valid across dates unchanged.
+  const baseRateMap = {};
   const rateByName = {};
-  (rates || []).forEach(r => { rateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
+  (rates || []).forEach(r => { baseRateMap[r.id] = r; rateByName[normalizeIngredientName(r.name)] = r.id; });
+  const rateMap = baseRateMap; // resolveRateId/computeBkRecipe below reference `rateMap` for existence/units
+
+  // Ledger indexed by item, newest-first, for as-of resolution. Supabase returns
+  // effective_date as an ISO 'YYYY-MM-DD' string, so lexical compare == date compare.
+  const priceHistoryByRate = {};
+  (priceRows || []).forEach(p => { (priceHistoryByRate[p.rate_card_id] ||= []).push(p); });
+  // Newest first: by effective_date, then created_at as the same-day tie-break so the
+  // latest price paid on a day wins (two challans for the same item on one date).
+  const cmpDesc = (a, b, k) => (a[k] < b[k] ? 1 : a[k] > b[k] ? -1 : 0);
+  Object.values(priceHistoryByRate).forEach(list => list.sort((a, b) =>
+    cmpDesc(a, b, 'effective_date') || cmpDesc(a, b, 'created_at')));
+  // Price of one item as of a date: latest ledger row effective on-or-before it (carry
+  // forward). No date → current price. No ledger row at all → current price (defensive;
+  // the baseline seed means every active item has at least one row from 2000-01-01).
+  const priceAsOf = (id, date) => {
+    const cur = baseRateMap[id] ? Number(baseRateMap[id].price) : null;
+    if (!date) return cur;
+    const hist = priceHistoryByRate[id];
+    if (!hist || !hist.length) return cur;
+    for (const row of hist) { if (row.effective_date <= date) return Number(row.price); }
+    return cur;
+  };
   const bkRecipeByName = {};
   // `active !== false` (not a strict `=== true`) since the column defaults null/undefined
   // on older rows that predate soft-delete — only an explicit false (a real DELETE
@@ -4403,48 +4694,64 @@ async function buildCostingContext() {
     (bkRecipes || []).forEach(r => { bkRecipesById[r.id] = r; });
     const bkIngredientsByRecipeId = {};
     (bkIngredients || []).forEach(i => { (bkIngredientsByRecipeId[i.recipe_id] ||= []).push(i); });
-    const bkRecipeMap = {};
-    const computeBkRecipe = (recipeId, visited = new Set()) => {
-      if (bkRecipeMap[recipeId]) return bkRecipeMap[recipeId];
-      const r = bkRecipesById[recipeId];
-      if (!r || visited.has(recipeId)) return null;
-      const nextVisited = new Set(visited); nextVisited.add(recipeId);
-      const yieldQty = Number(r.yield_qty) || 1;
-      let batchCost = 0;
-      (bkIngredientsByRecipeId[recipeId] || []).forEach(ing => {
-        const rmId = ing.raw_material_id || ing.raw_material;
-        const rateId = resolveRateId(rmId);
-        const ingRate = rateId ? rateMap[rateId] : null;
-        if (ingRate) {
-          const ingUnit = (ing.unit || 'Kg').toLowerCase();
-          const rateUnit = (ingRate.unit || 'Kg').toLowerCase();
-          let factor = 1;
-          let fromUnit = ingUnit;
-          // Check unit_conversions for non-standard units first (e.g. Tin -> Kg),
-          // then chain an SI step on top if that base unit still isn't the rate's unit.
-          const conv = convMap[rmId];
-          if (conv && ingUnit === conv.fromUnit.toLowerCase()) {
-            factor = conv.qty;
-            fromUnit = (conv.baseUnit || '').toLowerCase();
+    // Recompute every BK recipe's cost/Kg against a given (priced) rateMap. A factory,
+    // not a one-shot, because a date-scoped context reprices its ingredients — so Sambhar's
+    // own cost moves with the raw-material prices in effect on that date, entirely in memory.
+    const buildBkRecipeMap = (pricedRateMap) => {
+      const bkRecipeMap = {};
+      const computeBkRecipe = (recipeId, visited = new Set()) => {
+        if (bkRecipeMap[recipeId]) return bkRecipeMap[recipeId];
+        const r = bkRecipesById[recipeId];
+        if (!r || visited.has(recipeId)) return null;
+        const nextVisited = new Set(visited); nextVisited.add(recipeId);
+        const yieldQty = Number(r.yield_qty) || 1;
+        let batchCost = 0;
+        (bkIngredientsByRecipeId[recipeId] || []).forEach(ing => {
+          const rmId = ing.raw_material_id || ing.raw_material;
+          const rateId = resolveRateId(rmId);
+          const ingRate = rateId ? pricedRateMap[rateId] : null;
+          if (ingRate) {
+            const ingUnit = (ing.unit || 'Kg').toLowerCase();
+            const rateUnit = (ingRate.unit || 'Kg').toLowerCase();
+            let factor = 1;
+            let fromUnit = ingUnit;
+            // Check unit_conversions for non-standard units first (e.g. Tin -> Kg),
+            // then chain an SI step on top if that base unit still isn't the rate's unit.
+            const conv = convMap[rmId];
+            if (conv && ingUnit === conv.fromUnit.toLowerCase()) {
+              factor = conv.qty;
+              fromUnit = (conv.baseUnit || '').toLowerCase();
+            }
+            if (fromUnit !== rateUnit) {
+              if ((fromUnit === 'gm' || fromUnit === 'g') && rateUnit === 'kg') factor *= 0.001;
+              else if (fromUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor *= 1000;
+              else if (fromUnit === 'ml' && (rateUnit === 'ltr' || rateUnit === 'l')) factor *= 0.001;
+              else if ((fromUnit === 'ltr' || fromUnit === 'l') && rateUnit === 'ml') factor *= 1000;
+            }
+            batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
+          } else if (rmId !== recipeId && bkRecipesById[rmId]) {
+            const nested = computeBkRecipe(rmId, nextVisited);
+            if (nested) batchCost += (Number(ing.qty) || 0) * nested.costPerKg;
           }
-          if (fromUnit !== rateUnit) {
-            if ((fromUnit === 'gm' || fromUnit === 'g') && rateUnit === 'kg') factor *= 0.001;
-            else if (fromUnit === 'kg' && (rateUnit === 'gm' || rateUnit === 'g')) factor *= 1000;
-            else if (fromUnit === 'ml' && (rateUnit === 'ltr' || rateUnit === 'l')) factor *= 0.001;
-            else if ((fromUnit === 'ltr' || fromUnit === 'l') && rateUnit === 'ml') factor *= 1000;
-          }
-          batchCost += (Number(ing.qty) || 0) * factor * Number(ingRate.price);
-        } else if (rmId !== recipeId && bkRecipesById[rmId]) {
-          const nested = computeBkRecipe(rmId, nextVisited);
-          if (nested) batchCost += (Number(ing.qty) || 0) * nested.costPerKg;
-        }
-      });
-      const costPerKg = yieldQty > 0 ? batchCost / yieldQty : 0;
-      const result = { name: r.name || r.id, costPerKg, yieldQty };
-      bkRecipeMap[recipeId] = result;
-      return result;
+        });
+        const costPerKg = yieldQty > 0 ? batchCost / yieldQty : 0;
+        const result = { name: r.name || r.id, costPerKg, yieldQty };
+        bkRecipeMap[recipeId] = result;
+        return result;
+      };
+      (bkRecipes || []).forEach(r => computeBkRecipe(r.id));
+      return bkRecipeMap;
     };
-    (bkRecipes || []).forEach(r => computeBkRecipe(r.id));
+
+    // rateMap for a date: each item's row with its as-of price. No date → the base map
+    // (current prices) UNCHANGED — the exact object every existing caller already got, so
+    // the non-dated path is byte-for-byte identical to before.
+    const buildRateMapForDate = (date) => {
+      if (!date) return baseRateMap;
+      const m = {};
+      for (const id in baseRateMap) m[id] = { ...baseRateMap[id], price: priceAsOf(id, date) };
+      return m;
+    };
 
     // Conversion factor from a specific recorded unit to a target (usually rate-card)
     // unit — chains through unit_conversions then an SI step, same as everywhere else.
@@ -4478,11 +4785,31 @@ async function buildCostingContext() {
       return factor;
     };
 
+    // Static (date-independent) half of the context — helpers + lookups that never depend
+    // on price. Spread into every date-scoped context so withDate() only has to swap the
+    // two priced members.
+    const staticCtx = { rateByName, bkRecipeByName, convMap, demandNameMap, demandUnitMap, convFactorFor, bkIngredientsByRecipeId, bkRecipesById, resolveRateId, priceAsOf };
+
+    // Build the context for one date: static half + this date's priced rateMap and BK
+    // recipe costs. withDate() re-prices in memory off the already-loaded ledger — no query
+    // — returning a fresh, independent context so concurrent per-day resolutions in a range
+    // loop never clobber a shared object.
+    const contextForDate = (date) => {
+      const pricedRateMap = buildRateMapForDate(date);
+      const ctx = {
+        ...staticCtx,
+        rateMap: pricedRateMap,
+        bkRecipeMap: buildBkRecipeMap(pricedRateMap),
+        asOfDate: date || null,
+      };
+      ctx.withDate = contextForDate;
+      return ctx;
+    };
     // bkIngredientsByRecipeId/bkRecipesById/resolveRateId exposed (previously local-only)
     // so computeRMAudit can walk a nested BK recipe's OWN ingredients (e.g. White Chutney
     // -> Coconut Crush -> Coconut) for should-consume purposes — see the note there. Purely
     // additive: every existing caller destructuring this return is unaffected.
-    return { rateMap, rateByName, bkRecipeByName, bkRecipeMap, convMap, demandNameMap, demandUnitMap, convFactorFor, bkIngredientsByRecipeId, bkRecipesById, resolveRateId };
+    return contextForDate(asOfDate);
 }
 
 // Dispatched items (this period, this outlet) × rate card / BK-recipe cost — same
@@ -4737,7 +5064,10 @@ async function computeStockUsageForDate(date, outlet, costingContext) {
       { data: confirmedTransfers },
       { data: todayPurchases },
     ] = await Promise.all([
-      costingContext ? Promise.resolve(costingContext) : buildCostingContext(),
+      // Priced as-of this day when we build our own context, so consumption is valued at
+      // that day's prices. A caller passing its own context is responsible for having priced
+      // it for the right date (finance's day-loops pass costingContext.withDate(ds)).
+      costingContext ? Promise.resolve(costingContext) : buildCostingContext(date),
       // 2. Previous day closing stock (from closing_stocks table, NOT demands) — status
       // filter excludes a still-in-progress Chef/Bainmarry draft from being treated as the
       // day's real closing figure.
@@ -5070,7 +5400,14 @@ router.get('/wastage/cost', async (req, res) => {
     if (!from) return res.status(400).json({ error: 'from is required' });
     const outlet_id = scopedOutletFilter(user, req.query.outlet_id);
 
-    const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = await buildCostingContext();
+    // Loaded once (undated); each wastage row is then priced as-of ITS OWN date so a past
+    // day's wastage is valued at that day's prices. Per-date contexts are memoized so
+    // withDate() (which rebuilds rateMap + BK recipe costs in memory) runs at most once per
+    // distinct date, not once per row.
+    const baseCtx = await buildCostingContext();
+    const { demandNameMap, demandUnitMap, convFactorFor } = baseCtx;
+    const ctxByDate = {};
+    const ctxForDate = (d) => (ctxByDate[d] ||= baseCtx.withDate(d));
 
     let query = supabase.from('demands').select('outlet_id, date, items, items_units').eq('type', 'wastage').gte('date', from);
     if (outlet_id) query = query.eq('outlet_id', outlet_id);
@@ -5079,6 +5416,7 @@ router.get('/wastage/cost', async (req, res) => {
 
     const results = [];
     (wastageRows || []).forEach(row => {
+      const { rateMap, bkRecipeMap } = ctxForDate(row.date);
       Object.entries(row.items || {}).forEach(([itemId, qty]) => {
         const rate = rateMap[itemId];
         const bkRecipe = bkRecipeMap[itemId];
@@ -5599,7 +5937,10 @@ router.get('/franchise-billing/summary', async (req, res) => {
     const allOutletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
 
     const [{ rateMap, bkRecipeMap, demandUnitMap, convFactorFor }, { data: demands, error: demandsErr }, { data: agreements, error: agreementsErr }, { data: bkFixed, error: bkFixedErr }, salesByOutlet] = await Promise.all([
-      buildCostingContext(),
+      // Priced as-of month end — the whole month's dispatch is valued at that month's
+      // prices, and because prices are forward-only a later challan never reprices a past
+      // month's franchise bill.
+      buildCostingContext(monthEnd),
       supabase.from('demands').select('outlet_id, dispatch_items').eq('type', 'manual').neq('status', 'draft').gte('date', monthStart).lte('date', monthEnd),
       supabase.from('franchise_settings').select('*').eq('outlet_id', outlet_id).lte('effective_from', monthEnd).order('effective_from', { ascending: false }).limit(1),
       supabase.from('fixed_costs').select('amount').eq('outlet_id', 'bk').eq('active', true),

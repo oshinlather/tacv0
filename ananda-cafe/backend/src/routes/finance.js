@@ -124,7 +124,7 @@ async function mapWithConcurrency(items, limit, fn) {
 // per day (cheaper than 6 single-outlet calls per day for the whole-table figure).
 async function computeConsumptionByOutlet(from, to, costingContext) {
   const byOutlet = {};
-  const dayResults = await mapWithConcurrency(daysInRange(from, to), DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, null, costingContext));
+  const dayResults = await mapWithConcurrency(daysInRange(from, to), DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, null, costingContext.withDate(ds)));
   dayResults.forEach(({ outlets }) => {
     (outlets || []).forEach((o) => {
       if (o.outlet_id === "all" || o.outlet_id === "bk") return;
@@ -141,7 +141,7 @@ async function computeConsumptionByOutlet(from, to, costingContext) {
 // and discarding 5.
 async function computeConsumptionDetail(outletId, from, to, costingContext) {
   const dates = daysInRange(from, to);
-  const dayResults = await mapWithConcurrency(dates, DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, outletId, costingContext));
+  const dayResults = await mapWithConcurrency(dates, DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, outletId, costingContext.withDate(ds)));
   const itemsById = {};
   dayResults.forEach(({ outlets }, i) => {
     const ds = dates[i];
@@ -175,11 +175,16 @@ async function computeConsumptionDetail(outletId, from, to, costingContext) {
 // the range in one query instead of per-day — wastage doesn't need
 // computeStockUsageForDate's opening/closing pairing, it's a flat sum either way.
 async function computeWastageCostByOutlet(from, to, costingContext) {
-  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
-  const { data: wastageRows, error } = await supabase.from("demands").select("outlet_id, items, items_units").eq("type", "wastage").gte("date", from).lte("date", to);
+  const { convFactorFor } = costingContext;
+  const { data: wastageRows, error } = await supabase.from("demands").select("outlet_id, date, items, items_units").eq("type", "wastage").gte("date", from).lte("date", to);
   if (error) throw error;
+  // Each wastage row priced as-of its own date; per-date contexts memoized so withDate()
+  // runs at most once per distinct date across the range.
+  const ctxByDate = {};
+  const ctxForDate = (d) => (ctxByDate[d] ||= costingContext.withDate(d));
   const byOutlet = {};
   (wastageRows || []).forEach((row) => {
+    const { rateMap, bkRecipeMap } = ctxForDate(row.date);
     let cost = 0;
     Object.entries(row.items || {}).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
@@ -245,8 +250,8 @@ router.get("/outlet-pnl", async (req, res) => {
     ]);
     const commissionPct = commissionCfg?.value ? Number(JSON.parse(commissionCfg.value)) : 40;
     const materialCostByOutlet = basis === "consumption"
-      ? await computeConsumptionByOutlet(from, to, costingContext)
-      : await computeBkPurchaseByOutlet(from, to, costingContext);
+      ? await computeConsumptionByOutlet(from, to, costingContext)          // prices each day as-of that day internally
+      : await computeBkPurchaseByOutlet(from, to, costingContext.withDate(to)); // range rollup priced as-of range end
     // Wastage — only meaningful alongside Consumption (BK Purchase stays the owner's own
     // deliberately simplified view; see computeWastageCostByOutlet's comment). Consumption's
     // own formula already subtracts wastage OUT of what counts as material cost, so without
@@ -329,7 +334,7 @@ router.get("/bk-purchase-detail", async (req, res) => {
     if (!OUTLET_IDS.includes(outlet_id)) return res.status(400).json({ error: "Invalid outlet_id" });
 
     const costingContext = await buildCostingContext();
-    const detail = await computeBkPurchaseDetail(outlet_id, from, to, costingContext);
+    const detail = await computeBkPurchaseDetail(outlet_id, from, to, costingContext.withDate(to)); // priced as-of range end, matches /outlet-pnl
     res.json({ outlet_id, from, to, ...detail });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

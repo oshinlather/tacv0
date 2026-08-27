@@ -65,9 +65,14 @@ async function rebuildStockBalances({ itemId, locationId } = {}) {
 // (items table has no threshold column — that's an inventory_items-only concept today).
 router.get("/stock", async (req, res) => {
   if (!await gate(req, res)) return;
-  const { location, category } = req.query;
+  const { location, category, below_threshold } = req.query;
 
-  let itemQuery = supabase.from("items").select("id, name, category, base_unit, active, demand_item_id, raw_material_id, rate_card_id").eq("active", true).order("category").order("name");
+  // reorder_threshold: Stage 6 — carried over from the old Inventory screen's
+  // per-item threshold (see 2026_08_27_store_reorder_threshold.sql) so the low-stock
+  // alert this screen's predecessor had isn't lost on cutover. NULL means "no threshold
+  // set" (never below it), same semantics as item_units having no row for an unentered
+  // conversion — absence isn't guessed as zero.
+  let itemQuery = supabase.from("items").select("id, name, category, base_unit, active, demand_item_id, raw_material_id, rate_card_id, reorder_threshold").eq("active", true).order("category").order("name");
   if (category) itemQuery = itemQuery.eq("category", category);
   const { data: items, error: itemsError } = await itemQuery;
   if (itemsError) return res.status(500).json({ error: itemsError.message });
@@ -83,18 +88,37 @@ router.get("/stock", async (req, res) => {
     balMap.get(b.item_id)[b.location_id] = { current_qty: Number(b.current_qty) || 0, updated_at: b.updated_at };
   });
 
-  const result = items.map((it) => {
+  let result = items.map((it) => {
     const byLoc = balMap.get(it.id) || {};
+    const threshold = it.reorder_threshold != null ? Number(it.reorder_threshold) : null;
     if (location) {
       const loc = byLoc[location] || { current_qty: 0, updated_at: null };
-      return { ...it, current_qty: loc.current_qty, updated_at: loc.updated_at };
+      return { ...it, current_qty: loc.current_qty, updated_at: loc.updated_at, below_threshold: threshold != null && loc.current_qty <= threshold };
     }
     const store = byLoc.store || { current_qty: 0, updated_at: null };
     const bk = byLoc.bk || { current_qty: 0, updated_at: null };
-    return { ...it, store_qty: store.current_qty, bk_qty: bk.current_qty, current_qty: store.current_qty + bk.current_qty, updated_at: store.updated_at || bk.updated_at };
+    const total = store.current_qty + bk.current_qty;
+    return { ...it, store_qty: store.current_qty, bk_qty: bk.current_qty, current_qty: total, updated_at: store.updated_at || bk.updated_at, below_threshold: threshold != null && total <= threshold };
   });
 
+  if (below_threshold === "true") result = result.filter((r) => r.below_threshold);
   res.json(result);
+});
+
+// POST /api/store/thresholds — batch set/update reorder thresholds. Same {id, threshold}
+// shape the old /api/inventory/thresholds used, so nothing new to learn on the frontend
+// side of this specific piece.
+router.post("/thresholds", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { items } = req.body;
+  if (!Array.isArray(items) || !items.length) return res.status(400).json({ error: "items is required" });
+  try {
+    for (const { id, threshold } of items) {
+      if (!id) continue;
+      await supabase.from("items").update({ reorder_threshold: threshold === "" || threshold == null ? null : Number(threshold) }).eq("id", id);
+    }
+    res.json({ success: true, count: items.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // GET /api/store/stock/:itemId/movements — ledger history for one item, for the audit
@@ -186,6 +210,40 @@ router.post("/adjust", async (req, res) => {
 
   await rebuildStockBalances({ itemId: item_id, locationId: location_id });
   res.json(movement);
+});
+
+// POST /api/store/adjust-batch — Stage 6: the batched sibling of /adjust above, for the
+// same "Smart Issue" use case the old Stock Out screen covered that a single-item call
+// is too slow for — issuing/writing off several items in one go under real time
+// pressure (the old screen's own comment: "runs under real morning time pressure").
+// Same semantics as /adjust (signed qty per item, one shared reason, no floor check —
+// an item going negative is surfaced back rather than blocked, so a real count problem
+// gets caught same-day instead of silently accumulating), just batched.
+router.post("/adjust-batch", async (req, res) => {
+  const user = await gate(req, res);
+  if (!user) return;
+  const { location_id, reason, items } = req.body;
+  if (!location_id || !["store", "bk"].includes(location_id)) return res.status(400).json({ error: "location_id must be 'store' or 'bk'" });
+  if (!reason || !reason.trim()) return res.status(400).json({ error: "A reason is required for a manual adjustment" });
+  const validItems = (items || []).filter((i) => i.item_id && Number(i.qty) && !isNaN(Number(i.qty)));
+  if (!validItems.length) return res.status(400).json({ error: "At least one item with a non-zero qty is required" });
+
+  const rows = validItems.map((i) => ({
+    item_id: i.item_id, location_id, movement_type: "ADJUSTMENT", qty_delta: Number(i.qty),
+    source_type: "manual_adjustment", reason: reason.trim(), created_by: user.name,
+  }));
+  const { data: movements, error } = await supabase.from("stock_movements").insert(rows).select();
+  if (error) return res.status(500).json({ error: error.message });
+
+  const uniqueItemIds = [...new Set(validItems.map((i) => i.item_id))];
+  for (const itemId of uniqueItemIds) await rebuildStockBalances({ itemId, locationId: location_id });
+
+  // Surface anything that went negative — same courtesy the old batched Stock Out gave,
+  // so a physical-count problem gets caught same-day rather than drifting silently.
+  const { data: balances } = await supabase.from("store_stock_balances").select("item_id, current_qty").eq("location_id", location_id).in("item_id", uniqueItemIds);
+  const went_negative = (balances || []).filter((b) => Number(b.current_qty) < 0).map((b) => ({ item_id: b.item_id, current_qty: Number(b.current_qty) }));
+
+  res.json({ success: true, count: movements.length, went_negative });
 });
 
 module.exports = router;
