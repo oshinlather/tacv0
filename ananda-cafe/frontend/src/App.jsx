@@ -5562,6 +5562,16 @@ const DriverVegetables = () => {
   const [draftQty, setDraftQty] = useState({});
   const [draftPrice, setDraftPrice] = useState({});
   const [saving, setSaving] = useState(null);
+  const [itemError, setItemError] = useState({}); // item_id -> inline error text
+  // Same blocking-alert freeze this session already root-caused for Closing Stock/
+  // Wastage on a Chef's phone (confirmed via direct DB check: the submission had gone
+  // through every time, alert() afterward was the only thing stuck) — a driver reporting
+  // "I saved these but they're showing blank" on this exact screen traced to the same
+  // thing: alert() here fires *before* any network call on a validation failure, so on a
+  // mobile/PWA session that freezes right there, nothing was ever sent to the server, and
+  // there's no visible sign the save didn't happen. Toast/inline error replace both alerts.
+  const [toast, setToast] = useState(null);
+  const Toast = () => toast ? <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 1000, background: "#16A34A", color: "#fff", padding: "12px 20px", borderRadius: 12, fontSize: 13, fontWeight: 700, textAlign: "center", boxShadow: "0 4px 16px rgba(0,0,0,0.25)", maxWidth: "92%" }}>{toast}</div> : null;
 
   const load = () => {
     setLoading(true);
@@ -5587,23 +5597,34 @@ const DriverVegetables = () => {
     const id = item.item_id;
     const qty = Number(draftQty[id] ?? item.qty_entered) || 0;
     const totalPaid = Number(draftPrice[id] ?? item.line_total ?? 0) || 0;
-    if (qty <= 0 || totalPaid <= 0) { alert("Enter both quantity and price"); return; }
+    if (qty <= 0 || totalPaid <= 0) { setItemError((p) => ({ ...p, [id]: "Enter both quantity and price" })); return; }
+    setItemError((p) => { const c = { ...p }; delete c[id]; return c; });
+    // total_price (what the whole line cost, e.g. "20 Pcs for ₹600") is what the backend's
+    // PATCH /items route actually reads to derive and store unit_price/line_total — it
+    // was being sent here as `unit_price` instead, a key the backend silently ignores
+    // (it only checks patch.total_price), so nothing was ever actually persisted: the
+    // Save button updated this component's own local state (looking saved on-screen) but
+    // the server-side row kept unit_price/line_total null. Root-caused after a driver
+    // reported prices "saved on another phone" reading back blank — confirmed via direct
+    // DB check every item's line_total was still null despite qty_entered being correct.
     const unitPrice = Math.round((totalPaid / qty) * 100) / 100;
     setSaving(id);
     try {
-      const updated = await api.updateChallanItems(challan.id, { [id]: { qty_entered: qty, unit_price: unitPrice } });
+      const updated = await api.updateChallanItems(challan.id, { [id]: { qty_entered: qty, total_price: totalPaid } });
       setChallans((prev) => prev.map((c) => (c.id === challan.id ? { ...c, total_amount: updated.total_amount, items: c.items.map((it) => (it.item_id === id ? { ...it, qty_entered: qty, unit_price: unitPrice, line_total: totalPaid } : it)) } : c)));
       setEditingId(null);
       setDraftQty((p) => { const c = { ...p }; delete c[id]; return c; });
       setDraftPrice((p) => { const c = { ...p }; delete c[id]; return c; });
-    } catch (e) { alert("Error: " + e.message); }
+      setToast("✅ Saved");
+      setTimeout(() => setToast(null), 1200);
+    } catch (e) { setItemError((p) => ({ ...p, [id]: "Error: " + e.message })); }
     finally { setSaving(null); }
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>⏳ Loading...</div>;
   if (challans.length === 0) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No vegetable order for today yet</div>;
 
-  return (<div>
+  return (<div><Toast />
     {challans.map((challan) => {
       const items = challan.items || [];
       const doneCount = items.filter((it) => it.unit_price > 0).length;
@@ -5649,6 +5670,7 @@ const DriverVegetables = () => {
                   </div>
                 </div>
                 {perUnit > 0 && <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: "#2563EB", marginBottom: 10 }}>≈ ₹{perUnit} / {item.unit_entered}</div>}
+                {itemError[id] && <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: "#DC2626", marginBottom: 8 }}>⚠️ {itemError[id]}</div>}
                 <button onClick={() => saveItem(challan, item)} disabled={saving === id || !(Number(q) > 0) || !(Number(pr) > 0)} style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                   {saving === id ? "⏳ Saving..." : "💾 Save"}
                 </button>
