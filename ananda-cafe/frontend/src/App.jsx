@@ -7661,18 +7661,32 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       exportCSV(headers, rows, `franchise_billing_daywise_${selOutlet}_${selMonth}.csv`);
       return;
     }
-    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Rate Unit", "Amount"];
-    const rows = items.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), i.rateUnit, Math.round(i.amount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
+    // Franchise's own export (lockedOutlet) never shows the Base/BK Share/Markup breakup —
+    // same reasoning as the table below: one all-in Final Price per unit, not the internal
+    // cost composition. Owner's export is unchanged, with Final Price added as an extra
+    // column alongside the existing Rate/Franchise Rate breakdown they already had.
+    if (lockedOutlet) {
+      const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Final Price", "Amount"];
+      const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, Math.round((i.billedQty > 0 ? i.totalAmt / i.billedQty : 0) * 100) / 100, Math.round(i.totalAmt * 100) / 100]);
+      rows.push(["", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
+      rows.push(["", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
+      rows.push(["", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
+      rows.push(["", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
+      exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
+      return;
+    }
+    const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
+    const rows = pricingRows.map((i) => [i.name, i.unit, i.demandQty, i.billedQty, i.billedRate, franchiseRateFor(i), Math.round((i.billedQty > 0 ? i.totalAmt / i.billedQty : 0) * 100) / 100, i.rateUnit, Math.round(i.amount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", "Material Cost", Math.round(totalAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", `Markup (${markupPct}%)`, Math.round(markupAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", "BK Fixed Cost Share", Math.round(bkShareAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", "Subtotal", Math.round(billingSubtotal * 100) / 100]);
     // Revenue as its own line (not just inside the Royalty row's label text) — so the
     // figure royalty was actually calculated from is visible/auditable on its own,
     // straight from the exported file, not just implied by the % applied to it.
-    rows.push(["", "", "", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
-    rows.push(["", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
-    rows.push(["", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
+    rows.push(["", "", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
     exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selMonth}.csv`);
   };
 
@@ -7708,25 +7722,26 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                   <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
                 </div>
                 <div>
+                  {/* Franchise's own view (lockedOutlet) never breaks Base/BK Share/Markup out
+                      as separate figures — same "one final number" reasoning as the item table
+                      and CSV below. Subtotal here already includes all three, so the line under
+                      it only needs to add Royalty (the one component that's genuinely separate,
+                      since it's a % of revenue rather than of any item). Owner's own view keeps
+                      showing the full composition, unchanged. */}
                   <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>
-                    {fmt(franchiseAmountTotal)}
-                    {markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
+                    {fmt(lockedOutlet ? billingSubtotal : franchiseAmountTotal)}
+                    {!lockedOutlet && markupPct > 0 && <span style={{ fontSize: 10, color: "#888", fontWeight: 600, marginLeft: 4 }}>(incl. {markupPct}% markup)</span>}
                   </div>
-                  {/* BK Fixed Share/Royalty/Total Payable already existed further down (the
-                      "Billing Summary" breakdown, after the full item list) — but that meant
-                      scrolling past up to ~80 item rows to see them at all. Surfaced here too,
-                      right next to the main total, so they're visible without scrolling —
-                      this is what was actually missing, not the numbers themselves. */}
                   <div style={{ fontSize: 11, color: "#888", marginTop: 2, fontFamily: "'JetBrains Mono'" }}>
-                    + BK Share <strong style={{ color: "#7C3AED" }}>{fmt(bkShareAmount)}</strong>
-                    {" · "}+ Royalty ({royaltyPct}%) <strong style={{ color: "#7C3AED" }}>{fmt(royaltyAmount)}</strong>
+                    {!lockedOutlet && <>+ BK Share <strong style={{ color: "#7C3AED" }}>{fmt(bkShareAmount)}</strong>{" · "}</>}
+                    + Royalty ({royaltyPct}%) <strong style={{ color: "#7C3AED" }}>{fmt(royaltyAmount)}</strong>
                     {" · "}<span style={{ color: "#166534", fontWeight: 700 }}>Total Payable {fmt(totalPayable)}</span>
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }, { id: "pricing", label: "💲 Pricing" }].map((m) => (
+                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }, ...(lockedOutlet ? [] : [{ id: "pricing", label: "💲 Pricing" }])].map((m) => (
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
@@ -7830,19 +7845,25 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                 </table>
               </div>
             </>) : (<>
+              {/* Franchise's own view (lockedOutlet) shows one Final Price per unit — Base +
+                  this item's BK Share slice + Markup, already combined — instead of the
+                  Rate/Franchise Rate breakdown that exposes the cost composition. Owner's
+                  view keeps that breakdown AND gets Final Price as an extra column. */}
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead><tr style={{ background: "#FAFAF8" }}>
                     <th style={thS}>Item</th>
                     <th style={{ ...thS, textAlign: "right" }}>Demanded</th>
                     <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Rate</th>
-                    <th style={{ ...thS, textAlign: "right" }}>Franchise Rate{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(franchiseAmountTotal)})</div></th>
-                    <th style={{ ...thS, textAlign: "right" }}>Amount<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(totalAmount)})</div></th>
+                    {!lockedOutlet && <th style={{ ...thS, textAlign: "right" }}>Rate</th>}
+                    {!lockedOutlet && <th style={{ ...thS, textAlign: "right" }}>Franchise Rate{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(franchiseAmountTotal)})</div></th>}
+                    <th style={{ ...thS, textAlign: "right" }}>Final Price{!lockedOutlet && <div style={{ fontWeight: 500, color: "#999", fontSize: 9 }}>(incl. BK Share)</div>}</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Amount<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(lockedOutlet ? billingSubtotal : totalAmount)})</div></th>
                   </tr></thead>
                   <tbody>
-                    {visibleItems.map((i) => {
+                    {pricingRows.map((i) => {
                       const mismatch = i.dispatchQty != null && Math.abs(i.dispatchQty - i.demandQty) > 0.01;
+                      const finalPrice = i.billedQty > 0 ? Math.round((i.totalAmt / i.billedQty) * 100) / 100 : 0;
                       return (
                         <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC", background: mismatch && !i.dispatchQtyEdited ? "#FEF2F2" : "transparent" }}>
                           <td style={tdS}>{i.name}</td>
@@ -7860,22 +7881,25 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                               <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.dispatchQtyEdited || mismatch ? 700 : 400, color: i.dispatchQtyEdited ? "#2563EB" : (mismatch ? "#DC2626" : "#1A1A1A") }}>{i.billedQty} {i.unit}</span>
                             )}
                           </td>
-                          <td style={{ ...tdS, textAlign: "right" }}>
-                            {editMode ? (
-                              <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                <span style={{ color: "#999" }}>₹</span>
-                                <input type="number" inputMode="decimal" step="any" value={i.billedRate}
-                                  onChange={(e) => setEditField(i.id, "rate", e.target.value)}
-                                  style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: i.rateEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.rateEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.rateEdited ? "#2563EB" : "#888", fontWeight: i.rateEdited ? 700 : 400 }} />
-                                <span style={{ color: "#999" }}>/{i.rateUnit}</span>
-                                {i.rateEdited && <button onClick={() => resetEditField(i.id, "rate")} title="Reset to rate card price" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
-                              </div>
-                            ) : (
-                              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.rateEdited ? 700 : 400, color: i.rateEdited ? "#2563EB" : "#888" }}>₹{i.billedRate}/{i.rateUnit}</span>
-                            )}
-                          </td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A" }}>₹{franchiseRateFor(i)}/{i.rateUnit}</td>
-                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(i.amount)}</td>
+                          {!lockedOutlet && (
+                            <td style={{ ...tdS, textAlign: "right" }}>
+                              {editMode ? (
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                  <span style={{ color: "#999" }}>₹</span>
+                                  <input type="number" inputMode="decimal" step="any" value={i.billedRate}
+                                    onChange={(e) => setEditField(i.id, "rate", e.target.value)}
+                                    style={{ width: 60, padding: "4px 6px", borderRadius: 6, border: i.rateEdited ? "1px solid #2563EB" : "1px solid #E0E0DC", background: i.rateEdited ? "#EFF6FF" : "#fff", fontSize: 12, fontFamily: "'JetBrains Mono'", textAlign: "right", color: i.rateEdited ? "#2563EB" : "#888", fontWeight: i.rateEdited ? 700 : 400 }} />
+                                  <span style={{ color: "#999" }}>/{i.rateUnit}</span>
+                                  {i.rateEdited && <button onClick={() => resetEditField(i.id, "rate")} title="Reset to rate card price" style={{ border: "none", background: "transparent", color: "#999", cursor: "pointer", fontSize: 12 }}>↺</button>}
+                                </div>
+                              ) : (
+                                <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: i.rateEdited ? 700 : 400, color: i.rateEdited ? "#2563EB" : "#888" }}>₹{i.billedRate}/{i.rateUnit}</span>
+                              )}
+                            </td>
+                          )}
+                          {!lockedOutlet && <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#1A1A1A" }}>₹{franchiseRateFor(i)}/{i.rateUnit}</td>}
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>₹{finalPrice}/{i.rateUnit}</td>
+                          <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>{fmt(lockedOutlet ? i.totalAmt : i.amount)}</td>
                         </tr>
                       );
                     })}
@@ -7885,8 +7909,8 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 16px", borderTop: "2px solid #1A1A1A", background: "#F8F8F5", gap: 12, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 14, fontWeight: 800 }}>Total</span>
                 <div style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
-                  <span style={{ fontSize: 12, color: "#888" }}>Franchise Rate <b style={{ fontFamily: "'JetBrains Mono'", color: "#B45309", fontSize: 15 }}>{fmt(franchiseAmountTotal)}</b></span>
-                  <span style={{ fontSize: 12, color: "#888" }}>Amount <b style={{ fontFamily: "'JetBrains Mono'", color: "#1A1A1A", fontSize: 16 }}>{fmt(totalAmount)}</b></span>
+                  {!lockedOutlet && <span style={{ fontSize: 12, color: "#888" }}>Franchise Rate <b style={{ fontFamily: "'JetBrains Mono'", color: "#B45309", fontSize: 15 }}>{fmt(franchiseAmountTotal)}</b></span>}
+                  <span style={{ fontSize: 12, color: "#888" }}>Amount <b style={{ fontFamily: "'JetBrains Mono'", color: "#1A1A1A", fontSize: 16 }}>{fmt(lockedOutlet ? billingSubtotal : totalAmount)}</b></span>
                 </div>
               </div>
             </>)}
@@ -7901,22 +7925,33 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
                 <div style={{ padding: "10px 16px", fontSize: 12, color: "#DC2626", background: "#FEF2F2", borderBottom: "1px solid #FECACA" }}>⚠️ No franchise agreement configured for {outletName} — markup and royalty are showing as 0%. Set them in Owner → Audit → Franchise Settings.</div>
               )}
               <div style={{ padding: "4px 16px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
-                  <span>Material Cost</span>
-                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(totalAmount)}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
-                  <span>+ Markup ({markupPct}% on material cost)</span>
-                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(markupAmount)}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
-                  <span>+ BK Fixed Cost Share ({Math.round((billingSummary?.bk_share_ratio || 0) * 1000) / 10}% of ₹{fmt(billingSummary?.bk_monthly_fixed || 0)})</span>
-                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(bkShareAmount)}</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13, fontWeight: 700 }}>
-                  <span>Subtotal</span>
-                  <span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(billingSubtotal)}</span>
-                </div>
+                {/* Franchise's own view collapses Base/Markup/BK Share into the single
+                    Subtotal line — the whole point of Final Price per item is not exposing
+                    this composition, so the summary below the table shouldn't undo that.
+                    Owner's own view is unchanged, still fully itemized. */}
+                {lockedOutlet ? (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13, fontWeight: 700 }}>
+                    <span>Subtotal (material, BK share & markup)</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(billingSubtotal)}</span>
+                  </div>
+                ) : (<>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                    <span>Material Cost</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(totalAmount)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                    <span>+ Markup ({markupPct}% on material cost)</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(markupAmount)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
+                    <span>+ BK Fixed Cost Share ({Math.round((billingSummary?.bk_share_ratio || 0) * 1000) / 10}% of ₹{fmt(billingSummary?.bk_monthly_fixed || 0)})</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(bkShareAmount)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13, fontWeight: 700 }}>
+                    <span>Subtotal</span>
+                    <span style={{ fontFamily: "'JetBrains Mono'" }}>{fmt(billingSubtotal)}</span>
+                  </div>
+                </>)}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
                   <span>+ Royalty ({royaltyPct}% of revenue ₹{fmt(revenue)})</span>
                   <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(royaltyAmount)}</span>
