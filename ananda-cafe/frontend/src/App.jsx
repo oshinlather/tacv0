@@ -17589,6 +17589,11 @@ const RateAlertPanel = () => {
   const [search, setSearch] = useState("");
   const [onlyChanged, setOnlyChanged] = useState(false); // show ALL items by default; toggle to focus on changed ones
   const SEED_DATE = "2000-01-01";
+  // Sortable columns — click "Item" to sort A-Z/Z-A, or any date column (Opening included)
+  // to sort by that date's price. Same toggle convention as Item-wise Sales' sortable
+  // columns: first click on a column is always descending, click again to flip to ascending.
+  const [sort, setSort] = useState({ key: null, dir: "desc" });
+  const toggleSort = (key) => setSort((s) => s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
 
   useEffect(() => {
     setLoading(true);
@@ -17628,6 +17633,25 @@ const RateAlertPanel = () => {
     });
     return out;
   }, [filtered]);
+
+  // Sorting by a date column reads that date's price off cellByItem — items with no entry
+  // for that date sort last regardless of direction, same "nulls always last" convention
+  // Item-wise Sales' sort uses, so a mostly-empty column doesn't scatter blanks to the top.
+  const sortedFiltered = useMemo(() => {
+    if (!sort.key) return filtered;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      const av = sort.key === "name" ? (a.name || "") : (cellByItem[a.id] || {})[sort.key]?.price;
+      const bv = sort.key === "name" ? (b.name || "") : (cellByItem[b.id] || {})[sort.key]?.price;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  }, [filtered, sort, cellByItem]);
+
+  const sortArrow = (key) => <span style={{ marginLeft: 4, fontSize: 9, color: sort.key === key ? "#1A1A1A" : "#CCC" }}>{sort.key === key ? (sort.dir === "desc" ? "▼" : "▲") : "⇅"}</span>;
 
   const fmtCol = (d) => (d === SEED_DATE ? "Opening" : new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }));
   const catCount = (c) => items.filter((i) => i.category === c).length;
@@ -17671,17 +17695,17 @@ const RateAlertPanel = () => {
           <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
             <thead>
               <tr style={{ background: "#FAFAF8" }}>
-                <th style={{ ...stickyCell, zIndex: 4, background: "#FAFAF8", top: 0, textAlign: "left", padding: "8px 12px", fontWeight: 700, borderBottom: "1px solid #E8E8E4" }}>Item</th>
+                <th onClick={() => toggleSort("name")} style={{ ...stickyCell, zIndex: 4, background: "#FAFAF8", top: 0, textAlign: "left", padding: "8px 12px", fontWeight: 700, borderBottom: "1px solid #E8E8E4", cursor: "pointer", userSelect: "none" }}>Item{sortArrow("name")}</th>
                 {dates.map((d) => (
-                  <th key={d} style={{ position: "sticky", top: 0, zIndex: 3, background: "#FAFAF8", padding: "8px 10px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", minWidth: 78, borderBottom: "1px solid #E8E8E4", color: d === SEED_DATE ? "#999" : "#1A1A1A" }}>
-                    {fmtCol(d)}
+                  <th key={d} onClick={() => toggleSort(d)} style={{ position: "sticky", top: 0, zIndex: 3, background: "#FAFAF8", padding: "8px 10px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", minWidth: 78, borderBottom: "1px solid #E8E8E4", color: d === SEED_DATE ? "#999" : "#1A1A1A", cursor: "pointer", userSelect: "none" }}>
+                    {fmtCol(d)}{sortArrow(d)}
                     {d === SEED_DATE && openingRecordedLabel && <div style={{ fontSize: 9, fontWeight: 500, color: "#BBB" }}>{openingRecordedLabel}</div>}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((it) => {
+              {sortedFiltered.map((it) => {
                 const cells = cellByItem[it.id] || {};
                 const current = (it.prices || [])[(it.prices || []).length - 1];
                 return (
