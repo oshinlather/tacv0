@@ -7390,7 +7390,7 @@ const DemandHistory = () => {
 //  FRANCHISE BILLING — month-wise demand vs dispatch, priced off the rate card,
 //  for franchise outlets only (billed for what Base Kitchen actually supplied)
 // ═════════════════════════════════════════════════════════════════════════════
-const FranchiseBilling = ({ lockedOutlet } = {}) => {
+const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   // Franchise-ness comes from the live `outlets` table (owner-editable in Franchise
   // Settings) when available, falling back to the hardcoded OUTLETS flag for any outlet
   // the migration/panel hasn't touched yet — so toggling a new franchise on shows up here
@@ -7407,7 +7407,7 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
   const [loading, setLoading] = useState(true);
   const [rateCard, setRateCard] = useState([]);
   const [conversions, setConversions] = useState({});
-  const [viewMode, setViewMode] = useState("summary"); // 'summary' or 'daywise'
+  const [viewMode, setViewMode] = useState(initialView || "summary"); // 'summary', 'daywise', or 'pricing'
   // Corrections applied before export — persisted server-side per outlet+month (one row,
   // see /api/franchise-billing/corrections), so they survive a refresh instead of
   // vanishing as component state. Never written back to demands or the rate card itself.
@@ -7600,6 +7600,22 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
   const franchiseRateFor = (i) => Math.round(i.billedRate * (1 + markupPct / 100) * 100) / 100;
   const franchiseAmountTotal = totalAmount * (1 + markupPct / 100);
 
+  // Pricing Breakdown view — same 3 numbers the Summary header already shows (Base/
+  // Material Amount, Markup, BK Share), just split per item instead of shown only as
+  // outlet-wide totals. BK Share only exists server-side as one lump sum for the whole
+  // outlet (it's a slice of BK's shared fixed costs, not tied to any single item), so it's
+  // allocated down to each line proportionally by that item's own share of this bill's
+  // Base Amount — the same basis the outlet-level ratio itself is computed on. Markup is
+  // already a flat % of Base Amount, so it splits per item exactly with no allocation
+  // needed. Royalty is deliberately NOT part of this breakdown — it's a % of revenue, not
+  // of any demanded material, so it has no per-item meaning; it stays a summary-only line.
+  const pricingRows = useMemo(() => visibleItems.map((i) => {
+    const baseAmount = i.amount;
+    const markupAmt = baseAmount * markupPct / 100;
+    const bkShareAmt = totalAmount > 0 ? (baseAmount / totalAmount) * bkShareAmount : 0;
+    return { ...i, baseAmount, markupAmt, bkShareAmt, totalAmt: baseAmount + markupAmt + bkShareAmt };
+  }), [visibleItems, markupPct, bkShareAmount, totalAmount]);
+
   // Every date in the month up to today (dates with no demand still show as a column)
   const days = useMemo(() => {
     const [y, mo] = selMonth.split("-").map(Number);
@@ -7710,11 +7726,11 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }].map((m) => (
+                  {[{ id: "summary", label: "🧾 Summary" }, { id: "daywise", label: "📅 Day by Day" }, { id: "pricing", label: "💲 Pricing" }].map((m) => (
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>
-                {!lockedOutlet && <button onClick={() => (editMode ? finishEditing() : setEditMode(true))} disabled={items.length === 0 || savingCorrections} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 || savingCorrections ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{savingCorrections ? "⏳ Saving..." : editMode ? "✅ Done" : "✏️ Edit"}</button>}
+                {!lockedOutlet && viewMode !== "pricing" && <button onClick={() => (editMode ? finishEditing() : setEditMode(true))} disabled={items.length === 0 || savingCorrections} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: editMode ? "none" : "1px solid #BFDBFE", background: items.length === 0 ? "#F5F5F3" : editMode ? "#2563EB" : "#EFF6FF", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : editMode ? "#fff" : "#1D4ED8", cursor: items.length === 0 || savingCorrections ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{savingCorrections ? "⏳ Saving..." : editMode ? "✅ Done" : "✏️ Edit"}</button>}
                 <button onClick={downloadCSV} disabled={items.length === 0} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "8px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: items.length === 0 ? "#F5F5F3" : "#F0FDF4", fontSize: 12, fontWeight: 700, color: items.length === 0 ? "#BBB" : "#16A34A", cursor: items.length === 0 ? "not-allowed" : "pointer", fontFamily: "inherit" }}>📥 Download CSV</button>
               </div>
             </div>
@@ -7774,6 +7790,43 @@ const FranchiseBilling = ({ lockedOutlet } = {}) => {
                       );
                     })}
                   </tbody>
+                </table>
+              </div>
+            </>) : viewMode === "pricing" ? (<>
+              <div style={{ padding: "8px 16px", fontSize: 11, color: "#2563EB", background: "#EFF6FF", borderBottom: "1px solid #BFDBFE" }}>💡 Base Amount comes from Rate × Qty dispatched. BK Share is this outlet's slice of Base Kitchen's shared fixed costs (rent, salaries, etc.), split across items by each one's share of Base Amount. Royalty ({royaltyPct}% of revenue, {fmt(royaltyAmount)} this month) isn't tied to any item, so it's summary-only — not shown per line here.</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>Item</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Qty</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Base Price</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Base Amount<div style={{ fontWeight: 700, color: "#1A1A1A", fontSize: 10 }}>({fmt(totalAmount)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>BK Share<div style={{ fontWeight: 700, color: "#7C3AED", fontSize: 10 }}>({fmt(bkShareAmount)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>Markup{markupPct > 0 ? ` (+${markupPct}%)` : ""}<div style={{ fontWeight: 700, color: "#B45309", fontSize: 10 }}>({fmt(markupAmount)})</div></th>
+                    <th style={{ ...thS, textAlign: "right" }}>Total<div style={{ fontWeight: 700, color: "#166534", fontSize: 10 }}>({fmt(billingSubtotal)})</div></th>
+                  </tr></thead>
+                  <tbody>
+                    {pricingRows.map((i) => (
+                      <tr key={i.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={tdS}>{i.name}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{i.billedQty} {i.unit}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>₹{i.billedRate}/{i.rateUnit}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 600 }}>{fmt(i.baseAmount)}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{fmt(i.bkShareAmt)}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(i.markupAmt)}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#166534" }}>{fmt(i.totalAmt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#FAFAF8", borderTop: "2px solid #E0E0DC" }}>
+                      <td style={{ ...tdS, fontWeight: 800 }} colSpan={3}>Total</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>{fmt(totalAmount)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#7C3AED" }}>{fmt(bkShareAmount)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#B45309" }}>{fmt(markupAmount)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#166534" }}>{fmt(billingSubtotal)}</td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </>) : (<>
@@ -18518,7 +18571,7 @@ export default function AnandaCafe() {
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
-      <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
+      <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
@@ -18551,6 +18604,7 @@ export default function AnandaCafe() {
       <div onClick={() => setFranchiseDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "franchise_billing", label: "🧾 Franchise Billing", sub: "Monthly billing per franchise outlet" },
+          { id: "franchise_pricing", label: "💲 Pricing Breakdown", sub: "Base price, BK share & markup per item" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "rate_alert", label: "📈 Rate Alert", sub: "Price change per item across challan dates" },
           { id: "franchise_settings", label: "🏳️ Franchise Settings", sub: "Markup, royalty & franchise flag per outlet" },
@@ -18644,7 +18698,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "rate_alert"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
@@ -18657,6 +18711,7 @@ export default function AnandaCafe() {
       {ownerTab === "finance" && <FinancePnL />}
       {ownerTab === "demands" && <DemandHistory />}
       {ownerTab === "franchise_billing" && <FranchiseBilling />}
+      {ownerTab === "franchise_pricing" && <FranchiseBilling initialView="pricing" />}
       {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
       {ownerTab === "wastage_history" && <WastageHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
