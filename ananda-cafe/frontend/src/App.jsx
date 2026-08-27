@@ -3473,24 +3473,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // table has no way to scope to just one outlet, and Cold Drink cost is now
           // visible to franchise anyway via P&L's own Material Cost breakdown below.
           ...(lockedOutlet ? [] : [{ key: "cogs", label: "📊 COGS Compare" }]),
-          // Cross-outlet manager scorecard (COGS/Punch/Discipline/Wastage), same reasoning
-          // as COGS Compare above for why it's owner-only — every other outlet's numbers
-          // are visible side by side, meaningless on a locked single-outlet view.
-          ...(lockedOutlet ? [] : [{ key: "mgr_perf", label: "🏆 Managers Performance" }]),
           { key: "compare", label: "📊 4-Week Comparison" },
-          // Missing Punches is an owner nudge tool over the 4 own outlets — franchises
-          // don't punch through this system (they manage their own cash/stock), so this
-          // pill is meaningless on a locked franchise view and hidden there too.
-          ...(lockedOutlet ? [] : [{ key: "punches", label: "🔔 Missing Punches" }]),
-          ...(lockedOutlet ? [] : [{ key: "attendance", label: "👥 Attendance" }]),
           // Fines — outlet/BK managers impose these from Team, but they sit pending
           // here until an owner approves/rejects; same internal-HR gating as Attendance.
           ...(lockedOutlet ? [] : [{ key: "fines", label: "🚩 Fines" }]),
-          // Challans and Demand vs Closing are both useful to a franchise partner too —
-          // it's their own outlet's numbers either way, the shared outlet pill just
-          // narrows to it (locked, so there's nothing else to pick).
-          { key: "challans", label: "🧾 Challans" },
-          { key: "demand_vs_closing", label: "📦 Demand vs Closing" },
           // Store Audit is BK/Store's own internal inventory reconciliation, not scoped
           // to any one outlet's numbers — meaningless on a locked franchise view, which
           // has its own separate supply chain outside this Store/BK system entirely.
@@ -3498,13 +3484,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         ].map((t) => (
           <button key={t.key} onClick={() => {
             setPnlTab(t.key);
-            // Demand vs Closing defaults to Today, not the page's usual Yesterday default —
-            // it's about what to order right now, not yesterday's closed-out numbers. Every
-            // other tab defaults back to Yesterday, so leaving Demand vs Closing for any of
-            // them resets the day too — otherwise Today would silently carry over onto P&L/
-            // COGS Compare/etc, which is only ever correct here by coincidence.
-            if (t.key === "demand_vs_closing") { setSelDay(0); setSelMonth(null); }
-            else if (pnlTab === "demand_vs_closing") { setSelDay(1); }
             // BK Store Audit is day-only (no month view) and now owns its own date
             // control instead of sharing the row above — clear a carried-over month
             // selection so it always has a valid single day to show.
@@ -4231,17 +4210,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         })()}
       </>)}
       {pnlTab === "cogs" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={lockedOutlet} />}
-      {pnlTab === "mgr_perf" && <ManagersPerformance />}
       {pnlTab === "compare" && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
             Pick a single day (not month view) above to compare weekdays.
           </div>
         ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
-      )}
-      {pnlTab === "punches" && !lockedOutlet && <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />}
-      {pnlTab === "attendance" && !lockedOutlet && (
-        selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} selOutlet={selOutlet} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />
       )}
       {pnlTab === "fines" && !lockedOutlet && <FinesPanel />}
       {pnlTab === "flags" && !lockedOutlet && (
@@ -4250,20 +4224,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             Pick a single day (not month view) above for Flags.
           </div>
         ) : <FlagsSection dateStr={dateStr} selOutlet={selOutlet} />
-      )}
-      {pnlTab === "challans" && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Challans.
-          </div>
-        ) : <ChallansSection dateStr={dateStr} selOutlet={selOutlet} />
-      )}
-      {pnlTab === "demand_vs_closing" && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Demand vs Closing.
-          </div>
-        ) : <DemandVsClosingSection dateStr={dateStr} lockedOutlet={lockedOutlet} selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
       )}
       {pnlTab === "storeaudit" && !lockedOutlet && <BKStoreAudit dateStr={dateStr} selDay={selDay} setSelDay={setSelDay} />}
     </div>
@@ -13634,6 +13594,75 @@ const ManagersPerformance = () => {
   );
 };
 
+// Standalone wrappers for the 3 sections moved out of Daily P&L's own pill row into the
+// DOD dropdown — MissingPunches/DailyAttendanceSection/MonthlyPayrollPanel/ChallansSection
+// all expect their date/outlet as props from a shared parent picker (unlike RMAuditPanel/
+// DailyStockUsage/ManagersPerformance/DemandVsClosingSection, which already own their own),
+// so each gets its own small picker here instead, same markup/pattern already used
+// throughout this file for a day+month dropdown plus an outlet-pill row.
+const monthOptionsLastYear = () => {
+  const opts = [];
+  const now = istNow();
+  for (let i = 0; i < 12; i++) {
+    const m = new Date(now.getUTCFullYear(), now.getUTCMonth() - i, 1);
+    const value = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+    opts.push({ value, label: m.toLocaleDateString("en-IN", { month: "short", year: "numeric" }) });
+  }
+  return opts;
+};
+const OutletPickerRow = ({ selOutlet, setSelOutlet }) => (<>
+  <button onClick={() => setSelOutlet(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selOutlet ? 700 : 500, border: !selOutlet ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selOutlet ? "#1A1A1A" : "#fff", color: !selOutlet ? "#fff" : "#888" }}>All Outlets</button>
+  {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
+</>);
+
+const MissingPunchesTab = () => {
+  const [selDay, setSelDay] = useState(1);
+  const [selMonth, setSelMonth] = useState(null);
+  const [selOutlet, setSelOutlet] = useState(null);
+  const monthOptions = useMemo(monthOptionsLastYear, []);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
+        <OutletPickerRow selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
+      </div>
+      <MissingPunches selOutlet={selOutlet} syncDate={{ selDay, selMonth }} />
+    </div>
+  );
+};
+
+const AttendanceTab = () => {
+  const [selDay, setSelDay] = useState(1);
+  const [selMonth, setSelMonth] = useState(null);
+  const [selOutlet, setSelOutlet] = useState(null);
+  const monthOptions = useMemo(monthOptionsLastYear, []);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
+        <OutletPickerRow selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
+      </div>
+      {selMonth ? <MonthlyPayrollPanel syncMonth={selMonth} selOutlet={selOutlet} /> : <DailyAttendanceSection dateStr={dateStr} selOutlet={selOutlet} />}
+    </div>
+  );
+};
+
+const ChallansTab = () => {
+  const [selDay, setSelDay] = useState(1); // day-only, same as before — no month view for Challans
+  const [selOutlet, setSelOutlet] = useState(null);
+  const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} marginBottom={0} />
+        <OutletPickerRow selOutlet={selOutlet} setSelOutlet={setSelOutlet} />
+      </div>
+      <ChallansSection dateStr={dateStr} selOutlet={selOutlet} />
+    </div>
+  );
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  RM AUDIT — Theoretical vs Actual consumption
 // ═════════════════════════════════════════════════════════════════════════════
@@ -18405,7 +18434,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button onClick={() => { setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button onClick={() => { setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
@@ -18421,6 +18450,11 @@ export default function AnandaCafe() {
           { id: "demands", label: "📋 Demands", sub: "Last 7 days, AM/PM split" },
           { id: "closing_stock_history", label: "📊 Closing Stock", sub: "History across outlets" },
           { id: "wastage_history", label: "🗑️ Wastage", sub: "History across outlets" },
+          { id: "mgr_perf", label: "🏆 Managers Performance", sub: "Cross-outlet manager scorecard" },
+          { id: "punches", label: "🔔 Missing Punches", sub: "Owner nudge tool, own outlets" },
+          { id: "attendance", label: "👥 Attendance", sub: "Daily attendance & monthly payroll" },
+          { id: "challans", label: "🧾 Challans", sub: "Demand vs dispatch vs verified" },
+          { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setDodDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -18543,6 +18577,11 @@ export default function AnandaCafe() {
       {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
       {ownerTab === "wastage_history" && <WastageHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
+      {ownerTab === "mgr_perf" && <ManagersPerformance />}
+      {ownerTab === "punches" && <MissingPunchesTab />}
+      {ownerTab === "attendance" && <AttendanceTab />}
+      {ownerTab === "challans" && <ChallansTab />}
+      {ownerTab === "demand_vs_closing" && <DemandVsClosingSection />}
       {ownerTab === "kitchen" && <BaseKitchen />}
       {ownerTab === "dispatch" && <Dispatch />}
       {ownerTab === "inventory" && <Inventory />}
