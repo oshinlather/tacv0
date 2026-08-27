@@ -5583,8 +5583,20 @@ const DriverChallans = () => {
   </div>);
 };
 
+// Stage 6: ported off purchase_orders onto the new Vendor Challans (vendor_challans /
+// vendor_challan_items) — the old table stopped getting new Vegetable orders once the
+// old Inventory screen's own ordering sub-flow was retired from bk_manager's nav (real
+// orders now land here instead, via VendorChallans.jsx's "Order from Vendor"). Same job
+// as before: driver enters what was actually bought + total price paid per item: PATCH
+// /api/store/challans/:id/items (qty_entered, unit_price — computed from the total paid
+// here since that's what a driver actually knows at the market, not a per-kg rate).
+// Demanded qty is captured from the FIRST load only (the very qty_entered the challan
+// was created with) — after that the driver's save overwrites qty_entered with what was
+// actually bought, same as the old order_qty-vs-bought_qty split, just without a
+// separate column for it on this newer table.
 const DriverVegetables = () => {
-  const [pos, setPos] = useState([]);
+  const [challans, setChallans] = useState([]);
+  const [demanded, setDemanded] = useState({}); // item_id -> original qty_entered, captured once
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null);
   const [draftQty, setDraftQty] = useState({});
@@ -5593,22 +5605,34 @@ const DriverVegetables = () => {
 
   const load = () => {
     setLoading(true);
-    api.getPurchaseOrders({ status: "pending", limit: 30 })
-      .then((d) => setPos((d || []).filter((po) => po.date === today() && po.notes === "🥬 Vegetables")))
-      .catch(() => setPos([]))
+    api.getChallans({ date: today(), location: "store", status: "draft" })
+      .then((list) => {
+        const veg = (list || []).filter((c) => c.vendor_name === "🥬 Vegetables");
+        return Promise.all(veg.map((c) => api.getChallan(c.id)));
+      })
+      .then((full) => {
+        setChallans(full);
+        setDemanded((prev) => {
+          const next = { ...prev };
+          full.forEach((c) => (c.items || []).forEach((it) => { if (next[it.item_id] === undefined) next[it.item_id] = it.qty_entered; }));
+          return next;
+        });
+      })
+      .catch(() => setChallans([]))
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
 
-  const saveItem = async (po, id) => {
-    const qty = Number(draftQty[id] ?? po.items[id].bought_qty ?? po.items[id].order_qty) || 0;
-    const price = Number(draftPrice[id] ?? po.items[id].total_price ?? 0) || 0;
-    if (qty <= 0 || price <= 0) { alert("Enter both quantity and price"); return; }
+  const saveItem = async (challan, item) => {
+    const id = item.item_id;
+    const qty = Number(draftQty[id] ?? item.qty_entered) || 0;
+    const totalPaid = Number(draftPrice[id] ?? item.line_total ?? 0) || 0;
+    if (qty <= 0 || totalPaid <= 0) { alert("Enter both quantity and price"); return; }
+    const unitPrice = Math.round((totalPaid / qty) * 100) / 100;
     setSaving(id);
     try {
-      const updatedItems = { ...po.items, [id]: { ...po.items[id], bought_qty: qty, total_price: price } };
-      await api.updatePurchaseOrder(po.id, { items: updatedItems });
-      setPos((prev) => prev.map((p) => (p.id === po.id ? { ...p, items: updatedItems } : p)));
+      const updated = await api.updateChallanItems(challan.id, { [id]: { qty_entered: qty, unit_price: unitPrice } });
+      setChallans((prev) => prev.map((c) => (c.id === challan.id ? { ...c, total_amount: updated.total_amount, items: c.items.map((it) => (it.item_id === id ? { ...it, qty_entered: qty, unit_price: unitPrice, line_total: totalPaid } : it)) } : c)));
       setEditingId(null);
       setDraftQty((p) => { const c = { ...p }; delete c[id]; return c; });
       setDraftPrice((p) => { const c = { ...p }; delete c[id]; return c; });
@@ -5617,43 +5641,44 @@ const DriverVegetables = () => {
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>⏳ Loading...</div>;
-  if (pos.length === 0) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No vegetable order for today yet</div>;
+  if (challans.length === 0) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 14 }}>No vegetable order for today yet</div>;
 
   return (<div>
-    {pos.map((po) => {
-      const items = Object.entries(po.items || {});
-      const doneCount = items.filter(([, it]) => it.total_price > 0).length;
+    {challans.map((challan) => {
+      const items = challan.items || [];
+      const doneCount = items.filter((it) => it.unit_price > 0).length;
       return (
-        <div key={po.id} style={{ marginBottom: 20 }}>
+        <div key={challan.id} style={{ marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#888" }}>🥬 Today's Vegetable Order</div>
             <div style={{ fontSize: 12, fontWeight: 800, color: doneCount === items.length ? "#16A34A" : "#B45309" }}>{doneCount}/{items.length} priced</div>
           </div>
-          {items.map(([id, item]) => {
-            const savedDone = item.total_price > 0;
+          {items.map((item) => {
+            const id = item.item_id;
+            const savedDone = item.unit_price > 0;
             const inEdit = editingId === id || !savedDone;
+            const savedTotal = item.line_total ?? (item.unit_price > 0 ? Math.round(item.unit_price * item.qty_entered * 100) / 100 : 0);
             if (!inEdit) {
-              const savedPerUnit = item.bought_qty > 0 ? Math.round((item.total_price / item.bought_qty) * 100) / 100 : 0;
               return (
                 <div key={id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 12, padding: "14px 16px", marginBottom: 8 }}>
                   <div>
-                    <div style={{ fontSize: 15, fontWeight: 700 }}>✅ {item.name}</div>
-                    <div style={{ fontSize: 12, color: "#16A34A", marginTop: 2 }}>{item.bought_qty} {item.unit} for ₹{item.total_price} · ₹{savedPerUnit}/{item.unit}</div>
+                    <div style={{ fontSize: 15, fontWeight: 700 }}>✅ {item.item_name}</div>
+                    <div style={{ fontSize: 12, color: "#16A34A", marginTop: 2 }}>{item.qty_entered} {item.unit_entered} for ₹{savedTotal} · ₹{item.unit_price}/{item.unit_entered}</div>
                   </div>
                   <button onClick={() => setEditingId(id)} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #BBF7D0", background: "#fff", color: "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
                 </div>
               );
             }
-            const q = draftQty[id] ?? item.bought_qty ?? item.order_qty;
-            const pr = draftPrice[id] ?? item.total_price ?? "";
+            const q = draftQty[id] ?? item.qty_entered;
+            const pr = draftPrice[id] ?? (savedDone ? savedTotal : "");
             const perUnit = q > 0 && pr > 0 ? Math.round((pr / q) * 100) / 100 : 0;
             return (
               <div key={id} style={{ background: "#fff", border: "2px solid #16A34A", borderRadius: 12, padding: "14px 16px", marginBottom: 8 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{item.name}</div>
-                <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>Demanded: {item.order_qty} {item.unit}</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>{item.item_name}</div>
+                <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>Demanded: {demanded[id] ?? item.qty_entered} {item.unit_entered}</div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: "#999", marginBottom: 3 }}>Qty bought ({item.unit})</div>
+                    <div style={{ fontSize: 11, color: "#999", marginBottom: 3 }}>Qty bought ({item.unit_entered})</div>
                     <input type="number" inputMode="decimal" value={q} onChange={(e) => setDraftQty((p) => ({ ...p, [id]: e.target.value }))}
                       style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 800, boxSizing: "border-box" }} />
                   </div>
@@ -5663,8 +5688,8 @@ const DriverVegetables = () => {
                       style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 20, textAlign: "center", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: "#16A34A", boxSizing: "border-box" }} />
                   </div>
                 </div>
-                {perUnit > 0 && <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: "#2563EB", marginBottom: 10 }}>≈ ₹{perUnit} / {item.unit}</div>}
-                <button onClick={() => saveItem(po, id)} disabled={saving === id || !(Number(q) > 0) || !(Number(pr) > 0)} style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+                {perUnit > 0 && <div style={{ textAlign: "center", fontSize: 15, fontWeight: 800, color: "#2563EB", marginBottom: 10 }}>≈ ₹{perUnit} / {item.unit_entered}</div>}
+                <button onClick={() => saveItem(challan, item)} disabled={saving === id || !(Number(q) > 0) || !(Number(pr) > 0)} style={{ width: "100%", padding: "13px", borderRadius: 10, border: "none", background: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving === id || !(Number(q) > 0) || !(Number(pr) > 0) ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
                   {saving === id ? "⏳ Saving..." : "💾 Save"}
                 </button>
               </div>

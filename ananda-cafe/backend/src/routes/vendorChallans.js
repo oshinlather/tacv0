@@ -11,7 +11,18 @@ const router = express.Router();
 const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
 const { gate, rebuildStockBalances } = require("./store");
+const { requireRole } = require("./authGuards");
 const { ingestPrices, resolveByItemIds } = require("./rateCardPrices");
+
+// Same gate as store.js's, plus 'driver' — Stage 6: the Driver Portal's Vegetables tab
+// now prices challans directly here (ported off the old purchase_orders-based flow,
+// which stopped receiving new orders once the old Inventory screen's own ordering
+// sub-flow was retired from bk_manager's nav). Scoped to just list/detail/item-price-
+// edit below, not the create/receive/cancel/vendor routes — same narrow slice of access
+// a driver already had on purchase_orders (read + patch items, nothing else).
+async function gateWithDriver(req, res) {
+  return await requireRole(req, res, "owner", "store_mgr", "avp", "bk_manager", "driver");
+}
 
 // ── Vendors ──
 // No real vendor entity existed anywhere in the app before this — every prior "vendor"
@@ -34,7 +45,7 @@ router.post("/vendors", async (req, res) => {
 
 // ── Challans ──
 router.get("/challans", async (req, res) => {
-  if (!await gate(req, res)) return;
+  if (!await gateWithDriver(req, res)) return;
   const { date, from, location, status, vendor_id } = req.query;
   let query = supabase.from("vendor_challans").select("*, vendors(name)").order("challan_date", { ascending: false }).order("created_at", { ascending: false });
   if (date) query = query.eq("challan_date", date);
@@ -51,7 +62,7 @@ router.get("/challans", async (req, res) => {
 // static signed URL — it expires; see store's item-units comment for the same pattern
 // employees.js's KYC docs use).
 router.get("/challans/:id", async (req, res) => {
-  if (!await gate(req, res)) return;
+  if (!await gateWithDriver(req, res)) return;
   const { data: challan, error } = await supabase.from("vendor_challans").select("*, vendors(name)").eq("id", req.params.id).maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!challan) return res.status(404).json({ error: "Challan not found" });
@@ -165,7 +176,7 @@ router.patch("/challans/:id", async (req, res) => {
 // "cancel this draft, start a fresh one" (source of the note in the comment above), to
 // keep the mapping from a challan to what it always claimed to represent unambiguous.
 router.patch("/challans/:id/items", async (req, res) => {
-  if (!await gate(req, res)) return;
+  if (!await gateWithDriver(req, res)) return;
   const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
   if (!existing) return res.status(404).json({ error: "Challan not found" });
   if (existing.status !== "draft") return res.status(400).json({ error: "Only a draft challan can be edited" });
