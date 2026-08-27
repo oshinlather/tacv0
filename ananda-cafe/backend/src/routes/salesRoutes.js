@@ -3960,7 +3960,10 @@ router.get('/rate-card/price-matrix', async (req, res) => {
     const items = (rc || []).map(it => ({
       id: it.id, name: it.name, category: it.category, unit: it.unit,
       prices: Object.entries(byItem[it.id] || {})
-        .map(([effective_date, v]) => ({ effective_date, price: v.price, source: v.source }))
+        // created_at included for the SEED_DATE ("Opening") row specifically — that row's
+        // effective_date is a synthetic placeholder (2000-01-01), so the frontend shows
+        // when this baseline price was actually recorded instead of that fake date.
+        .map(([effective_date, v]) => ({ effective_date, price: v.price, source: v.source, created_at: v.created_at }))
         .sort((a, b) => (a.effective_date < b.effective_date ? -1 : a.effective_date > b.effective_date ? 1 : 0)),
     })).sort((a, b) => (a.category || '').localeCompare(b.category || '') || (a.name || '').localeCompare(b.name || ''));
     res.json({ items });
@@ -5738,8 +5741,36 @@ router.patch('/purchase-orders/:id', async (req, res) => {
       updates.received_by = req.body.received_by;
       updates.received_at = new Date().toISOString();
     }
-    const { error } = await supabase.from('purchase_orders').update(updates).eq('id', req.params.id);
+    const { data: updated, error } = await supabase.from('purchase_orders').update(updates).eq('id', req.params.id).select('date, items').single();
     if (error) throw error;
+
+    // Push each priced line's paid price (total_price ÷ bought_qty) into the rate-card
+    // ledger, effective from the ORDER's own date (this is almost always a same-day-or-
+    // later backfill, not a live receive, so today's date would be wrong — Rate Alert
+    // needs the day the price was actually paid). This was the one gap in the price
+    // ledger: every OTHER price source (vendor challans, cash/dairy purchases, manual
+    // edits) already fed it, but this legacy Order Challan back-fill never did — real
+    // priced Vegetable orders were silently invisible to Rate Alert. Best-effort, same as
+    // the cash-purchase path above — a ledger failure never fails the save itself.
+    if (req.body.items !== undefined) {
+      try {
+        const priceLines = Object.entries(updated.items || {})
+          .map(([itemId, it]) => ({ itemId, qty: it.bought_qty != null ? Number(it.bought_qty) : Number(it.received_qty), price: Number(it.total_price), unit: it.unit }))
+          .filter((l) => l.qty > 0 && l.price > 0);
+        if (priceLines.length) {
+          const byId = await resolveByItemIds(priceLines.map((l) => l.itemId));
+          const entries = priceLines.map((l) => ({
+            rateCardId: byId[l.itemId]?.rateCardId || null,
+            price: l.price / l.qty,
+            priceUnit: l.unit || byId[l.itemId]?.baseUnit,
+            label: l.itemId,
+          }));
+          const { written, skipped } = await ingestPrices(entries, { effectiveDate: updated.date, source: 'legacy_order', sourceId: req.params.id, createdBy: req.body.received_by || null });
+          if (skipped.length) console.warn(`[rate-card ledger] purchase order ${req.params.id}: wrote ${written} price(s), skipped ${skipped.length}:`, skipped);
+        }
+      } catch (e) { console.error(`[rate-card ledger] purchase order price ingest failed:`, e.message); }
+    }
+
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

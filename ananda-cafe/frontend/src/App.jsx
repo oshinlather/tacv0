@@ -17631,6 +17631,17 @@ const RateAlertPanel = () => {
 
   const fmtCol = (d) => (d === SEED_DATE ? "Opening" : new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }));
   const catCount = (c) => items.filter((i) => i.category === c).length;
+  // "Opening" (SEED_DATE) is a synthetic placeholder date (2000-01-01), not a real event —
+  // show when this baseline price was actually recorded instead, so the column isn't just
+  // a bare label with no date on it at all.
+  const openingRecordedAt = useMemo(() => {
+    for (const it of filtered) {
+      const seedEntry = (it.prices || []).find((p) => p.effective_date === SEED_DATE && p.created_at);
+      if (seedEntry) return seedEntry.created_at;
+    }
+    return null;
+  }, [filtered]);
+  const openingRecordedLabel = openingRecordedAt ? new Date(openingRecordedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : null;
 
   const stickyCell = { position: "sticky", left: 0, zIndex: 2, background: "#fff", borderRight: "2px solid #E8E8E4", minWidth: 160, maxWidth: 160 };
 
@@ -17662,7 +17673,10 @@ const RateAlertPanel = () => {
               <tr style={{ background: "#FAFAF8" }}>
                 <th style={{ ...stickyCell, zIndex: 4, background: "#FAFAF8", top: 0, textAlign: "left", padding: "8px 12px", fontWeight: 700, borderBottom: "1px solid #E8E8E4" }}>Item</th>
                 {dates.map((d) => (
-                  <th key={d} style={{ position: "sticky", top: 0, zIndex: 3, background: "#FAFAF8", padding: "8px 10px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", minWidth: 78, borderBottom: "1px solid #E8E8E4", color: d === SEED_DATE ? "#999" : "#1A1A1A" }}>{fmtCol(d)}</th>
+                  <th key={d} style={{ position: "sticky", top: 0, zIndex: 3, background: "#FAFAF8", padding: "8px 10px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", minWidth: 78, borderBottom: "1px solid #E8E8E4", color: d === SEED_DATE ? "#999" : "#1A1A1A" }}>
+                    {fmtCol(d)}
+                    {d === SEED_DATE && openingRecordedLabel && <div style={{ fontSize: 9, fontWeight: 500, color: "#BBB" }}>{openingRecordedLabel}</div>}
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -18349,6 +18363,29 @@ export default function AnandaCafe() {
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
   const [dodDropdown, setDodDropdown] = useState(false); // "DOD" — RM Audit/Stock/Demands/Closing Stock/Wastage grouped under one pill
   const [franchiseDropdown, setFranchiseDropdown] = useState(false); // Franchise Billing/Rate Card/Rate Alert/Franchise Settings — Rate Card/Alert/Settings moved out of the PIN-gated Audit dropdown, so no auditUnlocked check here
+  // The 5 nav dropdowns (DOD/Franchise Billing/BK & Store/Payments/Audit) all used to render
+  // at a hardcoded `left: 50%` of the viewport regardless of which tab opened them — looked
+  // fine for a tab that happened to sit near the horizontal center, but for any tab left or
+  // right of center (Franchise Billing included) the menu popped up nowhere near its own
+  // button. Fixed by anchoring each dropdown to its trigger's actual position: capture the
+  // button's rect via ref right when it's opened, clamp so a 320px-wide menu can't run off
+  // either edge on a narrow phone screen, and position the (still position:fixed, so it's
+  // immune to the tab bar's own horizontal scroll) menu from that.
+  const DROPDOWN_MENU_W = 320;
+  const [dropdownAnchor, setDropdownAnchor] = useState({ top: 90, left: 16 });
+  const dodBtnRef = useRef(null);
+  const franchiseBtnRef = useRef(null);
+  const bkBtnRef = useRef(null);
+  const paymentsBtnRef = useRef(null);
+  const auditBtnRef = useRef(null);
+  const anchorDropdown = (btnRef) => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    setDropdownAnchor({
+      top: r.bottom + 6,
+      left: Math.max(8, Math.min(r.left, window.innerWidth - DROPDOWN_MENU_W - 8)),
+    });
+  };
   const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
@@ -18456,17 +18493,17 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button onClick={() => { setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
-      <button onClick={() => { setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
-      <button onClick={() => { setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button onClick={() => { setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
-      <button onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
+      <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
     {/* DOD Dropdown */}
     {dodDropdown && (<>
       <div onClick={() => setDodDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
-      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "stock_usage", label: "📦 Stock", sub: "Daily stock usage" },
           { id: "demands", label: "📋 Demands", sub: "Last 7 days, AM/PM split" },
@@ -18488,7 +18525,7 @@ export default function AnandaCafe() {
     {/* Franchise Billing Dropdown */}
     {franchiseDropdown && (<>
       <div onClick={() => setFranchiseDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
-      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "franchise_billing", label: "🧾 Franchise Billing", sub: "Monthly billing per franchise outlet" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
           { id: "rate_alert", label: "📈 Rate Alert", sub: "Price change per item across challan dates" },
@@ -18504,7 +18541,7 @@ export default function AnandaCafe() {
     {/* BK Dropdown */}
     {bkDropdown && (<>
       <div onClick={() => setBkDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
-      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "kitchen", label: "🏭 BK Consolidated", sub: "Demand & Stock Out" },
           { id: "dispatch", label: "🚚 Dispatch", sub: "Verify & send to outlets" },
           { id: "inventory", label: "📦 Inventory", sub: "Stock levels & issuance" },
@@ -18528,7 +18565,7 @@ export default function AnandaCafe() {
     {/* Payments Dropdown */}
     {paymentsDropdown && (<>
       <div onClick={() => setPaymentsDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
-      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
           { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
           { id: "custodian_ledger", label: "👤 Custodian Ledger", sub: "Ravinder / Sahil / Ganga" },
@@ -18544,7 +18581,7 @@ export default function AnandaCafe() {
     {/* Audit Dropdown */}
     {auditDropdown && (<>
       <div onClick={() => setAuditDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
-      <div style={{ position: "fixed", top: 90, left: "50%", transform: "translateX(-50%)", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: 320, padding: "6px 0" }}>
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
         {[{ id: "system_logs", label: "🔍 System Logs", sub: "Who did what, when — every action" },
           { id: "move_date", label: "🔀 Move Submission Date", sub: "Fix a manager's wrong-date entry" },
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
