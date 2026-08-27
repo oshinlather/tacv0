@@ -388,25 +388,46 @@ router.get("/audit-full/:date", async (req, res) => {
   const { date } = req.params;
   try {
     const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
-    const { data: stocks } = await supabase.from("inventory_stock").select("item_id, current_qty");
-    const { data: movements } = await supabase.from("inventory_movements").select("item_id, type, quantity, created_at");
-    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").in("date", [date, prevDay(date)]);
 
-    // ── Part 2: roll-forward balance, via the shared Ledger helper ──
+    // ── Part 2: roll-forward balance — Stage 6 re-anchor onto the new ledger
+    // (stock_movements, location='store') instead of inventory_movements, and Closing
+    // Counts (stock_counts) instead of bk_closing_stock for "actual" — same reasoning as
+    // store-audit's header comment. Unlike store-audit, this doesn't NEED a physical
+    // anchor to compute "expected" — stock_movements carries its own OPENING baseline
+    // (Stage 1 backfill), so opening/closing for any date is a direct sum, not a
+    // backward-walk from a cache. Only "logged_current" (the comparison point) needs an
+    // actual count, and gracefully stays null when one isn't available for that date —
+    // same degrade-to-null behavior this endpoint already had, not a new gap.
+    const { data: allMovements } = await supabase.from("stock_movements").select("item_id, movement_type, qty_delta, created_at").eq("location_id", "store");
     const todayStr = istDate(new Date().toISOString());
-    const currentQtyByItem = {};
-    (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
-    const deltasByItem = bucketMovementsByItemAndDay(movements);
-    const dateList = [];
-    for (let d = new Date(`${prevDay(date)}T00:00:00Z`); d.toISOString().slice(0, 10) <= todayStr; d.setUTCDate(d.getUTCDate() + 1)) {
-      dateList.push(d.toISOString().slice(0, 10));
-    }
-    const balances = walkBackwardBalances(items, currentQtyByItem, deltasByItem, dateList);
-
-    const closingByDate = {};
-    (closings || []).forEach((c) => { closingByDate[c.date] = c.items || {}; });
-    const loggedToday = closingByDate[date]; // undefined if not yet submitted for this date
     const isToday = date === todayStr;
+    const dateStart = new Date(`${date}T00:00:00Z`);
+    const dateEnd = new Date(`${nextDay(date)}T00:00:00Z`);
+    const openingByItem = {}, stockInByItem = {}, stockOutByItem = {};
+    (allMovements || []).forEach((m) => {
+      const delta = Number(m.qty_delta) || 0;
+      const ts = new Date(m.created_at);
+      if (ts < dateStart) {
+        openingByItem[m.item_id] = (openingByItem[m.item_id] || 0) + delta;
+      } else if (ts < dateEnd) {
+        if (delta > 0) stockInByItem[m.item_id] = (stockInByItem[m.item_id] || 0) + delta;
+        else if (delta < 0) stockOutByItem[m.item_id] = (stockOutByItem[m.item_id] || 0) - delta;
+      }
+    });
+
+    const { data: countRow } = await supabase.from("stock_counts")
+      .select("id").eq("location_id", "store").eq("status", "submitted").eq("count_date", date)
+      .order("submitted_at", { ascending: false }).limit(1).maybeSingle();
+    let loggedToday = null;
+    if (countRow) {
+      const { data: rows } = await supabase.from("stock_count_items").select("item_id, counted_qty").eq("count_id", countRow.id);
+      loggedToday = {}; (rows || []).forEach((r) => { loggedToday[r.item_id] = Number(r.counted_qty); });
+    }
+    let liveQtyByItem = {};
+    if (isToday && !loggedToday) {
+      const { data: balances } = await supabase.from("store_stock_balances").select("item_id, current_qty").eq("location_id", "store");
+      (balances || []).forEach((b) => { liveQtyByItem[b.item_id] = Number(b.current_qty) || 0; });
+    }
 
     // ── Part 1: demand vs dispatch vs stock-out, for the same calendar day ──
     // "Demanded from Base Kitchen and outlets" = the 6 real outlets' regular demand
@@ -441,20 +462,29 @@ router.get("/audit-full/:date", async (req, res) => {
     const round = (n) => Math.round(n * 1000) / 1000;
     const byCategory = {};
     (items || []).forEach((item) => {
-      const bal = balances[item.id]?.[date];
-      const loggedCurrent = loggedToday && loggedToday[item.id] !== undefined ? Number(loggedToday[item.id])
-        : (isToday ? currentQtyByItem[item.id] || 0 : null);
+      const opening = openingByItem[item.id] || 0;
+      const stockIn = stockInByItem[item.id] || 0;
+      const stockOut = stockOutByItem[item.id] || 0;
+      const closing = opening + stockIn - stockOut;
+
+      const loggedCurrent = loggedToday && loggedToday[item.id] !== undefined ? loggedToday[item.id]
+        : (isToday ? (liveQtyByItem[item.id] || 0) : null);
       const loggedIsLive = isToday && !(loggedToday && loggedToday[item.id] !== undefined);
-      const balanceVariance = bal && loggedCurrent != null ? round(loggedCurrent - bal.closing) : null;
+      const balanceVariance = loggedCurrent != null ? round(loggedCurrent - closing) : null;
 
       const demanded = item.demand_item_id ? (demandedByInvId[item.id] || 0) : null;
       const dispatched = item.demand_item_id ? (dispatchedByInvId[item.id] || 0) : null;
-      const stockOut = bal ? bal.stock_out : 0;
+      // Under the new ledger, a DISPATCH movement and its demands.dispatch_items entry
+      // are written by the same action (stockOutHooks.js) — so this should always be
+      // ~0 by construction now, unlike the old system where Stock-Out was a manual,
+      // separate action that could genuinely drift from what demand said. Kept (not
+      // removed) since a non-zero value here would mean a real software bug, not
+      // operational drift — still worth surfacing, just a different kind of signal now.
       const dispatchVariance = item.demand_item_id ? round(stockOut - dispatched) : null;
 
       // Skip items with nothing to say: no demand/dispatch activity, no stock movement, no variance.
       const hasDemandActivity = (demanded || 0) > 0 || (dispatched || 0) > 0;
-      const hasStockMovement = !!bal && (bal.stock_in > 0 || bal.stock_out > 0);
+      const hasStockMovement = stockIn > 0 || stockOut > 0;
       const hasVariance = !!balanceVariance;
       if (!hasDemandActivity && !hasStockMovement && !hasVariance) return;
 
@@ -463,8 +493,8 @@ router.get("/audit-full/:date", async (req, res) => {
       byCategory[cat].push({
         item_id: item.id, name: item.name, unit: item.unit,
         demanded, dispatched, stock_out: round(stockOut), dispatch_variance: dispatchVariance,
-        opening: bal ? round(bal.opening) : null, stock_in: bal ? round(bal.stock_in) : null,
-        expected_current: bal ? round(bal.closing) : null, logged_current: loggedCurrent != null ? round(loggedCurrent) : null,
+        opening: round(opening), stock_in: round(stockIn),
+        expected_current: round(closing), logged_current: loggedCurrent != null ? round(loggedCurrent) : null,
         logged_is_live: loggedIsLive, balance_variance: balanceVariance,
       });
     });
@@ -489,12 +519,33 @@ router.get("/audit-full/:date", async (req, res) => {
 // the separate Inventory "Stock Out" log the way audit-full's dispatch check does —
 // that log is essentially never used for BK-prepared items (see audit-full's Food
 // category rows), which would make a stock-out-based "should be" wrong for exactly the
-// items that matter most here. "Prior Actual Closing" is STRICTLY yesterday's (date-1)
-// submitted bk_closing_stock count — it used to walk back to whatever the most recent
-// submission was, however many days old, which silently anchored "should be" off a
-// stale count with no indication anything was wrong. Now, if yesterday wasn't
-// submitted, there's no anchor and nothing is flagged for `date` at all (prev_date:
-// null) — the gap is surfaced via Missing Punches instead of quietly papered over here.
+// items that matter most here.
+//
+// Stage 6 re-anchor: "Prior Actual Closing" used to be strictly yesterday's submitted
+// bk_closing_stock count, with the gap (when missing) surfaced via Missing Punches. Both
+// legs of that are now gone — bk_closing_stock stopped getting submissions once the old
+// Inventory screen was retired from Store/bk_manager's nav, AND the Missing Punches
+// check that used to flag exactly this was removed in the same pass (a miss — its own
+// header comment said the anchor-gap was "surfaced via Missing Punches instead of
+// quietly papered over here", and removing that check without replacing it is exactly
+// the quiet papering-over it was built to prevent). Re-anchored onto the new system
+// instead of trying to keep the old one fed:
+//   - "Prior Actual Closing" = the most recent SUBMITTED Closing Count (stock_counts,
+//     location='store') on or before date-1 — not required to be exactly yesterday,
+//     since counts are periodic under the new design, not a daily requirement. The
+//     actual anchor date used is always returned (prev_date) so the UI can show it
+//     plainly ("anchored to Aug 20") instead of implying a same-day count that isn't
+//     required to exist.
+//   - Purchases now also includes received Vendor Challans (vendor_challans /
+//     vendor_challan_items, location='store') — real purchases moved onto this table
+//     once the old ordering flow was retired; the old inventory_movements/purchase_orders
+//     sources are kept too since either can still carry real history.
+//   - "Actual" for `date` itself: a submitted Closing Count dated exactly `date` if one
+//     exists, else (only for today) the LIVE store_stock_balances figure — not the old
+//     inventory_stock column, which is frozen at whatever it was on cutover day and will
+//     never move again.
+//   - no_recent_count: true when the anchor is more than 1 day stale (or missing
+//     entirely) — the explicit, visible version of what Missing Punches used to imply.
 router.get("/store-audit/:date", async (req, res) => {
   if (!await gate(req, res)) return;
   const { date } = req.params;
@@ -502,26 +553,51 @@ router.get("/store-audit/:date", async (req, res) => {
     const yesterday = prevDay(date);
     const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
     const { data: demandItems } = await supabase.from("demand_items").select("id, section_id");
-    const { data: stocks } = await supabase.from("inventory_stock").select("item_id, current_qty");
-    const { data: closings } = await supabase.from("bk_closing_stock").select("date, items").in("date", [date, yesterday]);
 
     const foodDemandIds = new Set((demandItems || []).filter((d) => d.section_id === "food").map((d) => d.id));
     const isFoodItem = (item) => item.demand_item_id && foodDemandIds.has(item.demand_item_id);
 
     const todayStr = istDate(new Date().toISOString());
     const isToday = date === todayStr;
-    const currentQtyByItem = {};
-    (stocks || []).forEach((s) => { currentQtyByItem[s.item_id] = Number(s.current_qty) || 0; });
 
-    const todayClosing = (closings || []).find((c) => c.date === date)?.items;
-    const prevRow = (closings || []).find((c) => c.date === yesterday);
-    const prevDate = prevRow?.date || null;
-    const prevClosing = prevRow?.items || null;
+    // ── Anchor + today's actual, from Closing Counts (stock_counts/stock_count_items),
+    // not bk_closing_stock — see header comment. Anchor = most recent SUBMITTED count
+    // for 'store' on or before yesterday; not required to land exactly on yesterday
+    // since counts are periodic now, not a daily requirement.
+    const { data: anchorCountRow } = await supabase.from("stock_counts")
+      .select("id, count_date").eq("location_id", "store").eq("status", "submitted")
+      .lte("count_date", yesterday).order("count_date", { ascending: false }).limit(1).maybeSingle();
+    const prevDate = anchorCountRow?.count_date || null;
+    let prevClosing = null;
+    if (anchorCountRow) {
+      const { data: rows } = await supabase.from("stock_count_items").select("item_id, counted_qty").eq("count_id", anchorCountRow.id);
+      prevClosing = {}; (rows || []).forEach((r) => { prevClosing[r.item_id] = Number(r.counted_qty); });
+    }
+    // Flags when the anchor is more than a day stale (or missing) — the explicit,
+    // visible replacement for what Missing Punches used to imply about this gap.
+    const no_recent_count = !prevDate || prevDate < prevDay(yesterday);
+
+    const { data: todayCountRow } = await supabase.from("stock_counts")
+      .select("id").eq("location_id", "store").eq("status", "submitted").eq("count_date", date)
+      .order("submitted_at", { ascending: false }).limit(1).maybeSingle();
+    let todayClosing = null;
+    if (todayCountRow) {
+      const { data: rows } = await supabase.from("stock_count_items").select("item_id, counted_qty").eq("count_id", todayCountRow.id);
+      todayClosing = {}; (rows || []).forEach((r) => { todayClosing[r.item_id] = Number(r.counted_qty); });
+    }
+    // Live fallback for "today, no fresh count yet" — store_stock_balances (always
+    // current, derived from stock_movements), NOT inventory_stock (frozen since the old
+    // Inventory screen was retired — it will never move again).
+    let liveQtyByItem = {};
+    if (isToday && !todayClosing) {
+      const { data: balances } = await supabase.from("store_stock_balances").select("item_id, current_qty").eq("location_id", "store");
+      (balances || []).forEach((b) => { liveQtyByItem[b.item_id] = Number(b.current_qty) || 0; });
+    }
 
     const actualClosingByItem = {};
     (items || []).forEach((item) => {
-      if (todayClosing && todayClosing[item.id] !== undefined) actualClosingByItem[item.id] = { qty: Number(todayClosing[item.id]), isLive: false };
-      else if (isToday) actualClosingByItem[item.id] = { qty: currentQtyByItem[item.id] || 0, isLive: true };
+      if (todayClosing && todayClosing[item.id] !== undefined) actualClosingByItem[item.id] = { qty: todayClosing[item.id], isLive: false };
+      else if (isToday) actualClosingByItem[item.id] = { qty: liveQtyByItem[item.id] || 0, isLive: true };
     });
 
     let purchasesByItem = {}, bkDemandByItem = {}, outletDemandByItem = {}, outletBreakdownByItem = {};
@@ -564,6 +640,22 @@ router.get("/store-audit/:date", async (req, res) => {
           if (qty > 0) purchasesByItem[itemId] = (purchasesByItem[itemId] || 0) + qty;
         });
       });
+
+      // Real purchases moved onto Vendor Challans once the old ordering flow was
+      // retired — a genuinely separate table from the two above (no dedup risk),
+      // additive with them so any transition-period history in the old sources still
+      // counts too.
+      const { data: receivedChallans } = await supabase.from("vendor_challans")
+        .select("id").eq("location_id", "store").eq("status", "received")
+        .gt("received_at", rangeStart).lt("received_at", rangeEnd);
+      if (receivedChallans?.length) {
+        const { data: challanItems } = await supabase.from("vendor_challan_items")
+          .select("item_id, qty_base").in("challan_id", receivedChallans.map((c) => c.id));
+        (challanItems || []).forEach((l) => {
+          const qty = Number(l.qty_base) || 0;
+          if (qty > 0) purchasesByItem[l.item_id] = (purchasesByItem[l.item_id] || 0) + qty;
+        });
+      }
 
       const { data: demandRows } = await supabase.from("demands")
         .select("outlet_id, dispatch_items").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
@@ -620,7 +712,7 @@ router.get("/store-audit/:date", async (req, res) => {
       category, items: catItems.sort((a, b) => Math.abs(b.variance || 0) - Math.abs(a.variance || 0)),
     }));
 
-    res.json({ date, prev_date: prevDate, is_today: isToday, actual_submitted: !!(todayClosing && Object.keys(todayClosing).length), categories });
+    res.json({ date, prev_date: prevDate, is_today: isToday, actual_submitted: !!(todayClosing && Object.keys(todayClosing).length), no_recent_count, categories });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

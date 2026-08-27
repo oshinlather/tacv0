@@ -15973,12 +15973,12 @@ const BKAudit = () => {
     ) : (<>
       {!data.closing_submitted && !data.is_today && (
         <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 12 }}>
-          ⏳ No BK Closing Stock count was submitted for {dateStr} — the inventory roll-forward check below can't compare against a logged value for this date, only the demand/stock-out check applies.
+          ⏳ No Closing Count was submitted for Store on {dateStr} — the inventory roll-forward check below can't compare against a logged value for this date, only the demand/stock-out check applies.
         </div>
       )}
       {data.is_today && (
         <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12 }}>
-          ℹ️ Today's "Logged" figures use the live system balance until a Closing Stock count is submitted for today — a real variance won't show until then.
+          ℹ️ Today's "Logged" figures use the live system balance until a Closing Count is submitted for today — a real variance won't show until then.
         </div>
       )}
       {totalFlagged === 0 ? (
@@ -16038,7 +16038,6 @@ const BKStoreAudit = ({ dateStr, selDay, setSelDay }) => {
   const totalFlagged = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
   const visibleCategories = selCat ? (data?.categories || []).filter((c) => c.category === selCat) : (data?.categories || []);
   const visibleCount = visibleCategories.reduce((s, c) => s + c.items.length, 0);
-  const dayBefore = useMemo(() => { const d = new Date(`${dateStr}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); }, [dateStr]);
 
   // Date filter + category pills share one row — no outlet picker (this isn't
   // outlet-scoped) and no title/description/anchor-explanation text above the table,
@@ -16059,11 +16058,17 @@ const BKStoreAudit = ({ dateStr, selDay, setSelDay }) => {
     ) : !data ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {dateStr}</div>
     ) : !data.prev_date ? (
-      // Anchor is strictly yesterday (date-1) now — no walking back to an older stale
-      // submission — so a missing prev_date means yesterday specifically wasn't punched.
-      // Also flagged in Missing Punches so it doesn't just sit here silently.
-      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Yesterday's ({dayBefore}) BK Closing Stock wasn't submitted — nothing to audit {dateStr} from until it is.</div>
+      // Anchor is now the most recent SUBMITTED Closing Count (stock_counts,
+      // location=store) on or before yesterday — no bk_closing_stock walk-back, since
+      // that table stopped getting submissions once the old Inventory screen was
+      // retired. A missing prev_date means no Closing Count exists at all yet.
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No Closing Count has been submitted for Store yet — nothing to audit {dateStr} from until one is (Store Stock → 🔢 Closing Counts).</div>
     ) : (<>
+      {data.no_recent_count && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, color: "#92400E", marginBottom: 14 }}>
+          ⚠️ Anchored to {data.prev_date} — no more recent Closing Count exists. Submit a fresh one for a tighter audit.
+        </div>
+      )}
       {visibleCount === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing to flag for {dateStr}</div></div>
       ) : visibleCategories.map((cat) => (
