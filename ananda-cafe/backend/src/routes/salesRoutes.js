@@ -3935,6 +3935,38 @@ router.delete('/rate-card/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/rate-card/price-matrix — the Rate Alert spreadsheet: every active item with
+// its full dated price series (from rate_card_prices), collapsed to one price per day
+// (latest wins on a day with two challans). The frontend pivots this into an items × dates
+// grid with per-step deltas. Registered BEFORE /rate-card/:id/... so "price-matrix" isn't
+// captured as an :id.
+router.get('/rate-card/price-matrix', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef', 'bk_manager', 'store_mgr')) return;
+    const [{ data: rc, error: rcErr }, { data: rows, error: rowsErr }] = await Promise.all([
+      supabase.from('rate_card').select('id, name, category, unit').eq('active', true),
+      supabase.from('rate_card_prices').select('rate_card_id, effective_date, price, source, created_at'),
+    ]);
+    if (rcErr) throw rcErr;
+    if (rowsErr) throw rowsErr;
+    // Collapse to one price per (item, effective_date) — latest created wins, matching the
+    // as-of resolver's own same-day tie-break.
+    const byItem = {};
+    (rows || []).forEach(r => {
+      const m = (byItem[r.rate_card_id] ||= {});
+      const cur = m[r.effective_date];
+      if (!cur || r.created_at > cur.created_at) m[r.effective_date] = { price: Number(r.price), source: r.source, created_at: r.created_at };
+    });
+    const items = (rc || []).map(it => ({
+      id: it.id, name: it.name, category: it.category, unit: it.unit,
+      prices: Object.entries(byItem[it.id] || {})
+        .map(([effective_date, v]) => ({ effective_date, price: v.price, source: v.source }))
+        .sort((a, b) => (a.effective_date < b.effective_date ? -1 : a.effective_date > b.effective_date ? 1 : 0)),
+    })).sort((a, b) => (a.category || '').localeCompare(b.category || '') || (a.name || '').localeCompare(b.name || ''));
+    res.json({ items });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/rate-card/:id/price-history — the dated price ledger for one item, newest
 // first: every challan/purchase/manual/seed price change with its effective date and source.
 // Backs the Rate Card master's "price history" popover and the "last updated" badge.

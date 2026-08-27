@@ -131,8 +131,11 @@ router.post("/challans", async (req, res) => {
     const qtyEntered = Number(line.qty_entered);
     if (!(qtyEntered > 0)) return res.status(400).json({ error: `Invalid quantity for ${line.item_id}` });
     const qtyBase = qtyEntered * factor;
-    const unitPrice = line.unit_price != null ? Number(line.unit_price) : null;
-    const lineTotal = unitPrice != null ? Number((qtyBase * unitPrice).toFixed(2)) : null;
+    // Store punches in what the vendor's bill actually says for the whole line (e.g.
+    // "Potato 250 Kg — ₹6,250") — unit_price is DERIVED from that, not typed directly,
+    // so nobody has to divide the bill by the quantity themselves first.
+    const lineTotal = line.total_price != null ? Number(Number(line.total_price).toFixed(2)) : null;
+    const unitPrice = lineTotal != null && qtyBase > 0 ? Number((lineTotal / qtyBase).toFixed(2)) : null;
     if (lineTotal != null) total += lineTotal;
     lines.push({ item_id: line.item_id, qty_entered: qtyEntered, unit_entered: unit, qty_base: qtyBase, unit_price: unitPrice, line_total: lineTotal });
   }
@@ -167,11 +170,14 @@ router.patch("/challans/:id", async (req, res) => {
   res.json(data);
 });
 
-// PATCH /:id/items — Stage 5 migration: update qty_entered/unit_price on a draft's
+// PATCH /:id/items — Stage 5 migration: update qty_entered/total_price on a draft's
 // existing lines. Needed because ordering and pricing happen at different times, same
 // as the old Order Challan flow (you place the order not knowing the exact price; the
 // vendor/driver fills in what was actually bought and for how much once goods arrive,
-// before Receive is pressed) — {item_id: {qty_entered?, unit_price?}}. Recomputes
+// before Receive is pressed) — {item_id: {qty_entered?, total_price?}}. total_price is
+// what the vendor's bill says for that whole line (e.g. "Potato 250 Kg — ₹6,250") —
+// unit_price is DERIVED from it below, not typed directly, so the store doesn't have to
+// divide the bill by the quantity themselves before punching it in. Recomputes
 // total_amount from all lines afterward. Not a general item-add/remove — that's still
 // "cancel this draft, start a fresh one" (source of the note in the comment above), to
 // keep the mapping from a challan to what it always claimed to represent unambiguous.
@@ -180,24 +186,27 @@ router.patch("/challans/:id/items", async (req, res) => {
   const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
   if (!existing) return res.status(404).json({ error: "Challan not found" });
   if (existing.status !== "draft") return res.status(400).json({ error: "Only a draft challan can be edited" });
-  const { items } = req.body; // { item_id: { qty_entered?, unit_price? } }
+  const { items } = req.body; // { item_id: { qty_entered?, total_price? } }
   if (!items || !Object.keys(items).length) return res.status(400).json({ error: "items is required" });
 
   for (const [itemId, patch] of Object.entries(items)) {
     const linePatch = {};
     if (patch.qty_entered != null) linePatch.qty_entered = Number(patch.qty_entered);
-    if (patch.unit_price != null) linePatch.unit_price = Number(patch.unit_price);
+    if (patch.total_price != null) linePatch.line_total = Number(patch.total_price);
     if (!Object.keys(linePatch).length) continue;
-    const { data: line } = await supabase.from("vendor_challan_items").select("qty_entered, qty_base, unit_entered").eq("challan_id", req.params.id).eq("item_id", itemId).maybeSingle();
+    const { data: line } = await supabase.from("vendor_challan_items").select("qty_entered, qty_base, unit_entered, line_total").eq("challan_id", req.params.id).eq("item_id", itemId).maybeSingle();
     if (!line) continue;
     if (linePatch.qty_entered != null) {
       const factor = line.qty_entered ? Number(line.qty_base) / Number(line.qty_entered) : 1;
       linePatch.qty_base = linePatch.qty_entered * factor;
     }
-    if (linePatch.unit_price != null || linePatch.qty_base != null) {
-      const qtyBase = linePatch.qty_base != null ? linePatch.qty_base : line.qty_base;
-      const price = linePatch.unit_price != null ? linePatch.unit_price : null;
-      if (price != null) linePatch.line_total = Number((qtyBase * price).toFixed(2));
+    // unit_price is always re-derived (never accepted from the client) whenever either
+    // the total paid or the quantity changes, so it stays in sync regardless of which
+    // one the store edits first.
+    if (linePatch.line_total != null || linePatch.qty_base != null) {
+      const qtyBase = linePatch.qty_base != null ? linePatch.qty_base : Number(line.qty_base);
+      const lineTotal = linePatch.line_total != null ? linePatch.line_total : (line.line_total != null ? Number(line.line_total) : null);
+      if (lineTotal != null && qtyBase > 0) linePatch.unit_price = Number((lineTotal / qtyBase).toFixed(2));
     }
     await supabase.from("vendor_challan_items").update(linePatch).eq("challan_id", req.params.id).eq("item_id", itemId);
   }

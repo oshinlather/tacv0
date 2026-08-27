@@ -194,6 +194,8 @@ const api = {
   getRateCard: () => get("/api/rate-card"),
   // Dated price ledger for one item (challan/purchase/manual/seed changes), newest first.
   getRateCardPriceHistory: (id) => get(`/api/rate-card/${id}/price-history`),
+  // Rate Alert spreadsheet — every item with its full dated price series (items × dates).
+  getRateCardPriceMatrix: () => get("/api/rate-card/price-matrix"),
   addRate: (data) => post("/api/rate-card", data),
   updateRate: (id, data) => patch(`/api/rate-card/${id}`, data),
   deleteRate: (id) => del(`/api/rate-card/${id}`),

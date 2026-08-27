@@ -494,7 +494,7 @@ function ChallanForm({ onDone, onCancel }) {
   const [challanNumber, setChallanNumber] = useState("");
   const [challanDate, setChallanDate] = useState(todayStr());
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState([{ item_id: "", unit_entered: "", qty_entered: "", unit_price: "" }]);
+  const [lines, setLines] = useState([{ item_id: "", unit_entered: "", qty_entered: "", total_price: "" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -503,10 +503,10 @@ function ChallanForm({ onDone, onCancel }) {
   const itemById = useMemo(() => Object.fromEntries(items.map((i) => [i.id, i])), [items]);
 
   const setLine = (idx, patch) => setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
-  const addLine = () => setLines((ls) => [...ls, { item_id: "", unit_entered: "", qty_entered: "", unit_price: "" }]);
+  const addLine = () => setLines((ls) => [...ls, { item_id: "", unit_entered: "", qty_entered: "", total_price: "" }]);
   const removeLine = (idx) => setLines((ls) => ls.filter((_, i) => i !== idx));
 
-  const total = lines.reduce((sum, l) => { const q = Number(l.qty_entered); const p = Number(l.unit_price); return sum + (q > 0 && p > 0 ? q * p : 0); }, 0);
+  const total = lines.reduce((sum, l) => sum + (Number(l.total_price) || 0), 0);
 
   const save = async () => {
     setError("");
@@ -516,7 +516,7 @@ function ChallanForm({ onDone, onCancel }) {
     try {
       const payload = {
         location_id: location, challan_number: challanNumber || undefined, challan_date: challanDate, notes: notes || undefined,
-        items: validLines.map((l) => ({ item_id: l.item_id, unit_entered: l.unit_entered || itemById[l.item_id]?.base_unit, qty_entered: Number(l.qty_entered), unit_price: l.unit_price ? Number(l.unit_price) : undefined })),
+        items: validLines.map((l) => ({ item_id: l.item_id, unit_entered: l.unit_entered || itemById[l.item_id]?.base_unit, qty_entered: Number(l.qty_entered), total_price: l.total_price ? Number(l.total_price) : undefined })),
       };
       if (vendorId) payload.vendor_id = vendorId; else if (newVendorName.trim()) payload.vendor_name = newVendorName.trim();
       const challan = await api.createChallan(payload);
@@ -587,8 +587,8 @@ function ChallanForm({ onDone, onCancel }) {
                 </select>
               </div>
               <div style={{ flex: "1 1 90px" }}>
-                {idx === 0 && <label style={labelStyle}>Price/unit</label>}
-                <input type="number" min="0" step="any" value={l.unit_price} onChange={(e) => setLine(idx, { unit_price: e.target.value })} style={inputStyle} placeholder="₹" />
+                {idx === 0 && <label style={labelStyle}>Total paid</label>}
+                <input type="number" min="0" step="any" value={l.total_price} onChange={(e) => setLine(idx, { total_price: e.target.value })} style={inputStyle} placeholder="₹" />
               </div>
               {lines.length > 1 && <button onClick={() => removeLine(idx)} style={{ ...btnGhost, padding: "9px 10px", color: "#DC2626" }}>✕</button>}
             </div>
@@ -692,14 +692,23 @@ function ChallanDetail({ id, onBack }) {
             <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8 }}>
               <div style={{ flex: 1 }}>{it.item_name}</div>
               {challan.status === "draft" ? (
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <input type="number" min="0" step="any" value={draft.qty_entered ?? it.qty_entered} onChange={(e) => editLine(it.item_id, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
-                  <span style={{ fontSize: 10, color: "#999" }}>{it.unit_entered}</span>
-                  <span style={{ fontSize: 10, color: "#999" }}>@₹</span>
-                  <input type="number" min="0" step="any" value={draft.unit_price ?? it.unit_price ?? ""} onChange={(e) => editLine(it.item_id, { unit_price: e.target.value })} placeholder="price" style={{ ...inputStyle, width: 64, textAlign: "right" }} />
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input type="number" min="0" step="any" value={draft.qty_entered ?? it.qty_entered} onChange={(e) => editLine(it.item_id, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                    <span style={{ fontSize: 10, color: "#999" }}>{it.unit_entered}</span>
+                    <span style={{ fontSize: 10, color: "#999" }}>₹</span>
+                    {/* Total paid for this whole line, straight off the vendor's bill (e.g.
+                        "Potato 250 Kg — ₹6,250") — the per-Kg rate below is computed by the
+                        server, never something the store has to work out themselves. */}
+                    <input type="number" min="0" step="any" value={draft.total_price ?? it.line_total ?? ""} onChange={(e) => editLine(it.item_id, { total_price: e.target.value })} placeholder="total paid" style={{ ...inputStyle, width: 84, textAlign: "right" }} />
+                  </div>
+                  {it.unit_price != null && <div style={{ fontSize: 10, color: "#999" }}>@₹{Number(it.unit_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}/{it.unit_entered}</div>}
                 </div>
               ) : (
-                <div style={{ color: "#666" }}>{fmtQty(it.qty_entered)} {it.unit_entered}{it.unit_price ? ` @ ₹${it.unit_price}` : ""}</div>
+                <div style={{ color: "#666", textAlign: "right" }}>
+                  {fmtQty(it.qty_entered)} {it.unit_entered}
+                  {it.line_total != null && <div style={{ fontSize: 11, fontWeight: 600 }}>{fmtMoney(it.line_total)}{it.unit_price != null && <span style={{ fontWeight: 500, color: "#999" }}> (@₹{Number(it.unit_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}/{it.unit_entered})</span>}</div>}
+                </div>
               )}
             </div>
           );

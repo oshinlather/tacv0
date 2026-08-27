@@ -17525,6 +17525,133 @@ const RateCardPanel = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  RATE ALERT — price movement per item over time (items × price-change dates)
+// ═════════════════════════════════════════════════════════════════════════════
+// Pivots the rate_card_prices ledger (price-matrix endpoint) into a spreadsheet: one row
+// per item, one column per date a price landed (from a received challan, purchase, or
+// manual edit). Each cell shows that day's price plus its change from the item's previous
+// price — (+11) RED (cost went up), (-3) GREEN (cost dropped). "Opening" is the baseline.
+const RateAlertPanel = () => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selCat, setSelCat] = useState(null);
+  const [search, setSearch] = useState("");
+  const [onlyChanged, setOnlyChanged] = useState(false); // show ALL items by default; toggle to focus on changed ones
+  const SEED_DATE = "2000-01-01";
+
+  useEffect(() => {
+    setLoading(true);
+    api.getRateCardPriceMatrix().then((d) => setData(d || { items: [] })).catch(() => setData({ items: [] })).finally(() => setLoading(false));
+  }, []);
+
+  const pill = (active) => ({ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap" });
+
+  const items = data?.items || [];
+  const categories = useMemo(() => [...new Set(items.map((i) => i.category).filter(Boolean))].sort(), [items]);
+
+  const filtered = useMemo(() => items.filter((it) => {
+    if (selCat && it.category !== selCat) return false;
+    if (search && !(it.name || "").toLowerCase().includes(search.toLowerCase())) return false;
+    if (onlyChanged && (it.prices || []).filter((p) => p.source !== "seed").length === 0) return false;
+    return true;
+  }), [items, selCat, search, onlyChanged]);
+
+  // Union of dates across the filtered set, ascending (seed 2000-01-01 sorts first → shown
+  // as the "Opening" column).
+  const dates = useMemo(() => {
+    const s = new Set();
+    filtered.forEach((it) => (it.prices || []).forEach((p) => s.add(p.effective_date)));
+    return [...s].sort();
+  }, [filtered]);
+
+  // item.id -> { date -> { price, delta } }; delta is vs the item's OWN previous price.
+  const cellByItem = useMemo(() => {
+    const out = {};
+    filtered.forEach((it) => {
+      const m = {};
+      (it.prices || []).forEach((p, i) => {
+        const prev = i > 0 ? it.prices[i - 1].price : null;
+        m[p.effective_date] = { price: p.price, delta: prev != null ? Math.round((p.price - prev) * 100) / 100 : null };
+      });
+      out[it.id] = m;
+    });
+    return out;
+  }, [filtered]);
+
+  const fmtCol = (d) => (d === SEED_DATE ? "Opening" : new Date(d + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short" }));
+  const catCount = (c) => items.filter((i) => i.category === c).length;
+
+  const stickyCell = { position: "sticky", left: 0, zIndex: 2, background: "#fff", borderRight: "2px solid #E8E8E4", minWidth: 160, maxWidth: 160 };
+
+  return (
+    <div>
+      <div style={{ marginBottom: 14 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📈 Rate Alert</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Every item's price on each date it changed — from received challans, purchases & manual edits. <span style={{ color: "#DC2626", fontWeight: 700 }}>(+) red = price up</span>, <span style={{ color: "#16A34A", fontWeight: 700 }}>(-) green = price down</span>.</p>
+      </div>
+
+      <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search items..." style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", marginBottom: 12, boxSizing: "border-box" }} />
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4, alignItems: "center" }}>
+        <button onClick={() => setSelCat(null)} style={pill(!selCat)}>All ({items.length})</button>
+        {categories.map((c) => <button key={c} onClick={() => setSelCat(c)} style={pill(selCat === c)}>{c} ({catCount(c)})</button>)}
+      </div>
+
+      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#666", marginBottom: 12, cursor: "pointer" }}>
+        <input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only items whose price has changed
+      </label>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading price history...</div>}
+      {!loading && filtered.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "#999", fontSize: 12, background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4" }}>No items{onlyChanged ? " with price changes yet — a price moves once a challan/purchase is received or you edit it" : ""}.</div>}
+
+      {!loading && filtered.length > 0 && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "auto", maxHeight: "72vh" }}>
+          <table style={{ borderCollapse: "separate", borderSpacing: 0, fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: "#FAFAF8" }}>
+                <th style={{ ...stickyCell, zIndex: 4, background: "#FAFAF8", top: 0, textAlign: "left", padding: "8px 12px", fontWeight: 700, borderBottom: "1px solid #E8E8E4" }}>Item</th>
+                {dates.map((d) => (
+                  <th key={d} style={{ position: "sticky", top: 0, zIndex: 3, background: "#FAFAF8", padding: "8px 10px", fontWeight: 700, textAlign: "right", whiteSpace: "nowrap", minWidth: 78, borderBottom: "1px solid #E8E8E4", color: d === SEED_DATE ? "#999" : "#1A1A1A" }}>{fmtCol(d)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((it) => {
+                const cells = cellByItem[it.id] || {};
+                const current = (it.prices || [])[(it.prices || []).length - 1];
+                return (
+                  <tr key={it.id}>
+                    <td style={{ ...stickyCell, padding: "6px 12px", borderBottom: "1px solid #F0F0EC" }}>
+                      <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
+                      <div style={{ fontSize: 10, color: "#AAA" }}>{it.category} · now ₹{current ? Number(current.price).toLocaleString("en-IN") : "—"}{it.unit ? `/${it.unit}` : ""}</div>
+                    </td>
+                    {dates.map((d) => {
+                      const c = cells[d];
+                      if (!c) return <td key={d} style={{ padding: "6px 10px", borderBottom: "1px solid #F0F0EC" }} />;
+                      const up = c.delta != null && c.delta > 0, down = c.delta != null && c.delta < 0;
+                      return (
+                        <td key={d} style={{ padding: "6px 10px", textAlign: "right", borderBottom: "1px solid #F0F0EC", background: up ? "#FEF2F2" : down ? "#F0FDF4" : "transparent", whiteSpace: "nowrap" }}>
+                          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }}>₹{Number(c.price).toLocaleString("en-IN")}</div>
+                          {c.delta != null && c.delta !== 0 && (
+                            <div style={{ fontSize: 10, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: up ? "#DC2626" : "#16A34A" }}>
+                              ({up ? "+" : "-"}{Math.abs(c.delta).toLocaleString("en-IN")})
+                            </div>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  FIXED COSTS — Monthly costs per outlet, editable
 // ═════════════════════════════════════════════════════════════════════════════
 const FixedCostsPanel = ({ onBack } = {}) => {
@@ -18169,7 +18296,7 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "franchise_settings", "corrections", "system_logs", "move_date"];
+  const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "rate_card", "rate_alert", "franchise_settings", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
@@ -18330,6 +18457,7 @@ export default function AnandaCafe() {
           { id: "master", label: "🗂️ Master Data", sub: "Items, units, recipes & mappings" },
           { id: "packaging", label: "📦 Packaging Audit", sub: "Conversions & unit consistency check" },
           { id: "rate_card", label: "💰 Rate Card", sub: "Item prices for P&L calculation" },
+          { id: "rate_alert", label: "📈 Rate Alert", sub: "Price change per item across challan dates" },
           { id: "franchise_settings", label: "🏳️ Franchise Settings", sub: "Markup, royalty & franchise flag per outlet" },
           { id: "users", label: "👥 Users", sub: "Manage users, PINs & roles" },
           { id: "employees", label: "👤 Employee Master", sub: "Full staff directory by outlet, BK & top mgmt" },
@@ -18407,6 +18535,7 @@ export default function AnandaCafe() {
       {auditUnlocked && ownerTab === "master" && <MasterData />}
       {auditUnlocked && ownerTab === "packaging" && <PackagingAuditPanel />}
       {auditUnlocked && ownerTab === "rate_card" && <RateCardPanel />}
+      {auditUnlocked && ownerTab === "rate_alert" && <RateAlertPanel />}
       {auditUnlocked && ownerTab === "franchise_settings" && <FranchiseSettingsPanel />}
       {auditUnlocked && ownerTab === "iss_audit" && <IssuanceAudit />}
       {auditUnlocked && ownerTab === "inv_monthly" && <MonthlyInventory />}
