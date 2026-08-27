@@ -7464,7 +7464,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   // "Day by Day" doesn't mean anything for a single already-picked day — if a day gets
   // picked while that tab is open, fall back to Summary instead of showing an empty/1-column
   // day-wise table.
-  useEffect(() => { if (selDay) setViewMode((v) => v === "daywise" ? "summary" : v); }, [selDay]);
+  useEffect(() => { if (periodMode === "date") setViewMode((v) => v === "daywise" ? "summary" : v); }, [periodMode]);
   const finishEditing = () => {
     setEditMode(false);
     setSavingCorrections(true);
@@ -7501,14 +7501,14 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   // directly) off the owner-configured agreement in Franchise Settings.
   const [billingSummary, setBillingSummary] = useState(null);
   useEffect(() => {
-    if (!selOutlet || !selMonth) return;
+    if (!selOutlet || !range.from) return;
     setBillingSummary(null);
-    // Single-day mode: server prorates BK's monthly fixed cost down to that one day (see
-    // GET /franchise-billing/summary) rather than allocating a whole month's rent to it.
-    api.getFranchiseBillingSummary(selDay ? { outlet_id: selOutlet, date: selDay } : { outlet_id: selOutlet, month: selMonth })
+    // Date/Week modes: server prorates BK's monthly fixed cost down to the requested range
+    // (see GET /franchise-billing/summary) rather than allocating a whole month's rent to it.
+    api.getFranchiseBillingSummary({ outlet_id: selOutlet, from: range.from, to: range.to })
       .then(setBillingSummary)
       .catch(() => setBillingSummary(null));
-  }, [selOutlet, selMonth, selDay]);
+  }, [selOutlet, range]);
 
   const rateMap = useMemo(() => { const m = {}; rateCard.forEach((r) => { m[r.id] = r; }); return m; }, [rateCard]);
   const convMap = useMemo(() => {
@@ -7535,19 +7535,6 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     if ((fromUnit === 'ltr' || fromUnit === 'l') && ru === 'ml') return factor * 1000;
     return factor;
   };
-
-  // The single {from, to} range everything else (demands fetch, billing-summary fetch, the
-  // Day by Day view's day list) reads off, regardless of which of the 3 pills is active.
-  // Week's from/to can be typed in either order — swapped here so a backwards pick doesn't
-  // silently return zero rows.
-  const range = useMemo(() => {
-    if (periodMode === "date") { const d = selDay || istDateAgo(0); return { from: d, to: d }; }
-    if (periodMode === "week") {
-      return weekFrom <= weekTo ? { from: weekFrom, to: weekTo } : { from: weekTo, to: weekFrom };
-    }
-    const [y, mo] = selMonth.split("-").map(Number);
-    return { from: `${selMonth}-01`, to: new Date(y, mo, 0).toISOString().slice(0, 10) };
-  }, [periodMode, selDay, weekFrom, weekTo, selMonth]);
 
   useEffect(() => {
     if (!selOutlet || !range.from) return;
@@ -7621,9 +7608,9 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
   const totalAmount = items.reduce((s, i) => s + i.amount, 0);
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
-  // Last 5 days for the date dropdown's quick-picks — "Today"/"Yesterday" for the first two,
-  // then a plain day/month label. Real per-day billing (own BK Share/Markup/Royalty, not a
-  // slice of the month's), not just a navigation shortcut — see selDay's own comment above.
+  // Last 5 days for the Date pill's quick-picks — "Today"/"Yesterday" for the first two,
+  // then a plain day label. Real per-day billing (own BK Share/Markup/Royalty, not a slice
+  // of the month's), not just a navigation shortcut — see periodMode's own comment above.
   const dayOptions = useMemo(() => {
     const opts = [];
     for (let i = 0; i < 5; i++) {
@@ -7633,9 +7620,11 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     }
     return opts;
   }, []);
-  const periodLabel = selDay ? (dayOptions.find((d) => d.value === selDay)?.label === "Today" || dayOptions.find((d) => d.value === selDay)?.label === "Yesterday"
-    ? `${dayOptions.find((d) => d.value === selDay).label} (${new Date(selDay + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })})`
-    : new Date(selDay + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })) : monthLabel;
+  const fmtDate = (ds) => new Date(ds + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const periodLabel = periodMode === "date"
+    ? (["Today", "Yesterday"].includes(dayOptions.find((d) => d.value === selDay)?.label) ? `${dayOptions.find((d) => d.value === selDay).label} (${fmtDate(range.from)})` : fmtDate(range.from))
+    : periodMode === "week" ? `${fmtDate(range.from)} → ${fmtDate(range.to)}`
+    : monthLabel;
 
   // Markup applies to the actual billed Material Cost (totalAmount, corrections and all) —
   // BK Share uses the ratio computed server-side across every outlet's raw material cost,
@@ -7683,19 +7672,17 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     return { ...i, baseAmount, markupAmt, bkShareAmt, totalAmt, finalPricePerUnit };
   }), [visibleItems, markupPct, bkShareAmount, totalAmount]);
 
-  // Every date in the month up to today (dates with no demand still show as a column)
+  // Every date in the active range up to today (dates with no demand still show as a
+  // column) — the whole month for Month mode, just the picked days for Week mode.
   const days = useMemo(() => {
-    const [y, mo] = selMonth.split("-").map(Number);
-    const daysInMo = new Date(y, mo, 0).getDate();
     const todayStr = today();
+    const end = range.to > todayStr ? todayStr : range.to;
     const result = [];
-    for (let day = 1; day <= daysInMo; day++) {
-      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      if (ds > todayStr) break;
-      result.push(ds);
+    for (let d = new Date(range.from + "T00:00:00Z"); d.toISOString().slice(0, 10) <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      result.push(d.toISOString().slice(0, 10));
     }
     return result;
-  }, [selMonth]);
+  }, [range]);
 
   // Day-wise dispatched qty per item (the billed basis) — { item_id: { date: qty } }
   const dayWise = useMemo(() => {
@@ -7739,7 +7726,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       rows.push(["", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
       rows.push(["", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
       rows.push(["", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
-      exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selDay || selMonth}.csv`);
+      exportCSV(headers, rows, `franchise_billing_${selOutlet}_${range.from}_to_${range.to}.csv`);
       return;
     }
     const headers = ["Item", "Unit", "Demanded Qty", "Dispatched Qty (billed)", "Rate", `Franchise Rate (+${markupPct}%)`, "Final Price", "Rate Unit", "Amount"];
@@ -7754,7 +7741,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     rows.push(["", "", "", "", "", "", "", "Revenue (this month, real PetPooja billing)", Math.round(revenue * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", `Royalty (${royaltyPct}% of revenue)`, Math.round(royaltyAmount * 100) / 100]);
     rows.push(["", "", "", "", "", "", "", "TOTAL PAYABLE", Math.round(totalPayable * 100) / 100]);
-    exportCSV(headers, rows, `franchise_billing_${selOutlet}_${selDay || selMonth}.csv`);
+    exportCSV(headers, rows, `franchise_billing_${selOutlet}_${range.from}_to_${range.to}.csv`);
   };
 
   return (
@@ -7772,24 +7759,40 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
           {!lockedOutlet && franchiseOutlets.map((o) => (
             <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.name}</button>
           ))}
-          {/* "day:YYYY-MM-DD" vs "month:YYYY-MM" prefix on the option value tells the
-              handler which state to update — selDay drives real single-day billing (its own
-              BK Share/Markup/Royalty, prorated server-side), selMonth alone is the existing
-              whole-month view. selMonth is always kept pointed at whichever month the current
-              selection falls in, day or month, since corrections/agreement lookups key off it. */}
-          <select value={selDay ? `day:${selDay}` : `month:${selMonth}`} onChange={(e) => {
-              const [kind, val] = e.target.value.split(":");
-              if (kind === "day") { setSelDay(val); setSelMonth(val.slice(0, 7)); }
-              else { setSelDay(null); setSelMonth(val); }
-            }}
-            style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
-            <optgroup label="Last 5 Days">
-              {dayOptions.map((d) => <option key={d.value} value={`day:${d.value}`}>{d.label}</option>)}
-            </optgroup>
-            <optgroup label="Months">
-              {monthOptions.map((m) => <option key={m.value} value={`month:${m.value}`}>{m.label}</option>)}
-            </optgroup>
-          </select>
+          {/* 3 pills pick which control shows next to them — Date's dropdown (last 5 days),
+              Week's two date inputs, or Month's existing dropdown. Switching pills doesn't
+              reset the other two's own values, so flipping back and forth remembers what was
+              picked. selMonth always tracks whichever range is active (see periodMode's own
+              comment above) so corrections/agreement lookups keep working unchanged. */}
+          {[{ id: "date", label: "📅 Date" }, { id: "week", label: "📆 Week" }, { id: "month", label: "🗓️ Month" }].map((p) => (
+            <button key={p.id} onClick={() => {
+                setPeriodMode(p.id);
+                if (p.id === "date") { const d = selDay || istDateAgo(0); setSelDay(d); setSelMonth(d.slice(0, 7)); }
+                else if (p.id === "week") { setSelMonth(weekFrom.slice(0, 7)); }
+              }}
+              style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: periodMode === p.id ? 700 : 500, border: periodMode === p.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: periodMode === p.id ? "#1A1A1A" : "#fff", color: periodMode === p.id ? "#fff" : "#888" }}>{p.label}</button>
+          ))}
+          {periodMode === "date" && (
+            <select value={selDay || dayOptions[0].value} onChange={(e) => { setSelDay(e.target.value); setSelMonth(e.target.value.slice(0, 7)); }}
+              style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+              {dayOptions.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          )}
+          {periodMode === "week" && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input type="date" value={weekFrom} max={today()} onChange={(e) => { setWeekFrom(e.target.value); setSelMonth(e.target.value.slice(0, 7)); }}
+                style={{ padding: "6px 8px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", color: "#888" }} />
+              <span style={{ color: "#999", fontSize: 12 }}>to</span>
+              <input type="date" value={weekTo} max={today()} onChange={(e) => setWeekTo(e.target.value)}
+                style={{ padding: "6px 8px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", color: "#888" }} />
+            </div>
+          )}
+          {periodMode === "month" && (
+            <select value={selMonth} onChange={(e) => setSelMonth(e.target.value)}
+              style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500, border: "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: "#fff", color: "#888" }}>
+              {monthOptions.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          )}
         </div>
 
         {(loading || !correctionsLoaded) && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
@@ -7822,7 +7825,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 4 }}>
-                  {[{ id: "summary", label: "🧾 Summary" }, ...(selDay ? [] : [{ id: "daywise", label: "📅 Day by Day" }]), ...(lockedOutlet ? [] : [{ id: "pricing", label: "💲 Pricing" }])].map((m) => (
+                  {[{ id: "summary", label: "🧾 Summary" }, ...(periodMode === "date" ? [] : [{ id: "daywise", label: "📅 Day by Day" }]), ...(lockedOutlet ? [] : [{ id: "pricing", label: "💲 Pricing" }])].map((m) => (
                     <button key={m.id} onClick={() => setViewMode(m.id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: viewMode === m.id ? 700 : 500, border: viewMode === m.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: viewMode === m.id ? "#1A1A1A" : "#fff", color: viewMode === m.id ? "#fff" : "#888", whiteSpace: "nowrap" }}>{m.label}</button>
                   ))}
                 </div>

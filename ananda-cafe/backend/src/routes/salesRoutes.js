@@ -6001,7 +6001,14 @@ router.get('/franchise-billing/summary', async (req, res) => {
     const [y, mo] = month.split('-').map(Number);
     const daysInMonth = new Date(y, mo, 0).getDate();
     const monthStart = explicitFrom || date || `${month}-01`;
-    const monthEnd = explicitTo || date || new Date(y, mo, 0).toISOString().slice(0, 10);
+    // Built from y/mo/daysInMonth directly rather than `new Date(y, mo, 0).toISOString()` —
+    // that constructs the date in the SERVER's local timezone (IST, UTC+5:30) then converts
+    // to UTC for the ISO string, which lands on the 30th instead of the 31st for a 31-day
+    // month (midnight IST on the 31st is still the 30th in UTC). Harmless before this
+    // proration existed (nothing compared monthEnd's exact date against daysInMonth), but
+    // silently made daysInRange one short of daysInMonth for every whole-month query,
+    // under-billing BK Share by ~3% every month once the ratio was introduced.
+    const monthEnd = explicitTo || date || `${month}-${String(daysInMonth).padStart(2, '0')}`;
     // BK's fixed costs (rent, salaries, ...) are stored as one flat MONTHLY figure — fine
     // as-is for a whole-month query (daysInRange === daysInMonth below, so this is a no-op),
     // but billing a single day (or a week) off the FULL month's rent would overstate that
