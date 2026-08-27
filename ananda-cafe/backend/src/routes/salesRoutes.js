@@ -4943,10 +4943,17 @@ const CLOSING_CHECK_SECTIONS = ['grocery', 'packaging', 'food', 'dairy', 'cold_d
 // submitted row only proves something was punched, not that every category actually
 // got filled in. outlet_mgr can call this too (for their own Performance Dashboard) —
 // scopedOutletFilter forces them to their own outlet_id regardless of ?outlet=,
-// same defensive pattern as every other outlet-scoped read route. On the unscoped
-// "all outlets" view, an extra pseudo-outlet ('bk') is appended for the Store
-// Manager's own BK Closing Stock punch — separate from the 6 real outlets since it's
-// a distinct person's responsibility, not folded into any of theirs.
+// same defensive pattern as every other outlet-scoped read route.
+//
+// Used to also append a 'bk' pseudo-outlet checking whether Store Manager had submitted
+// bk_closing_stock (a daily physical recount) that day. Removed — Stage 6 of the Store
+// Inventory Module retired that screen (see 2026_08_27 nav changes): the whole point of
+// the new ledger is that current stock is always known live from stock_movements, so a
+// fresh manual recount is no longer a required DAILY action the way it used to be
+// (Closing Counts is periodic reconciliation, not a daily punch). Leaving the old check
+// in place would have shown a permanent false "missing" flag once nothing writes to
+// bk_closing_stock anymore — removed rather than force-fit to a new table that doesn't
+// actually represent a daily requirement.
 router.get('/punch-status/:date', async (req, res) => {
   try {
     // outlet_mgr/chef: outlet-side Performance Dashboard's Punch Score card — same
@@ -4965,7 +4972,6 @@ router.get('/punch-status/:date', async (req, res) => {
       { data: purchases },
       { data: dispatched },
       sectionMap,
-      { data: bkClosing },
     ] = await Promise.all([
       supabase.from('daily_outlet_sales').select('outlet_id').eq('date', date).in('outlet_id', outletIds),
       supabase.from('demands').select('outlet_id').eq('date', date).eq('type', 'wastage').eq('status', 'submitted').in('outlet_id', outletIds),
@@ -4977,12 +4983,6 @@ router.get('/punch-status/:date', async (req, res) => {
       // flagged at all rather than showing a false-positive missing punch.
       supabase.from('demands').select('outlet_id, received_at').eq('date', date).eq('status', 'fulfilled').in('outlet_id', outletIds),
       getDemandItemSectionMap(),
-      // Store Manager's own daily punch (BK Closing Stock) — a separate pseudo-outlet
-      // ('bk', not one of the 6 real outlet_ids) rather than folded into an existing
-      // outlet's missing list, since it's a distinct person's responsibility. Only
-      // fetched for the unscoped "all outlets" view (owner/avp/head_chef) — an
-      // outlet_mgr's own scoped Performance Dashboard call has no use for it.
-      scopedOutlet ? Promise.resolve({ data: null }) : supabase.from('bk_closing_stock').select('items').eq('date', date).maybeSingle(),
     ]);
 
     const has = (rows, oid) => (rows || []).some(r => r.outlet_id === oid);
@@ -5012,12 +5012,6 @@ router.get('/punch-status/:date', async (req, res) => {
 
       return { outlet_id: oid, missing, closing_categories };
     });
-
-    // Store Manager's BK Closing Stock punch, as its own pseudo-outlet — bkClosing is
-    // only fetched (non-null) for the unscoped view, so this only appears there.
-    if (!scopedOutlet) {
-      outlets.push({ outlet_id: 'bk', missing: (bkClosing?.items && Object.keys(bkClosing.items).length) ? [] : ['bk_closing'], closing_categories: null });
-    }
 
     res.json({ date, outlets });
   } catch (e) { res.status(500).json({ error: e.message }); }

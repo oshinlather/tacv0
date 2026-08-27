@@ -2746,10 +2746,10 @@ const PUNCH_TYPES = [
   { key: "sales", icon: "💰", label: "Sales" },
   { key: "wastage", icon: "🗑️", label: "Wastage" },
   { key: "closing", icon: "📊", label: "Closing Stock" },
-  // Not an outlet punch — Store Manager's own BK Closing Stock count. Only ever appears
-  // on the synthetic 'bk' pseudo-outlet entry the backend appends, never on a real
-  // outlet's own missing list.
-  { key: "bk_closing", icon: "🏪", label: "BK Closing Stock" },
+  // bk_closing (Store Manager's daily BK Closing Stock punch, on a synthetic 'bk'
+  // pseudo-outlet) removed — the backend no longer emits it now that the old Inventory
+  // module is retired (see salesRoutes.js's punch-status comment for why a daily manual
+  // recount isn't a requirement under the new live-ledger system).
 ];
 // OUTLETS has no 'bk' entry (it's not a real outlet) — this is the one place a punch
 // row needs a human name for it anyway.
@@ -18394,13 +18394,20 @@ export default function AnandaCafe() {
   if (effectiveApp === "franchise") return <FranchiseDashboard />;
   if (effectiveApp === "store") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>📦 Base Kitchen Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "inventory", label: "📦 Inventory" }, { id: "bk_closing", label: "📊 Store Closing (legacy)" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "0 18px", display: "flex", gap: 0, position: "sticky", top: 52, zIndex: 49, overflowX: "auto" }}>{/* Old Inventory/Store Closing (legacy) dropped from Store Manager's own day-to-day
+            nav too — confirmed live in production as a SECOND, parallel vendor-ordering +
+            stock-in path (its own generateChallan/pending-PO flow writing to
+            inventory_stock/inventory_movements) running alongside Vendor Challans' own
+            ordering flow, the actual mechanism behind "why doesn't this number match"
+            bugs. new_store_stock (with thresholds + batch issue, Stage 6) now covers
+            everything this role actually needs day-to-day; Owner's "BK & Store" dropdown
+            keeps the old screens reachable for historical reference. */}
+      {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "new_store_stock", label: "📦 Store Stock" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}</div>
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       {storeView === "bk" && <BaseKitchen />}
       {storeView === "dispatch" && <Dispatch />}
       {storeView === "demands" && <DemandHistory />}
-      {storeView === "inventory" && <Inventory />}
-      {storeView === "bk_closing" && <BKClosingStock />}
+      {storeView === "new_store_stock" && <StoreInventoryStock />}
       {storeView === "bk_closing_wastage" && <BKClosingWastage />}
       {storeView === "bk_audit" && <BKAudit />}
       {storeView === "sales" && <SalesUpload />}

@@ -44,9 +44,20 @@ ananda-cafe/
   - Vada Batter: 1 Batch = 2 Kg (but vada batter is demanded in Kg, not Batch)
   - Fortune Refined Oil: 1 Tin = 15 Kg
   - Desi Ghee: 1 Tin = 15 Kg
-- `inventory_items` — BK inventory items (id, name, category, demand_item_id)
 - `qty_corrections` — Audit log for quantity edits
-- `app_users` — User accounts with roles (owner, store_mgr, outlet_mgr)
+- `app_users` — User accounts with roles (owner, store_mgr, outlet_mgr, bk_manager, avp, driver, ...)
+
+### Store Inventory Module (CANONICAL for all current stock/purchasing — use these, not the retired tables below)
+- `items` — item master (id, name, category, base_unit, active, demand_item_id, raw_material_id, rate_card_id, reorder_threshold)
+- `item_units` — purchase/issue unit conversion factors per item (item_id, unit, factor)
+- `locations` — exactly `store` and `bk`; outlets are consume-only, not a tracked location here
+- `stock_movements` — append-only ledger (item_id, location_id, movement_type: RECEIPT/DISPATCH/WASTAGE/ADJUSTMENT/OPENING/TRANSFER, qty_delta, reason, idempotency_key). Source of truth.
+- `store_stock_balances` — rebuildable cache of `stock_movements`, keyed (item_id, location_id). Never edit directly — always via a movement + rebuild.
+- `vendors`, `vendor_challans`, `vendor_challan_items` — receiving flow: create a draft challan → upload bill/no-bill-reason → receive (writes RECEIPT movements + feeds `rate_card_prices`)
+- `stock_counts`, `stock_count_items` — blind physical count → submit → writes an ADJUSTMENT movement reconciling the ledger to the counted number
+- Backend: `backend/src/routes/store.js` (stock read, thresholds, adjust/adjust-batch), `vendorChallans.js` (challans), `stockCounts.js` (counts). Frontend: `StoreInventoryStock.jsx`, `VendorChallans.jsx`, `StoreClosingCount.jsx`.
+
+**Retired (do not build new features against these — historical/read-only only)**: `inventory_items`, `inventory_stock`, `inventory_movements`, `bk_closing_stock` (backend: `inventory.js`, mounted at `/api/inventory`; frontend: `Inventory`, `BKClosingStock` components). These were the live stock ledger until Stage 6 of the Store Inventory Module migration (2026-08-27) — kept reachable ONLY from the Owner's "BK & Store" dropdown (`BKAudit`/`BKStoreAudit`/`InventoryLedger`/`MonthlyInventory` are deliberately-old-data reconciliation tools comparing pre-migration history, not live numbers) and NOT in bk_manager/avp/store_mgr's day-to-day nav. If you're adding a new stock-in/stock-out/purchasing feature, it belongs in the Store Inventory Module above — a second write path against the old tables is exactly how BK Store Audit's numbers went wrong before (two live ledgers silently diverging). `purchase_orders` ("Order Challan") is a separate, still-live real-purchase-order system (Grocery/Vegetables ordering) merged read+backfill-editable into the Vendor Challans screen — not the same thing as the retired inventory tables above.
 
 ## Key Architecture Decisions
 
@@ -106,8 +117,8 @@ Consumed = (Yesterday Closing + Today Dispatched) - Today Wastage - Today Closin
 - qty-edit endpoint allows both owner and store_mgr
 
 ### Inventory
-- Tracked manually, NOT auto-deducted from dispatch
-- Separate from the demand→dispatch→P&L flow
+- Live current stock (Store + BK) is `store_stock_balances`, driven entirely by `stock_movements` — see "Store Inventory Module" under Database Tables above. NOT auto-deducted from outlet dispatch (outlets are consume-only, not a tracked location); BK's own demand-from-Store IS tracked (writes a DISPATCH movement).
+- The plain `inventory_*` tables are retired — see the note above before touching them.
 
 ## Frontend Structure (App.jsx)
 
