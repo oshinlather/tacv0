@@ -7552,11 +7552,20 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     demands.forEach((d) => {
       const dItems = d.items || {};
       const dispItems = d.dispatch_items || null;
+      const dUnits = d.items_units || {};
       const ids = new Set([...Object.keys(dItems), ...Object.keys(dispItems || {})]);
       ids.forEach((id) => {
-        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false };
+        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, dispatchRecords: [] };
         merged[id].qty += Number(dItems[id]) || 0;
-        if (dispItems) { merged[id].hasDispatch = true; merged[id].dispatchedQty += Number(dispItems[id]) || 0; }
+        if (dispItems && dispItems[id] != null) {
+          const q = Number(dispItems[id]) || 0;
+          merged[id].hasDispatch = true;
+          merged[id].dispatchedQty += q;
+          // Kept per-record (not just summed into dispatchedQty) so each record's OWN
+          // items_units override converts correctly below — a month can straddle a unit
+          // change for the same item (e.g. Batch before Aug 11 2026, Kg after).
+          merged[id].dispatchRecords.push({ qty: q, unit: dUnits[id] || null });
+        }
       });
     });
     return Object.entries(merged).map(([id, data]) => {
@@ -7568,12 +7577,24 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       // in Kg), so it's treated exactly like a Kg-priced rate for the unit conversion below.
       const bkCost = !rate ? bkRecipeCosts[id] : null;
       const displayUnit = def?.unit || rate?.unit || (bkCost ? 'Kg' : '');
-      let rateUnit = displayUnit, unitPrice = 0, convFactor = 1;
-      if (rate) { unitPrice = Number(rate.price); rateUnit = rate.unit || displayUnit; convFactor = getUnitConv(displayUnit, rateUnit, id); }
-      else if (bkCost && bkCost.costPerKg > 0) { unitPrice = Number(bkCost.costPerKg); rateUnit = 'Kg'; convFactor = getUnitConv(displayUnit, 'Kg', id); }
+      let rateUnit = displayUnit, unitPrice = 0;
+      if (rate) { unitPrice = Number(rate.price); rateUnit = rate.unit || displayUnit; }
+      else if (bkCost && bkCost.costPerKg > 0) { unitPrice = Number(bkCost.costPerKg); rateUnit = 'Kg'; }
       // Billed on what was actually dispatched (supplied), not just demanded
       const computedDispatchQty = data.hasDispatch ? Math.round(data.dispatchedQty * 100) / 100 : null;
       const computedRate = Math.round(unitPrice * 100) / 100;
+
+      // Convert and sum PER RECORD using that record's own items_units override — was
+      // summing raw qty across every record first and applying ONE conversion factor off
+      // the item's stale catalog-default unit ("Batch" for Dosa/Idli/Vada Batter, even
+      // though they've been demanded in Kg since Aug 11, 2026 — see CLAUDE.md). Any record
+      // actually recorded in Kg got silently treated as Batch and multiplied by 9x/8x on
+      // top of itself — the exact same bug already found and fixed server-side in
+      // computeBkPurchaseByOutlet/computeBkPurchaseDetail/franchise-billing's own
+      // bk_share_ratio calc. This was the one remaining copy — and the one that actually
+      // fed every number this whole page (and everything built on top of it this session:
+      // Pricing Breakdown, Final Price, category markup) has been showing.
+      const dispatchQtyInRateUnit = data.dispatchRecords.reduce((s, r) => s + r.qty * getUnitConv(r.unit || displayUnit, rateUnit, id), 0);
 
       // Apply local-only corrections (this bill only — never touches demands or rate_card)
       const edit = edits[id] || {};
@@ -7581,7 +7602,10 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       const rateEdited = edit.rate !== undefined;
       const billedQty = qtyEdited ? Number(edit.qty) || 0 : (computedDispatchQty ?? 0);
       const billedRate = rateEdited ? Number(edit.rate) || 0 : computedRate;
-      const amount = billedQty * convFactor * billedRate;
+      // A manual qty correction overrides the TOTAL directly, so there's no per-record
+      // breakdown left to convert individually — falls back to one conversion factor off
+      // the catalog's default unit, same as before, only for this explicitly-edited case.
+      const amount = qtyEdited ? billedQty * getUnitConv(displayUnit, rateUnit, id) * billedRate : dispatchQtyInRateUnit * billedRate;
 
       const sec = DEMAND_SECTIONS.find((s) => s.items.some((si) => si.id === id));
       return {
