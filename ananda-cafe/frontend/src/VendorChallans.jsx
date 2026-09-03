@@ -189,6 +189,12 @@ function LegacyOrderDetail({ id, onBack }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({}); // itemId -> { bought_qty, received_qty, total_price } strings
   const [saving, setSaving] = useState(false);
+  // Sortable columns — click a header to sort, click again to flip direction. Same
+  // toggle convention used elsewhere (Rate Alert, Item-wise Sales): first click on a
+  // column is descending, nulls (no price yet, mostly) always sort last regardless of
+  // direction so unpriced items don't scatter to the top of a descending Price sort.
+  const [sort, setSort] = useState({ key: null, dir: "desc" });
+  const toggleSort = (key) => setSort((s) => s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
 
   const load = () => api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message));
   useEffect(load, [id]);
@@ -197,6 +203,20 @@ function LegacyOrderDetail({ id, onBack }) {
   if (!po) return <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>;
 
   const items = Object.entries(po.items || {}).map(([itemId, it]) => ({ itemId, ...it }));
+  const sortedItems = (() => {
+    if (!sort.key) return items;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const field = { item: "name", ordered: "order_qty", price: "total_price" }[sort.key];
+    return [...items].sort((a, b) => {
+      const av = a[field], bv = b[field];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "string") return av.localeCompare(bv) * dir;
+      return (av - bv) * dir;
+    });
+  })();
+  const sortArrow = (key) => <span style={{ marginLeft: 4, fontSize: 9, color: sort.key === key ? "#1A1A1A" : "#CCC" }}>{sort.key === key ? (sort.dir === "desc" ? "▼" : "▲") : "⇅"}</span>;
   const anyPrice = items.some((it) => it.total_price != null);
   const grandTotal = items.reduce((sum, it) => sum + (Number(it.total_price) || 0), 0);
   const s = STATUS_COLORS[po.status === "received" ? "received" : po.status === "cancelled" ? "cancelled" : "draft"];
@@ -256,13 +276,13 @@ function LegacyOrderDetail({ id, onBack }) {
 
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, overflow: "hidden" }}>
         <div style={{ display: "flex", padding: "8px 14px", background: "#FAFAF8", fontSize: 10, fontWeight: 800, color: "#888", borderBottom: "1px solid #F0F0EE" }}>
-          <div style={{ flex: 2 }}>ITEM</div>
-          <div style={{ flex: 1, textAlign: "right" }}>ORDERED</div>
+          <div style={{ flex: 2, cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort("item")}>ITEM{sortArrow("item")}</div>
+          <div style={{ flex: 1, textAlign: "right", cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort("ordered")}>ORDERED{sortArrow("ordered")}</div>
           <div style={{ flex: 1, textAlign: "right" }}>BOUGHT</div>
           <div style={{ flex: 1, textAlign: "right" }}>RECEIVED</div>
-          <div style={{ flex: editing ? "1 1 100px" : 1, textAlign: "right" }}>PRICE (₹)</div>
+          <div style={{ flex: editing ? "1 1 100px" : 1, textAlign: "right", cursor: "pointer", userSelect: "none" }} onClick={() => toggleSort("price")}>PRICE (₹){sortArrow("price")}</div>
         </div>
-        {items.map((it, idx) => {
+        {sortedItems.map((it, idx) => {
           const bought = it.bought_qty != null ? it.bought_qty : it.received_qty;
           const perUnit = it.total_price != null && bought > 0 ? it.total_price / bought : null;
           const d = draft[it.itemId] || {};
