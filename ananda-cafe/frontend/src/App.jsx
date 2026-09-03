@@ -10001,11 +10001,18 @@ const OutletMgr = ({ onBack }) => {
   // real weight). Kg makes the leftover amount, and therefore the consumed-material "gas
   // used today" figure, actually meaningful. Demand/dispatch stay in Pcs — BK only ever
   // sends whole cylinders. unit_conversions: 1 Pcs = 19 Kg (added 2026-08-14).
-  const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Ltr", gas_cylinder: "Kg" };
+  const CLOSING_STOCK_UNIT_DEFAULTS = { desi_ghee: "Kg", fortune_refined: "Kg", gas_cylinder: "Kg" };
+  // Desi Ghee & Fortune Refined Oil are reported by leftover WEIGHT (Kg) only in closing
+  // stock — no Tin/Ltr picker at all. Ordering still uses Tin (see DEMAND_SECTIONS), but a
+  // closing count in Tin silently 15x-inflated the next day's consumed-material figure, so
+  // the unit is locked to Kg here rather than merely defaulted (a manager can't flip it).
+  const CLOSING_STOCK_FIXED_UNIT = { desi_ghee: "Kg", fortune_refined: "Kg" };
   // Renders either a plain unit label (single unit) or a dropdown (item has an alternate
   // unit via unit_conversions, e.g. Desi Ghee: Tin or Kg)
-  const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState, allowBatch = true }) => {
-    const options = getUnitOptions(itemId, defaultUnit, allowBatch);
+  const UnitPicker = ({ itemId, defaultUnit, initialUnit, unitsState, setUnitsState, allowBatch = true, fixedUnit = null }) => {
+    // fixedUnit locks the item to a single unit with no picker at all (e.g. closing-stock
+    // Desi Ghee / Fortune Refined forced to Kg), overriding any unit_conversions alternate.
+    const options = fixedUnit ? [fixedUnit] : getUnitOptions(itemId, defaultUnit, allowBatch);
     const forced = options.length === 1 ? options[0] : null;
     // Batch forced to Kg with no picker shown — still record it into the same units
     // state a manual pick would, so the submission tags this item's qty as Kg. Without
@@ -11105,7 +11112,7 @@ const OutletMgr = ({ onBack }) => {
       <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: idx < arr.length - 1 ? "1px solid #F0F0EC" : "none", background: isFilled ? "#F0FDF4" : "#fff" }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{item.name}</span>
         <input type="number" inputMode="decimal" min="0" step="0.1" placeholder="—" value={closing[item.id] ?? ""} onChange={(e) => setClosing((p) => ({ ...p, [item.id]: e.target.value === "" ? "" : Math.max(0, +e.target.value || 0) }))} style={{ width: 60, padding: "6px", borderRadius: 8, border: isFilled ? "2px solid #16A34A" : "1px solid #E0E0DC", background: "#fff", fontSize: 15, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-        <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} allowBatch={false} />
+        <UnitPicker itemId={bareId} defaultUnit={item.unit} initialUnit={CLOSING_STOCK_UNIT_DEFAULTS[bareId]} unitsState={closingUnits} setUnitsState={setClosingUnits} allowBatch={false} fixedUnit={CLOSING_STOCK_FIXED_UNIT[bareId]} />
       </div>); };
     return (<div><SavingOverlay /><Toast />
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📊 Closing Stock</div><span style={{ fontSize: 12, fontWeight: 700, color: canSubmit ? "#16A34A" : "#999" }}>{allFilled} filled</span></div>
@@ -16035,6 +16042,161 @@ const MonthlyInventory = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  MONTHLY SALES MATRIX — every Daily Sales header row (Total Sale, Swiggy, Zomato,
+//  Store Sale, UPI/Cash, Closing Cash, etc.) as a ROW, every day of the month as a
+//  COLUMN, one outlet at a time — same rows=metric/columns=day orientation as
+//  MonthlyInventory above, but for daily_outlet_sales instead of stock movements, so an
+//  owner can review a whole month without clicking through the per-day Daily Sales
+//  screen one date at a time. Reuses the exact same GET /outlet-sales range fetch
+//  CashLedger already calls, and mirrors that screen's own store_sale/closing_cash
+//  formulas exactly (both are derived, not stored columns) — see the per-day "Daily
+//  Sales" screen (screen === "daily_sales") for the source of truth on both.
+// ═════════════════════════════════════════════════════════════════════════════
+const MonthlySalesMatrix = () => {
+  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || null);
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const isCurrentMonth = selMonth === today().slice(0, 7);
+  const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
+  const dayNums = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const dates = dayNums.map((d) => `${selMonth}-${String(d).padStart(2, "0")}`).filter((d) => !isCurrentMonth || d <= today());
+  const todayDay = Number(today().slice(8, 10));
+
+  useEffect(() => {
+    if (!selOutlet) return;
+    setLoading(true);
+    const lastDate = `${selMonth}-${String(new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
+    api.getOutletSales({ outlet_id: selOutlet, from: `${selMonth}-01`, to: lastDate })
+      .then((data) => setRows(data || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [selOutlet, selMonth]);
+
+  const rowByDate = {}; rows.forEach((r) => { rowByDate[r.date] = r; });
+  const n = (v) => Number(v) || 0;
+
+  // Same field set + formulas as the per-day Daily Sales screen (screen === "daily_sales"
+  // above) — store_sale and closing_cash are always derived, never stored columns.
+  const computed = (date) => {
+    const r = rowByDate[date];
+    if (!r) return null;
+    const deliverySale = n(r.swiggy_sale) + n(r.zomato_sale) + n(r.other_delivery_sale);
+    const storeSale = Math.max(0, n(r.total_sale) - deliverySale - n(r.cancelled_orders) - n(r.complimentary_amount));
+    const effectivePayment = n(r.upi_collected) + n(r.cash_collected) - n(r.zomato_district);
+    const paymentDiff = storeSale - effectivePayment;
+    const closingCash = n(r.prev_day_cash) + n(r.cash_collected) - n(r.cash_expense) - n(r.cash_deposited);
+    return { r, storeSale, paymentDiff, closingCash };
+  };
+
+  // summable: true means the MTH total column sums it across the month (a real flow —
+  // sales, payments). Running-balance fields (prev/closing cash) and the match-diff
+  // don't have a meaningful month sum, so they show "—" there instead.
+  const METRIC_ROWS = [
+    { section: "Sales" },
+    { key: "total_sale", label: "Total Sale (Billing)", get: (c) => n(c.r.total_sale), summable: true },
+    { key: "swiggy_sale", label: "Swiggy", get: (c) => n(c.r.swiggy_sale), summable: true },
+    { key: "zomato_sale", label: "Zomato", get: (c) => n(c.r.zomato_sale), summable: true },
+    { key: "other_delivery_sale", label: "Other Delivery", get: (c) => n(c.r.other_delivery_sale), summable: true },
+    { key: "cancelled_orders", label: "− Cancelled Orders", get: (c) => n(c.r.cancelled_orders), summable: true, color: "#DC2626" },
+    { key: "complimentary_amount", label: "− Complimentary Order", get: (c) => n(c.r.complimentary_amount), summable: true, color: "#DC2626" },
+    { key: "store_sale", label: "🏪 Store Sale", get: (c) => c.storeSale, summable: true, bold: true, color: "#16A34A" },
+    { section: "Payment (Store Sale)" },
+    { key: "upi_collected", label: "UPI Collected", get: (c) => n(c.r.upi_collected), summable: true },
+    { key: "cash_collected", label: "Cash Collected", get: (c) => n(c.r.cash_collected), summable: true },
+    { key: "zomato_district", label: "− Paid by Zomato District", get: (c) => n(c.r.zomato_district), summable: true, color: "#7C3AED" },
+    { key: "payment_diff", label: "Match Diff (Store Sale − Payment)", get: (c) => c.paymentDiff, summable: false, color: (v) => v === 0 ? "#16A34A" : "#DC2626" },
+    { section: "Cash Management" },
+    { key: "prev_day_cash", label: "Previous Day Cash", get: (c) => n(c.r.prev_day_cash), summable: false },
+    { key: "today_cash", label: "+ Today Cash", get: (c) => n(c.r.cash_collected), summable: true, color: "#16A34A" },
+    { key: "cash_expense", label: "− Cash Expense (legacy)", get: (c) => n(c.r.cash_expense), summable: true, color: "#B45309" },
+    { key: "cash_deposited_row", label: "− Cash Deposited", get: (c) => n(c.r.cash_deposited), summable: true },
+    { key: "closing_cash", label: "💰 Closing Cash", get: (c) => c.closingCash, summable: false, bold: true, color: (v) => v >= 0 ? "#B45309" : "#DC2626" },
+  ];
+
+  const mthTotal = (metric) => {
+    if (!metric.summable) return null;
+    return dates.reduce((s, d) => { const c = computed(d); return s + (c ? metric.get(c) : 0); }, 0);
+  };
+
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const cellStyle = { padding: "6px 5px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, whiteSpace: "nowrap" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📅 Monthly Sales — {outletName}</h3>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <select value={selOutlet || ""} onChange={(e) => setSelOutlet(e.target.value)} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", background: "#fff" }}>
+            {OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </select>
+          <input type="month" value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit" }} />
+          <ExportBtn onClick={() => {
+            const headers = ["Metric", "Month Total", ...dates];
+            const csvRows = METRIC_ROWS.filter((m) => !m.section).map((m) => {
+              const total = mthTotal(m);
+              return [m.label, total == null ? "" : Math.round(total), ...dates.map((d) => { const c = computed(d); return c ? Math.round(m.get(c)) : ""; })];
+            });
+            exportCSV(headers, csvRows, `monthly_sales_${selOutlet}_${selMonth}.csv`);
+          }} />
+        </div>
+      </div>
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+      ) : (
+        <div style={{ overflowX: "auto", background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "100%" }}>
+            <thead>
+              <tr style={{ background: "#FAFAF8" }}>
+                <th style={{ padding: "8px 10px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#666", borderBottom: "2px solid #E0E0DC", position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2, minWidth: 180 }}>Metric</th>
+                <th style={{ padding: "8px 6px", textAlign: "right", fontSize: 9, fontWeight: 700, color: "#B45309", borderBottom: "2px solid #E0E0DC", minWidth: 60 }}>Month Total</th>
+                {dayNums.map((d) => {
+                  const date = `${selMonth}-${String(d).padStart(2, "0")}`;
+                  const hasData = !!rowByDate[date];
+                  return (
+                    <th key={d} style={{ padding: "8px 4px", textAlign: "center", fontSize: 9, fontWeight: isCurrentMonth && d === todayDay ? 800 : 600, color: isCurrentMonth && d === todayDay ? "#1A1A1A" : hasData ? "#999" : "#DDD", borderBottom: "2px solid #E0E0DC", minWidth: 44, background: isCurrentMonth && d === todayDay ? "#FFFBEB" : "#FAFAF8" }}>{d}</th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {METRIC_ROWS.map((m, i) => {
+                if (m.section) {
+                  return (
+                    <tr key={`sec-${i}`}>
+                      <td colSpan={2 + dayNums.length} style={{ padding: "6px 10px", fontSize: 10, fontWeight: 700, color: "#888", textTransform: "uppercase", letterSpacing: 0.5, background: "#FAFAF8", position: "sticky", left: 0, borderTop: i > 0 ? "1px solid #E8E8E4" : "none" }}>{m.section}</td>
+                    </tr>
+                  );
+                }
+                const total = mthTotal(m);
+                const totalColor = typeof m.color === "function" ? m.color(total) : m.color;
+                return (
+                  <tr key={m.key} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ padding: "6px 10px", fontWeight: m.bold ? 700 : 500, fontSize: 11, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap", color: typeof m.color === "function" ? "#555" : (m.color || "#555") }}>{m.label}</td>
+                    <td style={{ ...cellStyle, fontWeight: 800, color: total == null ? "#DDD" : (totalColor || "#1A1A1A") }}>{total == null ? "—" : fmt(Math.round(total))}</td>
+                    {dayNums.map((d) => {
+                      const date = `${selMonth}-${String(d).padStart(2, "0")}`;
+                      const c = computed(date);
+                      if (!c) return <td key={d} style={{ ...cellStyle, color: "#EEE" }}>—</td>;
+                      const v = m.get(c);
+                      const vColor = typeof m.color === "function" ? m.color(v) : m.color;
+                      return (
+                        <td key={d} style={{ ...cellStyle, fontWeight: m.bold ? 700 : 500, background: isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent", color: vColor || "#333" }}>{Math.round(v)}</td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  BK DAILY CLOSING STOCK — physical count vs system running balance, the audit
 //  leg outlets already have (closing_stocks + RM Audit) that Base Kitchen never did.
 //  Each row pre-fills with the system's current qty so counting is "confirm or
@@ -16513,6 +16675,13 @@ const FINANCE_EXPENSE_COLS = [
   // deliberately simplified "don't focus on closing and wastage" view) — see
   // computeWastageCostByOutlet in finance.js.
   { key: "wastage", label: "Wastage" },
+  // Cash the outlet manager spends directly on Dairy/Cold Drink (Butter, Cheese, Paneer,
+  // Milk, Cold Drinks, Water Bottles — never dispatched from Base Kitchen), from the daily
+  // Purchases punch. Under BK Purchase basis this is Dairy + Cold Drink combined (neither
+  // leg is in bk_purchase at all); under Consumption basis it's Cold Drink ONLY — Dairy
+  // purchases are already folded into that basis's own material-cost figure, so adding
+  // them again here would double-count (see computeDairyColdDrinkByOutlet in finance.js).
+  { key: "dairy_cold_drink", label: "Dairy/Cold Drink" },
   { key: "bk_fixed_share", label: "BK Fixed Share" },
   { key: "rent", label: "Rent" },
   { key: "salary", label: "Salary" },
@@ -18767,7 +18936,7 @@ export default function AnandaCafe() {
       <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
@@ -18842,6 +19011,7 @@ export default function AnandaCafe() {
           { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
           { id: "custodian_ledger", label: "👤 Custodian Ledger", sub: "Ravinder / Sahil / Ganga" },
           { id: "books_ledger", label: "📚 Books", sub: "Expense ledger from TAC - Books" },
+          { id: "monthly_sales", label: "📅 Monthly Sales", sub: "One outlet, whole month, one view" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setPaymentsDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -18892,7 +19062,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
@@ -18901,6 +19071,7 @@ export default function AnandaCafe() {
       {ownerTab === "cash_ledger" && <CashLedger />}
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
+      {ownerTab === "monthly_sales" && <MonthlySalesMatrix />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "finance" && <FinancePnL />}
       {ownerTab === "demands" && <DemandHistory />}

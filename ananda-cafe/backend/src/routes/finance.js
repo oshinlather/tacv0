@@ -203,6 +203,33 @@ async function computeWastageCostByOutlet(from, to, costingContext) {
   return byOutlet;
 }
 
+// Dairy/Cold Drink Purchase — cash the outlet manager spends directly (Butter, Cheese,
+// Paneer, Milk, Cold Drinks, Water Bottles — never dispatched from Base Kitchen), logged
+// via the daily Purchases punch. Was invisible from this whole P&L: under BK Purchase
+// basis neither leg is counted at all (bk_purchase only reflects what BK dispatched);
+// under Consumption basis, Dairy items ARE already folded into total_used_cost
+// (computeStockUsageForDate treats a dairy purchase as a second inbound leg alongside
+// Dispatched, since it resolves to a real rate-card item — see that function's own
+// "purchasedEntries" comment), but Cold Drink items have no rate-card price to cost a
+// "used" quantity against, so they're excluded there too, always. So: under bk_purchase
+// basis this line is Dairy + Cold Drink (both fully missing otherwise); under consumption
+// basis it's Cold Drink ONLY (adding Dairy again here would double-count it).
+async function computeDairyColdDrinkByOutlet(from, to, basis) {
+  const { data: rows, error } = await supabase.from("purchases").select("outlet_id, items").gte("date", from).lte("date", to);
+  if (error) throw error;
+  const byOutlet = {};
+  (rows || []).forEach((p) => {
+    (p.items || []).forEach((i) => {
+      const isDairy = i.type === "dairy_purchase";
+      const isColdDrink = i.type === "cold_drink_purchase";
+      if (!isDairy && !isColdDrink) return;
+      if (basis === "consumption" && isDairy) return; // already inside total_used_cost
+      byOutlet[p.outlet_id] = (byOutlet[p.outlet_id] || 0) + (Number(i.amount) || 0);
+    });
+  });
+  return byOutlet;
+}
+
 // ── GET /api/finance/commission-pct — the single editable delivery-commission rate
 // (Swiggy/Zomato charge ~40%; kept editable since aggregators renegotiate this).
 router.get("/commission-pct", async (req, res) => {
@@ -258,6 +285,7 @@ router.get("/outlet-pnl", async (req, res) => {
     // adding it back as its own line it would vanish from the P&L entirely instead of
     // showing up as a real expense.
     const wastageByOutlet = basis === "consumption" ? await computeWastageCostByOutlet(from, to, costingContext) : {};
+    const dairyColdDrinkByOutlet = await computeDairyColdDrinkByOutlet(from, to, basis);
 
     const round = (n) => Math.round(n || 0);
 
@@ -286,6 +314,7 @@ router.get("/outlet-pnl", async (req, res) => {
 
       const bkPurchase = round(materialCostByOutlet[oid] || 0);
       const wastage = round(wastageByOutlet[oid] || 0);
+      const dairyColdDrink = round(dairyColdDrinkByOutlet[oid] || 0);
       const bkFixedShare = round(totalMaterialCostAllOutlets > 0
         ? bkFixedTotalProrated * (materialCostByOutlet[oid] || 0) / totalMaterialCostAllOutlets
         : bkFixedTotalProrated / OUTLET_IDS.length);
@@ -299,7 +328,7 @@ router.get("/outlet-pnl", async (req, res) => {
       Object.keys(fixed).forEach((k) => { fixed[k] = round(fixed[k]); });
       const totalFixed = Object.values(fixed).reduce((s, v) => s + v, 0);
 
-      const totalExpense = bkPurchase + wastage + bkFixedShare + totalFixed;
+      const totalExpense = bkPurchase + wastage + dairyColdDrink + bkFixedShare + totalFixed;
       const netPnl = round(effectiveSale - totalExpense);
       const marginPct = effectiveSale > 0 ? Math.round((netPnl / effectiveSale) * 1000) / 10 : null;
 
@@ -307,12 +336,12 @@ router.get("/outlet-pnl", async (req, res) => {
         outlet_id: oid,
         total_sale: round(totalSale), delivery_sale: round(deliverySale),
         delivery_commission: deliveryCommission, effective_sale: effectiveSale,
-        bk_purchase: bkPurchase, wastage, bk_fixed_share: bkFixedShare, ...fixed,
+        bk_purchase: bkPurchase, wastage, dairy_cold_drink: dairyColdDrink, bk_fixed_share: bkFixedShare, ...fixed,
         total_expense: round(totalExpense), net_pnl: netPnl, margin_pct: marginPct,
       };
     });
 
-    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "wastage", "bk_fixed_share", "rent", "salary", "electricity", "gst", "misc", "total_expense", "net_pnl"];
+    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "wastage", "dairy_cold_drink", "bk_fixed_share", "rent", "salary", "electricity", "gst", "misc", "total_expense", "net_pnl"];
     const totals = { outlet_id: "all" };
     SUM_KEYS.forEach((k) => { totals[k] = round(outlets.reduce((s, o) => s + o[k], 0)); });
     totals.margin_pct = totals.effective_sale > 0 ? Math.round((totals.net_pnl / totals.effective_sale) * 1000) / 10 : null;
