@@ -55,7 +55,26 @@ router.get("/challans", async (req, res) => {
   if (vendor_id) query = query.eq("vendor_id", vendor_id);
   const { data, error } = await query.limit(200);
   if (error) return res.status(500).json({ error: error.message });
-  res.json((data || []).map((c) => ({ ...c, vendor_name: c.vendors?.name || null, vendors: undefined })));
+
+  // Each challan's item categories — VendorChallans.jsx's category filter pills (built
+  // from legacy purchase_orders' own per-item categories, see normalizeLegacyPO) apply the
+  // exact same `(c.categories || []).includes(category)` check uniformly across BOTH
+  // legacy orders and these rows. Without this, every row here always has categories===
+  // undefined -> [] -> .includes() always false -> a real, received challan (like a
+  // "Grocery & Masala" delivery) shows up under "All" but silently vanishes the instant
+  // any category pill is clicked, looking exactly like the challan went missing.
+  const challanIds = (data || []).map((c) => c.id);
+  const categoriesByChallanId = {};
+  if (challanIds.length) {
+    const { data: lines } = await supabase.from("vendor_challan_items").select("challan_id, items(category)").in("challan_id", challanIds);
+    (lines || []).forEach((l) => {
+      const cat = l.items?.category;
+      if (!cat) return;
+      (categoriesByChallanId[l.challan_id] ||= new Set()).add(cat);
+    });
+  }
+
+  res.json((data || []).map((c) => ({ ...c, vendor_name: c.vendors?.name || null, vendors: undefined, categories: [...(categoriesByChallanId[c.id] || [])] })));
 });
 
 // GET /:id — full detail incl. items and a freshly-signed bill photo URL (never store a

@@ -131,7 +131,12 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   }, [challans, legacy, status, category]);
   merged.sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
   const loaded = challans !== null && legacy !== null;
-  const availableCategories = useMemo(() => [...new Set((legacy || []).flatMap((c) => c.categories || []))].sort(), [legacy]);
+  // Was legacy-only — a category that only ever appears on new-system vendor_challans
+  // (e.g. a "Grocery & Masala" vendor's items individually categorized "Food", not
+  // "Grocery" — the vendor bucket name and the item's own category are two different
+  // things) would have no pill to filter by at all, leaving that challan visible under
+  // "All" but permanently unreachable through any category filter.
+  const availableCategories = useMemo(() => [...new Set([...(challans || []), ...(legacy || [])].flatMap((c) => c.categories || []))].sort(), [challans, legacy]);
 
   return (
     <div>
@@ -393,25 +398,27 @@ function LegacyOrderDetail({ id, onBack }) {
             </div>
           );
         })}
-        {/* Add-item typeahead — type to search the store item master (no free-typed names,
-            so nothing gets misspelled), pick one to add it with its own qty + price. */}
-        {editing && (
-          <div style={{ padding: "10px 14px", borderTop: "1px solid #F0F0EE", position: "relative" }}>
-            <input value={addQuery} onChange={(e) => setAddQuery(e.target.value)} placeholder="+ Add an item received but not ordered — type to search…" style={inputStyle} />
-            {suggestions.length > 0 && (
-              <div style={{ position: "absolute", left: 14, right: 14, top: 48, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 240, overflowY: "auto" }}>
-                {suggestions.map((i) => (
-                  <div key={i.id} onClick={() => addItem(i)} style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid #F5F5F3" }}>
-                    {i.name} <span style={{ fontSize: 10, color: "#999" }}>· {i.base_unit || i.unit || ""}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {addQuery.trim() && suggestions.length === 0 && <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>No matching item in the store master — it must be added there first.</div>}
-          </div>
-        )}
         {anyPrice && !editing && <div style={{ padding: "10px 14px", textAlign: "right", fontSize: 14, fontWeight: 800, borderTop: "1px solid #F0F0EE" }}>Total: {fmtMoney(grandTotal)}</div>}
       </div>
+
+      {/* Add-item typeahead — deliberately OUTSIDE the table's overflow:hidden wrapper above,
+          so its suggestion dropdown isn't clipped (it used to only show a sliver). Type to
+          search the store item master (no free-typed names, so nothing gets misspelled). */}
+      {editing && (
+        <div style={{ marginTop: 10, position: "relative" }}>
+          <input value={addQuery} onChange={(e) => setAddQuery(e.target.value)} placeholder="+ Add an item received but not ordered — type to search…" style={inputStyle} />
+          {suggestions.length > 0 && (
+            <div style={{ position: "absolute", left: 0, right: 0, top: 46, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 260, overflowY: "auto" }}>
+              {suggestions.map((i) => (
+                <div key={i.id} onClick={() => addItem(i)} style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid #F5F5F3" }}>
+                  {i.name} <span style={{ fontSize: 10, color: "#999" }}>· {i.base_unit || i.unit || ""}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {addQuery.trim() && suggestions.length === 0 && <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>No matching item in the store master — it must be added there first.</div>}
+        </div>
+      )}
     </div>
   );
 }
