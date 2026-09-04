@@ -18699,7 +18699,10 @@ const ScopedDashboard = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 const FRANCHISE_TABS = [
   { id: "pnl", label: "💰 P&L" },
-  { id: "sales", label: "📤 Sales" },
+  // "Sales" (Item-wise Sales / SalesUpload) deliberately hidden for now — its per-dish
+  // Cost/Margin column runs through a separate costing engine (computeAllDishCosts) that
+  // has no per-outlet Final Price awareness yet, unlike P&L/RM Audit/Billing here, which
+  // are all wired to the franchise's own Final Price. Re-add once that's closed too.
   { id: "audit", label: "🔍 RM Audit" },
   { id: "billing", label: "🧾 Order Challans" },
 ];
@@ -18724,7 +18727,6 @@ const FranchiseDashboard = () => {
     <div style={{ maxWidth: tab === "billing" ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
       {!outletId && <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>No outlet assigned to this account — contact the owner.</div>}
       {outletId && tab === "pnl" && <DailyPnL lockedOutlet={outletId} />}
-      {outletId && tab === "sales" && <SalesUpload lockedOutlet={outletId} />}
       {outletId && tab === "audit" && <RMAuditPanel lockedOutlet={outletId} />}
       {outletId && tab === "billing" && <FranchiseBilling lockedOutlet={outletId} />}
     </div>

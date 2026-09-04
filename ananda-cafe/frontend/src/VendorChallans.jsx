@@ -223,7 +223,14 @@ function LegacyOrderDetail({ id, onBack }) {
   const [sort, setSort] = useState({ key: null, dir: "desc" });
   const toggleSort = (key) => setSort((s) => s.key === key ? { key, dir: s.dir === "desc" ? "asc" : "desc" } : { key, dir: "desc" });
 
-  const load = () => api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message));
+  // Block body (not `() => api...then...catch(...)`) is deliberate — an expression-body
+  // arrow function here would return the promise chain itself, and passed straight to
+  // useEffect as its effect callback, React treats ANY non-undefined return value as a
+  // cleanup function and calls it on unmount — crashing with "destroy is not a function"
+  // every single time this screen was left via Back, since a Promise obviously isn't
+  // callable. Block body with no `return` makes `load()` return undefined instead, which
+  // is what an effect callback (and .then(load) at various call sites below) both expect.
+  const load = () => { api.getPurchaseOrder(id).then(setPo).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
 
   if (error) return <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>;
@@ -737,7 +744,10 @@ function ChallanDetail({ id, onBack }) {
   const [editing, setEditing] = useState({}); // item_id -> { qty_entered, unit_price } draft while typing
   const saveTimer = useRef(null);
 
-  const load = () => api.getChallan(id).then(setChallan).catch((e) => setError(e.message));
+  // Block body — see the identical fix + comment on LegacyOrderDetail's own `load` above.
+  // Same bug, same shape: an expression-body arrow here returns the promise chain, which
+  // useEffect below wrongly treats as its unmount cleanup function and tries to call.
+  const load = () => { api.getChallan(id).then(setChallan).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
 
   const editLine = (itemId, patch) => {
