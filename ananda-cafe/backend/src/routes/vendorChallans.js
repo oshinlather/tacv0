@@ -12,7 +12,7 @@ const supabase = require("../supabase");
 const { todayIST } = require("../helpers");
 const { gate, rebuildStockBalances } = require("./store");
 const { requireRole } = require("./authGuards");
-const { ingestPrices, resolveByItemIds } = require("./rateCardPrices");
+const { ingestPrices, resolveByItemIds, removeRateCardPricesBySource } = require("./rateCardPrices");
 
 // Same gate as store.js's, plus 'driver' — Stage 6: the Driver Portal's Vegetables tab
 // now prices challans directly here (ported off the old purchase_orders-based flow,
@@ -309,6 +309,42 @@ router.post("/challans/:id/cancel", async (req, res) => {
   const { data, error } = await supabase.from("vendor_challans").update({ status: "cancelled" }).eq("id", req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// DELETE /:id — owner-only, for a genuine duplicate entry (e.g. the same delivery logged
+// twice by mistake). A draft/cancelled challan has no downstream effects yet, so it's a
+// plain delete. A RECEIVED challan already moved real stock (its own /receive route) and
+// possibly wrote to the rate-card price ledger — deleting it without undoing both would
+// leave stock balances permanently inflated and a stale price lingering after its source
+// document is gone, so this reverses both first: removes the stock_movements it created
+// (matched by source_id, same idempotency key scheme /receive uses), rebuilds balances for
+// every item it touched, and strips its price-ledger rows (re-mirroring rate_card.price back
+// to whatever's now the latest remaining entry). This is deliberately narrower than a real
+// "undo a receive" flow (see /cancel's own comment above on why that's not built) — it only
+// exists to cleanly erase a mistaken duplicate, not to reopen a legitimately-received challan
+// for editing.
+router.delete("/challans/:id", async (req, res) => {
+  if (!await requireRole(req, res, "owner")) return;
+  const { data: challan, error } = await supabase.from("vendor_challans").select("*").eq("id", req.params.id).maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!challan) return res.status(404).json({ error: "Challan not found" });
+
+  if (challan.status === "received") {
+    const { data: lines } = await supabase.from("vendor_challan_items").select("item_id").eq("challan_id", challan.id);
+    const { error: mvErr } = await supabase.from("stock_movements").delete().eq("source_type", "receipt").eq("source_id", challan.id);
+    if (mvErr) return res.status(500).json({ error: mvErr.message });
+    for (const itemId of new Set((lines || []).map((l) => l.item_id))) {
+      await rebuildStockBalances({ itemId, locationId: challan.location_id });
+    }
+    try { await removeRateCardPricesBySource("challan", challan.id); }
+    catch (e) { console.error(`[rate-card ledger] challan ${challan.id} price removal failed:`, e.message); }
+  }
+
+  const { error: itemsErr } = await supabase.from("vendor_challan_items").delete().eq("challan_id", challan.id);
+  if (itemsErr) return res.status(500).json({ error: itemsErr.message });
+  const { error: delErr } = await supabase.from("vendor_challans").delete().eq("id", challan.id);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+  res.json({ ok: true });
 });
 
 // GET /items/:itemId/price-history — vendor_challan_items IS the price history, no

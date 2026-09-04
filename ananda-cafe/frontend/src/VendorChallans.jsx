@@ -14,6 +14,11 @@ import api from "./api";
 const fmtQty = (n) => { const v = Number(n) || 0; return Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toLocaleString("en-IN", { maximumFractionDigits: 2 }); };
 const fmtMoney = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330); return d.toISOString().slice(0, 10); };
+// Standalone (this file doesn't import from App.jsx — see the header comment on why),
+// reading the same localStorage key App.jsx's own getCurrentUser() writes to. Only used to
+// gate the Delete-challan button to owner — everything else here already goes through the
+// backend's own role checks regardless of what this says.
+const getCurrentUser = () => { try { const u = localStorage.getItem("ananda_user"); return u ? JSON.parse(u) : null; } catch (e) { return null; } };
 
 // Stage 5 migration: the same vendor-category buckets the old Order Challan screen
 // used (App.jsx's ORDER_VENDORS) — duplicated here rather than imported, since App.jsx
@@ -102,15 +107,21 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   const [challans, setChallans] = useState(null);
   const [legacy, setLegacy] = useState(null);
   const [error, setError] = useState("");
+  // Was hardcoded to the last 30 days only — "need all the challans from july to till
+  // date here". Neither backend route caps how far back `from` can reach (vendor_challans
+  // has a 200-row .limit(), purchase_orders has none), so this just widens the default
+  // window and lets the owner move it further back (or narrower) at will instead of a
+  // fixed cutoff nobody could see past.
+  const [fromDate, setFromDate] = useState("2026-07-01");
 
   const load = () => {
     setError("");
-    const params = { from: todayStrMinus(30) };
+    const params = { from: fromDate };
     if (status) params.status = status;
     api.getChallans(params).then(setChallans).catch((e) => setError(e.message));
-    api.getPurchaseOrders({ from: todayStrMinus(30) }).then((rows) => setLegacy((rows || []).map(normalizeLegacyPO))).catch(() => setLegacy([]));
+    api.getPurchaseOrders({ from: fromDate }).then((rows) => setLegacy((rows || []).map(normalizeLegacyPO))).catch(() => setLegacy([]));
   };
-  useEffect(load, [status]);
+  useEffect(load, [status, fromDate]);
 
   const merged = useMemo(() => {
     let list = [...(challans || []), ...(legacy || [])];
@@ -128,12 +139,19 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
         🆕 New Store Inventory Module — Stage 2 (Beta). Vendor deliveries received here post directly to the new stock ledger. Older real purchases (📜 Order Challan) are shown alongside for reference — read-only, they still live in the old system.
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
-          <option value="">All Statuses</option>
-          <option value="draft">Draft</option>
-          <option value="received">Received</option>
-          <option value="cancelled">Cancelled</option>
-        </select>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#888" }}>
+            From
+            <input type="date" value={fromDate} max={todayStr()} onChange={(e) => setFromDate(e.target.value)}
+              style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+          </label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+            <option value="">All Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="received">Received</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onOrder} style={{ ...btnPrimary, background: "#16A34A" }}>📝 Order from Vendor</button>
           <button onClick={onNew} style={btnGhost}>+ Log a Delivery</button>
@@ -153,7 +171,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
 
       {error && <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>}
       {!error && !loaded && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
-      {!error && loaded && merged.length === 0 && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>No challans in the last 30 days.</div>}
+      {!error && loaded && merged.length === 0 && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>No challans since {fromDate}.</div>}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {merged.map((c) => {
@@ -189,6 +207,7 @@ function LegacyOrderDetail({ id, onBack }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({}); // itemId -> { bought_qty, received_qty, total_price } strings
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Sortable columns — click a header to sort, click again to flip direction. Same
   // toggle convention used elsewhere (Rate Alert, Item-wise Sales): first click on a
   // column is descending, nulls (no price yet, mostly) always sort last regardless of
@@ -249,6 +268,16 @@ function LegacyOrderDetail({ id, onBack }) {
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
+  // Owner-only, for a genuine duplicate entry (e.g. the same order logged twice by
+  // mistake). Irreversible — also strips any price it recorded in the rate-card ledger
+  // server-side (see the backend route's own comment) — so this is a hard confirm.
+  const isOwner = getCurrentUser()?.role === "owner";
+  const deletePO = () => {
+    if (!window.confirm("Delete this Order Challan permanently? This cannot be undone.")) return;
+    setDeleting(true);
+    api.deletePurchaseOrder(id).then(onBack).catch((e) => { setError(e.message); setDeleting(false); });
+  };
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
@@ -264,7 +293,10 @@ function LegacyOrderDetail({ id, onBack }) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ fontSize: 12, color: "#999" }}>{po.date} · Store</div>
         {!editing ? (
-          <button onClick={startEdit} style={btnGhost}>✏️ Edit — Back-fill Qty/Price</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={startEdit} style={btnGhost}>✏️ Edit — Back-fill Qty/Price</button>
+            {isOwner && <button onClick={deletePO} disabled={deleting} style={{ ...btnGhost, color: "#DC2626", borderColor: "#FECACA", background: "#FEF2F2" }}>{deleting ? "…" : "🗑️ Delete (duplicate)"}</button>}
+          </div>
         ) : (
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setEditing(false)} disabled={saving} style={btnGhost}>Cancel</button>
@@ -681,6 +713,17 @@ function ChallanDetail({ id, onBack }) {
     api.cancelChallan(id).then(() => load()).catch((e) => setError(e.message)).finally(() => setBusy(false));
   };
 
+  // Owner-only, for a genuine duplicate entry — the same delivery logged twice by
+  // mistake. Irreversible (reverses any stock-in/price-ledger effects server-side, then
+  // deletes outright — see the backend route's own comment), so this is a hard confirm,
+  // not just a click.
+  const isOwner = getCurrentUser()?.role === "owner";
+  const deleteChallan = () => {
+    if (!window.confirm(`Delete this challan permanently? ${challan.status === "received" ? "This will also reverse the stock it added and any price it recorded. " : ""}This cannot be undone.`)) return;
+    setBusy(true);
+    api.deleteChallan(id).then(onBack).catch((e) => { setError(e.message); setBusy(false); });
+  };
+
   const shareWA = () => {
     if (!challan) return;
     const lines = [`*🧾 Vendor Challan — ${challan.vendor_name || "Vendor"}*`, `📅 ${challan.challan_date} · ${challan.location_id === "store" ? "Store" : "BK"}`, ""];
@@ -767,6 +810,7 @@ function ChallanDetail({ id, onBack }) {
         {challan.status === "draft" && <button onClick={receive} disabled={!canReceive || busy} style={{ ...btnPrimary, opacity: canReceive && !busy ? 1 : 0.5 }}>{busy ? "…" : "✅ Receive → Stock In"}</button>}
         {challan.status === "draft" && <button onClick={cancel} disabled={busy} style={{ ...btnGhost, color: "#DC2626" }}>Cancel Challan</button>}
         <button onClick={shareWA} style={btnGhost}>📤 Share on WhatsApp</button>
+        {isOwner && <button onClick={deleteChallan} disabled={busy} style={{ ...btnGhost, color: "#DC2626", borderColor: "#FECACA", background: "#FEF2F2" }}>🗑️ Delete (duplicate)</button>}
       </div>
       {challan.status === "draft" && !canReceive && <div style={{ fontSize: 11, color: "#999", marginTop: 8 }}>Upload the bill (or confirm there isn't one) before receiving.</div>}
       {challan.status === "received" && <div style={{ fontSize: 11, color: "#999", marginTop: 8 }}>Received by {challan.received_by} — stock updated.</div>}

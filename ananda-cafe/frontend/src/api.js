@@ -239,6 +239,7 @@ const api = {
   getPurchaseOrder: (id) => get(`/api/purchase-orders/${id}`),
   createPurchaseOrder: (data) => post("/api/purchase-orders", data),
   updatePurchaseOrder: (id, data) => patch(`/api/purchase-orders/${id}`, data),
+  deletePurchaseOrder: (id) => del(`/api/purchase-orders/${id}`),
   // System Logs
   getSystemLogs: (params) => get("/api/system-logs", params),
   // History
@@ -332,6 +333,7 @@ const api = {
   uploadChallanBill: (id, base64) => post(`/api/store/challans/${id}/bill`, { base64 }),
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),
+  deleteChallan: (id) => del(`/api/store/challans/${id}`),
   getItemPriceHistory: (itemId) => get(`/api/store/items/${itemId}/price-history`),
 
   // Stage 4: blind closing count -> audit/variance -> owner rollup.

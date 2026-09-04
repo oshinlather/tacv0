@@ -91,4 +91,28 @@ async function ingestPrices(entries, { effectiveDate, source, sourceId, createdB
   return { written, skipped };
 }
 
-module.exports = { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName };
+// Undoes appendRateCardPrice's write when its source document (a vendor challan, a legacy
+// order) gets deleted as a duplicate — removes the ledger row(s) that document created, then
+// re-mirrors rate_card.price to whatever is now the latest-effective row per affected item
+// (never left stale at the deleted price). If nothing's left for an item (only happens if
+// its 'seed' row was somehow also removed, which nothing here does), rate_card.price is left
+// untouched rather than zeroed — a missing ledger is not the same as "this item is free".
+async function removeRateCardPricesBySource(source, sourceId) {
+  const { data: rows, error } = await supabase.from("rate_card_prices")
+    .select("id, rate_card_id").eq("source", source).eq("source_id", String(sourceId));
+  if (error) throw error;
+  if (!rows || !rows.length) return { removed: 0 };
+  const rateCardIds = [...new Set(rows.map((r) => r.rate_card_id))];
+  const { error: delErr } = await supabase.from("rate_card_prices").delete().eq("source", source).eq("source_id", String(sourceId));
+  if (delErr) throw delErr;
+  for (const rateCardId of rateCardIds) {
+    const { data: latest } = await supabase.from("rate_card_prices")
+      .select("price").eq("rate_card_id", rateCardId)
+      .order("effective_date", { ascending: false }).order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+    if (latest) await supabase.from("rate_card").update({ price: Number(latest.price) }).eq("id", rateCardId);
+  }
+  return { removed: rows.length };
+}
+
+module.exports = { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName, removeRateCardPricesBySource };

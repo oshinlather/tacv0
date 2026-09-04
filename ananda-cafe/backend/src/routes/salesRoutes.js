@@ -14,7 +14,7 @@ const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutlet
 const { todayIST } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const { applyDispatchStockOut } = require('./stockOutHooks');
-const { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName: normalizeRateName } = require('./rateCardPrices');
+const { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName: normalizeRateName, removeRateCardPricesBySource } = require('./rateCardPrices');
 const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
@@ -5916,6 +5916,24 @@ router.patch('/purchase-orders/:id', async (req, res) => {
       } catch (e) { console.error(`[rate-card ledger] purchase order price ingest failed:`, e.message); }
     }
 
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/purchase-orders/:id — owner-only, for a genuine duplicate entry. This
+// legacy system never touches stock tables (no receive-time stock-in exists here, unlike
+// the new vendor_challans module — see that file's own header), so there's no inventory
+// side effect to reverse. It CAN have fed the rate-card price ledger though (the PATCH
+// route above, source 'legacy_order') — stripped here too, re-mirroring rate_card.price
+// back to whatever's now the latest remaining entry, so deleting a mistaken duplicate
+// doesn't leave a stale price behind after its source document is gone.
+router.delete('/purchase-orders/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    try { await removeRateCardPricesBySource('legacy_order', req.params.id); }
+    catch (e) { console.error(`[rate-card ledger] purchase order ${req.params.id} price removal failed:`, e.message); }
+    const { error } = await supabase.from('purchase_orders').delete().eq('id', req.params.id);
+    if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
