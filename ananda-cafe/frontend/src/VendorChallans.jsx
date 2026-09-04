@@ -208,6 +208,14 @@ function LegacyOrderDetail({ id, onBack }) {
   const [draft, setDraft] = useState({}); // itemId -> { bought_qty, received_qty, total_price } strings
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Add-item (typeahead) — for items that were physically received but never on the
+  // original order, so the owner can back-fill their qty + price here too. itemMaster is
+  // the same store item list the New Challan form picks from, so names/units/ids stay
+  // consistent (no free-typed spelling that wouldn't match any real item).
+  const [itemMaster, setItemMaster] = useState([]);
+  const [added, setAdded] = useState([]); // [{ itemId, name, unit }] not on the original order
+  const [addQuery, setAddQuery] = useState("");
+  useEffect(() => { api.getStoreItems().then((l) => setItemMaster(l || [])).catch(() => setItemMaster([])); }, []);
   // Sortable columns — click a header to sort, click again to flip direction. Same
   // toggle convention used elsewhere (Rate Alert, Item-wise Sales): first click on a
   // column is descending, nulls (no price yet, mostly) always sort last regardless of
@@ -244,10 +252,27 @@ function LegacyOrderDetail({ id, onBack }) {
     const d = {};
     items.forEach((it) => { d[it.itemId] = { bought_qty: it.bought_qty ?? "", received_qty: it.received_qty ?? "", total_price: it.total_price ?? "" }; });
     setDraft(d);
+    setAdded([]);
+    setAddQuery("");
     setEditing(true);
   };
 
   const setField = (itemId, field, val) => setDraft((p) => ({ ...p, [itemId]: { ...p[itemId], [field]: val } }));
+
+  // Items already on the order or already added — excluded from the typeahead so the same
+  // item can't be added twice.
+  const takenIds = new Set([...Object.keys(po.items || {}), ...added.map((a) => a.itemId)]);
+  const q = addQuery.trim().toLowerCase();
+  const suggestions = q ? itemMaster.filter((i) => !takenIds.has(i.id) && (i.name || "").toLowerCase().includes(q)).slice(0, 8) : [];
+  const addItem = (i) => {
+    setAdded((a) => [...a, { itemId: i.id, name: i.name, unit: i.base_unit || i.unit || "" }]);
+    setDraft((p) => ({ ...p, [i.id]: { bought_qty: "", received_qty: "", total_price: "" } }));
+    setAddQuery("");
+  };
+  const removeAdded = (itemId) => {
+    setAdded((a) => a.filter((x) => x.itemId !== itemId));
+    setDraft((p) => { const n = { ...p }; delete n[itemId]; return n; });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -255,8 +280,12 @@ function LegacyOrderDetail({ id, onBack }) {
     try {
       const newItems = { ...po.items };
       Object.entries(draft).forEach(([itemId, d]) => {
+        const addedMeta = added.find((a) => a.itemId === itemId);
         newItems[itemId] = {
-          ...newItems[itemId],
+          ...(newItems[itemId] || {}),
+          // A newly-added item has no original order row — stamp its name/unit and
+          // order_qty 0 (it was never ordered, only received) so it renders like the rest.
+          ...(addedMeta ? { name: addedMeta.name, unit: addedMeta.unit, order_qty: newItems[itemId]?.order_qty ?? 0 } : {}),
           bought_qty: d.bought_qty === "" ? undefined : Number(d.bought_qty),
           received_qty: d.received_qty === "" ? undefined : Number(d.received_qty),
           total_price: d.total_price === "" ? undefined : Number(d.total_price),
@@ -264,6 +293,7 @@ function LegacyOrderDetail({ id, onBack }) {
       });
       await api.updatePurchaseOrder(id, { items: newItems });
       setEditing(false);
+      setAdded([]);
       load();
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -299,7 +329,7 @@ function LegacyOrderDetail({ id, onBack }) {
           </div>
         ) : (
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => setEditing(false)} disabled={saving} style={btnGhost}>Cancel</button>
+            <button onClick={() => { setEditing(false); setAdded([]); setAddQuery(""); }} disabled={saving} style={btnGhost}>Cancel</button>
             <button onClick={save} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "Saving…" : "💾 Save"}</button>
           </div>
         )}
@@ -340,6 +370,39 @@ function LegacyOrderDetail({ id, onBack }) {
             </div>
           );
         })}
+        {/* Newly-added items (received but never ordered) — same qty/price inputs as the
+            rows above, tinted green + a remove (✕) so an accidental add can be undone. */}
+        {editing && added.map((a) => {
+          const d = draft[a.itemId] || {};
+          return (
+            <div key={a.itemId} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderTop: "1px solid #F0F0EE", fontSize: 13, background: "#F0FDF4" }}>
+              <div style={{ flex: 2, fontWeight: 600 }}>{a.name} <span style={{ fontSize: 9, color: "#16A34A", fontWeight: 800 }}>NEW</span>
+                <button onClick={() => removeAdded(a.itemId)} title="Remove this item" style={{ marginLeft: 6, border: "none", background: "none", color: "#DC2626", cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
+              </div>
+              <div style={{ flex: 1, textAlign: "right", color: "#BBB" }}>— {a.unit}</div>
+              <div style={{ flex: 1, textAlign: "right" }}><input type="number" min="0" step="any" value={d.bought_qty} onChange={(e) => setField(a.itemId, "bought_qty", e.target.value)} style={{ ...inputStyle, width: 64, textAlign: "right", display: "inline-block" }} /></div>
+              <div style={{ flex: 1, textAlign: "right" }}><input type="number" min="0" step="any" value={d.received_qty} onChange={(e) => setField(a.itemId, "received_qty", e.target.value)} style={{ ...inputStyle, width: 64, textAlign: "right", display: "inline-block" }} /></div>
+              <div style={{ flex: "1 1 100px", textAlign: "right" }}><input type="number" min="0" step="any" placeholder="₹ total" value={d.total_price} onChange={(e) => setField(a.itemId, "total_price", e.target.value)} style={{ ...inputStyle, width: 90, textAlign: "right", display: "inline-block" }} /></div>
+            </div>
+          );
+        })}
+        {/* Add-item typeahead — type to search the store item master (no free-typed names,
+            so nothing gets misspelled), pick one to add it with its own qty + price. */}
+        {editing && (
+          <div style={{ padding: "10px 14px", borderTop: "1px solid #F0F0EE", position: "relative" }}>
+            <input value={addQuery} onChange={(e) => setAddQuery(e.target.value)} placeholder="+ Add an item received but not ordered — type to search…" style={inputStyle} />
+            {suggestions.length > 0 && (
+              <div style={{ position: "absolute", left: 14, right: 14, top: 48, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 240, overflowY: "auto" }}>
+                {suggestions.map((i) => (
+                  <div key={i.id} onClick={() => addItem(i)} style={{ padding: "9px 12px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid #F5F5F3" }}>
+                    {i.name} <span style={{ fontSize: 10, color: "#999" }}>· {i.base_unit || i.unit || ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {addQuery.trim() && suggestions.length === 0 && <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>No matching item in the store master — it must be added there first.</div>}
+          </div>
+        )}
         {anyPrice && !editing && <div style={{ padding: "10px 14px", textAlign: "right", fontSize: 14, fontWeight: 800, borderTop: "1px solid #F0F0EE" }}>Total: {fmtMoney(grandTotal)}</div>}
       </div>
     </div>

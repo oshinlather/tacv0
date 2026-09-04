@@ -40,7 +40,7 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { requireRole } = require("./authGuards");
-const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, resolveFixedCostsForMonth, computeStockUsageForDate } = require("./salesRoutes");
+const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, resolveFixedCostsForMonth, computeStockUsageForDate, batchFranchisePriceMaps } = require("./salesRoutes");
 
 const OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"];
 
@@ -182,9 +182,19 @@ async function computeWastageCostByOutlet(from, to, costingContext) {
   // runs at most once per distinct date across the range.
   const ctxByDate = {};
   const ctxForDate = (d) => (ctxByDate[d] ||= costingContext.withDate(d));
+  // Franchise outlets (Elan, Gaursid) pay Final Price, not BK's raw internal rate_card
+  // cost — see getFranchiseFinalPriceMap's own comment in salesRoutes.js. Wasted stock is
+  // still stock the franchise paid Final Price for, so it needs the same override every
+  // other costing surface (RM Audit, P&L, Sales tab) already applies — otherwise a
+  // franchise's own Wastage card understates the real ₹ cost of what got thrown away.
+  const franchisePriceMaps = await batchFranchisePriceMaps(
+    (wastageRows || []).map((row) => ({ outletId: row.outlet_id, date: row.date })),
+    costingContext,
+  );
   const byOutlet = {};
   (wastageRows || []).forEach((row) => {
     const { rateMap, bkRecipeMap } = ctxForDate(row.date);
+    const finalPriceMap = franchisePriceMaps.get(`${row.outlet_id}|${row.date}`);
     let cost = 0;
     Object.entries(row.items || {}).forEach(([itemId, qty]) => {
       const q = Number(qty) || 0;
@@ -192,10 +202,11 @@ async function computeWastageCostByOutlet(from, to, costingContext) {
       const rate = rateMap[itemId];
       const bkRecipe = bkRecipeMap[itemId];
       const rawUnit = (row.items_units || {})[itemId] || null;
+      const override = finalPriceMap && finalPriceMap[itemId] != null ? finalPriceMap[itemId] : null;
       if (rate) {
-        cost += q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
+        cost += q * convFactorFor(itemId, rawUnit, rate.unit) * (override != null ? override : Number(rate.price));
       } else if (bkRecipe) {
-        cost += q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipe.costPerKg;
+        cost += q * convFactorFor(itemId, rawUnit, "Kg") * (override != null ? override : bkRecipe.costPerKg);
       }
     });
     byOutlet[row.outlet_id] = (byOutlet[row.outlet_id] || 0) + cost;

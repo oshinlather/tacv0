@@ -3624,9 +3624,21 @@ router.get('/sales', async (req, res) => {
       const key = `${r.outlet_code}|${r.sale_date}`;
       (byOutletDay[key] || (byOutletDay[key] = [])).push(r);
     });
+    // Franchise outlets (Elan, Gaursid) pay Final Price, not BK's raw internal rate_card
+    // cost — see getFranchiseFinalPriceMap's own comment. This route's packaging/crockery
+    // add-on cost used to price every outlet off the plain rate_card unconditionally, so a
+    // franchise's own Sales tab showed a cheaper per-unit cost than their RM Audit/P&L did
+    // for the exact same box/spoon — same source of truth (getFranchiseFinalPriceMap) as
+    // every other costing surface now, so the number can't drift between pages again.
+    const franchisePriceMaps = await batchFranchisePriceMaps(
+      Object.keys(byOutletDay).map((key) => { const [outletId, date2] = key.split('|'); return { outletId, date: date2 }; }),
+      costingContext,
+    );
     const addonPerUnit = {}; // "outlet|date" -> { dine_in, pickup, delivery } — ₹ per unit sold
+    const categoryContainerRate = {}; // "outlet|date" -> { TAKEAWAY_CATEGORY_CONTAINERS key -> ₹ per matching unit sold }
     Object.entries(byOutletDay).forEach(([key, rows]) => {
       const [oid] = key.split('|');
+      const finalPriceMap = franchisePriceMaps.get(key);
       const dineInQty = rows.filter((r) => r.order_type === 'Dine In').reduce((s, r) => s + Number(r.item_quantity || 0), 0);
       const takeawayQty = rows.filter((r) => r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
       // Sambhar/Chutney sides are per-order (see SAMBHAR_CHUTNEY_SIDES) but only for orders
@@ -3634,7 +3646,7 @@ router.get('/sales', async (req, res) => {
       // units that day, not all takeaway units (a rice-only order shouldn't absorb a share
       // of a side it never got).
       const sidesEligibleQty = rows.filter((r) => (r.order_type === 'Pick Up' || r.order_type?.includes('Delivery')) && isDosaIdliVadaRow(r)).reduce((s, r) => s + Number(r.item_quantity || 0), 0);
-      const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor, crockeryPackagingRules);
+      const crockeryItems = computeCrockeryPackagingItems(oid, rows, {}, rateMap, convFactorFor, crockeryPackagingRules, finalPriceMap);
       let dineInCost = 0, takeawayCost = 0, sidesCost = 0;
       crockeryItems.forEach((it) => {
         if (it.rate == null) return;
@@ -3649,19 +3661,21 @@ router.get('/sales', async (req, res) => {
       const takeawayRate = takeawayQty > 0 ? takeawayCost / takeawayQty : 0;
       const sidesRate = sidesEligibleQty > 0 ? sidesCost / sidesEligibleQty : 0;
       addonPerUnit[key] = { dine_in: dineInRate, pickup: takeawayRate, delivery: takeawayRate, sides: sidesRate };
-    });
 
-    // Category-matched containers (Dosa Box Small, Podi Idli Container, 500ML Container,
-    // Vada Lifafa) are deterministic per single unit sold — unlike the averaged Bio Spoon
-    // rate above, there's no need to spread these across the outlet-day; a dosa parcel
-    // always needs exactly 1 Dosa Box Small regardless of what else sold that day. Computed
-    // once here (₹ per unit of a matching dish) and added on top of addonPerUnit per row below.
-    const categoryContainerRate = {}; // TAKEAWAY_CATEGORY_CONTAINERS key -> ₹ per matching unit sold
-    TAKEAWAY_CATEGORY_CONTAINERS.forEach((rule) => {
-      const trackedUnit = rateMap[rule.item_id]?.unit || 'Pcs';
-      const perUnit = convFactorFor(rule.item_id, 'Piece', trackedUnit);
-      const price = rateMap[rule.item_id]?.price;
-      categoryContainerRate[rule.key] = price != null ? perUnit * price : 0;
+      // Category-matched containers (Dosa Box Small, Podi Idli Container, 500ML Container,
+      // Vada Lifafa) are deterministic per single unit sold — unlike the averaged Bio Spoon
+      // rate above, there's no need to spread these across the outlet-day; a dosa parcel
+      // always needs exactly 1 Dosa Box Small regardless of what else sold that day. Per
+      // (outlet, date) — not once globally — so a franchise outlet's own Final Price applies.
+      const rateFor = (itemId) => (finalPriceMap && finalPriceMap[itemId] != null) ? finalPriceMap[itemId] : rateMap[itemId]?.price;
+      const rates = {};
+      TAKEAWAY_CATEGORY_CONTAINERS.forEach((rule) => {
+        const trackedUnit = rateMap[rule.item_id]?.unit || 'Pcs';
+        const perUnit = convFactorFor(rule.item_id, 'Piece', trackedUnit);
+        const price = rateFor(rule.item_id);
+        rates[rule.key] = price != null ? perUnit * price : 0;
+      });
+      categoryContainerRate[key] = rates;
     });
 
     // Aggregate by item — split into Dine In / Pickup / Delivery sub-totals too, each
@@ -3688,7 +3702,7 @@ router.get('/sales', async (req, res) => {
         let categoryRate = 0, sidesRate = 0;
         if ((bucket === 'pickup' || bucket === 'delivery') && CROCKERY_PACKAGING_OUTLETS.has(row.outlet_code)) {
           const match = matchTakeawayCategoryContainer(row);
-          if (match) categoryRate = categoryContainerRate[match.key] || 0;
+          if (match) categoryRate = categoryContainerRate[`${row.outlet_code}|${row.sale_date}`]?.[match.key] || 0;
           if (isDosaIdliVadaRow(row)) sidesRate = addonPerUnit[`${row.outlet_code}|${row.sale_date}`]?.sides || 0;
         }
         itemMap[row.item_name][`${bucket}_qty`] += Number(row.item_quantity || 0);
@@ -4964,16 +4978,21 @@ async function getFranchiseFinalPriceMap(outletId, date, costingContext) {
   // fell back to the plain internal rate_card/BK-recipe price at every call site — a
   // franchise outlet's own leakage table ended up a mix of correctly marked-up rows and
   // incorrectly un-marked-up rows for the exact same date, understating "their price"
-  // leakage for whatever fraction of ingredients weren't in that day's dispatch. Flat
-  // category-aware markup (no BK-share term, since there's no per-item dispatch amount
-  // to allocate it against) covers every remaining rate_card/BK-recipe item so a
-  // franchise's cost basis is consistently their own price everywhere, not just on the
-  // items they happened to reorder that specific day.
+  // leakage for whatever fraction of ingredients weren't in that day's dispatch. Covers
+  // every remaining rate_card/BK-recipe item with the same category-aware markup PLUS the
+  // same BK-share loading (per ₹ of base cost, from the items that DO have it above) so a
+  // franchise's cost basis is consistently their own price everywhere — not just on the
+  // items they happened to reorder that specific day, and not missing the BK-share
+  // component either (which would otherwise make this fallback price a bit lower than the
+  // Franchise Billing page's own period-aggregated Final Price for the same item, a subtler
+  // version of the exact "price difference here and there" this whole override exists to
+  // prevent).
+  const bkShareRatePerRupee = outletMaterialCost > 0 ? bkShareAmountForOutlet / outletMaterialCost : 0;
   const flatMarkupFor = (basePrice, itemId) => {
     if (basePrice == null) return null;
     const catId = sectionMap[itemId] || null;
     const pct = catId && categoryMarkup[catId] != null ? Number(categoryMarkup[catId]) : markupPct;
-    return basePrice * (1 + pct / 100);
+    return basePrice * (1 + pct / 100 + bkShareRatePerRupee);
   };
   Object.entries(rateMap).forEach(([itemId, rate]) => {
     if (priceMap[itemId] != null) return;
@@ -5620,17 +5639,28 @@ router.get('/wastage/cost', async (req, res) => {
     const { data: wastageRows, error } = await query;
     if (error) throw error;
 
+    // Franchise outlets (Elan, Gaursid) pay Final Price, not BK's raw internal rate_card
+    // cost — see getFranchiseFinalPriceMap's own comment. Without this, a franchise's own
+    // Wastage card (and the owner's Wastage grid filtered to them) showed a cheaper ₹ cost
+    // for the exact same thrown-away item than RM Audit/P&L/Sales already show elsewhere.
+    const franchisePriceMaps = await batchFranchisePriceMaps(
+      (wastageRows || []).map((row) => ({ outletId: row.outlet_id, date: row.date })),
+      baseCtx,
+    );
+
     const results = [];
     (wastageRows || []).forEach(row => {
       const { rateMap, bkRecipeMap } = ctxForDate(row.date);
+      const finalPriceMap = franchisePriceMaps.get(`${row.outlet_id}|${row.date}`);
       Object.entries(row.items || {}).forEach(([itemId, qty]) => {
         const rate = rateMap[itemId];
         const bkRecipe = bkRecipeMap[itemId];
+        const override = finalPriceMap && finalPriceMap[itemId] != null ? finalPriceMap[itemId] : null;
         let unitPrice = 0, itemUnit = '', itemName = itemId, itemCategory = 'Other';
         if (rate) {
-          unitPrice = Number(rate.price); itemUnit = rate.unit || ''; itemName = rate.name; itemCategory = rate.category || 'Other';
+          unitPrice = override != null ? override : Number(rate.price); itemUnit = rate.unit || ''; itemName = rate.name; itemCategory = rate.category || 'Other';
         } else if (bkRecipe) {
-          unitPrice = bkRecipe.costPerKg; itemUnit = 'Kg'; itemName = bkRecipe.name; itemCategory = 'Food';
+          unitPrice = override != null ? override : bkRecipe.costPerKg; itemUnit = 'Kg'; itemName = bkRecipe.name; itemCategory = 'Food';
         } else {
           itemName = demandNameMap[itemId] || itemId.replace(/_/g, ' ');
           itemUnit = demandUnitMap[itemId] || '';
@@ -6334,3 +6364,9 @@ module.exports.resolveFixedCostsForMonth = resolveFixedCostsForMonth;
 // − Wastage − Today Closing formula Daily P&L/RM Audit already use, reused per-day
 // instead of a second, possibly-drifting copy of this logic.
 module.exports.computeStockUsageForDate = computeStockUsageForDate;
+// Exported so every other franchise-cost surface (finance.js's wastage line, and any
+// future one) prices Elan/Gaursid off the exact same Final Price this file's own RM
+// Audit/P&L/BK Purchase already use — one source of truth, not a per-route reimplementation
+// that can silently drift back to plain rate_card pricing for a franchise outlet.
+module.exports.getFranchiseFinalPriceMap = getFranchiseFinalPriceMap;
+module.exports.batchFranchisePriceMaps = batchFranchisePriceMaps;
