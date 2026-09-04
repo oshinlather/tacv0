@@ -12295,7 +12295,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
         <>
           {sales.outlets && sales.outlets.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 20 }}>
-              {sales.outlets.map((o) => (
+              {[...sales.outlets].sort((a, b) => (b.revenue || 0) - (a.revenue || 0)).map((o) => (
                 <div key={o.outlet_code} style={{ background: "#fff", borderRadius: 12, padding: "14px 16px", border: "1px solid #E8E8E4" }}>
                   <div style={{ fontSize: 10, color: "#999", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{o.outlet_code}</div>
                   <div style={{ fontSize: 22, fontWeight: 800, color: "#B45309", fontFamily: "'JetBrains Mono', monospace", margin: "4px 0" }}>{fmt(o.revenue || 0)}</div>

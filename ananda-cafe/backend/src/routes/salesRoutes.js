@@ -4954,6 +4954,38 @@ async function getFranchiseFinalPriceMap(outletId, date, costingContext) {
     // site below, no extra unit handling needed there.
     priceMap[itemId] = info.qtyInRateUnit > 0 ? totalAmt / info.qtyInRateUnit : info.unitPrice;
   });
+
+  // The precise per-item price above only exists for items THIS outlet actually had in
+  // its own manual-demand dispatch on THIS exact date — that's the right basis when it's
+  // available (it also folds in that day's BK-fixed-cost-share allocation), but a recipe
+  // ingredient RM Audit needs a price for (e.g. a raw material the outlet didn't happen
+  // to reorder today because it still had stock from a few days ago, yet is still being
+  // consumed today per the closing-stock formula). Without this, those items silently
+  // fell back to the plain internal rate_card/BK-recipe price at every call site — a
+  // franchise outlet's own leakage table ended up a mix of correctly marked-up rows and
+  // incorrectly un-marked-up rows for the exact same date, understating "their price"
+  // leakage for whatever fraction of ingredients weren't in that day's dispatch. Flat
+  // category-aware markup (no BK-share term, since there's no per-item dispatch amount
+  // to allocate it against) covers every remaining rate_card/BK-recipe item so a
+  // franchise's cost basis is consistently their own price everywhere, not just on the
+  // items they happened to reorder that specific day.
+  const flatMarkupFor = (basePrice, itemId) => {
+    if (basePrice == null) return null;
+    const catId = sectionMap[itemId] || null;
+    const pct = catId && categoryMarkup[catId] != null ? Number(categoryMarkup[catId]) : markupPct;
+    return basePrice * (1 + pct / 100);
+  };
+  Object.entries(rateMap).forEach(([itemId, rate]) => {
+    if (priceMap[itemId] != null) return;
+    const v = flatMarkupFor(Number(rate.price), itemId);
+    if (v != null) priceMap[itemId] = v;
+  });
+  Object.entries(bkRecipeMap).forEach(([itemId, recipe]) => {
+    if (priceMap[itemId] != null || recipe?.costPerKg == null) return;
+    const v = flatMarkupFor(Number(recipe.costPerKg), itemId);
+    if (v != null) priceMap[itemId] = v;
+  });
+
   return priceMap;
 }
 
