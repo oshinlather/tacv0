@@ -37,6 +37,13 @@ const api = {
   finalizeDemand: (id, data) => patch(`/api/demands/${id}/finalize`, data),
   updateDemand: (id, data) => patch(`/api/demands/${id}`, data),
   cancelDemand: (id, reason) => patch(`/api/demands/${id}/cancel`, { reason }),
+  // Owner-only exceptions to the 11:45 AM evening-demand cutoff — Owner Dashboard's
+  // Demand Approval screen.
+  getDemandExceptions: (params) => get("/api/demand-exceptions", params),
+  grantDemandException: (data) => post("/api/demand-exceptions", data),
+  revokeDemandException: (id) => del(`/api/demand-exceptions/${id}`),
+  // Outlet-side check — "has the owner opened evening ordering for MY outlet today".
+  checkMyDemandException: (outlet_id) => get("/api/demand-exceptions/mine", { outlet_id }),
 
   // ── Closing Stock ──
   submitClosingStock: (data) => post("/api/demands/closing-stock", data),

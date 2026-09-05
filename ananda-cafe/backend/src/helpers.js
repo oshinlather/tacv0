@@ -10,4 +10,13 @@ function todayIST() {
   return d.toISOString().split("T")[0];
 }
 
-module.exports = { todayIST };
+// Minutes since midnight IST, right now — same +5:30 shift todayIST() uses, read back as
+// hours*60+minutes instead of just the date. Used for time-of-day cutoffs (e.g. the evening
+// demand slot closing at 11:45 AM) that a date-only helper can't express.
+function istMinutesNow() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 330);
+  return d.getUTCHours() * 60 + d.getUTCMinutes();
+}
+
+module.exports = { todayIST, istMinutesNow };

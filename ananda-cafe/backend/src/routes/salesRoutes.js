@@ -11,7 +11,7 @@ const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
 const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope, getDemandItemSectionMap } = require('./authGuards');
-const { todayIST } = require('../helpers');
+const { todayIST, istMinutesNow } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const { applyDispatchStockOut } = require('./stockOutHooks');
 const { appendRateCardPrice, ingestPrices, resolveByItemIds, resolveByNames, normalizeName: normalizeRateName, removeRateCardPricesBySource } = require('./rateCardPrices');
@@ -2526,10 +2526,44 @@ router.patch('/auth/users/:id', async (req, res) => {
 // its own router — see routes/employees.js, mounted at /api/employees in server.js.
 
 // ── POST /api/demands — Create demand (robust version, handles all types)
+// Evening demand slot closes at 11:45 AM IST — outlet managers were able to punch a fresh
+// evening order at any hour with nothing stopping a habit of very-late requests. Owner
+// wants this hard-gated server-side (client-side disabling the button is just a courtesy;
+// this is the actual enforcement), with the only way past it being an explicit, one-day
+// exception the owner grants for that outlet from Owner Dashboard → Fines → Demand
+// Approval — for a real "outlet called on the phone asking for a late order" case.
+// Deliberately unconditional on demand_slot==='evening' — even RESUMING an already-started
+// draft after the cutoff is blocked, not just brand-new creation, since a stale pre-cutoff
+// draft would otherwise be an easy way around the whole point of this. Only ever checked
+// for type==='manual' (a real outlet order) — wastage is unaffected.
+const EVENING_CUTOFF_MINUTES = 11 * 60 + 45; // 11:45 AM
+async function checkEveningDemandCutoff(outlet_id, type, demand_slot) {
+  if (type !== 'manual' || demand_slot !== 'evening') return null;
+  if (istMinutesNow() < EVENING_CUTOFF_MINUTES) return null;
+  // Fails OPEN (never blocks) on a query error — specifically so that if this ships before
+  // the demand_exceptions migration has actually been run on a given DB, evening demand
+  // just keeps working exactly as it always has (today's real behavior), instead of every
+  // outlet being hard-locked out with zero workaround (the grant endpoint would fail the
+  // exact same way) until someone remembers to run it. A genuine "not granted" answer is a
+  // successful, empty query result, not an error — that path below still blocks correctly.
+  try {
+    const { data: exceptions, error } = await supabase.from('demand_exceptions')
+      .select('id').eq('outlet_id', outlet_id).eq('date', todayIST()).limit(1);
+    if (error) throw error;
+    if (exceptions && exceptions.length > 0) return null; // owner granted a one-day exception
+  } catch (e) {
+    console.error('[demand_exceptions] check failed, allowing through:', e.message);
+    return null;
+  }
+  return "Evening demand closes at 11:45 AM. Call the owner if you need a late order today — they can open it for you from the Owner Dashboard.";
+}
+
 router.post('/demands', async (req, res) => {
   try {
     const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status } = req.body;
     if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
+    const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
+    if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
     const targetDate = date || todayIST();
 
     // Server-side safety net against duplicate challans — never let two draft/submitted
@@ -2605,6 +2639,14 @@ router.patch('/demands/draft', async (req, res) => {
     const date = req.body.date || todayIST();
     if (!outlet_id || !type) return res.status(400).json({ error: 'outlet_id and type are required' });
     if (!ensureOutletAccess(user, outlet_id, res)) return;
+
+    // Owner/store_mgr/avp are trusted to intervene directly (e.g. keying in an exception
+    // themselves) and are exempt — the cutoff is specifically about the outlet-side roles
+    // (outlet_mgr/chef/bainmarry/bk_manager) not being able to self-serve a late order.
+    if (!['owner', 'store_mgr', 'avp'].includes(user.role)) {
+      const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
+      if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
+    }
 
     // Server-side backstop matching the frontend's CATEGORY_SCOPE — a direct API call
     // can't smuggle in items outside Chef/Bainmarry's own category this way either.
@@ -2689,6 +2731,68 @@ router.patch('/demands/:id/finalize', async (req, res) => {
     const { data, error } = await supabase.from('demands').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Demand Approval — owner-only exceptions to the 11:45 AM evening-demand cutoff above
+// (see checkEveningDemandCutoff). Surfaced in Owner Dashboard → Fines → Demand Approval,
+// for the "outlet called on the phone asking for a late order" case.
+// GET /api/demand-exceptions?date= — defaults to today; the owner's screen only ever needs
+// today's list (an exception for a past/future date is meaningless — see the migration's
+// own comment on why nothing needs to expire/revoke automatically).
+router.get('/demand-exceptions', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const date = req.query.date || todayIST();
+    const { data, error } = await supabase.from('demand_exceptions').select('*').eq('date', date).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/demand-exceptions/mine?outlet_id= — any outlet-side role checking their OWN
+// outlet's status for today, e.g. OutletMgr deciding whether to gray out the Evening
+// Delivery button. Not owner-gated (every other route above is) — scoped via
+// ensureOutletAccess instead, so outlet_mgr/chef/bainmarry can only ever see their own
+// outlet's answer, never another outlet's or the full list.
+router.get('/demand-exceptions/mine', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { outlet_id } = req.query;
+    if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
+    if (!ensureOutletAccess(user, outlet_id, res)) return;
+    const { data, error } = await supabase.from('demand_exceptions').select('id').eq('outlet_id', outlet_id).eq('date', todayIST()).limit(1);
+    if (error) throw error;
+    res.json({ granted: !!(data && data.length) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/demand-exceptions — grant one. Upserts on (outlet_id, date) so granting twice
+// for the same outlet+day (e.g. re-confirming after a call-back) just updates the reason/
+// granted_by instead of erroring on the unique constraint.
+router.post('/demand-exceptions', async (req, res) => {
+  try {
+    const user = await requireOwner(req, res);
+    if (!user) return;
+    const { outlet_id, reason } = req.body;
+    if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
+    const date = req.body.date || todayIST();
+    const { data, error } = await supabase.from('demand_exceptions')
+      .upsert({ outlet_id, date, reason: reason || null, granted_by: user.name }, { onConflict: 'outlet_id,date' })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/demand-exceptions/:id — revoke a grant made in error.
+router.delete('/demand-exceptions/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { error } = await supabase.from('demand_exceptions').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

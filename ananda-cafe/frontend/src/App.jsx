@@ -245,6 +245,8 @@ export const DEMAND_SECTIONS = [
       { id: "long", name: "Long (Clove)", unit: "Kg" },
       { id: "black_salt", name: "Black Salt", unit: "Kg" },
       { id: "kesar", name: "Kesar", unit: "Kg" },
+      { id: "yellow_colour", name: "Yellow Colour", unit: "Gm" },
+      { id: "red_colour", name: "Red Colour", unit: "Gm" },
     ]},
   { id: "packaging", titleHi: "Packaging & Disposal", emoji: "📦", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE",
     items: [
@@ -2832,6 +2834,74 @@ const FinesPanel = () => {
   );
 };
 
+// Demand Approval — one-day, per-outlet exceptions to the 11:45 AM evening-demand cutoff
+// (see checkEveningDemandCutoff, backend/src/routes/salesRoutes.js). The real use case:
+// an outlet calls the owner on the phone well after 11:45 asking for a late evening
+// order — the owner grants it here, the outlet's own Evening Delivery button unlocks
+// within a few seconds (OutletMgr polls this on mount), no code/DB access needed either
+// side. A grant only ever applies to TODAY (see the migration's own comment on why
+// nothing needs to expire) — there's no "grant for a future date" here on purpose, since
+// the whole point is a same-day phone call, not a standing schedule override.
+const DemandApprovalPanel = () => {
+  const [exceptions, setExceptions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyOutlet, setBusyOutlet] = useState(null);
+  const [reasonDraft, setReasonDraft] = useState({}); // outlet_id -> typed reason
+
+  const load = () => { api.getDemandExceptions().then(setExceptions).catch(() => {}).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const grantedByOutlet = useMemo(() => { const m = {}; exceptions.forEach((e) => { m[e.outlet_id] = e; }); return m; }, [exceptions]);
+
+  const grant = async (outletId) => {
+    setBusyOutlet(outletId);
+    try { await api.grantDemandException({ outlet_id: outletId, reason: (reasonDraft[outletId] || "").trim() || null }); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyOutlet(null); }
+  };
+  const revoke = async (id, outletId) => {
+    setBusyOutlet(outletId);
+    try { await api.revokeDemandException(id); load(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyOutlet(null); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Evening demand closes for every outlet at 11:45 AM. If an outlet calls asking for a late order today, open it here — their Evening Delivery button unlocks within a few seconds. Only applies to today; nothing to remember to turn back off.</div>
+      {OUTLETS.map((o) => {
+        const granted = grantedByOutlet[o.id];
+        return (
+          <div key={o.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${granted ? "#BBF7D0" : "#E8E8E4"}`, padding: "12px 14px", marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
+              {granted ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "3px 8px" }}>✅ Open for today</span>
+              ) : (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#991B1B", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6, padding: "3px 8px" }}>🔒 Closed after 11:45</span>
+              )}
+            </div>
+            {granted ? (
+              <div style={{ marginTop: 8 }}>
+                {granted.reason && <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>{granted.reason}</div>}
+                <div style={{ fontSize: 10.5, color: "#AAA", marginBottom: 8 }}>Granted by {granted.granted_by || "owner"}</div>
+                <button onClick={() => revoke(granted.id, o.id)} disabled={busyOutlet === o.id} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{busyOutlet === o.id ? "⏳..." : "Revoke"}</button>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <input placeholder="Reason (optional) — e.g. large event tonight" value={reasonDraft[o.id] || ""} onChange={(e) => setReasonDraft((p) => ({ ...p, [o.id]: e.target.value }))} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                <button onClick={() => grant(o.id)} disabled={busyOutlet === o.id} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyOutlet === o.id ? "⏳..." : "Open for Today"}</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const MissingPunches = ({ selOutlet, syncDate }) => {
   const [intSelDay, setIntSelDay] = useState(1); // 0=Today, 1=Yesterday (default)
   const [intSelMonth, setIntSelMonth] = useState(null); // 'YYYY-MM', or null for day pills
@@ -3477,6 +3547,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           // Fines — outlet/BK managers impose these from Team, but they sit pending
           // here until an owner approves/rejects; same internal-HR gating as Attendance.
           ...(lockedOutlet ? [] : [{ key: "fines", label: "🚩 Fines" }]),
+          // Demand Approval — one-day exceptions to the 11:45 AM evening-demand cutoff,
+          // for an outlet that calls in on the phone asking for a late order. Placed
+          // right next to Fines since that's where the owner asked for it, and it's the
+          // same "outlet-side small governance action" flavor as Fines/Attendance.
+          ...(lockedOutlet ? [] : [{ key: "demand_approval", label: "📋 Demand Approval" }]),
           // Store Audit is BK/Store's own internal inventory reconciliation, not scoped
           // to any one outlet's numbers — meaningless on a locked franchise view, which
           // has its own separate supply chain outside this Store/BK system entirely.
@@ -4218,6 +4293,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         ) : <FourWeekComparison selDay={selDay} selOutlet={selOutlet} />
       )}
       {pnlTab === "fines" && !lockedOutlet && <FinesPanel />}
+      {pnlTab === "demand_approval" && !lockedOutlet && <DemandApprovalPanel />}
       {pnlTab === "flags" && !lockedOutlet && (
         selMonth ? (
           <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
@@ -9698,6 +9774,23 @@ const OutletMgr = ({ onBack }) => {
       setRecentClosing(withData[0] || null);
     }).catch(() => setRecentClosing(null));
   }, [outlet]);
+  // Evening Delivery closes at 11:45 AM IST — see checkEveningDemandCutoff on the backend,
+  // the actual enforcement; this is only the friendly client-side lock so a manager finds
+  // out from the slot-picker screen instead of after filling in a whole order. undefined =
+  // not checked yet (don't show a false "open" state while the fetch is in flight).
+  const [eveningExceptionGranted, setEveningExceptionGranted] = useState(undefined);
+  useEffect(() => {
+    if (!outlet) return;
+    setEveningExceptionGranted(undefined);
+    // Fails OPEN on error (treated as granted, same as the backend's own fail-open on this
+    // check) — this is only ever a courtesy lock, so a network hiccup or the migration not
+    // having run yet on this DB should let a manager through to actually attempt the
+    // submission, not show a confusing false lock the real (server-side) check disagrees with.
+    api.checkMyDemandException(outlet).then((r) => setEveningExceptionGranted(!!r?.granted)).catch(() => setEveningExceptionGranted(true));
+  }, [outlet]);
+  const EVENING_CUTOFF_MINUTES = 11 * 60 + 45; // 11:45 AM, matching the backend's own cutoff
+  const pastEveningCutoff = istHour() * 60 + istNow().getUTCMinutes() >= EVENING_CUTOFF_MINUTES;
+  const eveningLocked = pastEveningCutoff && !eveningExceptionGranted;
   // Morning Demand orders ahead for tomorrow (or, past midnight, today) — the manager
   // needs to know what's actually on the shelf right now to decide how much to order, so
   // it's locked until the most recent closing stock submission is today or yesterday, not
@@ -9728,6 +9821,10 @@ const OutletMgr = ({ onBack }) => {
   // before filling in a whole form instead of after hitting submit.
   const selectDemandSlot = async (slot) => {
     if (slot === "morning" && !closingIsCurrent) return;
+    if (slot === "evening" && eveningLocked) {
+      alert("Evening demand closes at 11:45 AM.\n\nNeed a late order today? Call the owner — they can open it for this outlet from the Owner Dashboard.");
+      return;
+    }
     const resolvedDate = slot === "morning" ? morningSlotDate() : today();
     setCheckingSlotDispatch(true);
     try {
@@ -10746,14 +10843,23 @@ const OutletMgr = ({ onBack }) => {
         </div>
         <span style={{ color: closingIsCurrent === false ? "#DC2626" : "#D97706", fontSize: 18 }}>{closingIsCurrent === false ? "🔒" : "→"}</span>
       </button>
-      <button onClick={() => selectDemandSlot("evening")} disabled={checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #BFDBFE", background: "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-        <div style={{ fontSize: 40 }}>🌇</div>
+      {/* Closes at 11:45 AM IST (checkEveningDemandCutoff on the backend is the real
+          enforcement) unless the owner has granted a one-day exception for this outlet —
+          same locked/unlocked visual language as Morning Delivery's own closing-stock
+          gate above. eveningExceptionGranted === undefined means still checking; treated
+          as locked (not falsely open) until that resolves. */}
+      <button onClick={() => selectDemandSlot("evening")} disabled={eveningLocked || checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${eveningLocked ? "#FECACA" : "#BFDBFE"}`, background: eveningLocked ? "#FEF2F2" : "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: eveningLocked || checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: eveningExceptionGranted === undefined && pastEveningCutoff ? 0.6 : 1 }}>
+        <div style={{ fontSize: 40 }}>{eveningLocked ? "🔒" : "🌇"}</div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#2563EB" }}>Evening Delivery</div>
-          <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{checkingSlotDispatch ? "Checking…" : today()} {checkingSlotDispatch ? "" : "(Today)"}</div>
-          <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items needed for today's evening shift</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: eveningLocked ? "#991B1B" : "#2563EB" }}>Evening Delivery</div>
+          {eveningLocked ? (
+            <div style={{ fontSize: 12, color: "#991B1B", marginTop: 2 }}>Closed for today at 11:45 AM — call the owner if you need a late order; they can open it for you.</div>
+          ) : (<>
+            <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{checkingSlotDispatch ? "Checking…" : today()} {checkingSlotDispatch ? "" : "(Today)"}</div>
+            <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items needed for today's evening shift{pastEveningCutoff && eveningExceptionGranted ? " — opened for you today by the owner" : ""}</div>
+          </>)}
         </div>
-        <span style={{ color: "#2563EB", fontSize: 18 }}>→</span>
+        <span style={{ color: eveningLocked ? "#DC2626" : "#2563EB", fontSize: 18 }}>{eveningLocked ? "🔒" : "→"}</span>
       </button>
     </div>);
   }
