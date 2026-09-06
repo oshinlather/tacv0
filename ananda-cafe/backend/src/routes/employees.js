@@ -462,17 +462,49 @@ function parseFlexibleDate(raw) {
   return null;
 }
 
+// Case-insensitive column lookup with aliases — a real biometric-machine export (the
+// actual file this was built against) uses "Employee Name"/"Date"/"Total Working
+// Hours"/"Status" with capitals and spaces, not the plain employee_code/date/
+// hours_worked/status the simpler hand-made CSV format uses; this accepts either
+// without the uploader needing to rename columns first.
+function getField(lowerRow, aliases) {
+  for (const a of aliases) { if (lowerRow[a] !== undefined && lowerRow[a] !== '') return lowerRow[a]; }
+  return undefined;
+}
+// "11h 17m" / "13h" / "45m" / "-" (no punch) -> decimal hours. Falls back to treating
+// the value as a plain number for the simple hand-made format (hours_worked=8).
+function parseDurationHours(raw) {
+  const s = (raw || '').trim();
+  if (!s || s === '-') return 0;
+  const h = s.match(/(\d+)\s*h/i), m = s.match(/(\d+)\s*m/i);
+  if (h || m) return Math.round(((h ? Number(h[1]) : 0) + (m ? Number(m[1]) : 0) / 60) * 100) / 100;
+  const n = Number(s);
+  return isNaN(n) ? 0 : n;
+}
+// Biometric export's own status codes (FD/HD full/half day, Absent) alongside this
+// app's own employee_attendance.status values — never guessed when unrecognized, falls
+// back to the same hours>0 heuristic the simple format already used.
+const STATUS_ALIASES = { fd: 'present', 'full day': 'present', hd: 'half_day', 'half day': 'half_day' };
+function normalizeStatus(raw, hours) {
+  const key = (raw || '').trim().toLowerCase();
+  if (STATUS_ALIASES[key]) return STATUS_ALIASES[key];
+  if (ATTENDANCE_STATUSES.includes(key)) return key;
+  return hours > 0 ? 'present' : 'leave';
+}
+
 // ── POST /api/employees/attendance/bulk-month — same idea as /attendance/bulk
 // above, but for a WHOLE month in one file instead of re-uploading day by day.
-// CSV columns: employee_code and/or name, date, hours_worked, optional status/note —
-// one row per employee per day (a real attendance register exported as a flat sheet,
-// not one row per employee with 31 date columns — simplest to get right on both ends,
-// and it's the same shape the daily upload above already uses, just with `date`
-// promoted from a fixed body param to a per-row column, parsed leniently — see
-// parseFlexibleDate). `month` is required and used only to catch a wrong-file upload
-// early — any row dated outside it is skipped and reported, not silently saved against
-// the wrong month. Same upsert-on-employee_id+date semantics, so re-uploading (a
-// corrected file, or just the current month again) overwrites rather than duplicates.
+// Accepts either the simple hand-made CSV shape (employee_code/name, date,
+// hours_worked, status, note) or a real biometric-machine export (Employee Name,
+// Date, Total Working Hours as "11h 17m", Status as FD/HD/Absent — Employee ID is
+// deliberately NOT used for matching, since a machine's own internal id has nothing to
+// do with this app's employee_code and matching on it would risk a wrong-employee
+// match; name is the reliable common field, checked case-insensitively) — one row per
+// employee per day (a flat register, not one row per employee with 31 date columns).
+// `month` is required and used only to catch a wrong-file upload early — any row dated
+// outside it is skipped and reported, not silently saved against the wrong month. Same
+// upsert-on-employee_id+date semantics, so re-uploading (a corrected file, or just the
+// current month again) overwrites rather than duplicates.
 router.post('/attendance/bulk-month', upload.single('file'), async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
@@ -498,19 +530,23 @@ router.post('/attendance/bulk-month', upload.single('file'), async (req, res) =>
     await new Promise((resolve, reject) => {
       stream.pipe(csv())
         .on('data', (row) => {
-          const codeKey = (row.employee_code || '').trim().toLowerCase();
-          const nameKey = (row.name || row.employee_name || '').trim().toLowerCase();
+          const lowerRow = {};
+          Object.keys(row).forEach((k) => { lowerRow[k.trim().toLowerCase()] = row[k]; });
+          const codeKey = (getField(lowerRow, ['employee_code', 'emp code', 'emp id']) || '').trim().toLowerCase();
+          const nameVal = getField(lowerRow, ['name', 'employee_name', 'employee name']) || '';
+          const nameKey = nameVal.trim().toLowerCase();
           const emp = (codeKey && byCode[codeKey]) || (nameKey && byName[nameKey]);
-          const who = row.employee_code || row.name || row.employee_name || '(blank row)';
+          const who = nameVal || getField(lowerRow, ['employee_code', 'employee id']) || '(blank row)';
           if (!emp) { skipped.push(`${who}: unknown employee`); return; }
-          const date = parseFlexibleDate(row.date);
-          if (!date) { skipped.push(`${who} "${row.date || ''}": unrecognized date`); return; }
+          const dateRaw = getField(lowerRow, ['date']);
+          const date = parseFlexibleDate(dateRaw);
+          if (!date) { skipped.push(`${who} "${dateRaw || ''}": unrecognized date`); return; }
           if (!date.startsWith(month)) { skipped.push(`${who} ${date}: not in ${month}`); return; }
-          const hours = row.hours_worked !== undefined && row.hours_worked !== '' ? Number(row.hours_worked) : 0;
-          let status = (row.status || '').trim().toLowerCase();
-          if (!ATTENDANCE_STATUSES.includes(status)) status = hours > 0 ? 'present' : 'leave';
+          const hours = parseDurationHours(getField(lowerRow, ['hours_worked', 'total working hours', 'working hours']));
+          const status = normalizeStatus(getField(lowerRow, ['status']), hours);
+          const note = getField(lowerRow, ['note', 'remarks']) || null;
           rows.push({
-            employee_id: emp.id, date, status, note: row.note || null,
+            employee_id: emp.id, date, status, note,
             hours_worked: hours, marked_by: `${user.name} (monthly CSV upload)`, updated_at: new Date().toISOString(),
           });
         })
