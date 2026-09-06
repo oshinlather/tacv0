@@ -430,18 +430,49 @@ router.post('/attendance/bulk', upload.single('file'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// A real attendance register exported to CSV is unlikely to already be in strict
+// YYYY-MM-DD — Excel/Sheets tends to emit DD/MM/YYYY (this business's own locale) or
+// "17-Aug-2026" once a date-formatted column is exported. Extracts year/month/day
+// directly via regex for every format handled — deliberately NOT `new Date(s)` +
+// `.toISOString()`: that round-trip parses a non-ISO string as LOCAL midnight but
+// formats back out as UTC, silently shifting the date by a day whenever the server's
+// timezone isn't UTC (caught by testing this exact case before shipping it — "17-Aug-2026"
+// came back "2026-08-16"). Returns null (never a guessed date) if nothing matches, so an
+// unrecognized value is reported as a skip, not silently misdated.
+const MONTH_NAMES = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+function parseFlexibleDate(raw) {
+  const s = (raw || '').trim();
+  if (!s) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    // DD/MM/YYYY (or DD-MM-YYYY) — this business's locale, not US MM/DD/YYYY.
+    const day = Number(dmy[1]), mon = Number(dmy[2]);
+    if (mon >= 1 && mon <= 12 && day >= 1 && day <= 31) return `${dmy[3]}-${pad(mon)}-${pad(day)}`;
+    return null;
+  }
+  const dMonY = s.match(/^(\d{1,2})[\s\-]([A-Za-z]{3,})[\s\-](\d{4})$/); // "17-Aug-2026" / "17 August 2026"
+  if (dMonY) {
+    const day = Number(dMonY[1]);
+    const monIdx = MONTH_NAMES.indexOf(dMonY[2].slice(0, 3).toLowerCase());
+    if (monIdx >= 0 && day >= 1 && day <= 31) return `${dMonY[3]}-${pad(monIdx + 1)}-${pad(day)}`;
+    return null;
+  }
+  return null;
+}
+
 // ── POST /api/employees/attendance/bulk-month — same idea as /attendance/bulk
 // above, but for a WHOLE month in one file instead of re-uploading day by day.
-// CSV columns: employee_code and/or name, date (YYYY-MM-DD), hours_worked,
-// optional status/note — one row per employee per day (a real attendance
-// register exported as a flat sheet, not one row per employee with 31 date
-// columns — simplest to get right on both ends, and it's the same shape the
-// daily upload above already uses, just with `date` promoted from a fixed body
-// param to a per-row column). `month` is required and used only to catch a
-// wrong-file upload early — any row dated outside it is skipped and reported,
-// not silently saved against the wrong month. Same upsert-on-employee_id+date
-// semantics, so re-uploading (a corrected file, or just the current month
-// again) overwrites rather than duplicates.
+// CSV columns: employee_code and/or name, date, hours_worked, optional status/note —
+// one row per employee per day (a real attendance register exported as a flat sheet,
+// not one row per employee with 31 date columns — simplest to get right on both ends,
+// and it's the same shape the daily upload above already uses, just with `date`
+// promoted from a fixed body param to a per-row column, parsed leniently — see
+// parseFlexibleDate). `month` is required and used only to catch a wrong-file upload
+// early — any row dated outside it is skipped and reported, not silently saved against
+// the wrong month. Same upsert-on-employee_id+date semantics, so re-uploading (a
+// corrected file, or just the current month again) overwrites rather than duplicates.
 router.post('/attendance/bulk-month', upload.single('file'), async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
@@ -472,8 +503,9 @@ router.post('/attendance/bulk-month', upload.single('file'), async (req, res) =>
           const emp = (codeKey && byCode[codeKey]) || (nameKey && byName[nameKey]);
           const who = row.employee_code || row.name || row.employee_name || '(blank row)';
           if (!emp) { skipped.push(`${who}: unknown employee`); return; }
-          const date = (row.date || '').trim();
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !date.startsWith(month)) { skipped.push(`${who} ${date || '(no date)'}: not in ${month}`); return; }
+          const date = parseFlexibleDate(row.date);
+          if (!date) { skipped.push(`${who} "${row.date || ''}": unrecognized date`); return; }
+          if (!date.startsWith(month)) { skipped.push(`${who} ${date}: not in ${month}`); return; }
           const hours = row.hours_worked !== undefined && row.hours_worked !== '' ? Number(row.hours_worked) : 0;
           let status = (row.status || '').trim().toLowerCase();
           if (!ATTENDANCE_STATUSES.includes(status)) status = hours > 0 ? 'present' : 'leave';

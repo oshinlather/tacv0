@@ -309,7 +309,17 @@ const api = {
       method: "POST",
       headers: authHeaders(),
       body: formData,
-    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
+    }).then(r => {
+      if (!r.ok) return r.json().then(e => {
+        // The "why" (per-row skip reasons — unknown employee, wrong date, etc.) was
+        // being computed correctly server-side but silently dropped here, leaving a
+        // useless "No matching rows found" with no way to tell why without the raw file
+        // — surface a sample of it in the thrown message instead of just e.error.
+        const sample = e.skipped?.length ? ` — e.g. ${e.skipped.slice(0, 5).join("; ")}${e.skipped.length > 5 ? ` (+${e.skipped.length - 5} more)` : ""}` : "";
+        throw new Error((e.error || "Upload failed") + sample);
+      });
+      return r.json();
+    });
   },
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
