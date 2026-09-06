@@ -10022,7 +10022,12 @@ const OutletMgr = ({ onBack }) => {
   const loadDispatched = useCallback(() => {
     if (!outlet) return;
     setDispatchedLoading(true);
-    api.getOrders({ outlet_id: outlet, date: dispatchedDate, status: "fulfilled" })
+    // Was status: "fulfilled" only — a demand the manager had already submitted but BK
+    // hadn't dispatched yet was completely invisible here, with no way to tell "did I
+    // actually submit this?" apart from remembering. Fetches every status now (draft/
+    // submitted/fulfilled) and the list below shows each with its own real state instead
+    // of only ever showing what's already been dispatched.
+    api.getOrders({ outlet_id: outlet, date: dispatchedDate })
       .then((d) => setDispatchedOrders((d || []).filter((o) => o.type === "manual")))
       .catch(() => setDispatchedOrders([]))
       .finally(() => setDispatchedLoading(false));
@@ -10517,10 +10522,27 @@ const OutletMgr = ({ onBack }) => {
       <DatePicker value={dispatchedDate} onChange={setDispatchedDate} />
       <div style={{ height: 12 }} />
       {dispatchedLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
-      {!dispatchedLoading && dispatchedOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Nothing dispatched to you on this date</div>}
+      {!dispatchedLoading && dispatchedOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Nothing submitted or dispatched to you on this date</div>}
       {!dispatchedLoading && dispatchedOrders.map((order) => {
         const itemCount = Object.keys(order.items || {}).filter((id) => (order.items[id] || 0) > 0).length;
         const confirmed = !!order.received_at;
+        // Not yet dispatched (still 'draft' or 'submitted') — same states OutletActivityGrid
+        // and the demand form itself already use, just surfaced here too so "did my order
+        // actually go through?" has one answer instead of the manager having to remember.
+        // Nothing to verify/confirm receipt of yet, so this is a plain, non-clickable card —
+        // dispatch_items doesn't exist until BK actually sends it.
+        if (order.status !== 'fulfilled') {
+          const isDraft = order.status === 'draft';
+          return (
+            <div key={order.id} style={{ background: isDraft ? "#F5F5F3" : "#EFF6FF", borderRadius: 14, border: `1px solid ${isDraft ? "#E0E0DC" : "#BFDBFE"}`, padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{order.demand_slot === "morning" ? "🌅 Morning" : "🌙 Evening"}</div>
+                <div style={{ fontSize: 12, color: "#999" }}>{itemCount} items</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, color: isDraft ? "#666" : "#2563EB" }}>{isDraft ? "📝 Draft" : "🕐 Awaiting Dispatch"}</span>
+            </div>
+          );
+        }
         return (
           <div key={order.id} onClick={() => { setOpenDispatchOrder(order); setReceivedDraft({}); }} style={{ background: confirmed ? "#F0FDF4" : "#FFFBEB", borderRadius: 14, border: `1px solid ${confirmed ? "#BBF7D0" : "#FDE68A"}`, padding: "16px 18px", marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
             <div>
