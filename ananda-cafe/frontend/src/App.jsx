@@ -1401,29 +1401,34 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
     </div>
     )}
 
-    {!syncMonth && (
-      <div
-        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
-        onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
-        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleMonthFile({ target: { files: [file] } }); }}
-        style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 16, textAlign: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📤 Upload {month}'s attendance sheet</div>
-        <div style={{ color: "#999", fontSize: 11, margin: "0 0 8px" }}>
-          CSV — one row per employee per day: <code>employee_code</code> (or <code>name</code>), <code>date</code> (YYYY-MM-DD), <code>hours_worked</code>, optional <code>status</code>/<code>note</code>. Rows outside {month} are skipped.
-        </div>
-        <input type="file" accept=".csv" onChange={handleMonthFile} disabled={uploadingMonth}
-          style={{ fontSize: 13, fontFamily: "inherit", cursor: uploadingMonth ? "default" : "pointer" }} />
-        {uploadingMonth && <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>⏳ Uploading...</div>}
-        {monthUploadResult && (
-          <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-            background: monthUploadResult.ok ? "#F0FDF4" : "#FEF2F2",
-            color: monthUploadResult.ok ? "#16A34A" : "#DC2626",
-            border: `1px solid ${monthUploadResult.ok ? "#BBF7D0" : "#FECACA"}` }}>
-            {monthUploadResult.msg}
-          </div>
-        )}
+    {/* NOT gated behind !syncMonth like the arrows-picker above — the DOD dropdown's
+        month view (App.jsx:14057) renders this panel WITH syncMonth set (its own
+        DateRangeDropdown supplies the month instead of this component's internal one),
+        and that's exactly the real screen this upload needs to appear on (DOD ▾ → month
+        picker + outlet pills → Monthly Payroll). `month` itself already resolves
+        correctly either way (syncMonth || intMonth) — only the redundant second picker
+        should hide when syncMonth is set, not the upload box. */}
+    <div
+      onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
+      onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
+      onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleMonthFile({ target: { files: [file] } }); }}
+      style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 16, textAlign: "center", marginBottom: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📤 Upload {month}'s attendance sheet</div>
+      <div style={{ color: "#999", fontSize: 11, margin: "0 0 8px" }}>
+        CSV — one row per employee per day: <code>employee_code</code> (or <code>name</code>), <code>date</code> (YYYY-MM-DD), <code>hours_worked</code>, optional <code>status</code>/<code>note</code>. Rows outside {month} are skipped.
       </div>
-    )}
+      <input type="file" accept=".csv" onChange={handleMonthFile} disabled={uploadingMonth}
+        style={{ fontSize: 13, fontFamily: "inherit", cursor: uploadingMonth ? "default" : "pointer" }} />
+      {uploadingMonth && <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>⏳ Uploading...</div>}
+      {monthUploadResult && (
+        <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+          background: monthUploadResult.ok ? "#F0FDF4" : "#FEF2F2",
+          color: monthUploadResult.ok ? "#16A34A" : "#DC2626",
+          border: `1px solid ${monthUploadResult.ok ? "#BBF7D0" : "#FECACA"}` }}>
+          {monthUploadResult.msg}
+        </div>
+      )}
+    </div>
 
     {!loading && visibleRows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
