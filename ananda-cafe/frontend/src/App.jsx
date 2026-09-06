@@ -1301,6 +1301,17 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
   // of one date.
   const [uploadingMonth, setUploadingMonth] = useState(false);
   const [monthUploadResult, setMonthUploadResult] = useState(null);
+  // Table controls — dept filter (separate from the selOutlet prop some embeddings pass
+  // in, since that only covers real outlets, not Base Kitchen/Top Management, and this
+  // is meant to filter the Dept column specifically regardless of embedding) + click-to-
+  // sort on any column, toggling asc/desc on repeat clicks of the same one.
+  const [deptFilter, setDeptFilter] = useState("");
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1380,12 +1391,53 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
   // selOutlet, when passed (e.g. embedded inside Daily P&L's Attendance pill, which
   // shares that page's outlet pills), filters to just that department — payroll rows
   // already carry `department`, so no extra API call is needed, just a client-side
-  // filter, same as everywhere else `department` gates a view.
-  const visibleRows = selOutlet ? rows.filter((r) => r.department === selOutlet) : rows;
+  // filter, same as everywhere else `department` gates a view. deptFilter is this
+  // panel's OWN filter (below), which additionally covers Base Kitchen/Top Management —
+  // selOutlet's picker only ever lists real outlets — so both apply together.
+  const visibleRows = rows.filter((r) => (!selOutlet || r.department === selOutlet) && (!deptFilter || r.department === deptFilter));
   const totalNet = visibleRows.reduce((s, r) => s + Number(r.net_payable || 0), 0);
   const totalAdvances = visibleRows.reduce((s, r) => s + Number(r.advances_deducted || 0), 0);
   const finalizedCount = visibleRows.filter((r) => r.status === "finalized").length;
   const numS = { ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" };
+
+  // Sorting is display-only — computed off visibleRows (already outlet/dept-filtered),
+  // never mutates it, so the summary cards above always reflect the filter regardless
+  // of sort. "department"/"name"/"status" sort as strings (department by its resolved
+  // label — "🏭 Base Kitchen" etc — matching what's actually shown, not the raw id);
+  // everything else numerically.
+  const deptLabel = (id) => EMPLOYEE_DEPARTMENTS.find((d) => d.id === id)?.label || id || "";
+  const STRING_SORT_KEYS = new Set(["name", "department", "status"]);
+  const sortedRows = sortKey ? [...visibleRows].sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey === "department") { av = deptLabel(av); bv = deptLabel(bv); }
+    if (STRING_SORT_KEYS.has(sortKey)) {
+      const cmp = String(av || "").localeCompare(String(bv || ""));
+      return sortDir === "asc" ? cmp : -cmp;
+    }
+    const diff = (Number(av) || 0) - (Number(bv) || 0);
+    return sortDir === "asc" ? diff : -diff;
+  }) : visibleRows;
+
+  const COLUMNS = [
+    { key: "name", label: "Employee" },
+    { key: "department", label: "Dept" },
+    { key: "base_salary", label: "Base", num: true },
+    { key: "leave_allowed", label: "Leave Allwd", num: true },
+    { key: "leaves_taken", label: "Leaves Taken", num: true },
+    { key: "ot_hours", label: "OT Hrs", num: true },
+    { key: "leaves_cashin", label: "Leave Cash-in", num: true },
+    { key: "ot_days", label: "OT Days", num: true },
+    { key: "working_days", label: "Working Days", num: true },
+    { key: "prorated_salary", label: "Prorated", num: true },
+    { key: "advances_deducted", label: "Advances", num: true },
+    { key: "net_payable", label: "Net Payable", num: true },
+    { key: "status", label: "Status" },
+  ];
+  const SortableTh = ({ col }) => (
+    <th onClick={() => toggleSort(col.key)} title="Click to sort" style={{ ...thS, ...(col.num ? { textAlign: "right" } : {}), cursor: "pointer", userSelect: "none", color: sortKey === col.key ? "#1A1A1A" : thS.color }}>
+      {col.label}<span style={{ display: "inline-block", width: 12, color: "#999" }}>{sortKey === col.key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</span>
+    </th>
+  );
 
   return (<div>
     <div style={{ marginBottom: 16 }}>
@@ -1430,6 +1482,15 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
       )}
     </div>
 
+    {!loading && rows.length > 0 && (
+      <div style={{ marginBottom: 12 }}>
+        <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+          <option value="">All Departments</option>
+          {EMPLOYEE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+        </select>
+      </div>
+    )}
+
     {!loading && visibleRows.length > 0 && (
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 16 }}>
         <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: 12, textAlign: "center" }}>
@@ -1454,22 +1515,10 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>
-              <th style={thS}>Employee</th>
-              <th style={thS}>Dept</th>
-              <th style={{ ...thS, textAlign: "right" }}>Base</th>
-              <th style={{ ...thS, textAlign: "right" }}>Leave Allwd</th>
-              <th style={{ ...thS, textAlign: "right" }}>Leaves Taken</th>
-              <th style={{ ...thS, textAlign: "right" }}>OT Hrs</th>
-              <th style={{ ...thS, textAlign: "right" }}>Leave Cash-in</th>
-              <th style={{ ...thS, textAlign: "right" }}>OT Days</th>
-              <th style={{ ...thS, textAlign: "right" }}>Working Days</th>
-              <th style={{ ...thS, textAlign: "right" }}>Prorated</th>
-              <th style={{ ...thS, textAlign: "right" }}>Advances</th>
-              <th style={{ ...thS, textAlign: "right" }}>Net Payable</th>
-              <th style={thS}>Status</th>
+              {COLUMNS.map((col) => <SortableTh key={col.key} col={col} />)}
             </tr></thead>
             <tbody>
-              {visibleRows.map((r) => {
+              {sortedRows.map((r) => {
                 const isFinal = r.status === "finalized";
                 const otVal = otDraft[r.employee_id] !== undefined ? otDraft[r.employee_id] : String(r.ot_hours || 0);
                 const otChanged = otDraft[r.employee_id] !== undefined && Number(otDraft[r.employee_id]) !== r.ot_hours;
