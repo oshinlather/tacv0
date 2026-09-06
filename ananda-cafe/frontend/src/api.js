@@ -301,6 +301,16 @@ const api = {
       body: formData,
     }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
   },
+  uploadAttendanceCSVMonth: (file, month) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("month", month);
+    return fetch(API + "/api/employees/attendance/bulk-month", {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); return r.json(); });
+  },
   giveEmployeeAdvance: (id, data) => post(`/api/employees/${id}/advance`, data),
   getEmployeeAdvances: (id) => get(`/api/employees/${id}/advances`),
   imposeEmployeeFine: (id, data) => post(`/api/employees/${id}/fine`, data),

@@ -1294,6 +1294,13 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
   const [cellDraft, setCellDraft] = useState({}); // "employeeId:field" -> string being edited
   const [savingCell, setSavingCell] = useState(null); // "employeeId:field" currently saving
   const [profileId, setProfileId] = useState(null);
+  // Monthly attendance sheet upload — Leaves Taken/Working Days below are computed live
+  // from employee_attendance (see that column's own note), so a whole month's worth
+  // backfilled in one file is what actually moves those numbers, same mechanism Daily
+  // Attendance's single-day CSV backfill already uses, just spanning the month instead
+  // of one date.
+  const [uploadingMonth, setUploadingMonth] = useState(false);
+  const [monthUploadResult, setMonthUploadResult] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -1310,6 +1317,24 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
     try { await api.setEmployeeOT({ employee_id: employeeId, month, ot_hours: Number(val) || 0 }); load(); }
     catch (e) { alert("Error: " + e.message); }
     finally { setBusyId(null); }
+  };
+
+  const handleMonthFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingMonth(true);
+    setMonthUploadResult(null);
+    try {
+      const result = await api.uploadAttendanceCSVMonth(file, month);
+      const skippedMsg = result.skipped?.length ? ` · skipped ${result.skipped.length}: ${result.skipped.slice(0, 5).join(", ")}${result.skipped.length > 5 ? "…" : ""}` : "";
+      setMonthUploadResult({ ok: true, msg: `✅ Saved ${result.rows_saved} rows for ${result.month}${skippedMsg}` });
+      load();
+    } catch (err) {
+      setMonthUploadResult({ ok: false, msg: `❌ ${err.message}` });
+    } finally {
+      setUploadingMonth(false);
+      e.target.value = "";
+    }
   };
 
   const cellKey = (employeeId, field) => `${employeeId}:${field}`;
@@ -1374,6 +1399,30 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
       <input type="month" value={month} onChange={(e) => setIntMonth(e.target.value)} style={{ flex: 1, maxWidth: 180, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
       <button onClick={() => { const d = new Date(month + "-01"); d.setMonth(d.getMonth() + 1); setIntMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
     </div>
+    )}
+
+    {!syncMonth && (
+      <div
+        onDragOver={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#B45309"; }}
+        onDragLeave={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; }}
+        onDrop={(e) => { e.preventDefault(); e.currentTarget.style.borderColor = "#E8E8E4"; const file = e.dataTransfer.files?.[0]; if (file) handleMonthFile({ target: { files: [file] } }); }}
+        style={{ background: "#fff", borderRadius: 14, border: "2px dashed #E8E8E4", padding: 16, textAlign: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 2 }}>📤 Upload {month}'s attendance sheet</div>
+        <div style={{ color: "#999", fontSize: 11, margin: "0 0 8px" }}>
+          CSV — one row per employee per day: <code>employee_code</code> (or <code>name</code>), <code>date</code> (YYYY-MM-DD), <code>hours_worked</code>, optional <code>status</code>/<code>note</code>. Rows outside {month} are skipped.
+        </div>
+        <input type="file" accept=".csv" onChange={handleMonthFile} disabled={uploadingMonth}
+          style={{ fontSize: 13, fontFamily: "inherit", cursor: uploadingMonth ? "default" : "pointer" }} />
+        {uploadingMonth && <div style={{ marginTop: 8, fontSize: 12, color: "#999" }}>⏳ Uploading...</div>}
+        {monthUploadResult && (
+          <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+            background: monthUploadResult.ok ? "#F0FDF4" : "#FEF2F2",
+            color: monthUploadResult.ok ? "#16A34A" : "#DC2626",
+            border: `1px solid ${monthUploadResult.ok ? "#BBF7D0" : "#FECACA"}` }}>
+            {monthUploadResult.msg}
+          </div>
+        )}
+      </div>
     )}
 
     {!loading && visibleRows.length > 0 && (

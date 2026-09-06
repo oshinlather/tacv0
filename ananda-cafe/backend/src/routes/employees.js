@@ -430,6 +430,75 @@ router.post('/attendance/bulk', upload.single('file'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── POST /api/employees/attendance/bulk-month — same idea as /attendance/bulk
+// above, but for a WHOLE month in one file instead of re-uploading day by day.
+// CSV columns: employee_code and/or name, date (YYYY-MM-DD), hours_worked,
+// optional status/note — one row per employee per day (a real attendance
+// register exported as a flat sheet, not one row per employee with 31 date
+// columns — simplest to get right on both ends, and it's the same shape the
+// daily upload above already uses, just with `date` promoted from a fixed body
+// param to a per-row column). `month` is required and used only to catch a
+// wrong-file upload early — any row dated outside it is skipped and reported,
+// not silently saved against the wrong month. Same upsert-on-employee_id+date
+// semantics, so re-uploading (a corrected file, or just the current month
+// again) overwrites rather than duplicates.
+router.post('/attendance/bulk-month', upload.single('file'), async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
+    if (!user) return;
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const { month } = req.body;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'month (YYYY-MM) is required' });
+    const scope = scopeForUser(user);
+    if (requireScope(scope, res)) return;
+
+    let empQuery = supabase.from('employees').select('id, employee_code, name').eq('active', true);
+    if (scope) empQuery = empQuery.eq('department', scope);
+    const { data: employees } = await empQuery;
+    const byCode = {}, byName = {};
+    (employees || []).forEach((e) => {
+      if (e.employee_code) byCode[e.employee_code.trim().toLowerCase()] = e;
+      byName[e.name.trim().toLowerCase()] = e;
+    });
+
+    const rows = [];
+    const skipped = [];
+    const stream = Readable.from(req.file.buffer.toString());
+    await new Promise((resolve, reject) => {
+      stream.pipe(csv())
+        .on('data', (row) => {
+          const codeKey = (row.employee_code || '').trim().toLowerCase();
+          const nameKey = (row.name || row.employee_name || '').trim().toLowerCase();
+          const emp = (codeKey && byCode[codeKey]) || (nameKey && byName[nameKey]);
+          const who = row.employee_code || row.name || row.employee_name || '(blank row)';
+          if (!emp) { skipped.push(`${who}: unknown employee`); return; }
+          const date = (row.date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !date.startsWith(month)) { skipped.push(`${who} ${date || '(no date)'}: not in ${month}`); return; }
+          const hours = row.hours_worked !== undefined && row.hours_worked !== '' ? Number(row.hours_worked) : 0;
+          let status = (row.status || '').trim().toLowerCase();
+          if (!ATTENDANCE_STATUSES.includes(status)) status = hours > 0 ? 'present' : 'leave';
+          rows.push({
+            employee_id: emp.id, date, status, note: row.note || null,
+            hours_worked: hours, marked_by: `${user.name} (monthly CSV upload)`, updated_at: new Date().toISOString(),
+          });
+        })
+        .on('end', resolve).on('error', reject);
+    });
+
+    if (rows.length === 0) return res.status(400).json({ error: 'No matching rows found for ' + month, skipped });
+
+    // Batched — a full month × full roster can be a few hundred rows, comfortably one
+    // upsert call, but chunked defensively in case a very large roster pushes past a
+    // single request's practical row limit.
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const { error } = await supabase.from('employee_attendance').upsert(rows.slice(i, i + CHUNK), { onConflict: 'employee_id,date' });
+      if (error) throw error;
+    }
+    res.json({ success: true, month, rows_saved: rows.length, skipped });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── DELETE /api/employees/attendance/:id — clear a wrongly-marked day
 router.delete('/attendance/:id', async (req, res) => {
   try {
