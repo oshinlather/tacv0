@@ -4796,6 +4796,7 @@ let UNIT_CONVERSIONS = {
     { item_id: "filter_coffee_powder", item_name: "Filter Coffee Powder", qty: 200, base_unit: "Gm", notes: "1 Pkt = 200 Gm" },
     { item_id: "chai_patti", item_name: "Chai Patti", qty: 250, base_unit: "Gm", notes: "1 Pkt = 250 Gm" },
     { item_id: "papad_777", item_name: "777 Papad", qty: 200, base_unit: "Pcs", notes: "1 Pkt = 200 Pcs" },
+    { item_id: "sugar_sachet", item_name: "Sugar Sachet", qty: 1000, base_unit: "Pcs", notes: "1 Pkt = 1000 Pcs" },
     { item_id: "sarf", item_name: "Surf", qty: 1, base_unit: "Kg", notes: "1 Pkt = 1 Kg" },
   ],
   Tin: [
