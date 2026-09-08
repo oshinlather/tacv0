@@ -1483,11 +1483,24 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
     </div>
 
     {!loading && rows.length > 0 && (
-      <div style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
         <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
           <option value="">All Departments</option>
           {EMPLOYEE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
         </select>
+        {/* Exports exactly what's on screen — the current dept filter and sort order —
+            not the full unfiltered roster, so what someone downloads matches what they
+            were just looking at. */}
+        <ExportBtn onClick={() => {
+          const headers = ["Employee", "Employee Code", "Designation", "Dept", ...COLUMNS.filter((c) => !["name", "department"].includes(c.key)).map((c) => c.label)];
+          const dataRows = sortedRows.map((r) => [
+            r.name, r.employee_code || "", r.designation || "", deptLabel(r.department),
+            r.base_salary, r.leave_allowed, r.leaves_taken, r.ot_hours, r.leaves_cashin,
+            r.ot_days?.toFixed(2), r.working_days?.toFixed(2), r.prorated_salary, r.advances_deducted, r.net_payable,
+            r.status,
+          ]);
+          exportCSV(headers, dataRows, `payroll_${month}${deptFilter ? `_${deptFilter}` : ""}.csv`);
+        }} />
       </div>
     )}
 
