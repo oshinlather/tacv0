@@ -19,6 +19,26 @@ const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330
 // gate the Delete-challan button to owner — everything else here already goes through the
 // backend's own role checks regardless of what this says.
 const getCurrentUser = () => { try { const u = localStorage.getItem("ananda_user"); return u ? JSON.parse(u) : null; } catch (e) { return null; } };
+// Same plain CSV-blob-download pattern App.jsx's own exportCSV uses — duplicated
+// locally rather than imported, for the same "App.jsx stays wiring-only" reason as
+// ORDER_VENDORS above (that file doesn't export it either).
+const downloadCSV = (headers, rows, filename) => {
+  const csv = [headers.join(","), ...rows.map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
+// Fetches N promises with limited concurrency — a full-history export can mean a
+// hundred-plus challan/order detail fetches (list endpoints don't include line items),
+// and firing them all at once would hammer the backend for what's a manual, one-off click.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 // Stage 5 migration: the same vendor-category buckets the old Order Challan screen
 // used (App.jsx's ORDER_VENDORS) — duplicated here rather than imported, since App.jsx
@@ -113,6 +133,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   // window and lets the owner move it further back (or narrower) at will instead of a
   // fixed cutoff nobody could see past.
   const [fromDate, setFromDate] = useState("2026-07-01");
+  const [exporting, setExporting] = useState(false);
 
   const load = () => {
     setError("");
@@ -138,6 +159,38 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   // "All" but permanently unreachable through any category filter.
   const availableCategories = useMemo(() => [...new Set([...(challans || []), ...(legacy || [])].flatMap((c) => c.categories || []))].sort(), [challans, legacy]);
 
+  // Exports EVERY challan currently loaded (the fromDate range) — deliberately ignores
+  // the status/category pills above, per request ("irrespective of stage — draft,
+  // received — and category"), not just whatever's currently filtered on screen. List
+  // rows don't carry line items, so this fetches each challan's/order's full detail
+  // (chunked — see mapWithConcurrency) and writes one CSV row per item line, not per
+  // challan, so qty/price stay visible the same way the detail screen shows them.
+  const exportAll = async () => {
+    setExporting(true);
+    try {
+      const all = [...(challans || []), ...(legacy || [])];
+      const headers = ["Date", "Vendor", "Location", "Status", "Challan #", "Item", "Qty", "Unit", "Unit Price", "Line Total"];
+      const rowSets = await mapWithConcurrency(all, 8, async (c) => {
+        if (c._legacy) {
+          const po = await api.getPurchaseOrder(c.id).catch(() => null);
+          if (!po) return [];
+          return Object.values(po.items || {}).map((it) => {
+            const qty = it.bought_qty ?? it.received_qty ?? it.order_qty ?? 0;
+            const unitPrice = it.total_price != null && qty > 0 ? Math.round((it.total_price / qty) * 100) / 100 : "";
+            return [c.challan_date, c.vendor_name, "Store", c.status, po.order_number || "", it.name, qty, it.unit, unitPrice, it.total_price ?? ""];
+          });
+        }
+        const full = await api.getChallan(c.id).catch(() => null);
+        if (!full) return [];
+        return (full.items || []).map((it) => [c.challan_date, c.vendor_name, c.location_id === "store" ? "Store" : "BK", c.status, c.challan_number || "", it.item_name, it.qty_entered, it.unit_entered, it.unit_price ?? "", it.line_total ?? ""]);
+      });
+      const rows = rowSets.flat();
+      if (!rows.length) { alert("Nothing to export for this date range."); return; }
+      downloadCSV(headers, rows, `vendor_challans_${fromDate}_to_${todayStr()}.csv`);
+    } catch (e) { alert("Export failed: " + e.message); }
+    finally { setExporting(false); }
+  };
+
   return (
     <div>
       <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#92400E" }}>
@@ -158,6 +211,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
           </select>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={exportAll} disabled={exporting || !loaded} title="Exports every challan in this date range, regardless of the Status/Category filters above" style={{ ...btnGhost, opacity: exporting || !loaded ? 0.6 : 1 }}>{exporting ? "⏳ Exporting…" : "📥 CSV"}</button>
           <button onClick={onOrder} style={{ ...btnPrimary, background: "#16A34A" }}>📝 Order from Vendor</button>
           <button onClick={onNew} style={btnGhost}>+ Log a Delivery</button>
         </div>
