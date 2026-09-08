@@ -29,16 +29,6 @@ const downloadCSV = (headers, rows, filename) => {
   const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 };
-// Fetches N promises with limited concurrency — a full-history export can mean a
-// hundred-plus challan/order detail fetches (list endpoints don't include line items),
-// and firing them all at once would hammer the backend for what's a manual, one-off click.
-async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  const worker = async () => { while (next < items.length) { const i = next++; results[i] = await fn(items[i]); } };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
 
 // Stage 5 migration: the same vendor-category buckets the old Order Challan screen
 // used (App.jsx's ORDER_VENDORS) — duplicated here rather than imported, since App.jsx
@@ -133,7 +123,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   // window and lets the owner move it further back (or narrower) at will instead of a
   // fixed cutoff nobody could see past.
   const [fromDate, setFromDate] = useState("2026-07-01");
-  const [exporting, setExporting] = useState(false);
+  const [exporting, setExporting] = useState(null); // challan id currently exporting, or null
 
   const load = () => {
     setError("");
@@ -159,36 +149,32 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   // "All" but permanently unreachable through any category filter.
   const availableCategories = useMemo(() => [...new Set([...(challans || []), ...(legacy || [])].flatMap((c) => c.categories || []))].sort(), [challans, legacy]);
 
-  // Exports EVERY challan currently loaded (the fromDate range) — deliberately ignores
-  // the status/category pills above, per request ("irrespective of stage — draft,
-  // received — and category"), not just whatever's currently filtered on screen. List
-  // rows don't carry line items, so this fetches each challan's/order's full detail
-  // (chunked — see mapWithConcurrency) and writes one CSV row per item line, not per
-  // challan, so qty/price stay visible the same way the detail screen shows them.
-  const exportAll = async () => {
-    setExporting(true);
+  // Per-challan download, not one bulk file — "i dont want all download at once rather
+  // i want download for each challan". List rows don't carry line items, so this
+  // fetches that ONE challan's/order's full detail on click and writes one CSV row per
+  // item line (qty/unit/price/total), same detail the detail screen itself shows.
+  const downloadOne = async (c, e) => {
+    e.stopPropagation(); // don't also trigger the row's onOpen/onOpenLegacy navigation
+    setExporting(c.id);
     try {
-      const all = [...(challans || []), ...(legacy || [])];
       const headers = ["Date", "Vendor", "Location", "Status", "Challan #", "Item", "Qty", "Unit", "Unit Price", "Line Total"];
-      const rowSets = await mapWithConcurrency(all, 8, async (c) => {
-        if (c._legacy) {
-          const po = await api.getPurchaseOrder(c.id).catch(() => null);
-          if (!po) return [];
-          return Object.values(po.items || {}).map((it) => {
-            const qty = it.bought_qty ?? it.received_qty ?? it.order_qty ?? 0;
-            const unitPrice = it.total_price != null && qty > 0 ? Math.round((it.total_price / qty) * 100) / 100 : "";
-            return [c.challan_date, c.vendor_name, "Store", c.status, po.order_number || "", it.name, qty, it.unit, unitPrice, it.total_price ?? ""];
-          });
-        }
-        const full = await api.getChallan(c.id).catch(() => null);
-        if (!full) return [];
-        return (full.items || []).map((it) => [c.challan_date, c.vendor_name, c.location_id === "store" ? "Store" : "BK", c.status, c.challan_number || "", it.item_name, it.qty_entered, it.unit_entered, it.unit_price ?? "", it.line_total ?? ""]);
-      });
-      const rows = rowSets.flat();
-      if (!rows.length) { alert("Nothing to export for this date range."); return; }
-      downloadCSV(headers, rows, `vendor_challans_${fromDate}_to_${todayStr()}.csv`);
-    } catch (e) { alert("Export failed: " + e.message); }
-    finally { setExporting(false); }
+      let rows = [];
+      if (c._legacy) {
+        const po = await api.getPurchaseOrder(c.id);
+        rows = Object.values(po.items || {}).map((it) => {
+          const qty = it.bought_qty ?? it.received_qty ?? it.order_qty ?? 0;
+          const unitPrice = it.total_price != null && qty > 0 ? Math.round((it.total_price / qty) * 100) / 100 : "";
+          return [c.challan_date, c.vendor_name, "Store", c.status, po.order_number || "", it.name, qty, it.unit, unitPrice, it.total_price ?? ""];
+        });
+      } else {
+        const full = await api.getChallan(c.id);
+        rows = (full.items || []).map((it) => [c.challan_date, c.vendor_name, c.location_id === "store" ? "Store" : "BK", c.status, c.challan_number || "", it.item_name, it.qty_entered, it.unit_entered, it.unit_price ?? "", it.line_total ?? ""]);
+      }
+      if (!rows.length) { alert("This challan has no items to export."); return; }
+      const safeName = (c.vendor_name || "challan").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+      downloadCSV(headers, rows, `${safeName}_${c.challan_date}.csv`);
+    } catch (err) { alert("Export failed: " + err.message); }
+    finally { setExporting(null); }
   };
 
   return (
@@ -211,7 +197,6 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
           </select>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={exportAll} disabled={exporting || !loaded} title="Exports every challan in this date range, regardless of the Status/Category filters above" style={{ ...btnGhost, opacity: exporting || !loaded ? 0.6 : 1 }}>{exporting ? "⏳ Exporting…" : "📥 CSV"}</button>
           <button onClick={onOrder} style={{ ...btnPrimary, background: "#16A34A" }}>📝 Order from Vendor</button>
           <button onClick={onNew} style={btnGhost}>+ Log a Delivery</button>
         </div>
@@ -241,9 +226,12 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{c.vendor_name || "(no vendor)"} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
                 <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number && !c._legacy ? ` · #${c.challan_number}` : ""}</div>
               </div>
-              <div style={{ textAlign: "right" }}>
-                {c.total_amount != null && <div style={{ fontSize: 13, fontWeight: 700 }}>{fmtMoney(c.total_amount)}</div>}
-                <div style={{ fontSize: 10, fontWeight: 700, color: s.text, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "2px 6px", display: "inline-block", marginTop: 3 }}>{s.label}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ textAlign: "right" }}>
+                  {c.total_amount != null && <div style={{ fontSize: 13, fontWeight: 700 }}>{fmtMoney(c.total_amount)}</div>}
+                  <div style={{ fontSize: 10, fontWeight: 700, color: s.text, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "2px 6px", display: "inline-block", marginTop: 3 }}>{s.label}</div>
+                </div>
+                <button onClick={(e) => downloadOne(c, e)} disabled={exporting === c.id} title="Download this challan as CSV" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontSize: 13, lineHeight: 1, opacity: exporting === c.id ? 0.5 : 1 }}>{exporting === c.id ? "⏳" : "📥"}</button>
               </div>
             </div>
           );
