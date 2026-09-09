@@ -870,6 +870,10 @@ function ChallanDetail({ id, onBack }) {
   // A typed no-bill reason (not yet Confirmed) also unlocks Receive — receive() persists it
   // for you, so you don't have to click Confirm separately first.
   const canReceive = challan.status === "draft" && (challan.bill_photo_path || challan.no_bill_reason || noBillReason.trim());
+  // Edit allowed at every stage except cancelled — see PATCH /:id/items for how a
+  // post-receive edit also corrects the stock ledger and rate-card price, not just this
+  // record.
+  const canEditItems = challan.status !== "cancelled";
 
   return (
     <div>
@@ -881,13 +885,18 @@ function ChallanDetail({ id, onBack }) {
 
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: 16, marginBottom: 14 }}>
         <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>{challan.challan_date} · {challan.location_id === "store" ? "Store" : "BK"}{challan.challan_number ? ` · #${challan.challan_number}` : ""}</div>
-        {challan.status === "draft" && <div style={{ fontSize: 11, color: "#B45309", marginBottom: 6 }}>Fill in what was actually bought and for how much — edits save automatically.</div>}
+        {/* Edit unlocked at every stage except cancelled — "edit option should be there
+            at all the stages". Once received, a qty/price change here also posts a
+            correcting ADJUSTMENT stock movement and re-prices the rate-card ledger
+            (both handled server-side, see PATCH /:id/items) — not just a text change,
+            so the ledger and this screen never quietly disagree. */}
+        {canEditItems && <div style={{ fontSize: 11, color: "#B45309", marginBottom: 6 }}>{challan.status === "received" ? "Editing after receiving — a quantity change corrects stock, a price change re-prices from today." : "Fill in what was actually bought and for how much — edits save automatically."}</div>}
         {(challan.items || []).map((it) => {
           const draft = editing[it.item_id] || {};
           return (
             <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8 }}>
               <div style={{ flex: 1 }}>{it.item_name}</div>
-              {challan.status === "draft" ? (
+              {canEditItems ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                     <input type="number" min="0" step="any" value={draft.qty_entered ?? it.qty_entered} onChange={(e) => editLine(it.item_id, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
