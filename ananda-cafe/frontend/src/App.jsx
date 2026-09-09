@@ -1065,7 +1065,7 @@ const EmployeeMasterPanel = () => {
 // can only Impose Fine (no onboarding, editing, or advances). Backend enforces this too
 // (POST /:id/fine is the only employees.js write route chef is allowed to call), this
 // just keeps the UI from offering buttons that would 403 anyway.
-const TeamPanel = ({ onBack, fineOnly = false }) => {
+const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -1174,6 +1174,12 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
     finally { setUploadingDoc(null); }
   };
 
+  // When a department is pinned (e.g. the BK Manager's Team must show Base Kitchen staff
+  // only), filter client-side too — the backend already scopes a real scoped-manager's list,
+  // but this also holds when an owner/AVP previews the dashboard (whose API identity is
+  // unscoped and would otherwise return every outlet's staff).
+  const shownEmployees = department ? employees.filter((e) => e.department === department) : employees;
+
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
       {onBack && <BackBtn onClick={onBack} />}
@@ -1192,9 +1198,9 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
       <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Onboard Employee"}</button>
     </div>}
 
-    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : employees.length === 0
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : shownEmployees.length === 0
       ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
-      : employees.map((emp) => (
+      : shownEmployees.map((emp) => (
         <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}{!emp.active && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700 }}> · Inactive</span>}</div>
@@ -18946,7 +18952,7 @@ const ScopedDashboard = () => {
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
       {tab === "fines" && <FinesPanel />}
-      {tab === "team" && <TeamPanel />}
+      {tab === "team" && <TeamPanel department="bk" />}
       {tab === "demand_vs_closing" && <DemandVsClosingSection />}
     </div>
   </div>);

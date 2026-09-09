@@ -198,7 +198,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={onOrder} style={{ ...btnPrimary, background: "#16A34A" }}>📝 Order from Vendor</button>
-          <button onClick={onNew} style={btnGhost}>+ Log a Delivery</button>
+          <button onClick={onNew} style={{ ...btnGhost, background: "#FFF7ED", border: "1px solid #FED7AA", color: "#EA580C" }}>+ Purana Paap</button>
         </div>
       </div>
       {availableCategories.length > 0 && (
