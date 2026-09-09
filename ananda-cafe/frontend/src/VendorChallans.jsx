@@ -825,9 +825,18 @@ function ChallanDetail({ id, onBack }) {
     api.updateChallan(id, { no_bill_reason: noBillReason.trim() }).then(() => { setShowNoBill(false); load(); }).catch((e) => setError(e.message)).finally(() => setBusy(false));
   };
 
-  const receive = () => {
+  const receive = async () => {
     setBusy(true);
-    api.receiveChallan(id).then(() => load()).catch((e) => setError(e.message)).finally(() => setBusy(false));
+    try {
+      // No separate "Confirm" click needed: if there's no bill and no saved reason yet but
+      // one is typed in the box, persist it first so the backend's "bill OR no-bill reason
+      // required" check passes, then receive in the same action.
+      if (!challan.bill_photo_path && !challan.no_bill_reason && noBillReason.trim()) {
+        await api.updateChallan(id, { no_bill_reason: noBillReason.trim() });
+      }
+      await api.receiveChallan(id);
+      load();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
   };
 
   const cancel = () => {
@@ -858,7 +867,9 @@ function ChallanDetail({ id, onBack }) {
   if (!challan) return <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>;
 
   const s = STATUS_COLORS[challan.status] || STATUS_COLORS.draft;
-  const canReceive = challan.status === "draft" && (challan.bill_photo_path || challan.no_bill_reason);
+  // A typed no-bill reason (not yet Confirmed) also unlocks Receive — receive() persists it
+  // for you, so you don't have to click Confirm separately first.
+  const canReceive = challan.status === "draft" && (challan.bill_photo_path || challan.no_bill_reason || noBillReason.trim());
 
   return (
     <div>

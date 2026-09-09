@@ -189,32 +189,45 @@ router.patch("/challans/:id", async (req, res) => {
   res.json(data);
 });
 
-// PATCH /:id/items — Stage 5 migration: update qty_entered/total_price on a draft's
-// existing lines. Needed because ordering and pricing happen at different times, same
-// as the old Order Challan flow (you place the order not knowing the exact price; the
-// vendor/driver fills in what was actually bought and for how much once goods arrive,
-// before Receive is pressed) — {item_id: {qty_entered?, total_price?}}. total_price is
-// what the vendor's bill says for that whole line (e.g. "Potato 250 Kg — ₹6,250") —
-// unit_price is DERIVED from it below, not typed directly, so the store doesn't have to
-// divide the bill by the quantity themselves before punching it in. Recomputes
-// total_amount from all lines afterward. Not a general item-add/remove — that's still
-// "cancel this draft, start a fresh one" (source of the note in the comment above), to
-// keep the mapping from a challan to what it always claimed to represent unambiguous.
+// PATCH /:id/items — update qty_entered/total_price on a challan's existing lines.
+// Originally draft-only (ordering and pricing happen at different times — you place the
+// order not knowing the exact price; the vendor/driver fills in what was actually
+// bought and for how much once goods arrive, before Receive is pressed). Opened up to
+// RECEIVED challans too ("edit option should be there at all the stages") — a real,
+// common need (price entered wrong, driver logged a typo) that draft-only edit couldn't
+// fix once Receive had already been pressed. The complication: a received challan's
+// original qty/price already posted a RECEIPT stock_movement and (if priced) a
+// rate-card ledger entry — editing the challan row alone without touching those would
+// leave this screen and the actual ledger silently disagreeing, exactly the kind of gap
+// this app has been bitten by before. So a post-receive qty edit here also posts a
+// correcting ADJUSTMENT movement for the delta (not a second RECEIPT — this is a
+// correction, not a new delivery), and a price edit re-ingests the rate-card ledger
+// effective TODAY (forward-only, same rule every other price correction in this app
+// follows — never rewrites the historical entry from the original receive date).
+// {item_id: {qty_entered?, total_price?}}. total_price is what the vendor's bill says
+// for that whole line (e.g. "Potato 250 Kg — ₹6,250") — unit_price is DERIVED from it
+// below, not typed directly. Still blocked for a cancelled challan (nothing to correct
+// against — it never moved stock or priced anything). Not a general item-add/remove —
+// that stays a fresh challan, to keep the mapping from a challan to what it always
+// claimed to represent unambiguous.
 router.patch("/challans/:id/items", async (req, res) => {
-  if (!await gateWithDriver(req, res)) return;
-  const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
+  const user = await gateWithDriver(req, res);
+  if (!user) return;
+  const { data: existing } = await supabase.from("vendor_challans").select("status, location_id").eq("id", req.params.id).maybeSingle();
   if (!existing) return res.status(404).json({ error: "Challan not found" });
-  if (existing.status !== "draft") return res.status(400).json({ error: "Only a draft challan can be edited" });
+  if (existing.status === "cancelled") return res.status(400).json({ error: "A cancelled challan can't be edited" });
   const { items } = req.body; // { item_id: { qty_entered?, total_price? } }
   if (!items || !Object.keys(items).length) return res.status(400).json({ error: "items is required" });
 
+  const priceCorrections = []; // items whose price actually changed on an already-received challan
   for (const [itemId, patch] of Object.entries(items)) {
     const linePatch = {};
     if (patch.qty_entered != null) linePatch.qty_entered = Number(patch.qty_entered);
     if (patch.total_price != null) linePatch.line_total = Number(patch.total_price);
     if (!Object.keys(linePatch).length) continue;
-    const { data: line } = await supabase.from("vendor_challan_items").select("qty_entered, qty_base, unit_entered, line_total").eq("challan_id", req.params.id).eq("item_id", itemId).maybeSingle();
+    const { data: line } = await supabase.from("vendor_challan_items").select("qty_entered, qty_base, unit_entered, line_total, unit_price").eq("challan_id", req.params.id).eq("item_id", itemId).maybeSingle();
     if (!line) continue;
+    const oldQtyBase = Number(line.qty_base) || 0;
     if (linePatch.qty_entered != null) {
       const factor = line.qty_entered ? Number(line.qty_base) / Number(line.qty_entered) : 1;
       linePatch.qty_base = linePatch.qty_entered * factor;
@@ -223,17 +236,45 @@ router.patch("/challans/:id/items", async (req, res) => {
     // the total paid or the quantity changes, so it stays in sync regardless of which
     // one the store edits first.
     if (linePatch.line_total != null || linePatch.qty_base != null) {
-      const qtyBase = linePatch.qty_base != null ? linePatch.qty_base : Number(line.qty_base);
+      const qtyBase = linePatch.qty_base != null ? linePatch.qty_base : oldQtyBase;
       const lineTotal = linePatch.line_total != null ? linePatch.line_total : (line.line_total != null ? Number(line.line_total) : null);
       if (lineTotal != null && qtyBase > 0) linePatch.unit_price = Number((lineTotal / qtyBase).toFixed(2));
     }
     await supabase.from("vendor_challan_items").update(linePatch).eq("challan_id", req.params.id).eq("item_id", itemId);
+
+    if (existing.status === "received") {
+      const newQtyBase = linePatch.qty_base != null ? linePatch.qty_base : oldQtyBase;
+      const delta = newQtyBase - oldQtyBase;
+      if (Math.abs(delta) > 1e-9) {
+        await supabase.from("stock_movements").insert({
+          item_id: itemId, location_id: existing.location_id, movement_type: "ADJUSTMENT", qty_delta: delta,
+          source_type: "challan_edit", source_id: req.params.id, reason: "Challan item corrected after receiving",
+          idempotency_key: `challan_edit:${req.params.id}:${itemId}:${Date.now()}`, created_by: user.name,
+        });
+        await rebuildStockBalances({ itemId, locationId: existing.location_id });
+      }
+      if (linePatch.unit_price != null && linePatch.unit_price !== Number(line.unit_price)) {
+        priceCorrections.push({ item_id: itemId, unit_price: linePatch.unit_price, unit_entered: line.unit_entered });
+      }
+    }
   }
 
   const { data: allLines } = await supabase.from("vendor_challan_items").select("line_total").eq("challan_id", req.params.id);
   const total = (allLines || []).reduce((s, l) => s + (Number(l.line_total) || 0), 0);
   const { data, error } = await supabase.from("vendor_challans").update({ total_amount: total || null }).eq("id", req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  if (priceCorrections.length) {
+    try {
+      const targets = await resolveByItemIds(priceCorrections.map((c) => c.item_id));
+      const entries = priceCorrections.map((c) => ({
+        rateCardId: targets[c.item_id]?.rateCardId || null, price: c.unit_price,
+        priceUnit: targets[c.item_id]?.baseUnit || c.unit_entered, label: c.item_id,
+      }));
+      await ingestPrices(entries, { effectiveDate: todayIST(), source: "challan_edit", sourceId: req.params.id, createdBy: user.name });
+    } catch (e) { console.error(`[rate-card ledger] challan ${req.params.id} edit price ingest failed:`, e.message); }
+  }
+
   res.json(data);
 });
 
