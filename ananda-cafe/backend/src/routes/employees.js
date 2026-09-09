@@ -56,10 +56,14 @@ const FULL_EDIT_FIELDS = [
 // themselves — otherwise a former employee keeps accumulating 0%s in the
 // Performance Dashboard's Discipline score (personRatio scores "not marked" as 0)
 // until the owner happens to notice and deactivate them.
-const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active'];
+const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active', 'bank_account_number', 'bank_ifsc'];
 // Fields stripped out of API responses for scoped managers — payroll/bank data
 // isn't their business even read-only.
 const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
+// The two bank fields outlet/BK managers legitimately manage for their own team (salary/
+// advance payout) — kept visible AND editable for scoped roles. Salary, account-holder name
+// and UPI stay owner-only.
+const SCOPED_VISIBLE_FIELDS = ['bank_account_number', 'bank_ifsc'];
 
 // null = unrestricted (owner/avp/head_chef). A string = the one department
 // value (outlet id or 'bk') this user's employees are confined to. false = this
@@ -88,7 +92,7 @@ function requireScope(scope, res) {
 function sanitize(emp, role) {
   if (OWNER_LEVEL_ROLES.includes(role)) return emp;
   const clean = { ...emp };
-  SENSITIVE_FIELDS.forEach((f) => delete clean[f]);
+  SENSITIVE_FIELDS.filter((f) => !SCOPED_VISIBLE_FIELDS.includes(f)).forEach((f) => delete clean[f]);
   return clean;
 }
 

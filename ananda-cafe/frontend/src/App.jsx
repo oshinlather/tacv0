@@ -1086,6 +1086,10 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
   const [editPhone, setEditPhone] = useState("");
   const [editJoiningDate, setEditJoiningDate] = useState("");
   const [editActive, setEditActive] = useState(true);
+  // Bank details for salary/advance payout — saved onto the same employee profile the
+  // Employee Master edits (bank_account_number / bank_ifsc columns already exist there).
+  const [editAccountNumber, setEditAccountNumber] = useState("");
+  const [editIfsc, setEditIfsc] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   // KYC docs (Aadhar/Police Verification only — see SCOPED_DOC_TYPES on the
   // backend) uploadable straight from the edit form, no separate profile screen.
@@ -1147,6 +1151,7 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
   const openEdit = (emp) => {
     setEditId(emp.id); setEditName(emp.name || ""); setEditDesignation(emp.designation || "");
     setEditPhone(emp.phone || ""); setEditJoiningDate(emp.joining_date || ""); setEditActive(emp.active !== false);
+    setEditAccountNumber(emp.bank_account_number || ""); setEditIfsc(emp.bank_ifsc || "");
     setEditDocs([]);
     api.getEmployeeDocuments(emp.id).then(setEditDocs).catch(() => setEditDocs([]));
   };
@@ -1154,7 +1159,7 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
     if (!editName || !editDesignation) { alert("Name and designation required"); return; }
     setEditSaving(true);
     try {
-      await api.updateEmployee(id, { name: editName, designation: editDesignation, phone: editPhone || null, joining_date: editJoiningDate || null, active: editActive });
+      await api.updateEmployee(id, { name: editName, designation: editDesignation, phone: editPhone || null, joining_date: editJoiningDate || null, active: editActive, bank_account_number: editAccountNumber.trim() || null, bank_ifsc: editIfsc.trim().toUpperCase() || null });
       setEditId(null);
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -1204,6 +1209,9 @@ const TeamPanel = ({ onBack, fineOnly = false }) => {
               <input placeholder="Name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus style={inputStyle} />
               <input placeholder="Designation" value={editDesignation} onChange={(e) => setEditDesignation(e.target.value)} style={inputStyle} />
               <input type="tel" placeholder="Phone (optional)" value={editPhone} onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
+              {/* Bank details for salary/advance payout — saved onto the employee profile. */}
+              <input inputMode="numeric" placeholder="Bank account number (optional)" value={editAccountNumber} onChange={(e) => setEditAccountNumber(e.target.value.replace(/[^0-9]/g, ""))} style={inputStyle} />
+              <input placeholder="IFSC code (optional)" value={editIfsc} onChange={(e) => setEditIfsc(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} style={inputStyle} />
               {/* Left/right pair, same as a demand UnitPicker toggle — not a checkbox, so
                   which state is currently selected is unambiguous at a glance. */}
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
