@@ -832,6 +832,27 @@ function ChallanDetail({ id, onBack }) {
         const priceChanged = Number(d.total_price || 0) !== Number(it.line_total || 0);
         if (qtyChanged || priceChanged) changed[it.item_id] = { qty_entered: d.qty_entered, total_price: d.total_price };
       });
+      // Recheck guard — before saving, flag any changed line whose resulting PER-UNIT price
+      // lands more than 10% off the last recorded per-unit price for that item, and make the
+      // user confirm. This is what catches a fat-finger like the coconut line collapsing
+      // from ₹47 to ₹4.75 before it silently feeds the price ledger.
+      const spikes = [];
+      Object.entries(changed).forEach(([itemId, c]) => {
+        const it = (challan.items || []).find((x) => x.item_id === itemId);
+        if (!it) return;
+        const factor = Number(it.qty_entered) > 0 ? Number(it.qty_base) / Number(it.qty_entered) : 1;
+        const newBase = Number(c.qty_entered) * factor;
+        const newUnit = newBase > 0 ? Number(c.total_price) / newBase : null;
+        const prevUnit = it.unit_price != null ? Number(it.unit_price) : (Number(it.qty_base) > 0 ? Number(it.line_total) / Number(it.qty_base) : null);
+        if (newUnit != null && Number.isFinite(newUnit) && prevUnit && prevUnit > 0) {
+          const pct = ((newUnit - prevUnit) / prevUnit) * 100;
+          if (Math.abs(pct) > 10) spikes.push(`• ${it.item_name}: was ₹${prevUnit.toFixed(2)} → now ₹${newUnit.toFixed(2)}/${it.unit_entered || "unit"} (${pct > 0 ? "+" : ""}${pct.toFixed(0)}%)`);
+        }
+      });
+      if (spikes.length && !window.confirm(`⚠️ Recheck — these prices are more than 10% off the last recorded price:\n\n${spikes.join("\n")}\n\nSave anyway?`)) {
+        setSaving(false);
+        return;
+      }
       if (Object.keys(changed).length) await api.updateChallanItems(id, changed);
       for (const itemId of toRemove) await api.deleteChallanItem(id, itemId);
       setEditMode(false); setDraft({}); setToRemove(new Set());
