@@ -278,6 +278,47 @@ router.patch("/challans/:id/items", async (req, res) => {
   res.json(data);
 });
 
+// DELETE /:id/items/:itemId — remove one line from a challan (only ever offered from
+// Edit mode on the frontend — "deleting any item only after edit is clicked"). Owner/
+// store_mgr/avp/bk_manager only (not driver — this is a correction to the record
+// itself, a step beyond just pricing a line). If the challan is already received,
+// that item's original RECEIPT movement is deleted outright (not offset with a
+// compensating ADJUSTMENT) — same convention the full-challan DELETE route already
+// uses, so a removed line reads as "this never happened" rather than leaving two
+// entries that net to zero cluttering the ledger. Any later correction movement on this
+// same item (PATCH /:id/items after receiving) is cleaned up too, for the same reason.
+// Deliberately does NOT touch that item's rate-card price history — a line being wrong
+// doesn't mean the price it recorded was wrong (the item may just not have actually
+// been part of this delivery), and rate_card_prices has no per-item scope on a
+// challan's source_id to remove just one line's contribution safely anyway.
+router.delete("/challans/:id/items/:itemId", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { data: challan } = await supabase.from("vendor_challans").select("status, location_id").eq("id", req.params.id).maybeSingle();
+  if (!challan) return res.status(404).json({ error: "Challan not found" });
+  if (challan.status === "cancelled") return res.status(400).json({ error: "A cancelled challan can't be edited" });
+  const { data: line } = await supabase.from("vendor_challan_items").select("item_id").eq("challan_id", req.params.id).eq("item_id", req.params.itemId).maybeSingle();
+  if (!line) return res.status(404).json({ error: "Item not found on this challan" });
+
+  if (challan.status === "received") {
+    const { error: mvErr } = await supabase.from("stock_movements").delete()
+      .eq("source_type", "receipt").eq("source_id", req.params.id).eq("item_id", req.params.itemId);
+    if (mvErr) return res.status(500).json({ error: mvErr.message });
+    const { error: adjErr } = await supabase.from("stock_movements").delete()
+      .eq("source_type", "challan_edit").eq("source_id", req.params.id).eq("item_id", req.params.itemId);
+    if (adjErr) return res.status(500).json({ error: adjErr.message });
+    await rebuildStockBalances({ itemId: req.params.itemId, locationId: challan.location_id });
+  }
+
+  const { error: delErr } = await supabase.from("vendor_challan_items").delete().eq("challan_id", req.params.id).eq("item_id", req.params.itemId);
+  if (delErr) return res.status(500).json({ error: delErr.message });
+
+  const { data: remaining } = await supabase.from("vendor_challan_items").select("line_total").eq("challan_id", req.params.id);
+  const total = (remaining || []).reduce((s, l) => s + (Number(l.line_total) || 0), 0);
+  const { data, error } = await supabase.from("vendor_challans").update({ total_amount: total || null }).eq("id", req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // POST /:id/bill — bill photo upload, same base64-in-JSON-body + 'photos' bucket +
 // storage-path-not-URL pattern purchases.js and employees.js already use.
 router.post("/challans/:id/bill", async (req, res) => {

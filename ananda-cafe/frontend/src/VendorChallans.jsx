@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
 import api from "./api";
 
 // Store Inventory Module — Stage 2: vendor challan (delivery note) -> receive -> auto
@@ -790,8 +790,14 @@ function ChallanDetail({ id, onBack }) {
   const [noBillReason, setNoBillReason] = useState("");
   const [showNoBill, setShowNoBill] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState({}); // item_id -> { qty_entered, unit_price } draft while typing
-  const saveTimer = useRef(null);
+  // Explicit Edit mode, not live-as-you-type auto-save — "it should not save itself
+  // rather it should be editable" — nothing here touches the server until Save is
+  // pressed, and an item can only be removed while this is open ("deleting any item
+  // only after edit is clicked"), same pattern LegacyOrderDetail's own edit mode uses.
+  const [editMode, setEditMode] = useState(false);
+  const [draft, setDraft] = useState({}); // item_id -> { qty_entered, total_price } strings
+  const [toRemove, setToRemove] = useState(new Set()); // item_ids marked for deletion, applied on Save
+  const [saving, setSaving] = useState(false);
 
   // Block body — see the identical fix + comment on LegacyOrderDetail's own `load` above.
   // Same bug, same shape: an expression-body arrow here returns the promise chain, which
@@ -799,12 +805,39 @@ function ChallanDetail({ id, onBack }) {
   const load = () => { api.getChallan(id).then(setChallan).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
 
-  const editLine = (itemId, patch) => {
-    setEditing((e) => ({ ...e, [itemId]: { ...e[itemId], ...patch } }));
-    clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      api.updateChallanItems(id, { [itemId]: { ...editing[itemId], ...patch } }).then(load).catch((e) => setError(e.message));
-    }, 700);
+  const startEdit = () => {
+    const d = {};
+    (challan.items || []).forEach((it) => { d[it.item_id] = { qty_entered: String(it.qty_entered ?? ""), total_price: String(it.line_total ?? "") }; });
+    setDraft(d);
+    setToRemove(new Set());
+    setEditMode(true);
+  };
+  const cancelEdit = () => { setEditMode(false); setDraft({}); setToRemove(new Set()); };
+  const editLine = (itemId, patch) => setDraft((d) => ({ ...d, [itemId]: { ...d[itemId], ...patch } }));
+  const toggleRemove = (itemId) => setToRemove((s) => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
+
+  const saveEdit = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      // Only lines actually changed from what load() last returned — no point re-sending
+      // every row untouched, and it keeps the received-challan stock/price correction
+      // path (server-side) from firing on lines nobody actually edited.
+      const changed = {};
+      (challan.items || []).forEach((it) => {
+        if (toRemove.has(it.item_id)) return; // handled by the delete calls below instead
+        const d = draft[it.item_id];
+        if (!d) return;
+        const qtyChanged = Number(d.qty_entered) !== Number(it.qty_entered);
+        const priceChanged = Number(d.total_price || 0) !== Number(it.line_total || 0);
+        if (qtyChanged || priceChanged) changed[it.item_id] = { qty_entered: d.qty_entered, total_price: d.total_price };
+      });
+      if (Object.keys(changed).length) await api.updateChallanItems(id, changed);
+      for (const itemId of toRemove) await api.deleteChallanItem(id, itemId);
+      setEditMode(false); setDraft({}); setToRemove(new Set());
+      load();
+    } catch (e) { setError(e.message); }
+    finally { setSaving(false); }
   };
 
   const uploadBill = (dataUrl) => {
@@ -884,31 +917,47 @@ function ChallanDetail({ id, onBack }) {
       </div>
 
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: 16, marginBottom: 14 }}>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>{challan.challan_date} · {challan.location_id === "store" ? "Store" : "BK"}{challan.challan_number ? ` · #${challan.challan_number}` : ""}</div>
-        {/* Edit unlocked at every stage except cancelled — "edit option should be there
-            at all the stages". Once received, a qty/price change here also posts a
-            correcting ADJUSTMENT stock movement and re-prices the rate-card ledger
-            (both handled server-side, see PATCH /:id/items) — not just a text change,
-            so the ledger and this screen never quietly disagree. */}
-        {canEditItems && <div style={{ fontSize: 11, color: "#B45309", marginBottom: 6 }}>{challan.status === "received" ? "Editing after receiving — a quantity change corrects stock, a price change re-prices from today." : "Fill in what was actually bought and for how much — edits save automatically."}</div>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
+          <div style={{ fontSize: 12, color: "#999" }}>{challan.challan_date} · {challan.location_id === "store" ? "Store" : "BK"}{challan.challan_number ? ` · #${challan.challan_number}` : ""}</div>
+          {/* Edit unlocked at every stage except cancelled — "edit option should be there
+              at all the stages" — but only actually opens as an explicit mode, not
+              live-as-you-type. Once received, a qty/price change also posts a correcting
+              ADJUSTMENT stock movement and re-prices the rate-card ledger server-side
+              (see PATCH /:id/items), so the ledger and this screen never quietly disagree. */}
+          {canEditItems && !editMode && <button onClick={startEdit} style={{ ...btnGhost, padding: "5px 10px", fontSize: 11 }}>✏️ Edit</button>}
+          {editMode && (
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={cancelEdit} disabled={saving} style={{ ...btnGhost, padding: "5px 10px", fontSize: 11 }}>Cancel</button>
+              <button onClick={saveEdit} disabled={saving} style={{ ...btnPrimary, padding: "5px 10px", fontSize: 11, opacity: saving ? 0.6 : 1 }}>{saving ? "Saving…" : "💾 Save"}</button>
+            </div>
+          )}
+        </div>
+        {editMode && <div style={{ fontSize: 11, color: "#B45309", marginBottom: 6 }}>{challan.status === "received" ? "Editing after receiving — a quantity change corrects stock, a price change re-prices from today." : "Fill in what was actually bought and for how much."} Tap 🗑️ to drop a line that shouldn't be here.</div>}
         {(challan.items || []).map((it) => {
-          const draft = editing[it.item_id] || {};
+          const d = draft[it.item_id] || {};
+          const marked = toRemove.has(it.item_id);
           return (
-            <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8 }}>
-              <div style={{ flex: 1 }}>{it.item_name}</div>
-              {canEditItems ? (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input type="number" min="0" step="any" value={draft.qty_entered ?? it.qty_entered} onChange={(e) => editLine(it.item_id, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
-                    <span style={{ fontSize: 10, color: "#999" }}>{it.unit_entered}</span>
-                    <span style={{ fontSize: 10, color: "#999" }}>₹</span>
-                    {/* Total paid for this whole line, straight off the vendor's bill (e.g.
-                        "Potato 250 Kg — ₹6,250") — the per-Kg rate below is computed by the
-                        server, never something the store has to work out themselves. */}
-                    <input type="number" min="0" step="any" value={draft.total_price ?? it.line_total ?? ""} onChange={(e) => editLine(it.item_id, { total_price: e.target.value })} placeholder="total paid" style={{ ...inputStyle, width: 84, textAlign: "right" }} />
+            <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8, opacity: marked ? 0.4 : 1 }}>
+              <div style={{ flex: 1, textDecoration: marked ? "line-through" : "none" }}>{it.item_name}</div>
+              {editMode ? (
+                marked ? (
+                  <button onClick={() => toggleRemove(it.item_id)} style={{ ...btnGhost, padding: "4px 8px", fontSize: 10 }}>Undo</button>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input type="number" min="0" step="any" value={d.qty_entered ?? ""} onChange={(e) => editLine(it.item_id, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                      <span style={{ fontSize: 10, color: "#999" }}>{it.unit_entered}</span>
+                      <span style={{ fontSize: 10, color: "#999" }}>₹</span>
+                      {/* Total paid for this whole line, straight off the vendor's bill
+                          (e.g. "Potato 250 Kg — ₹6,250") — the per-Kg rate below is
+                          computed by the server, never something the store has to work
+                          out themselves. */}
+                      <input type="number" min="0" step="any" value={d.total_price ?? ""} onChange={(e) => editLine(it.item_id, { total_price: e.target.value })} placeholder="total paid" style={{ ...inputStyle, width: 84, textAlign: "right" }} />
+                      <button onClick={() => toggleRemove(it.item_id)} title="Remove this item" style={{ padding: "5px 7px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>🗑️</button>
+                    </div>
+                    {it.unit_price != null && <div style={{ fontSize: 10, color: "#999" }}>was @₹{Number(it.unit_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}/{it.unit_entered}</div>}
                   </div>
-                  {it.unit_price != null && <div style={{ fontSize: 10, color: "#999" }}>@₹{Number(it.unit_price).toLocaleString("en-IN", { maximumFractionDigits: 2 })}/{it.unit_entered}</div>}
-                </div>
+                )
               ) : (
                 <div style={{ color: "#666", textAlign: "right" }}>
                   {fmtQty(it.qty_entered)} {it.unit_entered}

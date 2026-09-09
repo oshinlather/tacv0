@@ -357,6 +357,7 @@ const api = {
   createChallan: (data) => post("/api/store/challans", data),
   updateChallan: (id, data) => patch(`/api/store/challans/${id}`, data),
   updateChallanItems: (id, items) => patch(`/api/store/challans/${id}/items`, { items }),
+  deleteChallanItem: (id, itemId) => del(`/api/store/challans/${id}/items/${itemId}`),
   uploadChallanBill: (id, base64) => post(`/api/store/challans/${id}/bill`, { base64 }),
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),
