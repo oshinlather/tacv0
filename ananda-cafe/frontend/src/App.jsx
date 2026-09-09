@@ -18829,10 +18829,17 @@ const SCOPED_ROLE_TABS = {
   bk_manager: [
     { id: "kitchen", label: "📋 Consolidated Demand" },
     { id: "bk_demand", label: "🏭 BK Demand" },
+    // Re-added next to BK Demand — same DEMAND_SECTIONS catalog (a superset: BK Demand's
+    // own getBkDemandSections() additionally strips out BK's own recipe items like
+    // Sambhar/batters, since BK can't demand those from itself; BK Closing intentionally
+    // keeps them, since BK does carry closing stock/wastage of what it just produced).
+    // No new render wiring needed — ScopedDashboard already has a generic
+    // {tab === "bk_closing_wastage" && <BKClosingWastage />} line every scoped role shares.
+    { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" },
     { id: "dispatch", label: "🚚 Dispatch" },
-    // Store Stock, BK Closing & Wastage and BK Store Audit intentionally removed from this
-    // role's day-to-day nav (still available to Owner/AVP). Vendor Challans + Closing Counts
-    // remain the operator's stock touchpoints.
+    // Store Stock and BK Store Audit intentionally removed from this role's day-to-day
+    // nav (still available to Owner/AVP). Vendor Challans + Closing Counts remain the
+    // operator's stock touchpoints.
     { id: "vendor_challans", label: "🧾 Vendor Challans" },
     { id: "stock_counts", label: "🔢 Closing Counts" },
     { id: "bk_production", label: "🏭 Production (Beta)" },
