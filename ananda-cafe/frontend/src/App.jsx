@@ -11049,7 +11049,13 @@ const OutletMgr = ({ onBack }) => {
       setStaffSaving(true); setErr(null);
       try {
         const foodItems = Object.entries(staffFood).filter(([, q]) => q > 0).map(([item, qty]) => ({ item, qty }));
-        await api.submitStaffDemand({ outlet_id: outlet, date: today(), shift: staffShift, category: "food", items: foodItems, note, submitted_by: getCurrentUser()?.name || outlet });
+        // Date staff food by its shift the SAME way the demand dates by its slot (AM = the
+        // morning delivery date, which is next-day after 11am; PM = today), so it lands on
+        // the same date as the demand it should ride with — otherwise BK Consolidated and
+        // the dispatch challan (both keyed by the demand's delivery date) look on the wrong
+        // day and the staff food silently never appears.
+        const staffDate = staffShift === "am" ? (morningDeliveryDate || morningSlotDate()) : today();
+        await api.submitStaffDemand({ outlet_id: outlet, date: staffDate, shift: staffShift, category: "food", items: foodItems, note, submitted_by: getCurrentUser()?.name || outlet });
         alert(`✅ Staff food (${staffShift.toUpperCase()}) submitted — ${foodItems.length} items`);
         setStaffFood({});
       } catch (e) { setErr(e.message); }
