@@ -119,6 +119,18 @@ export default function BKClosingWastage() {
           </div>
         ))}
       </div>
+
+      {/* Explicit Save — flushes the current draft immediately (cancels the pending
+          auto-save timer first so it doesn't double-fire). Labelled + coloured per mode, so
+          it reads as a separate save for Closing Stock vs Wastage. Auto-save still runs as a
+          safety net. */}
+      <button
+        onClick={() => { clearTimeout(saveTimer.current); save(draft); }}
+        disabled={saving}
+        style={{ width: "100%", marginTop: 14, padding: "14px", borderRadius: 12, border: "none", background: saving ? "#D0D0CC" : mode === "closing" ? "#1A1A1A" : "#DC2626", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}
+      >
+        {saving ? "⏳ Saving…" : `💾 Save ${mode === "closing" ? "Closing Stock" : "Wastage"}`}
+      </button>
     </div>
   );
 }
