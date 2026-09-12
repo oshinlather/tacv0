@@ -7631,7 +7631,16 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       return weekFrom <= weekTo ? { from: weekFrom, to: weekTo } : { from: weekTo, to: weekFrom };
     }
     const [y, mo] = selMonth.split("-").map(Number);
-    return { from: `${selMonth}-01`, to: new Date(y, mo, 0).toISOString().slice(0, 10) };
+    // Built from y/mo/daysInMonth directly (.getDate(), a LOCAL calendar read) rather than
+    // `new Date(y, mo, 0).toISOString()` — that constructs the date at LOCAL midnight then
+    // converts to UTC for the ISO string, which lands one day short (the 30th instead of
+    // the 31st) for any month ending in 31 whenever the browser's own timezone is ahead of
+    // UTC (IST included) — local midnight on the 31st is still the 30th in UTC. Silently
+    // dropped the last day of every 31-day month from this page's own Day by Day table
+    // (and, since `days` below reads off this same `range.to`, from the whole month's demand
+    // fetch too — see the identical fix already applied server-side for the same reason).
+    const daysInMonth = new Date(y, mo, 0).getDate();
+    return { from: `${selMonth}-01`, to: `${selMonth}-${String(daysInMonth).padStart(2, "0")}` };
   }, [periodMode, selDay, weekFrom, weekTo, selMonth]);
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19336,7 +19345,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance", "demands"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
