@@ -7756,7 +7756,12 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     if (!selOutlet || !range.from) return;
     setLoading(true);
     api.getOrders({ from: range.from, to: range.to, outlet_id: selOutlet })
-      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && d.date >= range.from && d.date <= range.to)))
+      // Exclude draft AND cancelled — a cancelled order was never supplied, so counting it
+      // as "demanded" here inflated the demand column and showed a phantom demanded>dispatched
+      // shortfall (e.g. Desi Ghee showed 7 demanded / 6 dispatched when the 7th was a
+      // cancelled order). Billing is on what was actually dispatched, so cancelled has no
+      // place in either column.
+      .then((data) => setDemands((data || []).filter((d) => d.type === "manual" && d.status !== "draft" && d.status !== "cancelled" && d.date >= range.from && d.date <= range.to)))
       .catch(() => setDemands([]))
       .finally(() => setLoading(false));
   }, [selOutlet, range]);
