@@ -38,6 +38,14 @@ UPDATE unit_conversions SET qty = 9, notes = '1 Batch = 9 Kg' WHERE item_id = 'd
 UPDATE unit_conversions SET qty = 8, notes = '1 Batch = 8 Kg' WHERE item_id = 'idli_batter' AND unit_type = 'Batch';
 UPDATE unit_conversions SET qty = 2, notes = '1 Batch = 2 Kg' WHERE item_id = 'vada_batter' AND unit_type = 'Batch';
 
+-- 0b. Correct the batter recipe YIELD too — owner-confirmed 1 batch YIELDS 9 Kg (Dosa) /
+--     8 Kg (Idli). yield_qty drives BK cost-per-Kg (batch ingredient cost ÷ yield), so the
+--     old 18/16 halved the batter rate and understated COGS everywhere it's used (P&L, RM
+--     Audit, Franchise Billing). Matched by name (verify first with the SELECT below).
+--       SELECT id, name, yield_qty FROM bk_recipes WHERE name ILIKE '%batter%';
+UPDATE bk_recipes SET yield_qty = 9 WHERE lower(trim(name)) = 'dosa batter';
+UPDATE bk_recipes SET yield_qty = 8 WHERE lower(trim(name)) = 'idli batter';
+
 -- 1. Tag pre-cutover batter records as Batch (fills only missing tags → idempotent).
 UPDATE demands
 SET items_units = COALESCE(items_units, '{}'::jsonb)
