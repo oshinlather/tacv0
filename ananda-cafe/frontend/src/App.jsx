@@ -7752,6 +7752,20 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     return factor;
   };
 
+  // Batters (Dosa/Idli/Vada Batter) were demanded in BATCH until 2026-08-11, then switched to
+  // Kg — but the demand records don't tag their unit, so a whole month's column silently mixed
+  // the two (a Batch "3" sitting next to a Kg "27", summed raw). Resolve each record's real
+  // unit by that cutover date (an explicit items_units tag still wins if one exists); every
+  // downstream calc then converts Batch→Kg via the item's own unit_conversions factor, so
+  // batter qty, day-by-day totals AND billing are all in one unit (Kg). Non-batters untouched.
+  const BATTER_IDS = new Set(["dosa_batter", "idli_batter", "vada_batter"]);
+  const BATTER_CUTOVER = "2026-08-11";
+  const effectiveUnit = (itemId, recUnit, date) => {
+    if (recUnit) return recUnit;
+    if (BATTER_IDS.has(itemId)) return date < BATTER_CUTOVER ? "Batch" : "Kg";
+    return null;
+  };
+
   useEffect(() => {
     if (!selOutlet || !range.from) return;
     setLoading(true);
@@ -7776,16 +7790,15 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       const dUnits = d.items_units || {};
       const ids = new Set([...Object.keys(dItems), ...Object.keys(dispItems || {})]);
       ids.forEach((id) => {
-        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, dispatchRecords: [] };
-        merged[id].qty += Number(dItems[id]) || 0;
+        if (!merged[id]) merged[id] = { hasDispatch: false, demandRecords: [], dispatchRecords: [] };
+        // Each record's effective unit (Batch vs Kg resolved by the batter cutover, or its
+        // own items_units tag) — kept per record so a month straddling the change converts
+        // each side correctly instead of summing raw mixed units.
+        const eu = effectiveUnit(id, dUnits[id], d.date);
+        if (dItems[id] != null) merged[id].demandRecords.push({ qty: Number(dItems[id]) || 0, unit: eu });
         if (dispItems && dispItems[id] != null) {
-          const q = Number(dispItems[id]) || 0;
           merged[id].hasDispatch = true;
-          merged[id].dispatchedQty += q;
-          // Kept per-record (not just summed into dispatchedQty) so each record's OWN
-          // items_units override converts correctly below — a month can straddle a unit
-          // change for the same item (e.g. Batch before Aug 11 2026, Kg after).
-          merged[id].dispatchRecords.push({ qty: q, unit: dUnits[id] || null });
+          merged[id].dispatchRecords.push({ qty: Number(dispItems[id]) || 0, unit: eu });
         }
       });
     });
@@ -7797,12 +7810,19 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       // Audit already use. bkRecipeCosts' cost is always per Kg (BK recipes always yield
       // in Kg), so it's treated exactly like a Kg-priced rate for the unit conversion below.
       const bkCost = !rate ? bkRecipeCosts[id] : null;
-      const displayUnit = def?.unit || rate?.unit || (bkCost ? 'Kg' : '');
+      // Batters are shown + billed in Kg (their records straddle the Batch→Kg cutover);
+      // every other item keeps its catalog unit exactly as before.
+      const displayUnit = BATTER_IDS.has(id) ? 'Kg' : (def?.unit || rate?.unit || (bkCost ? 'Kg' : ''));
       let rateUnit = displayUnit, unitPrice = 0;
       if (rate) { unitPrice = Number(rate.price); rateUnit = rate.unit || displayUnit; }
       else if (bkCost && bkCost.costPerKg > 0) { unitPrice = Number(bkCost.costPerKg); rateUnit = 'Kg'; }
+      // Demanded/dispatched shown IN displayUnit, converting each record from its own effective
+      // unit — for batters this collapses mixed Batch/Kg records into one honest Kg figure; for
+      // every other item the factor is 1 (record unit already == displayUnit), so nothing changes.
+      const demandQtySum = data.demandRecords.reduce((s, r) => s + r.qty * getUnitConv(r.unit || displayUnit, displayUnit, id), 0);
+      const dispatchQtySum = data.dispatchRecords.reduce((s, r) => s + r.qty * getUnitConv(r.unit || displayUnit, displayUnit, id), 0);
       // Billed on what was actually dispatched (supplied), not just demanded
-      const computedDispatchQty = data.hasDispatch ? Math.round(data.dispatchedQty * 100) / 100 : null;
+      const computedDispatchQty = data.hasDispatch ? Math.round(dispatchQtySum * 100) / 100 : null;
       const computedRate = Math.round(unitPrice * 100) / 100;
 
       // Convert and sum PER RECORD using that record's own items_units override — was
@@ -7831,7 +7851,7 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
       const sec = DEMAND_SECTIONS.find((s) => s.items.some((si) => si.id === id));
       return {
         id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
-        demandQty: Math.round(data.qty * 100) / 100,
+        demandQty: Math.round(demandQtySum * 100) / 100,
         dispatchQty: computedDispatchQty, dispatchQtyEdited: qtyEdited, billedQty,
         rate: computedRate, rateEdited, billedRate, rateUnit, amount,
         catId: sec?.id || '_other', catEmoji: sec?.emoji || '📦', catLabel: sec?.titleHi || 'Other',
@@ -7942,13 +7962,17 @@ const FranchiseBilling = ({ lockedOutlet, initialView } = {}) => {
     demands.forEach((d) => {
       const dispItems = d.dispatch_items || null;
       if (!dispItems) return;
+      const dUnits = d.items_units || {};
       Object.entries(dispItems).forEach(([id, qty]) => {
         if (!map[id]) map[id] = {};
-        map[id][d.date] = (map[id][d.date] || 0) + (Number(qty) || 0);
+        // Batters are shown/totalled in Kg (see effectiveUnit) so a column never mixes
+        // Batch and Kg; every other item stays in its own recorded unit as before.
+        const f = BATTER_IDS.has(id) ? getUnitConv(effectiveUnit(id, dUnits[id], d.date) || "Kg", "Kg", id) : 1;
+        map[id][d.date] = (map[id][d.date] || 0) + (Number(qty) || 0) * f;
       });
     });
     return map;
-  }, [demands]);
+  }, [demands, conversions]);
 
   // Effective (possibly manually corrected) dispatched qty for one item on one day
   const getDayQty = (itemId, date) => {
