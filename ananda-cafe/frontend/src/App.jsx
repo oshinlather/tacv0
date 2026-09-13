@@ -17040,8 +17040,17 @@ const PurchaseVsConsumptionAudit = ({ range, monthLabel, hiddenOutlets, toggleOu
     if (dailyByDate) return; // already loaded this month, whole-month cache covers every outlet
     setDailyLoading(true);
     const dates = [];
+    // d.toISOString().slice(0, 10) here was the exact same bug class just fixed in
+    // FranchiseBilling's own range.to — toISOString() converts to UTC, which lands one
+    // calendar day EARLY whenever the browser's timezone is ahead of UTC (IST always
+    // is): local midnight on Aug 1 is still July 31 in UTC. That silently shifted this
+    // whole day-by-day fetch back by a day (Aug 1-31 became Jul 31-Aug 30) — not just a
+    // label, since `ds` here is what actually gets queried, so the real Aug 31 was never
+    // fetched at all and a stray Jul 31 got pulled in instead. Fixed by reading y/m/d off
+    // `d` directly (LOCAL components, matching how `d` was already being incremented)
+    // instead of round-tripping through UTC.
     for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().slice(0, 10));
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     }
     Promise.all(dates.map((ds) =>
       Promise.all([
@@ -17249,8 +17258,17 @@ const FinancePnL = () => {
     if (dailyByDate) return; // already loaded this month, whole-month cache covers every outlet
     setDailyLoading(true);
     const dates = [];
+    // d.toISOString().slice(0, 10) here was the exact same bug class just fixed in
+    // FranchiseBilling's own range.to — toISOString() converts to UTC, which lands one
+    // calendar day EARLY whenever the browser's timezone is ahead of UTC (IST always
+    // is): local midnight on Aug 1 is still July 31 in UTC. That silently shifted this
+    // whole day-by-day fetch back by a day (Aug 1-31 became Jul 31-Aug 30) — not just a
+    // label, since `ds` here is what actually gets queried, so the real Aug 31 was never
+    // fetched at all and a stray Jul 31 got pulled in instead. Fixed by reading y/m/d off
+    // `d` directly (LOCAL components, matching how `d` was already being incremented)
+    // instead of round-tripping through UTC.
     for (let d = new Date(`${range.from}T00:00:00`); d <= new Date(`${range.to}T00:00:00`); d.setDate(d.getDate() + 1)) {
-      dates.push(d.toISOString().slice(0, 10));
+      dates.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
     }
     Promise.all(dates.map((ds) => api.getFinanceOutletPnl(ds, ds, basis).then((r) => [ds, r]).catch(() => [ds, null])))
       .then((entries) => {
