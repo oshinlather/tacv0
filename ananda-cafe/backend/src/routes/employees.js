@@ -117,14 +117,21 @@ router.get('/', async (req, res) => {
     // 2026_08_12_books_ledger_approval_status.sql) — a pending fine must not drag
     // down outstanding_advance (or payroll's deduction, see payroll.js) until approved.
     const { data: advances } = await supabase.from('books_ledger')
-      .select('employee_id, amount, settled, status').eq('is_advance', true).not('employee_id', 'is', null);
-    const balances = {};
+      .select('employee_id, amount, settled, status, entry_date').eq('is_advance', true).not('employee_id', 'is', null);
+    // First day of the current IST month (UTC+5:30) — entry_date is a plain 'YYYY-MM-DD', so
+    // a lexical >= compare against this string is the same as a date compare.
+    const istNow = new Date(Date.now() + 330 * 60000);
+    const monthStart = `${istNow.getUTCFullYear()}-${String(istNow.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const balances = {};      // all-time outstanding (payroll deduction / Employee Master)
+    const monthBalances = {}; // just this month's un-repaid advances (Team view)
     (advances || []).forEach((a) => {
       if (a.settled || a.status !== 'approved') return;
-      balances[a.employee_id] = (balances[a.employee_id] || 0) + Number(a.amount || 0);
+      const amt = Number(a.amount || 0);
+      balances[a.employee_id] = (balances[a.employee_id] || 0) + amt;
+      if (a.entry_date && a.entry_date >= monthStart) monthBalances[a.employee_id] = (monthBalances[a.employee_id] || 0) + amt;
     });
 
-    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0 }, user.role)));
+    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0 }, user.role)));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

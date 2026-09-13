@@ -1208,7 +1208,7 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
           </div>
           {emp.phone && <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>📞 {emp.phone}</div>}
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}</div>
-          {emp.outstanding_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.outstanding_advance)} advance outstanding</div>}
+          {emp.current_month_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.current_month_advance)} advance this month</div>}
 
           {editId === emp.id ? (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
