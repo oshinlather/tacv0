@@ -31,6 +31,13 @@
 --
 -- Rollback: 2026_09_14_batter_unit_backfill_DOWN.sql.
 
+-- 0. Correct the Batch→Kg factor first — owner-confirmed 1 Dosa Batch = 9 Kg, 1 Idli Batch
+--    = 8 Kg (Vada = 2). Some rows carried 18/16 (double). This MUST be right before the
+--    Batch tags below take effect, or pre-cutover history converts at twice the real weight.
+UPDATE unit_conversions SET qty = 9, notes = '1 Batch = 9 Kg' WHERE item_id = 'dosa_batter' AND unit_type = 'Batch';
+UPDATE unit_conversions SET qty = 8, notes = '1 Batch = 8 Kg' WHERE item_id = 'idli_batter' AND unit_type = 'Batch';
+UPDATE unit_conversions SET qty = 2, notes = '1 Batch = 2 Kg' WHERE item_id = 'vada_batter' AND unit_type = 'Batch';
+
 -- 1. Tag pre-cutover batter records as Batch (fills only missing tags → idempotent).
 UPDATE demands
 SET items_units = COALESCE(items_units, '{}'::jsonb)

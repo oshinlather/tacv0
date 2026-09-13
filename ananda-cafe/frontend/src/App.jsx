@@ -4793,8 +4793,8 @@ let RECIPES = {
 // ─── UNIT CONVERSIONS — Custom unit to base unit mappings ─────────────────
 let UNIT_CONVERSIONS = {
   Batch: [
-    { item_id: "dosa_batter", item_name: "Dosa Batter", qty: 18, base_unit: "Kg", notes: "1 Batch = 18 Kg" },
-    { item_id: "idli_batter", item_name: "Idli Batter", qty: 16, base_unit: "Kg", notes: "1 Batch = 16 Kg" },
+    { item_id: "dosa_batter", item_name: "Dosa Batter", qty: 9, base_unit: "Kg", notes: "1 Batch = 9 Kg" },
+    { item_id: "idli_batter", item_name: "Idli Batter", qty: 8, base_unit: "Kg", notes: "1 Batch = 8 Kg" },
     { item_id: "vada_batter", item_name: "Vada Batter", qty: 2, base_unit: "Kg", notes: "1 Batch = 2 Kg" },
   ],
   Pkt: [
