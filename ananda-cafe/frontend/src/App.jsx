@@ -10588,6 +10588,24 @@ const OutletMgr = ({ onBack }) => {
       const dispatched = order.dispatch_items || demanded;
       const allIds = [...new Set([...Object.keys(demanded), ...Object.keys(dispatched)])].filter((id) => (demanded[id] || 0) > 0 || (dispatched[id] || 0) > 0);
       const alreadyConfirmed = !!order.received_at;
+
+      // Downloadable/printable copy of this exact challan — same Item/Unit/Demanded/
+      // Dispatched/Status table the BK-side Dispatch Challan print already uses, adapted
+      // for a single outlet-side order. Available for any challan, confirmed or not.
+      const downloadChallan = () => {
+        const pw = window.open("", "_blank");
+        const rows = allIds.map((id) => {
+          const dem = demanded[id] || 0;
+          const disp = dispatched[id] || 0;
+          const short = disp < dem;
+          return `<tr style="${short ? "background:#FEF2F2" : ""}"><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;font-weight:600">${getName(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;color:#999;font-size:11px">${getUnit(id)}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-family:monospace">${dem}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-weight:700;font-family:monospace;color:${short ? "#DC2626" : "#16A34A"}">${disp}</td><td style="padding:8px 10px;border-bottom:1px solid #E8E8E4;text-align:center;font-size:11px;color:${short ? "#DC2626" : "#16A34A"}">${short ? "⬇ " + (dem - disp) + " short" : disp === dem ? "✓" : "⬆ +" + (disp - dem)}</td></tr>`;
+        }).join("");
+        const slotLabel = order.demand_slot === "morning" ? "Morning" : "Evening";
+        pw.document.write(`<!DOCTYPE html><html><head><title>${slotLabel} Challan — ${order.date}</title><link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;padding:24px}@media print{body{padding:12px}}</style></head><body><div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #1A1A1A;padding-bottom:12px;margin-bottom:16px"><div><h1 style="font-size:18px;font-weight:800">The Ananda Cafe — ${slotLabel} Challan</h1><p style="font-size:12px;color:#888;margin-top:2px">🏪 ${oData?.name || outlet}</p></div><div style="text-align:right"><div style="font-size:12px;color:#888">${order.date}</div>${alreadyConfirmed ? `<div style="font-size:11px;color:#16A34A;font-weight:700">✅ Confirmed by ${order.received_by}</div>` : ""}</div></div><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#F8F8F5"><th style="padding:8px 10px;text-align:left;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Item</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Unit</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Demanded</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Dispatched</th><th style="padding:8px 10px;text-align:center;font-size:10px;font-weight:700;color:#666;text-transform:uppercase;border-bottom:2px solid #DDD">Status</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:20px;font-size:11px;color:#999">Total: ${allIds.length} items · Generated: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></body></html>`);
+        pw.document.close();
+        setTimeout(() => { pw.focus(); pw.print(); }, 400);
+      };
+
       return (<div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <BackBtn onClick={() => { setOpenDispatchOrder(null); setReceivedDraft({}); }} />
@@ -10595,6 +10613,7 @@ const OutletMgr = ({ onBack }) => {
             <div style={{ fontSize: 15, fontWeight: 800 }}>{order.demand_slot === "morning" ? "🌅 Morning" : "🌙 Evening"} Challan</div>
             <div style={{ fontSize: 11, color: "#999" }}>{order.date} · {allIds.length} items</div>
           </div>
+          <button onClick={downloadChallan} style={{ padding: "8px 14px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", color: "#555", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>📄 Download</button>
         </div>
         {alreadyConfirmed && (
           <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", marginBottom: 14, fontSize: 12, color: "#166534" }}>
@@ -10640,6 +10659,14 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🚚 Dispatched Challans</div>
       </div>
       <DatePicker value={dispatchedDate} onChange={setDispatchedDate} />
+      {/* DatePicker above only offers the last 4 days — this reaches back through the
+          whole month (or further) for a specific challan instead of being stuck to
+          Today/Yesterday/2 more. */}
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 11, color: "#999", whiteSpace: "nowrap" }}>📅 Or pick any date</span>
+        <input type="date" value={dispatchedDate} max={today()} onChange={(e) => e.target.value && setDispatchedDate(e.target.value)}
+          style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff", color: "#1A1A1A" }} />
+      </label>
       <div style={{ height: 12 }} />
       {dispatchedLoading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>}
       {!dispatchedLoading && dispatchedOrders.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>Nothing submitted or dispatched to you on this date</div>}
