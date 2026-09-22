@@ -608,6 +608,7 @@ res.status(500).json({ error: err.message });
 const COLD_DRINK_ITEMS = [
   { id: 'cold_drink', name: 'Cold Drink', unit: 'Pcs' },
   { id: 'diet_coke', name: 'Diet Coke', unit: 'Pcs' },
+  { id: 'lahori_jeera', name: 'Lahori Jeera', unit: 'Pcs' },
   { id: 'small_water_bottle', name: 'Small Water Bottle', unit: 'Pcs' },
   { id: 'water_bottle_1l', name: 'Water Bottle (1L)', unit: 'Pcs' },
 ];
@@ -623,6 +624,9 @@ const COLD_DRINK_ITEMS = [
 function classifyColdDrinkSale(name) {
   const compact = (name || '').toLowerCase().replace(/[^a-z]/g, '');
   if (compact.includes('dietcoke')) return 'diet_coke';
+  // Brand tokens only ('lahori' / 'zeera'), never bare 'jeera' — that would wrongly swallow
+  // food lines like Jeera Rice/Jeera Aloo into the cold-drink audit.
+  if (compact.includes('lahori') || compact.includes('zeera')) return 'lahori_jeera';
   if (compact.includes('smallwater')) return 'small_water_bottle';
   if (compact.includes('water')) return 'water_bottle_1l';
   if (compact.includes('colddrink')) return 'cold_drink';

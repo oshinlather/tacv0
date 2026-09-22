@@ -307,6 +307,7 @@ export const DEMAND_SECTIONS = [
     items: [
       { id: "cold_drink", name: "Cold Drink", unit: "Pcs" },
       { id: "diet_coke", name: "Diet Coke", unit: "Pcs" },
+      { id: "lahori_jeera", name: "Lahori Jeera", unit: "Pcs" },
       { id: "small_water_bottle", name: "Small Water Bottle", unit: "Pcs" },
       { id: "water_bottle_1l", name: "Water Bottle (1L)", unit: "Pcs" },
     ]},
