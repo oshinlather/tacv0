@@ -18532,7 +18532,7 @@ const UnitEconomicsPanel = ({ onBack } = {}) => {
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-      <button onClick={onBack} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
+      <BackBtn onClick={onBack} />
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 16, fontWeight: 700 }}>📐 Unit Economics</div>
         <div style={{ fontSize: 11, color: "#888" }}>Food + Serving + Packaging = Final Cost, vs Sector-23's current price = CM1</div>
