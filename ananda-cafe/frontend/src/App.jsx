@@ -17257,6 +17257,7 @@ const FinancePnL = () => {
   // — backend still enforces owner-only on every fixed-costs write regardless of where the
   // button lives, this is just giving the owner a shortcut to it.
   const [showFixedCosts, setShowFixedCosts] = useState(false);
+  const [showUnitEconomics, setShowUnitEconomics] = useState(false);
   // BK Purchase drill-down — one outlet expanded at a time, item × date breakdown fetched
   // lazily on first expand and cached per outlet_id for the rest of this month view.
   const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
@@ -17425,7 +17426,9 @@ const FinancePnL = () => {
       <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Total Sale − Delivery Commission = Effective Sale, minus {materialCostLabel} ({basis === "consumption" ? "Yesterday Closing + Dispatched − Wastage − Today Closing, the actual-consumption formula" : "what was dispatched, at rate-card cost"}), BK Fixed Share (BK's own rent/salary/etc, split proportional to each outlet's {materialCostLabel} — not equally), and fixed costs = Net P&L.</p>
     </div>
 
-    {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} /> : (<>
+    {showFixedCosts ? <FixedCostsPanel onBack={() => setShowFixedCosts(false)} />
+      : showUnitEconomics ? <UnitEconomicsPanel onBack={() => setShowUnitEconomics(false)} />
+      : (<>
     <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "center", flexWrap: "wrap" }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
@@ -17449,6 +17452,7 @@ const FinancePnL = () => {
       {getCurrentUser()?.role === "owner" && (
         <button onClick={() => setShowFixedCosts(true)} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🏢 Fixed Costs</button>
       )}
+      <button onClick={() => setShowUnitEconomics(true)} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#1D4ED8", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>📐 Unit Economics</button>
     </div>
 
     {/* Basis pill — same table, same columns, just which material-cost figure drives
@@ -18461,6 +18465,127 @@ const RateAlertPanel = () => {
       )}
     </div>
   );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  UNIT ECONOMICS — one row per active dish: Food Cost (recipe) + Serving Cost
+//  (dine-in crockery, flat — same rule for every dish) + Packaging Cost (takeaway,
+//  dish-specific) = Final Cost, vs the current Sector-23 price = CM1. See the backend
+//  route's own header comment (GET /api/recipes/unit-economics) for exactly how each
+//  column is derived — every number here traces back to a real configured rule
+//  (rate card, recipe, crockery/packaging rules), nothing guessed.
+// ═════════════════════════════════════════════════════════════════════════════
+const UNIT_ECON_COLUMNS = [
+  { key: "item_name", label: "Item" },
+  { key: "category", label: "Category" },
+  { key: "food_cost", label: "Food Cost", num: true },
+  { key: "serving_cost", label: "Serving Cost", num: true },
+  { key: "packaging_cost", label: "Packaging Cost", num: true },
+  { key: "final_cost", label: "Final Cost", num: true },
+  { key: "price_sec23", label: "Price (S-23)", num: true },
+  { key: "cm1", label: "CM1", num: true },
+  { key: "cm1_pct", label: "CM1 %", num: true },
+];
+const UnitEconomicsPanel = ({ onBack } = {}) => {
+  const [data, setData] = useState(null); // { serving_cost_note, rows } | null while loading
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [sortKey, setSortKey] = useState("item_name");
+  const [sortDir, setSortDir] = useState("asc");
+
+  useEffect(() => { api.getUnitEconomics().then(setData).catch((e) => setError(e.message)); }, []);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir(key === "item_name" || key === "category" ? "asc" : "desc"); }
+  };
+
+  const rupee = (n) => n == null ? "—" : `₹${Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  const categories = useMemo(() => [...new Set((data?.rows || []).map((r) => r.category).filter(Boolean))].sort(), [data]);
+
+  const visibleRows = useMemo(() => {
+    let rows = data?.rows || [];
+    if (categoryFilter) rows = rows.filter((r) => r.category === categoryFilter);
+    if (search.trim()) { const q = search.trim().toLowerCase(); rows = rows.filter((r) => r.item_name.toLowerCase().includes(q)); }
+    return [...rows].sort((a, b) => {
+      const av = a[sortKey], bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1; // nulls (unpriced dishes, no S-23 sale yet) always sort last
+      if (bv == null) return -1;
+      if (typeof av === "string") { const c = av.localeCompare(bv); return sortDir === "asc" ? c : -c; }
+      const diff = av - bv; return sortDir === "asc" ? diff : -diff;
+    });
+  }, [data, categoryFilter, search, sortKey, sortDir]);
+
+  const exportRows = () => {
+    const headers = UNIT_ECON_COLUMNS.map((c) => c.label);
+    const rows = visibleRows.map((r) => UNIT_ECON_COLUMNS.map((c) => r[c.key] ?? ""));
+    exportCSV(headers, rows, `unit_economics_${today()}.csv`);
+  };
+
+  const SortableTh = ({ col }) => (
+    <th onClick={() => toggleSort(col.key)} title="Click to sort" style={{ ...thS, ...(col.num ? { textAlign: "right" } : {}), cursor: "pointer", userSelect: "none", color: sortKey === col.key ? "#1A1A1A" : thS.color, whiteSpace: "nowrap" }}>
+      {col.label}<span style={{ display: "inline-block", width: 12, color: "#999" }}>{sortKey === col.key ? (sortDir === "asc" ? " ▲" : " ▼") : ""}</span>
+    </th>
+  );
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <button onClick={onBack} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 16, fontWeight: 700 }}>📐 Unit Economics</div>
+        <div style={{ fontSize: 11, color: "#888" }}>Food + Serving + Packaging = Final Cost, vs Sector-23's current price = CM1</div>
+      </div>
+      {data && <ExportBtn onClick={exportRows} />}
+    </div>
+
+    {error && <div style={{ color: "#DC2626", fontSize: 13, padding: 20, textAlign: "center" }}>{error}</div>}
+    {!error && !data && <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>⏳ Loading…</div>}
+
+    {data && (<>
+      {data.serving_cost_note && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 14 }}>
+          ℹ️ {data.serving_cost_note}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 Search items…" style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", minWidth: 180 }} />
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }}>
+          <option value="">All Categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <span style={{ fontSize: 11, color: "#999" }}>{visibleRows.length} item(s)</span>
+      </div>
+
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>{UNIT_ECON_COLUMNS.map((col) => <SortableTh key={col.key} col={col} />)}</tr></thead>
+            <tbody>
+              {visibleRows.map((r) => (
+                <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                  <td style={tdS}>{r.item_name}{r.unpriced_ingredients > 0 && <span title={`${r.unpriced_ingredients} ingredient(s) not priced in Rate Card — Food Cost is understated`} style={{ marginLeft: 4, color: "#DC2626" }}>⚠️</span>}</td>
+                  <td style={tdS}>{r.category || "—"}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.food_cost)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.serving_cost)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.packaging_cost)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{rupee(r.final_cost)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.price_sec23)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.cm1 == null ? "#999" : r.cm1 >= 0 ? "#16A34A" : "#DC2626" }}>{rupee(r.cm1)}</td>
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.cm1_pct == null ? "#999" : r.cm1_pct >= 0 ? "#16A34A" : "#DC2626" }}>{r.cm1_pct == null ? "—" : `${r.cm1_pct}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p style={{ fontSize: 10.5, color: "#BBB", marginTop: 10 }}>
+        Food Cost is at the current Rate Card (not date-effective history). Price (S-23) is the most recent real sale at Sector-23 — "—" means it's never been sold there. CM1 = Price − Final Cost; needs both a price and a fully-priced recipe to compute (⚠️ marks a dish with an unpriced ingredient — its Food Cost is understated until that's fixed in Rate Card).
+      </p>
+    </>)}
+  </div>);
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

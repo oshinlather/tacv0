@@ -398,6 +398,108 @@ router.get('/recipes/costs-bulk', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/recipes/unit-economics — one row per active dish: Food Cost (recipe, at
+// current rate card — reuses computeAllDishCosts, the same source costs-bulk uses, not
+// a re-derived copy), Serving Cost, Packaging Cost, Final Cost, CM1, and the current
+// Sector-23 selling price. Owner/AVP/Head Chef only, same tier as the rest of Finance.
+//
+// Serving Cost (dine-in crockery) is FLAT — identical for every dish. That's the real
+// operational rule, not a bug: DEFAULT_CROCKERY_PACKAGING_RULES' dine_in list (1 Wooden
+// Plate + 2 Bio Spoon + 1 Paper Bowl) applies to every dine-in item sold regardless of
+// what it is — see computeCrockeryPackagingItems' own header comment. There's no
+// per-dish variation to compute even if this table looks odd showing the same number
+// on every row.
+//
+// Packaging Cost (takeaway) IS dish-specific: 2 Bio Spoon (universal, every takeaway
+// order gets these) + whichever TAKEAWAY_CATEGORY_CONTAINERS container matches this
+// dish's own category/name (Dosa Box for a Dosas-category dish, 500ML for Rice, Podi
+// Idli/Vada Lifafa by name — nothing extra for a dish matching none, e.g. Beverages) +
+// the Sambhar+Chutney sides (SAMBHAR_CHUTNEY_SIDES) if it's a Dosa/Idli/Vada dish. The
+// real rule attributes Bio Spoon and the sides once per ORDER, not per dish — priced
+// here as "if this dish were the whole order", the same simplification any single-dish
+// unit-economics figure has to make, not a guess at the rule itself (the rule's own
+// quantities/items are exactly what computeCrockeryPackagingItems already uses).
+//
+// Final Cost = Food + Serving + Packaging summed (all three, not a dine-in-only or
+// takeaway-only scenario) — CM1 = Sector-23 price − Final Cost. Sector-23 price is the
+// most recent real daily_sales row for that dish at outlet_code='sec23', same
+// "latest actual sale, not a configured menu price" rule getSellingPriceInfo already
+// uses elsewhere, just scoped to one outlet.
+const UNIT_ECON_CROCKERY_ITEM_IDS = ['wooden_plates', 'bio_spoon', 'paper_bowl', 'dosa_box_small', 'container_500ml', 'podi_idli_container', 'vada_lifafa', 'container_250ml', 'container_50ml'];
+router.get('/recipes/unit-economics', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef');
+    if (!user) return;
+
+    const [{ data: recipes }, allCosts, crockeryRules, { data: crockeryRateRows }, { data: crockeryConvRows }, { data: recentSec23Sales }] = await Promise.all([
+      supabase.from('recipes').select('id, item_name, category').eq('status', 'Active'),
+      computeAllDishCosts(),
+      getCrockeryPackagingRules(),
+      supabase.from('rate_card').select('id, unit, price').eq('active', true).in('id', UNIT_ECON_CROCKERY_ITEM_IDS),
+      supabase.from('unit_conversions').select('item_id, unit_type, qty, base_unit').eq('active', true).in('item_id', UNIT_ECON_CROCKERY_ITEM_IDS),
+      // Last 5000 sec23 rows — comfortably more than a few months of real volume at one
+      // outlet — grouped below to the single most recent price per dish (rows already
+      // newest-first), the same "latest actual sale" rule getSellingPriceInfo uses.
+      supabase.from('daily_sales').select('item_name, item_price, sale_date').eq('outlet_code', 'sec23').order('sale_date', { ascending: false }).limit(5000),
+    ]);
+
+    // Per-PIECE cost for each crockery/packaging item — rate_card price is per its own
+    // tracked unit (often a pack, e.g. Bio Spoon = ₹60.14 per 100-piece Pkt), converted
+    // down via unit_conversions the same way computeCrockeryPackagingItems' own
+    // convFactorFor does; standalone here since this route doesn't need the full
+    // buildCostingContext machinery for just 9 items.
+    const crockeryConvByItem = {};
+    (crockeryConvRows || []).forEach((c) => { crockeryConvByItem[c.item_id] = c; });
+    const piecePrice = {};
+    (crockeryRateRows || []).forEach((r) => {
+      const conv = crockeryConvByItem[r.id];
+      if (!conv || (r.unit || '').toLowerCase() !== conv.unit_type.toLowerCase()) { piecePrice[r.id] = Number(r.price) || 0; return; }
+      piecePrice[r.id] = (Number(r.price) || 0) / (Number(conv.qty) || 1);
+    });
+    const pieceCost = (itemId, qty) => (piecePrice[itemId] || 0) * qty;
+
+    const servingCost = Math.round((crockeryRules.dine_in || []).reduce((s, rule) => s + pieceCost(rule.item_id, rule.qty), 0) * 100) / 100;
+    const takeawayBaseCost = (crockeryRules.takeaway || []).reduce((s, rule) => s + pieceCost(rule.item_id, rule.qty), 0);
+    const sidesCost = SAMBHAR_CHUTNEY_SIDES.reduce((s, rule) => s + pieceCost(rule.item_id, rule.qty), 0);
+
+    const sec23PriceByNormName = {};
+    (recentSec23Sales || []).forEach((r) => {
+      const norm = normalizeDishName(r.item_name);
+      if (sec23PriceByNormName[norm] === undefined && Number(r.item_price) > 0) {
+        sec23PriceByNormName[norm] = { price: Number(r.item_price), date: r.sale_date };
+      }
+    });
+
+    const rows = (recipes || []).map((r) => {
+      const costed = allCosts[normalizeDishName(r.item_name)] || null;
+      const foodCost = costed ? Math.round(costed.total_cost * 100) / 100 : null;
+
+      const containerMatch = matchTakeawayCategoryContainer({ category_name: r.category, item_name: r.item_name });
+      const containerCost = containerMatch ? pieceCost(containerMatch.item_id, 1) : 0;
+      const getsSides = !!containerMatch && containerMatch.key !== 'rice';
+      const packagingCost = Math.round((takeawayBaseCost + containerCost + (getsSides ? sidesCost : 0)) * 100) / 100;
+
+      const finalCost = foodCost != null ? Math.round((foodCost + servingCost + packagingCost) * 100) / 100 : null;
+      const priceInfo = sec23PriceByNormName[normalizeDishName(r.item_name)] || null;
+      const cm1 = finalCost != null && priceInfo ? Math.round((priceInfo.price - finalCost) * 100) / 100 : null;
+      const cm1Pct = cm1 != null && priceInfo.price > 0 ? Math.round((cm1 / priceInfo.price) * 1000) / 10 : null;
+
+      return {
+        id: r.id, item_name: r.item_name, category: r.category,
+        food_cost: foodCost, unpriced_ingredients: costed ? costed.unpriced_count : null,
+        serving_cost: servingCost, packaging_cost: packagingCost, final_cost: finalCost,
+        price_sec23: priceInfo?.price ?? null, price_sec23_date: priceInfo?.date ?? null,
+        cm1, cm1_pct: cm1Pct,
+      };
+    });
+
+    res.json({
+      serving_cost_note: 'Flat per dine-in item (1 Wooden Plate + 2 Bio Spoon + 1 Paper Bowl) — same for every dish, per the real operational rule, not a per-row calculation error.',
+      rows,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Converts a recipe-ingredient qty into the kg-equivalent computeRMAudit sums directly —
 // GM/KG/LTR/ML get a numeric qty_kg; countable items (Piece/Pcs) get null so they're
 // skipped from the raw-material weight total (packaging isn't costed by weight).

@@ -125,6 +125,7 @@ const api = {
   deleteRecipeIngredient: (id) => del(`/api/recipes/ingredients/${id}`),
   getDishCost: (recipeId) => get(`/api/recipes/${recipeId}/cost`),
   getAllDishCosts: () => get("/api/recipes/costs-bulk"),
+  getUnitEconomics: () => get("/api/recipes/unit-economics"),
 
   // ── Orders / Dashboard ──
   getOrders: (params) => get("/api/orders", params),
