@@ -425,22 +425,36 @@ router.get('/recipes/costs-bulk', async (req, res) => {
 // most recent real daily_sales row for that dish at outlet_code='sec23', same
 // "latest actual sale, not a configured menu price" rule getSellingPriceInfo already
 // uses elsewhere, just scoped to one outlet.
-const UNIT_ECON_CROCKERY_ITEM_IDS = ['wooden_plates', 'bio_spoon', 'paper_bowl', 'dosa_box_small', 'container_500ml', 'podi_idli_container', 'vada_lifafa', 'container_250ml', 'container_50ml'];
 router.get('/recipes/unit-economics', async (req, res) => {
   try {
     const user = await requireRole(req, res, 'owner', 'avp', 'head_chef');
     if (!user) return;
 
-    const [{ data: recipes }, allCosts, crockeryRules, { data: crockeryRateRows }, { data: crockeryConvRows }, { data: recentSec23Sales }] = await Promise.all([
+    const [{ data: recipes }, allCosts, crockeryRules, { data: recentSec23Sales }] = await Promise.all([
       supabase.from('recipes').select('id, item_name, category').eq('status', 'Active'),
       computeAllDishCosts(),
       getCrockeryPackagingRules(),
-      supabase.from('rate_card').select('id, name, unit, price').eq('active', true).in('id', UNIT_ECON_CROCKERY_ITEM_IDS),
-      supabase.from('unit_conversions').select('item_id, unit_type, qty, base_unit').eq('active', true).in('item_id', UNIT_ECON_CROCKERY_ITEM_IDS),
       // Last 5000 sec23 rows — comfortably more than a few months of real volume at one
       // outlet — grouped below to the single most recent price per dish (rows already
       // newest-first), the same "latest actual sale" rule getSellingPriceInfo uses.
       supabase.from('daily_sales').select('item_name, item_price, sale_date').eq('outlet_code', 'sec23').order('sale_date', { ascending: false }).limit(5000),
+    ]);
+
+    // Every item_id these rules could possibly reference — NOT a hardcoded list. The
+    // rules themselves are owner-editable (POST /crockery-packaging-rules), and a newly
+    // added item (caught in testing: the owner added "Banana Leaves" to dine_in after
+    // this route first shipped) would otherwise silently price at ₹0 here while still
+    // correctly pricing in the real day-to-day RM Audit computation, which always reads
+    // rate_card/unit_conversions for whatever's actually in the rules, not a fixed list.
+    const crockeryItemIds = [...new Set([
+      ...(crockeryRules.dine_in || []).map((r) => r.item_id),
+      ...(crockeryRules.takeaway || []).map((r) => r.item_id),
+      ...TAKEAWAY_CATEGORY_CONTAINERS.map((c) => c.item_id),
+      ...SAMBHAR_CHUTNEY_SIDES.map((s) => s.item_id),
+    ])];
+    const [{ data: crockeryRateRows }, { data: crockeryConvRows }] = await Promise.all([
+      supabase.from('rate_card').select('id, name, unit, price').eq('active', true).in('id', crockeryItemIds),
+      supabase.from('unit_conversions').select('item_id, unit_type, qty, base_unit').eq('active', true).in('item_id', crockeryItemIds),
     ]);
 
     // Per-PIECE cost for each crockery/packaging item — rate_card price is per its own
