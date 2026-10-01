@@ -18486,6 +18486,33 @@ const UNIT_ECON_COLUMNS = [
   { key: "cm1", label: "CM1", num: true },
   { key: "cm1_pct", label: "CM1 %", num: true },
 ];
+// Small shared pieces for the expand-row drill-down — one card per cost column
+// (Food/Serving/Packaging), each just a compact name/qty/rate/cost table. Kept generic
+// (rows is already display-ready strings) rather than three near-identical bespoke
+// layouts.
+const UnitEconBreakdownCard = ({ title, sub, children }) => (
+  <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 10, padding: "10px 12px" }}>
+    <div style={{ fontSize: 11.5, fontWeight: 700, marginBottom: sub ? 1 : 6 }}>{title}</div>
+    {sub && <div style={{ fontSize: 10, color: "#999", marginBottom: 6 }}>{sub}</div>}
+    {children}
+  </div>
+);
+const UnitEconLineTable = ({ rows }) => (
+  rows.length === 0 ? <div style={{ fontSize: 11, color: "#999" }}>—</div> : (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+      <tbody>
+        {rows.map((row, i) => (
+          <tr key={i} style={{ borderTop: i === 0 ? "none" : "1px solid #F0F0EE" }}>
+            <td style={{ padding: "3px 0", color: "#555" }}>{row.name}</td>
+            <td style={{ padding: "3px 0", color: "#999", textAlign: "right" }}>{row.qty}</td>
+            <td style={{ padding: "3px 0", color: "#999", textAlign: "right" }}>{row.rate}</td>
+            <td style={{ padding: "3px 0", textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{row.cost != null ? `₹${row.cost}` : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+);
 const UnitEconomicsPanel = ({ onBack } = {}) => {
   const [data, setData] = useState(null); // { serving_cost_note, rows } | null while loading
   const [error, setError] = useState("");
@@ -18493,6 +18520,24 @@ const UnitEconomicsPanel = ({ onBack } = {}) => {
   const [categoryFilter, setCategoryFilter] = useState("");
   const [sortKey, setSortKey] = useState("item_name");
   const [sortDir, setSortDir] = useState("asc");
+  // Expand-row drill-down ("drop down in relevant column") — shows exactly what makes up
+  // Food/Serving/Packaging Cost for one dish, read-only (editing ingredients/crockery
+  // rules already lives on the Dish Costing screen and the Sales tab's own Item-wise
+  // Sales drill-down — this just shows the same numbers, not a second write path for
+  // them). Food Cost's ingredient list is fetched lazily per dish on first expand
+  // (api.getDishCost, the same call Dish Costing/Sales tab use) and cached so
+  // re-expanding doesn't re-fetch; Serving/Packaging breakdowns are already in `data`
+  // (the bulk /recipes/unit-economics response), no extra call needed for those.
+  const [expandedId, setExpandedId] = useState(null);
+  const [ingredientDetail, setIngredientDetail] = useState({}); // recipe id -> {ingredients,...} | "loading" | "error"
+  const toggleExpand = (r) => {
+    if (expandedId === r.id) { setExpandedId(null); return; }
+    setExpandedId(r.id);
+    if (ingredientDetail[r.id] === undefined) {
+      setIngredientDetail((p) => ({ ...p, [r.id]: "loading" }));
+      api.getDishCost(r.id).then((d) => setIngredientDetail((p) => ({ ...p, [r.id]: d }))).catch(() => setIngredientDetail((p) => ({ ...p, [r.id]: "error" })));
+    }
+  };
 
   useEffect(() => { api.getUnitEconomics().then(setData).catch((e) => setError(e.message)); }, []);
 
@@ -18564,19 +18609,45 @@ const UnitEconomicsPanel = ({ onBack } = {}) => {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ background: "#FAFAF8" }}>{UNIT_ECON_COLUMNS.map((col) => <SortableTh key={col.key} col={col} />)}</tr></thead>
             <tbody>
-              {visibleRows.map((r) => (
-                <tr key={r.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                  <td style={tdS}>{r.item_name}{r.unpriced_ingredients > 0 && <span title={`${r.unpriced_ingredients} ingredient(s) not priced in Rate Card — Food Cost is understated`} style={{ marginLeft: 4, color: "#DC2626" }}>⚠️</span>}</td>
-                  <td style={tdS}>{r.category || "—"}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.food_cost)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.serving_cost)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.packaging_cost)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{rupee(r.final_cost)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.price_sec23)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.cm1 == null ? "#999" : r.cm1 >= 0 ? "#16A34A" : "#DC2626" }}>{rupee(r.cm1)}</td>
-                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.cm1_pct == null ? "#999" : r.cm1_pct >= 0 ? "#16A34A" : "#DC2626" }}>{r.cm1_pct == null ? "—" : `${r.cm1_pct}%`}</td>
-                </tr>
-              ))}
+              {visibleRows.map((r) => {
+                const isOpen = expandedId === r.id;
+                const detail = ingredientDetail[r.id];
+                return (
+                  <Fragment key={r.id}>
+                    <tr onClick={() => toggleExpand(r)} style={{ borderBottom: isOpen ? "none" : "1px solid #F0F0EC", cursor: "pointer", background: isOpen ? "#FAFAF8" : "transparent" }}>
+                      <td style={tdS}><span style={{ display: "inline-block", width: 12, color: "#999", fontSize: 9 }}>{isOpen ? "▼" : "▶"}</span>{r.item_name}{r.unpriced_ingredients > 0 && <span title={`${r.unpriced_ingredients} ingredient(s) not priced in Rate Card — Food Cost is understated`} style={{ marginLeft: 4, color: "#DC2626" }}>⚠️</span>}</td>
+                      <td style={tdS}>{r.category || "—"}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.food_cost)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.serving_cost)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.packaging_cost)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{rupee(r.final_cost)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{rupee(r.price_sec23)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: r.cm1 == null ? "#999" : r.cm1 >= 0 ? "#16A34A" : "#DC2626" }}>{rupee(r.cm1)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: r.cm1_pct == null ? "#999" : r.cm1_pct >= 0 ? "#16A34A" : "#DC2626" }}>{r.cm1_pct == null ? "—" : `${r.cm1_pct}%`}</td>
+                    </tr>
+                    {isOpen && (
+                      <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td colSpan={UNIT_ECON_COLUMNS.length} style={{ padding: "4px 14px 18px 30px", background: "#FAFAF8" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr", gap: 14 }}>
+                            <UnitEconBreakdownCard title={`🍲 Food Cost — ${rupee(r.food_cost)}`}>
+                              {detail === "loading" ? <div style={{ fontSize: 11, color: "#999" }}>⏳ Loading…</div>
+                                : detail === "error" || !detail ? <div style={{ fontSize: 11, color: "#DC2626" }}>Couldn't load ingredients</div>
+                                : (detail.ingredients || []).length === 0 ? <div style={{ fontSize: 11, color: "#999" }}>No ingredients on this recipe</div>
+                                : <UnitEconLineTable rows={(detail.ingredients || []).map((i) => ({ name: i.raw_material, qty: `${i.qty} ${i.unit}`, rate: i.priced ? `₹${i.rate}/${i.rate_unit}` : "not priced", cost: i.priced ? i.cost : null }))} />}
+                            </UnitEconBreakdownCard>
+                            <UnitEconBreakdownCard title={`🍽️ Serving Cost — ${rupee(r.serving_cost)}`} sub="Flat, every dine-in item">
+                              <UnitEconLineTable rows={(r.serving_cost_breakdown || []).map((b) => ({ name: b.name, qty: `× ${b.qty}`, rate: `₹${b.unit_price}`, cost: b.cost }))} />
+                            </UnitEconBreakdownCard>
+                            <UnitEconBreakdownCard title={`📦 Packaging Cost — ${rupee(r.packaging_cost)}`} sub="If this dish were a takeaway order">
+                              <UnitEconLineTable rows={(r.packaging_cost_breakdown || []).map((b) => ({ name: b.name, qty: `× ${b.qty}`, rate: `₹${b.unit_price}`, cost: b.cost }))} />
+                            </UnitEconBreakdownCard>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -435,7 +435,7 @@ router.get('/recipes/unit-economics', async (req, res) => {
       supabase.from('recipes').select('id, item_name, category').eq('status', 'Active'),
       computeAllDishCosts(),
       getCrockeryPackagingRules(),
-      supabase.from('rate_card').select('id, unit, price').eq('active', true).in('id', UNIT_ECON_CROCKERY_ITEM_IDS),
+      supabase.from('rate_card').select('id, name, unit, price').eq('active', true).in('id', UNIT_ECON_CROCKERY_ITEM_IDS),
       supabase.from('unit_conversions').select('item_id, unit_type, qty, base_unit').eq('active', true).in('item_id', UNIT_ECON_CROCKERY_ITEM_IDS),
       // Last 5000 sec23 rows — comfortably more than a few months of real volume at one
       // outlet — grouped below to the single most recent price per dish (rows already
@@ -462,6 +462,21 @@ router.get('/recipes/unit-economics', async (req, res) => {
     const takeawayBaseCost = (crockeryRules.takeaway || []).reduce((s, rule) => s + pieceCost(rule.item_id, rule.qty), 0);
     const sidesCost = SAMBHAR_CHUTNEY_SIDES.reduce((s, rule) => s + pieceCost(rule.item_id, rule.qty), 0);
 
+    // Line-item breakdown for the UI's expand-row drill-down ("drop down in relevant
+    // column") — the exact same rule items the cost totals above are built from, just
+    // also returned individually so the owner can see what's actually in Serving Cost/
+    // Packaging Cost instead of only the summed number. servingBreakdown/
+    // takeawayBaseBreakdown/sidesBreakdown are identical for every dish (same flat
+    // rule), computed once and reused per row below.
+    const breakdownFor = (rules) => rules.map((rule) => ({
+      name: rule.name, qty: rule.qty,
+      unit_price: Math.round((piecePrice[rule.item_id] || 0) * 100) / 100,
+      cost: Math.round(pieceCost(rule.item_id, rule.qty) * 100) / 100,
+    }));
+    const servingBreakdown = breakdownFor(crockeryRules.dine_in || []);
+    const takeawayBaseBreakdown = breakdownFor(crockeryRules.takeaway || []);
+    const sidesBreakdown = breakdownFor(SAMBHAR_CHUTNEY_SIDES);
+
     const sec23PriceByNormName = {};
     (recentSec23Sales || []).forEach((r) => {
       const norm = normalizeDishName(r.item_name);
@@ -478,6 +493,10 @@ router.get('/recipes/unit-economics', async (req, res) => {
       const containerCost = containerMatch ? pieceCost(containerMatch.item_id, 1) : 0;
       const getsSides = !!containerMatch && containerMatch.key !== 'rice';
       const packagingCost = Math.round((takeawayBaseCost + containerCost + (getsSides ? sidesCost : 0)) * 100) / 100;
+      const containerBreakdown = containerMatch
+        ? [{ name: containerMatch.name, qty: 1, unit_price: Math.round((piecePrice[containerMatch.item_id] || 0) * 100) / 100, cost: Math.round(containerCost * 100) / 100 }]
+        : [];
+      const packagingBreakdown = [...takeawayBaseBreakdown, ...containerBreakdown, ...(getsSides ? sidesBreakdown : [])];
 
       const finalCost = foodCost != null ? Math.round((foodCost + servingCost + packagingCost) * 100) / 100 : null;
       const priceInfo = sec23PriceByNormName[normalizeDishName(r.item_name)] || null;
@@ -490,6 +509,7 @@ router.get('/recipes/unit-economics', async (req, res) => {
         serving_cost: servingCost, packaging_cost: packagingCost, final_cost: finalCost,
         price_sec23: priceInfo?.price ?? null, price_sec23_date: priceInfo?.date ?? null,
         cm1, cm1_pct: cm1Pct,
+        serving_cost_breakdown: servingBreakdown, packaging_cost_breakdown: packagingBreakdown,
       };
     });
 
