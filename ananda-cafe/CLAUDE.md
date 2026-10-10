@@ -37,7 +37,7 @@ ananda-cafe/
 - `rate_card_prices` — Price ledger (rate_card_id, effective_date, price, source, source_id). Dated price history; costing resolves as-of each calculation's date
 - `demand_items` — Item definitions for demand form (id, name, section_id, unit, active)
 - `bk_recipes` — BK recipe definitions (id, name, yield_qty, yield_unit)
-- `bk_recipe_ingredients` — Recipe ingredients (recipe_id, raw_material_id, qty, unit)
+- `bk_recipe_ingredients` — Recipe ingredients (id, recipe_id, raw_material_id, qty, created_at). NO `unit` column — all qty is per-Kg (code reads `ing.unit` which is always undefined → defaults Kg)
 - `unit_conversions` — Custom unit conversions (item_id, unit_type, qty, base_unit)
   - Dosa Batter: 1 Batch = 9 Kg
   - Idli Batter: 1 Batch = 8 Kg
