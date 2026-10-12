@@ -716,6 +716,113 @@ router.get("/store-audit/:date", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/inventory/store-audit-monthly/:month (YYYY-MM) — the monthly companion to the
+// daily BK Store Audit above: a pure stock-IN vs stock-OUT flow report for Store over a
+// whole month, per item, with OUT broken down by Base Kitchen and each outlet ("ordered by
+// outlets and base kitchen"). Deliberately NOT a closing-count reconciliation like the daily
+// one — no prior-closing anchor / should-be / actual — because closing counts are periodic
+// now, so a month rarely has a clean start+end count to reconcile against; this answers the
+// simpler, always-answerable question "what came in, and where did it go". Same source
+// tables + same dedup rules as the daily audit so the two always agree when summed.
+//   Stock In  = received Vendor Challans + received Order Challans (POs) + stock_in movements
+//               (deduped by po_id::item_id, exactly as the daily audit does).
+//   Stock Out = demand dispatched this month, split: bk (outlet_id='bk') vs each outlet.
+//               Outlet out excludes the "food" category (BK-prepared items outlets get from
+//               BK, not Store), same rule as the daily audit.
+router.get("/store-audit-monthly/:month", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { month } = req.params;
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "month must be YYYY-MM" });
+  try {
+    const monthStart = `${month}-01`;
+    const rangeStart = `${monthStart}T00:00:00Z`;
+    const nextMonth = (() => { const d = new Date(`${monthStart}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1); return d.toISOString().slice(0, 10); })();
+    const rangeEnd = `${nextMonth}T00:00:00Z`; // exclusive upper bound
+
+    const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
+    const { data: demandItems } = await supabase.from("demand_items").select("id, section_id");
+    const foodDemandIds = new Set((demandItems || []).filter((d) => d.section_id === "food").map((d) => d.id));
+    const invById = {}; (items || []).forEach((i) => { invById[i.id] = i; });
+    const isFoodItem = (item) => item && item.demand_item_id && foodDemandIds.has(item.demand_item_id);
+
+    // ── Stock IN (purchases) — same three sources + dedup as the daily audit.
+    const inByItem = {};
+    const { data: movements } = await supabase.from("inventory_movements")
+      .select("item_id, quantity, po_id, created_at").eq("type", "stock_in")
+      .gte("created_at", rangeStart).lt("created_at", rangeEnd);
+    const movementPoItemPairs = new Set();
+    (movements || []).forEach((m) => {
+      inByItem[m.item_id] = (inByItem[m.item_id] || 0) + (Number(m.quantity) || 0);
+      if (m.po_id) movementPoItemPairs.add(`${m.po_id}::${m.item_id}`);
+    });
+    const { data: receivedPOs } = await supabase.from("purchase_orders")
+      .select("id, items, received_at").eq("status", "received")
+      .gte("received_at", rangeStart).lt("received_at", rangeEnd);
+    (receivedPOs || []).forEach((po) => {
+      Object.entries(po.items || {}).forEach(([itemId, item]) => {
+        if (movementPoItemPairs.has(`${po.id}::${itemId}`)) return;
+        const qty = Number(item?.received_qty) || 0;
+        if (qty > 0) inByItem[itemId] = (inByItem[itemId] || 0) + qty;
+      });
+    });
+    const { data: receivedChallans } = await supabase.from("vendor_challans")
+      .select("id").eq("location_id", "store").eq("status", "received")
+      .gte("received_at", rangeStart).lt("received_at", rangeEnd);
+    if (receivedChallans?.length) {
+      const { data: challanItems } = await supabase.from("vendor_challan_items")
+        .select("item_id, qty_base").in("challan_id", receivedChallans.map((c) => c.id));
+      (challanItems || []).forEach((l) => {
+        const qty = Number(l.qty_base) || 0;
+        if (qty > 0) inByItem[l.item_id] = (inByItem[l.item_id] || 0) + qty;
+      });
+    }
+
+    // ── Stock OUT — demand dispatched this month, split bk vs per-outlet.
+    const demandItemIdToInvId = {};
+    (items || []).forEach((i) => { if (i.demand_item_id) demandItemIdToInvId[i.demand_item_id] = i.id; });
+    const outByItem = {}; // inv_id -> { bk, byOutlet: {outlet_id: qty}, outletTotal, total }
+    const { data: demandRows } = await supabase.from("demands")
+      .select("outlet_id, dispatch_items").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
+      .gte("dispatched_at", rangeStart).lt("dispatched_at", rangeEnd);
+    (demandRows || []).forEach((row) => {
+      Object.entries(row.dispatch_items || {}).forEach(([demandId, qty]) => {
+        const invId = demandItemIdToInvId[demandId];
+        const q = Number(qty) || 0;
+        if (!invId || q <= 0) return;
+        const bucket = (outByItem[invId] = outByItem[invId] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 });
+        if (row.outlet_id === "bk") { bucket.bk += q; bucket.total += q; }
+        else if (!isFoodItem(invById[invId])) {
+          bucket.byOutlet[row.outlet_id] = (bucket.byOutlet[row.outlet_id] || 0) + q;
+          bucket.outletTotal += q; bucket.total += q;
+        }
+      });
+    });
+
+    const round = (n) => Math.round(n * 1000) / 1000;
+    const byCategory = {};
+    (items || []).forEach((item) => {
+      const stockIn = inByItem[item.id] || 0;
+      const out = outByItem[item.id] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 };
+      if (stockIn === 0 && out.total === 0) return; // no activity this month — skip
+      const cat = item.category || "Other";
+      (byCategory[cat] = byCategory[cat] || []).push({
+        item_id: item.id, name: item.name, unit: item.unit,
+        stock_in: round(stockIn),
+        bk_out: round(out.bk),
+        outlet_out: Object.fromEntries(Object.entries(out.byOutlet).map(([k, v]) => [k, round(v)])),
+        outlet_total: round(out.outletTotal),
+        total_out: round(out.total),
+        net: round(stockIn - out.total), // + = more came in than went out this month
+      });
+    });
+    const categories = Object.entries(byCategory).map(([category, catItems]) => ({
+      category, items: catItems.sort((a, b) => b.total_out - a.total_out),
+    }));
+
+    res.json({ month, from: monthStart, to: prevDay(nextMonth), categories });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Summary — owner only (financial data across entire store)
 router.get("/summary", async (req, res) => {
   if (!await gate(req, res)) return;

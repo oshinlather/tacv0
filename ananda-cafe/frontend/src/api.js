@@ -165,6 +165,8 @@ const api = {
   getBkInventoryAudit: (date) => get(`/api/inventory/audit/${date}`),
   getBkAuditFull: (date) => get(`/api/inventory/audit-full/${date}`),
   getStoreAudit: (date) => get(`/api/inventory/store-audit/${date}`),
+  // Monthly BK Store Audit — per-item stock-in vs stock-out, out split by BK + each outlet.
+  getStoreAuditMonthly: (month) => get(`/api/inventory/store-audit-monthly/${month}`),
   getInventoryLedger: (from, to) => get("/api/inventory/ledger", { from, to }),
 
   // ── Master Data ──

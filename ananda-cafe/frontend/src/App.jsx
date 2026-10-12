@@ -16878,6 +16878,85 @@ const BKStoreAudit = ({ dateStr, selDay, setSelDay }) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  MONTHLY BK AUDIT — per-item stock IN (purchases) vs stock OUT for Store over a
+//  whole month, OUT broken down by Base Kitchen and each outlet. A flow report (not a
+//  closing-count reconciliation like the daily BK Store Audit) — backed by
+//  GET /api/inventory/store-audit-monthly/:month.
+// ═════════════════════════════════════════════════════════════════════════════
+const MonthlyBKAudit = () => {
+  const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [selCat, setSelCat] = useState(null);
+
+  useEffect(() => {
+    setLoading(true); setSelCat(null);
+    api.getStoreAuditMonthly(selMonth).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [selMonth]);
+
+  const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
+  const total = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
+  const visibleCategories = selCat ? (data?.categories || []).filter((c) => c.category === selCat) : (data?.categories || []);
+  const visibleCount = visibleCategories.reduce((s, c) => s + c.items.length, 0);
+  // Fixed outlet columns (BK first, then each real outlet) so every row lines up.
+  const outletCols = OUTLETS.map((o) => ({ id: o.id, short: o.short }));
+
+  return (<div>
+    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" max={today().slice(0, 7)} value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", fontWeight: 700 }} />
+      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); const m = d.toISOString().slice(0, 7); if (m <= today().slice(0, 7)) setSelMonth(m); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+      {!loading && data && total > 0 && (<>
+        <button onClick={() => setSelCat(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({total})</button>
+        {data.categories.map((c) => (
+          <button key={c.category} onClick={() => setSelCat(c.category)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selCat === c.category ? 700 : 500, border: selCat === c.category ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.category ? "#1A1A1A" : "#fff", color: selCat === c.category ? "#fff" : "#888" }}>{c.category} ({c.items.length})</button>
+        ))}
+      </>)}
+    </div>
+
+    <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}>Stock <strong style={{ color: "#16A34A" }}>In</strong> = purchases received into Store (challans + orders). Stock <strong style={{ color: "#B45309" }}>Out</strong> = dispatched, split by Base Kitchen and each outlet. Net = In − Out.</div>
+
+    {loading ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading monthly audit...</div>
+    ) : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {selMonth}</div>
+    ) : visibleCount === 0 ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No stock movement recorded for {selMonth}.</div>
+    ) : visibleCategories.map((cat) => (
+      <div key={cat.category} style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({cat.items.length})</span></div>
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8" }}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Stock In</th>
+                <th style={{ ...thS, textAlign: "right" }}>🏭 BK</th>
+                {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right" }}>{o.short}</th>)}
+                <th style={{ ...thS, textAlign: "right" }}>Total Out</th>
+                <th style={{ ...thS, textAlign: "right" }}>Net</th>
+              </tr></thead>
+              <tbody>
+                {cat.items.map((i) => (
+                  <tr key={i.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{i.name}</div><div style={{ fontSize: 9, color: "#999" }}>{i.unit}</div></td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.stock_in > 0 ? "#16A34A" : "#DDD", fontWeight: 700 }}>{i.stock_in > 0 ? "+" : ""}{fmtQty(i.stock_in)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.bk_out)}</td>
+                    {outletCols.map((o) => { const q = i.outlet_out?.[o.id] || 0; return <td key={o.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: q > 0 ? "#555" : "#DDD" }}>{fmtQty(q)}</td>; })}
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: i.total_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.total_out)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: i.net > 0 ? "#2563EB" : i.net < 0 ? "#DC2626" : "#16A34A" }}>{i.net > 0 ? "+" : ""}{fmtQty(i.net)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    ))}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  INVENTORY LEDGER — owner-only. Date-wise Opening + Stock In − Stock Out = Expected
 //  Closing, tallied against the store manager's actual submitted closing count
 //  (BK Closing Stock), mismatches highlighted in red. Backed by GET /api/inventory/ledger,
@@ -19544,7 +19623,7 @@ export default function AnandaCafe() {
       {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
-      <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
@@ -19599,6 +19678,7 @@ export default function AnandaCafe() {
           { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage", sub: "New — BK's own closing/wastage, same as outlets" },
           { id: "bk_audit", label: "🔍 BK Audit", sub: "Demand vs Stock-Out, logged vs expected inventory" },
           { id: "inv_ledger", label: "📊 Inventory Ledger", sub: "Owner-only — 7-day & monthly tally" },
+          { id: "monthly_bk_audit", label: "📅 Monthly BK Audit", sub: "Per-item stock in vs out, split by outlet & BK" },
           { id: "new_store_stock", label: "🆕 Store Inventory (Beta)", sub: "New item master & ledger — Stage 1, read-only" },
           { id: "vendor_challans", label: "🧾 Vendor Challans (Beta)", sub: "Stage 2 — receive deliveries, auto stock-in" },
           { id: "stock_counts", label: "🔢 Closing Counts (Beta)", sub: "Stage 4 — blind count, variance, rollup" },
@@ -19701,6 +19781,7 @@ export default function AnandaCafe() {
       {ownerTab === "bk_closing_wastage" && <BKClosingWastage />}
       {ownerTab === "bk_audit" && <BKAudit />}
       {ownerTab === "inv_ledger" && <InventoryLedger />}
+      {ownerTab === "monthly_bk_audit" && <MonthlyBKAudit />}
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
       {ownerTab === "vendor_challans" && <VendorChallans />}
       {ownerTab === "stock_counts" && <StoreClosingCount />}
