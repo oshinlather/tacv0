@@ -16901,6 +16901,17 @@ const MonthlyBKAudit = () => {
   // Fixed outlet columns (BK first, then each real outlet) so every row lines up.
   const outletCols = OUTLETS.map((o) => ({ id: o.id, short: o.short }));
 
+  // CSV — the full visible set (respects the category filter), one row per item with a
+  // leading Category column so the flattened file stays grouped. Same columns as the table.
+  const exportMonthly = () => {
+    const headers = ["Category", "Item", "Unit", "Stock In", "BK", ...outletCols.map((o) => o.short), "Total Out", "Net"];
+    const rows = visibleCategories.flatMap((cat) => cat.items.map((i) => [
+      cat.category, i.name, i.unit, i.stock_in, i.bk_out,
+      ...outletCols.map((o) => i.outlet_out?.[o.id] || 0), i.total_out, i.net,
+    ]));
+    exportCSV(headers, rows, `monthly_bk_audit_${selMonth}.csv`);
+  };
+
   return (<div>
     <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
       <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
@@ -16911,6 +16922,7 @@ const MonthlyBKAudit = () => {
         {data.categories.map((c) => (
           <button key={c.category} onClick={() => setSelCat(c.category)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selCat === c.category ? 700 : 500, border: selCat === c.category ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selCat === c.category ? "#1A1A1A" : "#fff", color: selCat === c.category ? "#fff" : "#888" }}>{c.category} ({c.items.length})</button>
         ))}
+        <div style={{ marginLeft: "auto" }}><ExportBtn onClick={exportMonthly} /></div>
       </>)}
     </div>
 
