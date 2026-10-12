@@ -40,9 +40,10 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
 const { requireRole } = require("./authGuards");
-const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, resolveFixedCostsForMonth, computeStockUsageForDate, batchFranchisePriceMaps } = require("./salesRoutes");
+const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, computeBkOwnCostByCategory, resolveFixedCostsForMonth, computeStockUsageForDate, batchFranchisePriceMaps } = require("./salesRoutes");
 
 const OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"];
+const BK_COST_CATEGORIES = ["grocery", "vegetable", "gas", "packaging"];
 
 function daysInMonthOf(dateStr) {
   const [y, m] = dateStr.split("-").map(Number);
@@ -297,6 +298,10 @@ router.get("/outlet-pnl", async (req, res) => {
     // showing up as a real expense.
     const wastageByOutlet = basis === "consumption" ? await computeWastageCostByOutlet(from, to, costingContext) : {};
     const dairyColdDrinkByOutlet = await computeDairyColdDrinkByOutlet(from, to, basis);
+    // Base Kitchen's own Grocery/Vegetable/Gas/Packaging purchase from Store — always
+    // priced as-of range end (same simplification bk_purchase basis itself uses), shared
+    // across both basis pills since it's informational and doesn't feed Total Expense.
+    const bkOwnCostByCategory = await computeBkOwnCostByCategory(from, to, costingContext.withDate(to));
 
     const round = (n) => Math.round(n || 0);
 
@@ -330,6 +335,15 @@ router.get("/outlet-pnl", async (req, res) => {
         ? bkFixedTotalProrated * (materialCostByOutlet[oid] || 0) / totalMaterialCostAllOutlets
         : bkFixedTotalProrated / OUTLET_IDS.length);
 
+      // BK Cost tab — same proration as bkFixedShare above, one category at a time.
+      const bkCost = {};
+      BK_COST_CATEGORIES.forEach((cat) => {
+        const catTotal = bkOwnCostByCategory[cat] || 0;
+        bkCost[cat] = round(totalMaterialCostAllOutlets > 0
+          ? catTotal * (materialCostByOutlet[oid] || 0) / totalMaterialCostAllOutlets
+          : catTotal / OUTLET_IDS.length);
+      });
+
       const fixed = { rent: 0, salary: 0, electricity: 0, gst: 0, misc: 0 };
       const outletHeads = new Set((fixedCostRows || []).filter((f) => f.outlet_id === oid).map((f) => f.cost_head));
       outletHeads.forEach((head) => {
@@ -348,11 +362,12 @@ router.get("/outlet-pnl", async (req, res) => {
         total_sale: round(totalSale), delivery_sale: round(deliverySale),
         delivery_commission: deliveryCommission, effective_sale: effectiveSale,
         bk_purchase: bkPurchase, wastage, dairy_cold_drink: dairyColdDrink, bk_fixed_share: bkFixedShare, ...fixed,
+        bk_cost_grocery: bkCost.grocery, bk_cost_vegetable: bkCost.vegetable, bk_cost_gas: bkCost.gas, bk_cost_packaging: bkCost.packaging,
         total_expense: round(totalExpense), net_pnl: netPnl, margin_pct: marginPct,
       };
     });
 
-    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "wastage", "dairy_cold_drink", "bk_fixed_share", "rent", "salary", "electricity", "gst", "misc", "total_expense", "net_pnl"];
+    const SUM_KEYS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", "bk_purchase", "wastage", "dairy_cold_drink", "bk_fixed_share", "rent", "salary", "electricity", "gst", "misc", "bk_cost_grocery", "bk_cost_vegetable", "bk_cost_gas", "bk_cost_packaging", "total_expense", "net_pnl"];
     const totals = { outlet_id: "all" };
     SUM_KEYS.forEach((k) => { totals[k] = round(outlets.reduce((s, o) => s + o[k], 0)); });
     totals.margin_pct = totals.effective_sale > 0 ? Math.round((totals.net_pnl / totals.effective_sale) * 1000) / 10 : null;

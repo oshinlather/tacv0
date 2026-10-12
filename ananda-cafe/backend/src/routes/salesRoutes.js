@@ -5367,6 +5367,45 @@ async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
   return { dates: [...datesSet].sort(), items };
 }
 
+// BK's OWN purchase cost from Store, categorized — Base Kitchen places its own demand from
+// Store exactly like an outlet does (outlet_id='bk', type='bk_demand' — see BKDemandForm's
+// own comment: gas cylinders, cleaning/packaging staples, Grocery/Vegetable raw commodities
+// BK needs for its own prep, none of it tied to any single outlet's dispatch). Finance's
+// materialCostByOutlet loop only ever iterates the 6 real OUTLET_IDS, so this spend —
+// despite already sitting in the same `demands` table computeBkPurchaseByOutlet queries —
+// was silently dropped from every P&L figure. Powers the "🏭 BK Cost" tab: each category's
+// BK-wide total for the period gets prorated across the 6 outlets, same share-of-BK-Purchase
+// logic bk_fixed_share already uses (see finance.js) — purely informational here, not folded
+// into Total Expense/Net P&L (the owner asked for a breakdown, not a formula change).
+const BK_OWN_COST_CATEGORIES = ["grocery", "vegetable", "gas", "packaging"];
+async function computeBkOwnCostByCategory(from, to, costingContext) {
+  const { rateMap, bkRecipeMap, convFactorFor } = costingContext;
+  const [{ data: orders, error }, sectionMap] = await Promise.all([
+    supabase.from("demands").select("date, items, dispatch_items, status, items_units").eq("outlet_id", "bk").eq("type", "bk_demand").gte("date", from).lte("date", to),
+    getDemandItemSectionMap(),
+  ]);
+  if (error) throw error;
+  const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
+  const byCategory = {};
+  BK_OWN_COST_CATEGORIES.forEach((c) => { byCategory[c] = 0; });
+  dispatched.forEach((o) => {
+    const items = o.dispatch_items || o.items || {};
+    Object.entries(items).forEach(([itemId, qty]) => {
+      const q = Number(qty) || 0;
+      if (q <= 0) return;
+      const category = sectionMap[itemId];
+      if (!BK_OWN_COST_CATEGORIES.includes(category)) return;
+      const rawUnit = (o.items_units || {})[itemId] || null;
+      const rate = rateMap[itemId];
+      let cost = 0;
+      if (rate) cost = q * convFactorFor(itemId, rawUnit, rate.unit) * Number(rate.price);
+      else if (bkRecipeMap[itemId]) cost = q * convFactorFor(itemId, rawUnit, "Kg") * bkRecipeMap[itemId].costPerKg;
+      byCategory[category] += cost;
+    });
+  });
+  return byCategory;
+}
+
 // Lightweight, dashboard-wide check: any outlet sitting on a closing-stock draft that was
 // never finalized, for today or yesterday — the exact silent-zero trap the P&L warning
 // (prev/today_closing_draft) surfaces once you're already looking at one outlet. This is
@@ -6603,6 +6642,7 @@ module.exports.computeDailySalesRevenue = computeDailySalesRevenue;
 module.exports.buildCostingContext = buildCostingContext;
 module.exports.computeBkPurchaseByOutlet = computeBkPurchaseByOutlet;
 module.exports.computeBkPurchaseDetail = computeBkPurchaseDetail;
+module.exports.computeBkOwnCostByCategory = computeBkOwnCostByCategory;
 module.exports.resolveFixedCostsForMonth = resolveFixedCostsForMonth;
 // Exported for finance.js's Consumption-basis pill — same Yesterday Closing + Dispatched
 // − Wastage − Today Closing formula Daily P&L/RM Audit already use, reused per-day

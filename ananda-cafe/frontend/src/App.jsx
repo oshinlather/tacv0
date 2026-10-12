@@ -17024,6 +17024,17 @@ const FINANCE_EXPENSE_COLS = [
   { key: "gst", label: "GST" },
   { key: "misc", label: "Misc" },
 ];
+// 🏭 BK Cost tab (4th Finance pill) — Base Kitchen's OWN purchase from Store (gas
+// cylinders, cleaning/packaging staples, Grocery/Vegetable raw commodities for its own
+// prep — see computeBkOwnCostByCategory in salesRoutes.js), categorized and split across
+// outlets proportional to each outlet's BK Purchase/Consumption share, same logic BK
+// Fixed Share already uses. Purely informational — doesn't touch Total Expense/Net P&L.
+const BK_COST_COLS = [
+  { key: "bk_cost_grocery", label: "🛒 Grocery" },
+  { key: "bk_cost_vegetable", label: "🥬 Vegetable" },
+  { key: "bk_cost_gas", label: "🔥 Gas" },
+  { key: "bk_cost_packaging", label: "📦 Disposals" },
+];
 // Third Finance pill — "if we're taking opening from the same demand data, and the same
 // closing/wastage every day, how can BK Purchase and Consumption's expense differ?"
 // They measure genuinely different things (what LEFT the shelf vs. what's estimated to
@@ -17412,7 +17423,7 @@ const FinancePnL = () => {
   // Every numeric field that's safe to plain-sum across outlets (or across days, for
   // Consumption basis's client-side day-by-day aggregation below) — margin_pct is
   // deliberately excluded, it's a ratio recomputed AFTER summing, never summed itself.
-  const FINANCE_SUM_FIELDS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", ...FINANCE_EXPENSE_COLS.map((c) => c.key), "total_expense", "net_pnl"];
+  const FINANCE_SUM_FIELDS = ["total_sale", "delivery_sale", "delivery_commission", "effective_sale", ...FINANCE_EXPENSE_COLS.map((c) => c.key), ...BK_COST_COLS.map((c) => c.key), "total_expense", "net_pnl"];
   const visibleOutlets = useMemo(() => (data?.outlets || []).filter((o) => !hiddenOutlets.has(o.outlet_id)), [data, hiddenOutlets]);
   // "All Outlets" recomputed from whatever's currently visible, not data.totals (the
   // server's full-6-outlet sum) — same fields the backend itself sums (see finance.js),
@@ -17467,6 +17478,7 @@ const FinancePnL = () => {
       <button onClick={() => setBasis("bk_purchase")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_purchase" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_purchase" ? "#1A1A1A" : "#fff", color: basis === "bk_purchase" ? "#fff" : "#888" }}>💰 BK Purchase</button>
       <button onClick={() => setBasis("consumption")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "consumption" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "consumption" ? "#1A1A1A" : "#fff", color: basis === "consumption" ? "#fff" : "#888" }}>📊 Consumption</button>
       <button onClick={() => setBasis("audit")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "audit" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "audit" ? "#1A1A1A" : "#fff", color: basis === "audit" ? "#fff" : "#888" }}>🔍 Purchase vs Consumption</button>
+      <button onClick={() => setBasis("bk_cost")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_cost" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_cost" ? "#1A1A1A" : "#fff", color: basis === "bk_cost" ? "#fff" : "#888" }}>🏭 BK Cost</button>
     </div>
 
     {/* Outlet filter — tap to drop an outlet out of the table below; tap again to bring it
@@ -17495,6 +17507,45 @@ const FinancePnL = () => {
       <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Finance P&L</div>
     ) : visibleOutlets.length === 0 ? (
       <div style={{ textAlign: "center", padding: 40, color: "#BBB" }}>Every outlet is filtered out — tap one above to bring it back.</div>
+    ) : basis === "bk_cost" ? (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+        <div style={{ padding: "10px 14px", fontSize: 11.5, color: "#888", borderBottom: "1px solid #F0F0EC" }}>
+          Base Kitchen's own purchases from Store this period — Grocery, Vegetable, Gas and Packaging/Disposals it buys for itself (gas cylinders, cleaning staples, raw commodities for its own prep), not tied to any one outlet's own dispatch. Split across outlets proportional to each outlet's BK Purchase share, same way BK Fixed Share is above — informational, not added into Net P&L.
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 }}>Outlet</th>
+              {BK_COST_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+              <th style={{ ...thS, textAlign: "right" }}>Total</th>
+            </tr></thead>
+            <tbody>
+              {visibleOutlets.map((o) => {
+                const oData = OUTLETS.find((x) => x.id === o.outlet_id);
+                const rowTotal = BK_COST_COLS.reduce((s, c) => s + (o[c.key] || 0), 0);
+                return (
+                  <tr key={o.outlet_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>{oData?.short || o.outlet_id}</td>
+                    {BK_COST_COLS.map((c) => (
+                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o[c.key] > 0 ? "#991B1B" : "#BBB" }}>{o[c.key] > 0 ? `−${fmt0(o[c.key])}` : "—"}</td>
+                    ))}
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{rowTotal > 0 ? `−${fmt0(rowTotal)}` : "—"}</td>
+                  </tr>
+                );
+              })}
+              <tr style={{ background: "#FAFAF8", fontWeight: 800 }}>
+                <td style={{ ...tdS, position: "sticky", left: 0, background: "#FAFAF8" }}>All Outlets</td>
+                {BK_COST_COLS.map((c) => (
+                  <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{computedTotals[c.key] > 0 ? `−${fmt0(computedTotals[c.key])}` : "—"}</td>
+                ))}
+                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
+                  {(() => { const grand = BK_COST_COLS.reduce((s, c) => s + (computedTotals[c.key] || 0), 0); return grand > 0 ? `−${fmt0(grand)}` : "—"; })()}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
