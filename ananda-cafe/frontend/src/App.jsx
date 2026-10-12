@@ -3314,6 +3314,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   const [monthLoading, setMonthLoading] = useState(false);
   const [monthBreakdownMode, setMonthBreakdownMode] = useState("daily"); // 'daily' or 'category'
   const [monthExpandedCats, setMonthExpandedCats] = useState({});
+  const [monthExpandedItem, setMonthExpandedItem] = useState(null); // `${cat}::${item_id}` currently showing its should-vs-actual day-wise table, or null
 
   const monthOptions = useMemo(() => {
     const opts = [];
@@ -3339,15 +3340,31 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       dates.push(ds);
     }
     Promise.all(dates.map((ds) =>
-      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null)])
-        .then(([pnl, stock]) => {
+      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null), api.getRMAudit(ds).catch(() => null)])
+        .then(([pnl, stock, audit]) => {
+          // Should-consume (theoretical, recipe x sales) per outlet+item for this one day —
+          // same merge fetchPnl does for the single-day view, kept per-day here (not summed)
+          // so the Header Wise item dropdown below can render a day-by-day should-vs-actual
+          // table instead of just one month total.
+          const scByOutlet = {}; // { outlet_id: { item_id: { qty, cost } } }
+          (audit?.outlets || []).forEach((o) => {
+            const bucket = scByOutlet[o.outlet_id] = scByOutlet[o.outlet_id] || {};
+            (o.items || []).forEach((it) => {
+              if (it.item_id == null || it.should_consume == null) return;
+              bucket[it.item_id] = { qty: it.should_consume, cost: it.should_consume_cost };
+            });
+          });
           // Same merge as the daily fetch: consumed-material cost overrides dispatch-based variable cost
           if (pnl?.pnl && stock?.outlets) {
             pnl.pnl.forEach((p) => {
               const su = stock.outlets.find((s) => s.outlet_id === p.outlet_id);
               if (su) {
                 p.variable_cost = su.total_used_cost;
-                p.stock_items = su.items; // per-item cost, carried through for the header/category-wise roll-up below
+                const scMap = scByOutlet[p.outlet_id] || {};
+                p.stock_items = su.items.map((it) => {
+                  const sc = scMap[it.item_id];
+                  return sc ? { ...it, should_consume: sc.qty, should_consume_cost: sc.cost } : it;
+                }); // per-item cost (+ should-consume where available), carried through for the header/category-wise roll-up below
                 // Cold Drink & Water — same lump-actual-amount treatment as the daily fetch
                 // below (purchased directly, no rate-card price to compute it any other way).
                 if (p.cold_drink_purchase_total > 0) {
@@ -3366,9 +3383,9 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
         })
     )).then((results) => {
       const totals = {}; // outlet_id -> summed totals across the month
-      const categoryTotals = {}; // outlet_id -> { category -> { total, items: { item_id -> { name, unit, qty, cost } } } }
+      const categoryTotals = {}; // outlet_id -> { category -> { total, items: { item_id -> { name, unit, qty, cost, days: { date -> {qty,cost,should,shouldCost,hasShould} } } } } }
       const fixedTotals = {}; // outlet_id -> { cost_head -> { label, total } }
-      results.forEach(({ pnl }) => {
+      results.forEach(({ date, pnl }) => {
         pnl.forEach((p) => {
           if (!totals[p.outlet_id]) totals[p.outlet_id] = { outlet_id: p.outlet_id, total_sale: 0, effective_sale: 0, variable_cost: 0, bk_purchase: 0, daily_fixed_cost: 0, bk_share: 0, daily_purchases: 0, vendor_payments: 0, new_purchases: 0, total_expense: 0, net_profit: 0 };
           const t = totals[p.outlet_id];
@@ -3397,10 +3414,19 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                 const cat = item.category || 'Other';
                 if (!catMap[cat]) catMap[cat] = { total: 0, items: {} };
                 catMap[cat].total += item.used_cost || 0;
-                if (!catMap[cat].items[item.item_id]) catMap[cat].items[item.item_id] = { name: item.name, unit: item.unit, qty: 0, cost: 0 };
+                if (!catMap[cat].items[item.item_id]) catMap[cat].items[item.item_id] = { name: item.name, unit: item.unit, qty: 0, cost: 0, days: {} };
                 const it = catMap[cat].items[item.item_id];
                 it.qty += item.used || 0;
                 it.cost += item.used_cost || 0;
+                // Day-wise should-vs-actual series for this item — for 'all' this accumulates
+                // more than one real outlet's figures into the same date (summed), same as the
+                // month totals above.
+                if (!it.days[date]) it.days[date] = { qty: 0, cost: 0, should: 0, shouldCost: 0, hasShould: false };
+                const dEntry = it.days[date];
+                dEntry.qty += item.used || 0;
+                dEntry.cost += item.used_cost || 0;
+                if (item.should_consume != null) { dEntry.should += item.should_consume; dEntry.hasShould = true; }
+                if (item.should_consume_cost != null) dEntry.shouldCost += item.should_consume_cost;
               });
 
               if (!fixedTotals[key]) fixedTotals[key] = {};
@@ -3420,6 +3446,9 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   }, []);
 
   useEffect(() => { if (selMonth) fetchMonthlyPnl(selMonth); }, [selMonth, fetchMonthlyPnl]);
+  // Collapse any open item day-wise dropdown when the month or outlet changes underneath it —
+  // its data belongs to whichever month/outlet was selected when it was opened.
+  useEffect(() => { setMonthExpandedItem(null); }, [selMonth, selOutlet]);
 
   const fetchPnl = useCallback(() => {
     setLoading(true);
@@ -4365,12 +4394,58 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                             </span>
                             <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", color: "#B45309" }}>{fmt(group.total)}</span>
                           </div>
-                          {isExpanded && sortedItems.map(([itemId, item]) => (
-                            <div key={itemId} style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 6px 32px", fontSize: 12, borderBottom: "1px solid #F5F5F3" }}>
-                              <span style={{ color: "#555" }}>{item.name} <span style={{ color: "#BBB", fontSize: 10 }}>({Math.round(item.qty * 100) / 100} {item.unit})</span></span>
-                              <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
-                            </div>
-                          ))}
+                          {isExpanded && sortedItems.map(([itemId, item]) => {
+                            const itemKey = `${cat}::${itemId}`;
+                            const itemExpanded = monthExpandedItem === itemKey;
+                            const hasShouldData = monthData.days.some(({ date }) => item.days[date]?.hasShould);
+                            return (
+                              <div key={itemId}>
+                                <div onClick={() => setMonthExpandedItem(itemExpanded ? null : itemKey)}
+                                  style={{ display: "flex", justifyContent: "space-between", padding: "6px 16px 6px 32px", fontSize: 12, borderBottom: "1px solid #F5F5F3", cursor: "pointer", background: itemExpanded ? "#FAFAF8" : "transparent" }}>
+                                  <span style={{ color: "#555" }}>
+                                    <span style={{ color: "#BBB", fontSize: 9, marginRight: 4 }}>{itemExpanded ? "▼" : "▶"}</span>
+                                    {item.name} <span style={{ color: "#BBB", fontSize: 10 }}>({Math.round(item.qty * 100) / 100} {item.unit})</span>
+                                  </span>
+                                  <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
+                                </div>
+                                {itemExpanded && (
+                                  <div style={{ padding: "6px 16px 10px 44px", background: "#FAFAF8", borderBottom: "1px solid #F5F5F3" }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Should Consume vs Actual — day by day</div>
+                                    {!hasShouldData ? (
+                                      <div style={{ fontSize: 11, color: "#999", padding: "4px 0" }}>No should-consume data for this item — it isn't linked to any dish recipe, so there's nothing to compare actual usage against.</div>
+                                    ) : (
+                                      <div style={{ overflowX: "auto" }}>
+                                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                                          <thead><tr>
+                                            <th style={{ ...thS, padding: "3px 6px" }}>Date</th>
+                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Should Consume</th>
+                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Actual</th>
+                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Variance</th>
+                                          </tr></thead>
+                                          <tbody>
+                                            {monthData.days.map(({ date }) => {
+                                              const d = item.days[date] || { qty: 0, should: 0, hasShould: false };
+                                              const variance = d.hasShould ? Math.round((d.qty - d.should) * 100) / 100 : null;
+                                              return (
+                                                <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                                  <td style={{ padding: "2px 6px" }}>{date.slice(5)}</td>
+                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{d.hasShould ? Math.round(d.should * 100) / 100 : "—"}</td>
+                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{Math.round(d.qty * 100) / 100}</td>
+                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", color: variance == null ? "#999" : variance > 0 ? "#DC2626" : variance < 0 ? "#16A34A" : "#999" }}>
+                                                    {variance == null ? "—" : `${variance > 0 ? "+" : ""}${variance}`}
+                                                  </td>
+                                                </tr>
+                                              );
+                                            })}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       );
                     })}
