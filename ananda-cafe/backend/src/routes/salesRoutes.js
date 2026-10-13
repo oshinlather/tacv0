@@ -4854,6 +4854,29 @@ router.get('/pnl/live/:date', async (req, res) => {
 // the returned context re-resolves rateMap + BK recipe costs for a DIFFERENT date entirely
 // in memory (no extra query), so a month/range caller prices each day correctly off a
 // single fetch instead of rebuilding the whole context 30 times.
+// rate_card_prices has grown past PostgREST's default 1000-row page cap — a plain
+// unordered .select() on it was silently truncating the ledger (discovered 2026-10-13: a
+// backdated manual price landed past row 1000 and was invisible to every consumer of
+// buildCostingContext below — P&L, RM Audit, stock-usage, finance, franchise billing — even
+// though it was really in the table). Page through the whole table instead, ordered by the
+// bigserial id for a stable cursor across pages.
+async function fetchAllRatePrices() {
+  const pageSize = 1000;
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await supabase.from('rate_card_prices')
+      .select('rate_card_id, effective_date, price, created_at')
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 async function buildCostingContext(asOfDate) {
   // None of these queries depend on each other's results — fired concurrently instead
   // of one-at-a-time so this function's total latency is bounded by the slowest single
@@ -4866,7 +4889,7 @@ async function buildCostingContext(asOfDate) {
     { data: invItemsList },
     { data: demandItemsRaw },
     { data: unitConversions },
-    { data: priceRows },
+    priceRows,
   ] = await Promise.all([
     supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
     supabase.from('bk_recipes').select('*'),
@@ -4874,10 +4897,10 @@ async function buildCostingContext(asOfDate) {
     supabase.from('inventory_items').select('id, name, demand_item_id'),
     supabase.from('demand_items').select('id, name, unit').eq('active', true),
     supabase.from('unit_conversions').select('*').eq('active', true),
-    // Whole ledger loaded once — small (one row per item per price change) and reused
-    // across every date a withDate() caller asks for. created_at is the tie-break when two
-    // prices share an effective_date (e.g. two challans the same day) — latest wins.
-    supabase.from('rate_card_prices').select('rate_card_id, effective_date, price, created_at'),
+    // Whole ledger — now paginated (see fetchAllRatePrices above). created_at is the
+    // tie-break when two prices share an effective_date (e.g. two challans the same day) —
+    // latest wins.
+    fetchAllRatePrices(),
   ]);
   // baseRateMap holds each item's CURRENT price (rate_card.price). The priced rateMap the
   // context exposes is derived from it per-date below; resolveRateId/convFactorFor only ever
