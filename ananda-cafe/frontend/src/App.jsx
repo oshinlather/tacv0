@@ -4408,41 +4408,56 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
                                   </span>
                                   <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 600, color: "#B45309" }}>{fmt(item.cost)}</span>
                                 </div>
-                                {itemExpanded && (
-                                  <div style={{ padding: "6px 16px 10px 44px", background: "#FAFAF8", borderBottom: "1px solid #F5F5F3" }}>
-                                    <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Should Consume vs Actual — day by day</div>
-                                    {!hasShouldData ? (
-                                      <div style={{ fontSize: 11, color: "#999", padding: "4px 0" }}>No should-consume data for this item — it isn't linked to any dish recipe, so there's nothing to compare actual usage against.</div>
-                                    ) : (
-                                      <div style={{ overflowX: "auto" }}>
-                                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                                          <thead><tr>
-                                            <th style={{ ...thS, padding: "3px 6px" }}>Date</th>
-                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Should Consume</th>
-                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Actual</th>
-                                            <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Variance</th>
-                                          </tr></thead>
-                                          <tbody>
-                                            {monthData.days.map(({ date }) => {
-                                              const d = item.days[date] || { qty: 0, should: 0, hasShould: false };
-                                              const variance = d.hasShould ? Math.round((d.qty - d.should) * 100) / 100 : null;
-                                              return (
-                                                <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                                                  <td style={{ padding: "2px 6px" }}>{date.slice(5)}</td>
-                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{d.hasShould ? Math.round(d.should * 100) / 100 : "—"}</td>
-                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{Math.round(d.qty * 100) / 100}</td>
-                                                  <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", color: variance == null ? "#999" : variance > 0 ? "#DC2626" : variance < 0 ? "#16A34A" : "#999" }}>
-                                                    {variance == null ? "—" : `${variance > 0 ? "+" : ""}${variance}`}
-                                                  </td>
-                                                </tr>
-                                              );
-                                            })}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
+                                {itemExpanded && (() => {
+                                  const totalShould = Math.round(monthData.days.reduce((s, { date }) => s + (item.days[date]?.hasShould ? item.days[date].should : 0), 0) * 100) / 100;
+                                  const totalActual = Math.round(monthData.days.reduce((s, { date }) => s + (item.days[date]?.qty || 0), 0) * 100) / 100;
+                                  const totalVariance = Math.round((totalActual - totalShould) * 100) / 100;
+                                  return (
+                                    <div style={{ padding: "6px 16px 10px 44px", background: "#FAFAF8", borderBottom: "1px solid #F5F5F3" }}>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Should Consume vs Actual — day by day</div>
+                                      {!hasShouldData ? (
+                                        <div style={{ fontSize: 11, color: "#999", padding: "4px 0" }}>No should-consume data for this item — it isn't linked to any dish recipe, so there's nothing to compare actual usage against.</div>
+                                      ) : (
+                                        <div style={{ overflowX: "auto" }}>
+                                          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                                            <thead><tr>
+                                              <th style={{ ...thS, padding: "3px 6px" }}>Date</th>
+                                              <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Should Consume</th>
+                                              <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Actual</th>
+                                              <th style={{ ...thS, padding: "3px 6px", textAlign: "right" }}>Variance</th>
+                                            </tr></thead>
+                                            <tbody>
+                                              {monthData.days.map(({ date }) => {
+                                                const d = item.days[date] || { qty: 0, should: 0, hasShould: false };
+                                                const variance = d.hasShould ? Math.round((d.qty - d.should) * 100) / 100 : null;
+                                                return (
+                                                  <tr key={date} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                                    <td style={{ padding: "2px 6px" }}>{date.slice(5)}</td>
+                                                    <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{d.hasShould ? Math.round(d.should * 100) / 100 : "—"}</td>
+                                                    <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{Math.round(d.qty * 100) / 100}</td>
+                                                    <td style={{ padding: "2px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", color: variance == null ? "#999" : variance > 0 ? "#DC2626" : variance < 0 ? "#16A34A" : "#999" }}>
+                                                      {variance == null ? "—" : `${variance > 0 ? "+" : ""}${variance}`}
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                            <tfoot>
+                                              <tr style={{ borderTop: "2px solid #DDD" }}>
+                                                <td style={{ padding: "4px 6px", fontWeight: 700, color: "#333" }}>Total</td>
+                                                <td style={{ padding: "4px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#333" }}>{totalShould}</td>
+                                                <td style={{ padding: "4px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#333" }}>{totalActual}</td>
+                                                <td style={{ padding: "4px 6px", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: totalVariance > 0 ? "#DC2626" : totalVariance < 0 ? "#16A34A" : "#333" }}>
+                                                  {`${totalVariance > 0 ? "+" : ""}${totalVariance}`}
+                                                </td>
+                                              </tr>
+                                            </tfoot>
+                                          </table>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             );
                           })}
