@@ -6714,6 +6714,7 @@ const RecipesPanel = () => {
   const [saving, setSaving] = useState(false);
   const [viewMode, setViewMode] = useState("manage"); // "manage" or "costing"
   const [rateCard, setRateCard] = useState([]);
+  const [priceMatrix, setPriceMatrix] = useState([]); // [{ id, prices:[{effective_date, created_at, ...}] }] — for the "last updated" date per rate
   const [costingLoading, setCostingLoading] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
   const [newItemName, setNewItemName] = useState("");
@@ -6722,6 +6723,23 @@ const RecipesPanel = () => {
   const [newRecipeName, setNewRecipeName] = useState("");
   const [newRecipeYieldQty, setNewRecipeYieldQty] = useState("");
   const [newRecipeYieldUnit, setNewRecipeYieldUnit] = useState("Kg");
+
+  // CSV — every BK recipe, one row per ingredient. Ingredient name/unit resolve from
+  // RAW_MATERIALS; a nested recipe ingredient falls back to its RECIPES name (Kg).
+  const exportRecipes = () => {
+    const headers = ["Recipe", "Yield", "Raw Material", "Qty per Batch", "Unit"];
+    const rows = Object.values(editRecipes).flatMap((rec) => {
+      const ings = rec.ingredients || [];
+      if (!ings.length) return [[rec.name, rec.yield || "", "", "", ""]];
+      return ings.map((ing) => {
+        const raw = RAW_MATERIALS.find((r) => r.id === ing.rawId);
+        const name = raw?.name || RECIPES[ing.rawId]?.name || ing.rawId;
+        const unit = raw?.unit || (RECIPES[ing.rawId] ? "Kg" : "");
+        return [rec.name, rec.yield || "", name, ing.qty, unit];
+      });
+    });
+    exportCSV(headers, rows, `bk_recipes_${today()}.csv`);
+  };
 
   // Load rate card for costing calculations
   useEffect(() => {
@@ -6732,7 +6750,30 @@ const RecipesPanel = () => {
         .catch(() => setRateCard([]))
         .finally(() => setCostingLoading(false));
     }
+    // Price ledger (per rate_card_id) — gives each rate's last-updated date for the Rate column.
+    api.getRateCardPriceMatrix().then(d => setPriceMatrix(d?.items || [])).catch(() => setPriceMatrix([]));
   }, []);
+
+  // rate_card_id -> "last updated" date label (when the current price took effect). A price
+  // that never changed sits on the synthetic seed date (2000-01-01), which isn't a real
+  // event, so fall back to when the baseline was recorded (created_at).
+  const SEED_DATE = "2000-01-01";
+  const rateUpdatedMap = useMemo(() => {
+    const m = {};
+    (priceMatrix || []).forEach(it => {
+      const prices = it.prices || [];
+      const cur = prices[prices.length - 1];
+      if (!cur) return;
+      let label = null;
+      if (cur.effective_date === SEED_DATE) {
+        if (cur.created_at) label = new Date(cur.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      } else {
+        label = new Date(cur.effective_date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      }
+      if (label) m[it.id] = label;
+    });
+    return m;
+  }, [priceMatrix]);
 
   // Build rate map for costing: { item_id: { name, price, unit } }
   const rateMap = useMemo(() => {
@@ -6847,6 +6888,7 @@ const RecipesPanel = () => {
         unit: rawUnit,
         rate: rate ? Number(rate.price) : (nestedRate != null ? Math.round(nestedRate * 100) / 100 : null),
         rateUnit: rate?.unit || (nestedRate != null ? 'Kg' : null),
+        rateId: rate?.id || null, // resolved rate_card id → look up the rate's last-updated date
         cost: ingCost,
         hasRate: !!rate || nestedRate != null,
         isNestedRecipe: nestedRate != null,
@@ -7072,6 +7114,11 @@ const RecipesPanel = () => {
                           <span style={{ color: "#888", fontSize: 11 }}>{ing.unit}</span>
                           <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", color: ing.hasRate ? "#555" : "#DC2626" }}>
                             {ing.hasRate ? `₹${ing.rate}/${ing.rateUnit}` : "no rate"}
+                            {ing.rateId && rateUpdatedMap[ing.rateId] && (
+                              <div title={`Rate last updated ${rateUpdatedMap[ing.rateId]}`} style={{ fontSize: 9, color: "#AAA", marginTop: 1, whiteSpace: "nowrap" }}>
+                                🕑 {rateUpdatedMap[ing.rateId]}
+                              </div>
+                            )}
                           </span>
                           <span style={{ textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>
                             {ing.hasRate ? `₹${Math.round(ing.cost * 100) / 100}` : "—"}
@@ -7110,6 +7157,7 @@ const RecipesPanel = () => {
               <button onClick={saveRecipes} disabled={saving} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#16A34A", fontSize: 12, fontWeight: 600, color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳ Saving..." : "💾 Save"}</button>
             </>
           )}
+          <ExportBtn onClick={exportRecipes} />
           <PrintBtn sectionId="print-recipes" title={`Recipe — ${recipe.name}`} />
         </div>
       </div>
@@ -7197,6 +7245,11 @@ const RecipesPanel = () => {
                   <td style={{ ...tdS, textAlign: "center", color: "#999" }}>{raw?.unit || ""}</td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: ingCost?.hasRate ? "#555" : "#DC2626" }}>
                     {ingCost?.hasRate ? `₹${ingCost.rate}/${ingCost.rateUnit}` : "—"}
+                    {ingCost?.rateId && rateUpdatedMap[ingCost.rateId] && (
+                      <div title={`Rate last updated ${rateUpdatedMap[ingCost.rateId]}`} style={{ fontSize: 9, color: "#AAA", fontFamily: "inherit", marginTop: 1, whiteSpace: "nowrap" }}>
+                        🕑 {rateUpdatedMap[ingCost.rateId]}
+                      </div>
+                    )}
                   </td>
                   <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#B45309" }}>
                     {ingCost?.hasRate ? `₹${Math.round(ingCost.cost * 100) / 100}` : "—"}
@@ -15973,6 +16026,18 @@ const DishRecipesPanel = () => {
     try { await api.deleteRecipeIngredient(ingId); load(); } catch (e) { alert("Failed: " + e.message); }
   };
 
+  // CSV — the visible dish set (respects the search box), one row per ingredient. A dish
+  // with no ingredients still gets one row so it isn't dropped from the export.
+  const exportDishes = () => {
+    const headers = ["Dish", "Category", "Ingredient", "Qty", "Unit"];
+    const rows = filtered.flatMap((r) => {
+      const ings = r.recipe_ingredients || [];
+      if (!ings.length) return [[r.item_name, r.category || "", "", "", ""]];
+      return ings.map((m) => [r.item_name, r.category || "", m.raw_material, m.qty, m.unit]);
+    });
+    exportCSV(headers, rows, `dish_recipes_${today()}.csv`);
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading recipes...</div>;
 
   return (
@@ -15982,7 +16047,10 @@ const DishRecipesPanel = () => {
           <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>📖 Dish Recipes</h3>
           <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Per-dish ingredient breakdown — dish name must match the sales sheet exactly. Feeds the Sales vs Consumption audit.</p>
         </div>
-        <button onClick={() => setAddingDish(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Dish</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <ExportBtn onClick={exportDishes} />
+          <button onClick={() => setAddingDish(true)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add Dish</button>
+        </div>
       </div>
 
       <datalist id="dish-recipe-raw-materials">{rawMaterialNames.map((n) => <option key={n} value={n} />)}</datalist>
@@ -17473,6 +17541,10 @@ const FinancePnL = () => {
   const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
   const [bkPurchaseDetail, setBkPurchaseDetail] = useState({}); // outlet_id -> { dates, items }
   const [bkPurchaseLoading, setBkPurchaseLoading] = useState(null); // outlet_id currently loading
+  // Category filter for the drill-down table ("all" or one of the 8 category keys). Only one
+  // outlet's drill-down is open at a time (expandedBkPurchase is single-valued), so a single
+  // shared filter is enough; reset to "all" whenever a different outlet's drill-down opens.
+  const [bkCatFilter, setBkCatFilter] = useState("all");
   // Misc drill-down — same lazy-fetch-and-cache pattern as BK Purchase, independent toggle
   // (both can be open at once for the same outlet). Per cost-head amount, not per-date —
   // fixed costs are one prorated monthly figure per head, not naturally day-itemized.
@@ -17580,6 +17652,7 @@ const FinancePnL = () => {
   const toggleBkPurchase = (outletId) => {
     if (expandedBkPurchase === outletId) { setExpandedBkPurchase(null); return; }
     setExpandedBkPurchase(outletId);
+    setBkCatFilter("all");
     ensureBkPurchaseDetail(outletId);
   };
   // One day at a time, per outlet — key is `${outletId}|${date}` so a different outlet's
@@ -17812,29 +17885,55 @@ const FinancePnL = () => {
                             <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>
                           ) : !detail || detail.items.length === 0 ? (
                             <div style={{ textAlign: "center", padding: 16, color: "#BBB", fontSize: 12 }}>No BK Purchase items for this period</div>
-                          ) : (
-                            <div style={{ overflowX: "auto" }}>
-                              <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
-                                <thead><tr>
-                                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", minWidth: 150, zIndex: 2 }}>Item</th>
-                                  <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", minWidth: 110, textAlign: "right", whiteSpace: "nowrap", zIndex: 2, borderRight: "1px solid #E0E0DC" }}>Total</th>
-                                  {detail.dates.map((d) => <th key={d} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap", borderLeft: "1px dotted #CCC", background: "#FAFAF8" }}>{d.slice(5)}</th>)}
-                                </tr></thead>
-                                <tbody>
-                                  {detail.items.map((it) => (
-                                    <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap", zIndex: 1 }}>{it.name}</td>
-                                      <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap", zIndex: 1, borderRight: "1px solid #E0E0DC" }}>{fmt0(it.total_amount)} ({it.total_qty} {it.unit})</td>
-                                      {detail.dates.map((d) => {
-                                        const cell = it.byDate[d];
-                                        return <td key={d} style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap", color: cell ? "#1A1A1A" : "#DDD", borderLeft: "1px dotted #CCC" }}>{cell ? `${fmt0(cell.amount)} (${cell.qty})` : "—"}</td>;
-                                      })}
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
+                          ) : (() => {
+                            // Per-category filter chips: sum each item's total into its 8-category
+                            // bucket (category comes from the backend now — demand_items.section_id),
+                            // show a chip per category present with that category's ₹ total, and
+                            // narrow the rows to the picked one. "All" shows everything (default).
+                            const CAT_ORDER = ["food", "dairy", "vegetable", "grocery", "masala", "packaging", "cleaning", "gas", "other"];
+                            const CAT_LABEL = { food: "Food", dairy: "Dairy", vegetable: "Vegetable", grocery: "Grocery", masala: "Masala", packaging: "Packaging", cleaning: "Cleaning", gas: "Gas", other: "Other" };
+                            const catSums = {};
+                            detail.items.forEach((it) => { const c = it.category || "other"; catSums[c] = (catSums[c] || 0) + (it.total_amount || 0); });
+                            const presentCats = CAT_ORDER.filter((c) => catSums[c] != null);
+                            const grandTotal = detail.items.reduce((s, it) => s + (it.total_amount || 0), 0);
+                            // Guard against a stale filter (e.g. category vanished after a basis switch).
+                            const activeFilter = bkCatFilter !== "all" && catSums[bkCatFilter] == null ? "all" : bkCatFilter;
+                            const filteredItems = activeFilter === "all" ? detail.items : detail.items.filter((it) => (it.category || "other") === activeFilter);
+                            const chip = (key, label, sum, active) => (
+                              <button key={key} onClick={() => setBkCatFilter(key)} style={{ padding: "4px 10px", borderRadius: 999, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#666" }}>
+                                {label} <span style={{ fontFamily: "'JetBrains Mono'", opacity: 0.8 }}>({fmt0(sum)})</span>
+                              </button>
+                            );
+                            return (
+                              <>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                                  {chip("all", "All", grandTotal, activeFilter === "all")}
+                                  {presentCats.map((c) => chip(c, CAT_LABEL[c], catSums[c], activeFilter === c))}
+                                </div>
+                                <div style={{ overflowX: "auto" }}>
+                                  <table style={{ borderCollapse: "collapse", fontSize: 11 }}>
+                                    <thead><tr>
+                                      <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", minWidth: 150, zIndex: 2 }}>Item</th>
+                                      <th style={{ ...thS, position: "sticky", left: 150, background: "#FAFAF8", minWidth: 110, textAlign: "right", whiteSpace: "nowrap", zIndex: 2, borderRight: "1px solid #E0E0DC" }}>Total</th>
+                                      {detail.dates.map((d) => <th key={d} style={{ ...thS, textAlign: "center", whiteSpace: "nowrap", borderLeft: "1px dotted #CCC", background: "#FAFAF8" }}>{d.slice(5)}</th>)}
+                                    </tr></thead>
+                                    <tbody>
+                                      {filteredItems.map((it) => (
+                                        <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                                          <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff", fontWeight: 600, whiteSpace: "nowrap", zIndex: 1 }}>{it.name}</td>
+                                          <td style={{ ...tdS, position: "sticky", left: 150, background: "#fff", textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap", zIndex: 1, borderRight: "1px solid #E0E0DC" }}>{fmt0(it.total_amount)} ({it.total_qty} {it.unit})</td>
+                                          {detail.dates.map((d) => {
+                                            const cell = it.byDate[d];
+                                            return <td key={d} style={{ ...tdS, textAlign: "center", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap", color: cell ? "#1A1A1A" : "#DDD", borderLeft: "1px dotted #CCC" }}>{cell ? `${fmt0(cell.amount)} (${cell.qty})` : "—"}</td>;
+                                          })}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       </td>
                     </tr>

@@ -39,7 +39,7 @@
 const express = require("express");
 const router = express.Router();
 const supabase = require("../supabase");
-const { requireRole } = require("./authGuards");
+const { requireRole, getDemandItemSectionMap } = require("./authGuards");
 const { computeDailySalesRevenue, buildCostingContext, computeBkPurchaseByOutlet, computeBkPurchaseDetail, computeBkOwnCostByCategory, resolveFixedCostsForMonth, computeStockUsageForDate, batchFranchisePriceMaps } = require("./salesRoutes");
 
 const OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "elan", "gaursid"];
@@ -142,14 +142,19 @@ async function computeConsumptionByOutlet(from, to, costingContext) {
 // and discarding 5.
 async function computeConsumptionDetail(outletId, from, to, costingContext) {
   const dates = daysInRange(from, to);
-  const dayResults = await mapWithConcurrency(dates, DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, outletId, costingContext.withDate(ds)));
+  // sectionMap tags each item with its 8-category bucket so the drill-down's per-category
+  // filter chips work on Consumption basis too — same source/shape as computeBkPurchaseDetail.
+  const [dayResults, sectionMap] = await Promise.all([
+    mapWithConcurrency(dates, DAY_BATCH_CONCURRENCY, (ds) => computeStockUsageForDate(ds, outletId, costingContext.withDate(ds))),
+    getDemandItemSectionMap(),
+  ]);
   const itemsById = {};
   dayResults.forEach(({ outlets }, i) => {
     const ds = dates[i];
     const row = (outlets || []).find((o) => o.outlet_id === outletId);
     (row?.items || []).forEach((it) => {
       if (!it.used) return;
-      if (!itemsById[it.item_id]) itemsById[it.item_id] = { item_id: it.item_id, name: it.name, unit: it.unit, byDate: {}, total_qty: 0, total_amount: 0 };
+      if (!itemsById[it.item_id]) itemsById[it.item_id] = { item_id: it.item_id, name: it.name, unit: it.unit, category: sectionMap[it.item_id] || "other", byDate: {}, total_qty: 0, total_amount: 0 };
       const bucket = itemsById[it.item_id];
       bucket.byDate[ds] = { qty: it.used, amount: it.used_cost };
       bucket.total_qty += it.used;
