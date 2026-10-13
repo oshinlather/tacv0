@@ -7308,10 +7308,13 @@ const RecipesPanel = () => {
 // ═════════════════════════════════════════════════════════════════════════════
 //  DEMAND HISTORY — View & Edit last 7 days of demands by outlet
 // ═════════════════════════════════════════════════════════════════════════════
-const DemandHistory = () => {
+const DemandHistory = ({ outletOverride } = {}) => {
   const [demands, setDemands] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selOutlet, setSelOutlet] = useState(OUTLETS[0]?.id || "sec23");
+  const [selOutlet, setSelOutlet] = useState(outletOverride || OUTLETS[0]?.id || "sec23");
+  // When embedded in Owner Home, the page-level outlet pill drives the outlet — keep this
+  // component's own selection in sync and hide its redundant internal picker (below).
+  useEffect(() => { if (outletOverride) setSelOutlet(outletOverride); }, [outletOverride]);
   const [viewMode, setViewMode] = useState("recent"); // 'recent' (7-day AM/PM) or 'month' (day-wise per-item grid)
   const [expandedDay, setExpandedDay] = useState(null);
   const [expandedSlot, setExpandedSlot] = useState(null);
@@ -7586,7 +7589,8 @@ const DemandHistory = () => {
       {viewMode === "month" && <OutletActivityGrid mode="demand" />}
 
       {viewMode === "recent" && <>
-      {/* Outlet selector */}
+      {/* Outlet selector — hidden when the page-level pill already drives the outlet (Owner Home) */}
+      {!outletOverride && (
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
         {[{ id: "bk", short: "🏭 Base Kitchen" }, ...OUTLETS].map(o => (
           <button key={o.id} onClick={() => setSelOutlet(o.id)}
@@ -7597,6 +7601,7 @@ const DemandHistory = () => {
           </button>
         ))}
       </div>
+      )}
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading demands...</div>}
 
@@ -19755,6 +19760,119 @@ const ClosingStockDraftBanner = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  🏠 OWNER HOME — the default landing tab
+// ═════════════════════════════════════════════════════════════════════════════
+// One shared date + outlet filter drives four stacked sections in a single continuous
+// scroll: Flags → Reviews → 4-Week Comparison → Demand & Dispatch. A sticky pill bar
+// jumps between them (and highlights the one in view). Outlet-scoped — default S-23, BK
+// selectable, no "All Outlets" for now. Reuses the existing section components as-is;
+// Reviews stays cross-outlet by design (its data is platform-wide, not per-outlet).
+const HOME_SECTIONS = [
+  { id: "flags", label: "🚩 Flags" },
+  { id: "reviews", label: "⭐ Reviews" },
+  { id: "compare", label: "📊 4-Week" },
+  { id: "demand", label: "📦 Demand & Dispatch" },
+];
+// Same outlets as everywhere else plus BK, but no "All" pill (per the Home spec).
+const HOME_OUTLETS = [...OUTLETS, { id: "bk", short: "🏭 BK" }];
+
+const OwnerHome = () => {
+  const [selOutlet, setSelOutlet] = useState("sec23");
+  const [selDay, setSelDay] = useState(1); // yesterday — the latest fully-closed day
+  const [selMonth, setSelMonth] = useState(null);
+  const [activeSection, setActiveSection] = useState("flags");
+  const monthOptions = useMemo(monthOptionsLastYear, []);
+  const sectionRefs = useRef({});
+
+  // Daily sections (Flags, Demand) want a single date. In day mode that's istDateAgo(selDay);
+  // when a MONTH is picked we anchor to that month's latest day — yesterday for the current
+  // month (today isn't closed yet), otherwise the month's last calendar day.
+  const effDateStr = useMemo(() => {
+    if (!selMonth) return istDateAgo(selDay);
+    const [y, m] = selMonth.split("-").map(Number);
+    const now = istNow();
+    if (now.getUTCFullYear() === y && now.getUTCMonth() + 1 === m) return istDateAgo(1);
+    const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate(); // day 0 of next month = last of this
+    return `${selMonth}-${String(lastDay).padStart(2, "0")}`;
+  }, [selMonth, selDay]);
+
+  // FourWeekComparison anchors off an integer "days ago", not a date string — derive it from
+  // effDateStr so picking a month shifts the 4-week window to that month's latest day too.
+  const effSelDay = useMemo(() => {
+    const ms = new Date(`${today()}T00:00:00Z`) - new Date(`${effDateStr}T00:00:00Z`);
+    return Math.max(0, Math.round(ms / 86400000));
+  }, [effDateStr]);
+
+  // 'bk' isn't a real sales/flags outlet — those sections have nothing to show for it, so
+  // pass it straight through (they render an empty state) rather than silently flipping to
+  // "all outlets". Demand & Dispatch DOES track BK, so it gets the raw selection.
+  const outletShort = HOME_OUTLETS.find((o) => o.id === selOutlet)?.short || selOutlet;
+
+  // Highlight the pill of whichever section is currently scrolled into view.
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActiveSection(top.target.dataset.sid);
+      },
+      { rootMargin: "-150px 0px -55% 0px" },
+    );
+    HOME_SECTIONS.forEach((s) => { const el = sectionRefs.current[s.id]; if (el) obs.observe(el); });
+    return () => obs.disconnect();
+  }, []);
+
+  const jumpTo = (id) => {
+    setActiveSection(id);
+    sectionRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Plain functions that RETURN elements (a div / h3 / button), NOT inline components used
+  // as <Section/> — an inline component gets a fresh identity each render, which would
+  // remount FlagsSection/FourWeekComparison/etc. (and refire their data fetches) every time
+  // the scroll observer bumps activeSection. Returning a div keeps the subtree mounted.
+  const section = (id, title, sub, child) => (
+    <div key={id} ref={(el) => { sectionRefs.current[id] = el; }} data-sid={id} style={{ scrollMarginTop: 150, paddingTop: 10, marginBottom: 34, borderTop: "1px solid #F0F0EC" }}>
+      <div style={{ marginBottom: 10 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 2px" }}>{title}</h3>
+        {sub && <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{sub}</p>}
+      </div>
+      {child}
+    </div>
+  );
+
+  const pill = (active, onClick, label, key, round) => (
+    <button key={key} onClick={onClick} style={{ padding: round ? "6px 13px" : "7px 14px", borderRadius: round ? 999 : 8, fontSize: 12, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap" }}>{label}</button>
+  );
+
+  return (
+    <div>
+      {/* Shared date + outlet filter */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
+        {HOME_OUTLETS.map((o) => pill(selOutlet === o.id, () => setSelOutlet(o.id), o.short, o.id, false))}
+      </div>
+
+      {/* Sticky section nav — tap to jump, highlights the section in view */}
+      <div style={{ position: "sticky", top: 92, zIndex: 20, display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 0", marginBottom: 4, background: "#FAFAF8", borderBottom: "1px solid #ECECE8" }}>
+        {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+      </div>
+
+      {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,
+        <FlagsSection dateStr={effDateStr} selOutlet={selOutlet} />)}
+
+      {section("reviews", "⭐ Reviews", "Zomato & Swiggy ratings and complaints — all outlets",
+        <DailyReviewSummary />)}
+
+      {section("compare", "📊 4-Week Comparison", `${outletShort} — same weekday across the last 4 weeks`,
+        <FourWeekComparison selDay={effSelDay} selOutlet={selOutlet} />)}
+
+      {section("demand", "📦 Demand & Dispatch", `${outletShort} — last 7 days, AM/PM split`,
+        <DemandHistory outletOverride={selOutlet} />)}
+    </div>
+  );
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  MAIN — LAUNCHER
 // ═════════════════════════════════════════════════════════════════════════════
 export default function AnandaCafe() {
@@ -19800,7 +19918,7 @@ export default function AnandaCafe() {
     } catch (e) {}
     return "launcher";
   });
-  const [ownerTab, setOwnerTab] = useState("pnl");
+  const [ownerTab, setOwnerTab] = useState("home");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
@@ -19935,7 +20053,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
@@ -20066,7 +20184,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance", "demands"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["home", "payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance", "demands"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
@@ -20076,6 +20194,7 @@ export default function AnandaCafe() {
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "monthly_sales" && <MonthlySalesMatrix />}
+      {ownerTab === "home" && <OwnerHome />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "finance" && <FinancePnL />}
       {ownerTab === "demands" && <DemandHistory />}

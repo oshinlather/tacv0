@@ -13,6 +13,8 @@ import api from "./api";
 
 const fmtQty = (n) => { const v = Number(n) || 0; return Number.isInteger(v) ? v.toLocaleString("en-IN") : v.toLocaleString("en-IN", { maximumFractionDigits: 2 }); };
 const fmtMoney = (n) => `₹${(Number(n) || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+// received_at is a full UTC ISO timestamp; show just the IST calendar date it was received on.
+const fmtRecvDate = (iso) => { if (!iso) return null; try { return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); } catch { return String(iso).slice(0, 10); } };
 const todayStr = () => { const d = new Date(); d.setMinutes(d.getMinutes() + 330); return d.toISOString().slice(0, 10); };
 // Standalone (this file doesn't import from App.jsx — see the header comment on why),
 // reading the same localStorage key App.jsx's own getCurrentUser() writes to. Only used to
@@ -107,6 +109,7 @@ function normalizeLegacyPO(po) {
     location_id: "store", // legacy orders were always the central Store
     challan_date: po.date, challan_number: po.order_number,
     total_amount: totalAmount,
+    received_at: po.received_at || po.received_on || null,
     status: po.status === "received" ? "received" : po.status === "cancelled" ? "cancelled" : "draft",
   };
 }
@@ -225,6 +228,7 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{c.vendor_name || "(no vendor)"} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
                 <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number && !c._legacy ? ` · #${c.challan_number}` : ""}</div>
+                {c.status === "received" && fmtRecvDate(c.received_at) && <div style={{ fontSize: 11, color: "#16A34A", marginTop: 1 }}>📥 Received {fmtRecvDate(c.received_at)}</div>}
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{ textAlign: "right" }}>
@@ -939,7 +943,7 @@ function ChallanDetail({ id, onBack }) {
 
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: 16, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 6 }}>
-          <div style={{ fontSize: 12, color: "#999" }}>{challan.challan_date} · {challan.location_id === "store" ? "Store" : "BK"}{challan.challan_number ? ` · #${challan.challan_number}` : ""}</div>
+          <div style={{ fontSize: 12, color: "#999" }}>{challan.challan_date} · {challan.location_id === "store" ? "Store" : "BK"}{challan.challan_number ? ` · #${challan.challan_number}` : ""}{challan.status === "received" && fmtRecvDate(challan.received_at) ? <span style={{ color: "#16A34A" }}> · 📥 Received {fmtRecvDate(challan.received_at)}{challan.received_by ? ` by ${challan.received_by}` : ""}</span> : ""}</div>
           {/* Edit unlocked at every stage except cancelled — "edit option should be there
               at all the stages" — but only actually opens as an explicit mode, not
               live-as-you-type. Once received, a qty/price change also posts a correcting
