@@ -98,6 +98,7 @@ const api = {
   // Range/month audit — sum of every day from `from` through `to` (see computeRMAuditRange).
   getRMAuditRange: (from, to, outlet) => get(`/api/audit/${from}`, { to, ...(outlet ? { outlet } : {}) }),
   getColdDrinkAudit: (date) => get(`/api/audit/cold-drink/${date}`),
+  getColdDrinkAuditMonthly: (month) => get(`/api/audit/cold-drink-monthly/${month}`),
   getPackagingAudit: (days) => get("/api/audit/packaging", days ? { days } : {}),
 
   getBkRecipeCosts: () => get("/api/bk-recipe-costs"),

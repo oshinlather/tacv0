@@ -915,6 +915,142 @@ router.get('/audit/cold-drink/:date', async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// 3D-3. GET /api/audit/cold-drink-monthly/:month — Monthly Cold Drink & Water Audit
+// The daily audit's same formula, rolled up over a whole month so the owner can
+// reconcile a month at a glance rather than clicking 30 days:
+//   Consumed = (Prev-month last-day Closing) + (Month's total Purchase) − (Month-end Closing)
+// checked against total billed sales for the month. Month boundaries use the
+// latest actually-submitted closing on each side (closings telescope day to day,
+// so the two boundary stock-takes plus the month's purchases/sales reproduce the
+// sum of the daily consumed figures — and are robust to missing mid-month
+// closings). `month` is 'YYYY-MM'. The current month is capped at today.
+// ────────────────────────────────────────────────────────────
+router.get('/audit/cold-drink-monthly/:month', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    const { month } = req.params;
+    if (!/^\d{4}-\d{2}$/.test(month || '')) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const [y, mo] = month.split('-').map(Number);
+    const monthFirst = `${month}-01`;
+    const daysInMonth = new Date(y, mo, 0).getDate();
+    const monthLastRaw = `${month}-${String(daysInMonth).padStart(2, '0')}`;
+    const todayStr = new Date().toISOString().split('T')[0];
+    // Cap the current month at today — no closings/sales exist for future days, and
+    // including them would make the window straddle data that isn't in yet.
+    const monthLast = monthLastRaw > todayStr ? todayStr : monthLastRaw;
+    // Opening comes from the latest submitted closing BEFORE the month starts. Look back
+    // ~45 days so a month whose prior boundary stock-take was a few days stale still resolves.
+    const openingLookback = new Date(monthFirst); openingLookback.setDate(openingLookback.getDate() - 45);
+    const openingLookbackStr = openingLookback.toISOString().split('T')[0];
+
+    const [{ data: closingRows }, { data: monthPurchases }, salesRows] = await Promise.all([
+      supabase.from('closing_stocks').select('outlet_id, date, items').gte('date', openingLookbackStr).lte('date', monthLast).eq('status', 'submitted').order('date', { ascending: true }),
+      supabase.from('purchases').select('outlet_id, items').gte('date', monthFirst).lte('date', monthLast),
+      fetchAllDailySales({ from: monthFirst, to: monthLast, select: 'outlet_code, item_name, item_quantity' }),
+    ]);
+
+    // Resolve each side's boundary closing per outlet: opening = latest submitted closing
+    // with date < monthFirst; closing = latest submitted closing within [monthFirst, monthLast].
+    const openingByOutlet = {}; // outlet_id -> { date, items }
+    const closingByOutlet = {}; // outlet_id -> { date, items }
+    (closingRows || []).forEach((r) => {
+      if (r.date < monthFirst) {
+        openingByOutlet[r.outlet_id] = { date: r.date, items: r.items || {} }; // rows pre-sorted asc → last wins = latest
+      } else {
+        closingByOutlet[r.outlet_id] = { date: r.date, items: r.items || {} };
+      }
+    });
+
+    const purchasedByOutlet = {}; // outlet_id -> item_id -> qty
+    const purchaseAgg = {}; // outlet_id -> item_id -> { amount, qty }  (month's own avg price)
+    const purchaseAggAllOutlets = {}; // item_id -> { amount, qty }
+    (monthPurchases || []).forEach((p) => {
+      (p.items || []).filter((i) => i.type === 'cold_drink_purchase').forEach((i) => {
+        const item = COLD_DRINK_ITEMS.find((ci) => ci.name.toLowerCase() === (i.item_name || '').toLowerCase());
+        if (!item) return;
+        const qty = Number(i.quantity) || 0;
+        const amount = Number(i.amount) || 0;
+        purchasedByOutlet[p.outlet_id] = purchasedByOutlet[p.outlet_id] || {};
+        purchasedByOutlet[p.outlet_id][item.id] = (purchasedByOutlet[p.outlet_id][item.id] || 0) + qty;
+        if (qty <= 0) return;
+        purchaseAgg[p.outlet_id] = purchaseAgg[p.outlet_id] || {};
+        purchaseAgg[p.outlet_id][item.id] = purchaseAgg[p.outlet_id][item.id] || { amount: 0, qty: 0 };
+        purchaseAgg[p.outlet_id][item.id].amount += amount;
+        purchaseAgg[p.outlet_id][item.id].qty += qty;
+        purchaseAggAllOutlets[item.id] = purchaseAggAllOutlets[item.id] || { amount: 0, qty: 0 };
+        purchaseAggAllOutlets[item.id].amount += amount;
+        purchaseAggAllOutlets[item.id].qty += qty;
+      });
+    });
+    const rateFor = (oid, itemId) => {
+      const own = purchaseAgg[oid]?.[itemId];
+      if (own && own.qty > 0) return Math.round((own.amount / own.qty) * 100) / 100;
+      const all = purchaseAggAllOutlets[itemId];
+      if (all && all.qty > 0) return Math.round((all.amount / all.qty) * 100) / 100;
+      return null;
+    };
+
+    const billedByOutlet = {}; // outlet_id -> item_id -> qty
+    const unmatchedByOutlet = {}; // outlet_id -> { item_name -> qty }
+    (salesRows || []).forEach((r) => {
+      const oc = r.outlet_code || 'unknown';
+      const itemId = classifyColdDrinkSale(r.item_name);
+      if (!itemId) {
+        const compact = (r.item_name || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (!/colddrink|water|softdrink|energydrink|coke/.test(compact)) return;
+        unmatchedByOutlet[oc] = unmatchedByOutlet[oc] || {};
+        unmatchedByOutlet[oc][r.item_name] = (unmatchedByOutlet[oc][r.item_name] || 0) + (Number(r.item_quantity) || 0);
+        return;
+      }
+      billedByOutlet[oc] = billedByOutlet[oc] || {};
+      billedByOutlet[oc][itemId] = (billedByOutlet[oc][itemId] || 0) + (Number(r.item_quantity) || 0);
+    });
+
+    const outletIds = ['sec23', 'sec31', 'sec56', 'sec14', 'elan', 'gaursid'];
+    const outlets = outletIds.map((oid) => {
+      const openEntry = openingByOutlet[oid] || null;
+      const closeEntry = closingByOutlet[oid] || null;
+      const openItems = openEntry?.items || {};
+      const closeItems = closeEntry?.items || {};
+      const purchased = purchasedByOutlet[oid] || {};
+      const billed = billedByOutlet[oid] || {};
+      const items = COLD_DRINK_ITEMS.map((ci) => {
+        const csKey = `cs_${ci.id}`;
+        const hasClosingData = csKey in openItems || csKey in closeItems;
+        const opening = Number(openItems[csKey] || 0);
+        const closing = Number(closeItems[csKey] || 0);
+        const purchase = Number(purchased[ci.id] || 0);
+        const consumed = Math.round((opening + purchase - closing) * 100) / 100;
+        const billedQty = Math.round((billed[ci.id] || 0) * 100) / 100;
+        const rate = rateFor(oid, ci.id);
+        const shouldConsumeCost = (hasClosingData && rate != null) ? Math.round(billedQty * rate * 100) / 100 : null;
+        const actualConsumedCost = (hasClosingData && rate != null) ? Math.round(consumed * rate * 100) / 100 : null;
+        return {
+          item_id: ci.id, name: ci.name, unit: ci.unit,
+          prev_closing: opening, purchased: purchase, closing, consumed,
+          billed: billedQty,
+          variance: hasClosingData ? Math.round((consumed - billedQty) * 100) / 100 : null,
+          rate,
+          should_consume_cost: shouldConsumeCost,
+          actual_consumed_cost: actualConsumedCost,
+        };
+      });
+      return {
+        outlet_id: oid,
+        opening_date: openEntry?.date || null,
+        closing_date: closeEntry?.date || null,
+        items,
+        unmatched_sales: Object.entries(unmatchedByOutlet[oid] || {}).map(([item_name, qty]) => ({ item_name, qty })),
+      };
+    });
+
+    res.json({ month, from: monthFirst, to: monthLast, outlets });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ────────────────────────────────────────────────────────────
 // GET /api/pnl/computed/:date — Frontend getComputedPnl(date)
 // MUST be before /pnl/:date so Express doesn't match "computed" as a date
 // ────────────────────────────────────────────────────────────

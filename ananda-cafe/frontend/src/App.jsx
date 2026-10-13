@@ -9450,11 +9450,9 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
         ) : <DairyAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
       )}
       {cogsView === "cold_drink" && (
-        selMonth ? (
-          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 30, textAlign: "center", color: "#999" }}>
-            Pick a single day (not month view) above for Cold Drink Audit.
-          </div>
-        ) : <ColdDrinkAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
+        selMonth
+          ? <ColdDrinkAuditMonthlySection month={selMonth} lockedOutlet={lockedOutlet} />
+          : <ColdDrinkAuditSection dateStr={dateStr} lockedOutlet={lockedOutlet} />
       )}
 
       {cogsView === "table" && loading && <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {periodLabel}...</div>}
@@ -14945,6 +14943,97 @@ const ColdDrinkAuditSection = ({ dateStr, lockedOutlet }) => {
             </table>
           </div>
           {items.length === 0 && <div style={{ padding: 16, textAlign: "center", color: "#999", fontSize: 12 }}>No data for {outletName} on {dateStr}</div>}
+        </div>
+      )}
+
+      {!loading && unmatched.length > 0 && (
+        <div style={{ marginTop: 8, padding: "10px 14px", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, fontSize: 11.5, color: "#92400E" }}>
+          <strong>⚠️ Billed but not tracked as a stock item</strong> (no closing stock/purchase to audit against): {unmatched.map((u) => `${u.item_name} ×${u.qty}`).join(", ")}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Monthly roll-up of the Cold Drink audit above — same formula, but the two stock-takes
+// are the month's boundary closings (prev-month last day + month-end) with the whole
+// month's Purchase and Billed sales in between. Shown when a month (not a single day) is
+// picked in the COGS date dropdown.
+const ColdDrinkAuditMonthlySection = ({ month, lockedOutlet }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [selOutlet, setSelOutlet] = useState(lockedOutlet || OUTLETS[0]?.id || null);
+
+  useEffect(() => {
+    setLoading(true);
+    api.getColdDrinkAuditMonthly(month).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [month]);
+
+  const outletData = data?.outlets?.find((o) => o.outlet_id === selOutlet) || null;
+  const items = outletData?.items || [];
+  const unmatched = outletData?.unmatched_sales || [];
+  const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+  const monthLabel = (() => {
+    const [y, mo] = (month || "").split("-").map(Number);
+    return y ? new Date(y, mo - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" }) : month;
+  })();
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div style={{ marginBottom: 12 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🥤 Cold Drink & Water Audit — {monthLabel}</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>(Prev-month last-day Closing + Month's Purchase) − Month-end Closing = Consumed, checked against everything billed in {monthLabel}.</p>
+      </div>
+
+      {!lockedOutlet && <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {OUTLETS.map((o) => (
+          <button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>
+        ))}
+      </div>}
+
+      {!loading && outletData && (
+        <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>
+          Opening stock-take: <b>{outletData.opening_date || "—"}</b> · Closing stock-take: <b>{outletData.closing_date || "—"}</b>
+        </div>
+      )}
+
+      {loading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+
+      {!loading && (
+        <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Prev-Mo Closing</th>
+                <th style={{ ...thS, textAlign: "right" }}>Purchase</th>
+                <th style={{ ...thS, textAlign: "right" }}>Month-End Closing</th>
+                <th style={{ ...thS, textAlign: "right" }}>Consumed</th>
+                <th style={{ ...thS, textAlign: "right" }}>Billed</th>
+                <th style={{ ...thS, textAlign: "right" }}>Variance</th>
+              </tr></thead>
+              <tbody>
+                {items.map((it) => {
+                  const hasVariance = it.variance != null;
+                  const isOver = hasVariance && it.variance > 0;
+                  return (
+                    <tr key={it.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                      <td style={{ ...tdS, fontWeight: 600 }}>{it.name}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.prev_closing}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.purchased}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.closing}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: "#2563EB" }}>{it.consumed}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace" }}>{it.billed}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: !hasVariance ? "#999" : isOver ? "#DC2626" : it.variance < 0 ? "#16A34A" : "#999" }}>
+                        {hasVariance ? `${isOver ? "+" : ""}${it.variance}` : "no closing stock data"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {items.length === 0 && <div style={{ padding: 16, textAlign: "center", color: "#999", fontSize: 12 }}>No data for {outletName} in {monthLabel}</div>}
         </div>
       )}
 
