@@ -745,6 +745,20 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
     const invById = {}; (items || []).forEach((i) => { invById[i.id] = i; });
     const isFoodItem = (item) => item && item.demand_item_id && foodDemandIds.has(item.demand_item_id);
 
+    // Per-item per-date buckets, so each item can be expanded day-wise on the client.
+    // in[itemId][date] = qty ; out[itemId][date] = { bk, byOutlet, outletTotal, total }
+    const inByItemDate = {};
+    const outByItemDate = {};
+    const addInDate = (itemId, date, qty) => {
+      if (!date) return;
+      const d = (inByItemDate[itemId] = inByItemDate[itemId] || {});
+      d[date] = (d[date] || 0) + qty;
+    };
+    const outDateBucket = (itemId, date) => {
+      const d = (outByItemDate[itemId] = outByItemDate[itemId] || {});
+      return (d[date] = d[date] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 });
+    };
+
     // ── Stock IN (purchases) — same three sources + dedup as the daily audit.
     const inByItem = {};
     const { data: movements } = await supabase.from("inventory_movements")
@@ -752,28 +766,32 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
       .gte("created_at", rangeStart).lt("created_at", rangeEnd);
     const movementPoItemPairs = new Set();
     (movements || []).forEach((m) => {
-      inByItem[m.item_id] = (inByItem[m.item_id] || 0) + (Number(m.quantity) || 0);
+      const qty = Number(m.quantity) || 0;
+      inByItem[m.item_id] = (inByItem[m.item_id] || 0) + qty;
+      addInDate(m.item_id, (m.created_at || "").slice(0, 10), qty);
       if (m.po_id) movementPoItemPairs.add(`${m.po_id}::${m.item_id}`);
     });
     const { data: receivedPOs } = await supabase.from("purchase_orders")
       .select("id, items, received_at").eq("status", "received")
       .gte("received_at", rangeStart).lt("received_at", rangeEnd);
     (receivedPOs || []).forEach((po) => {
+      const date = (po.received_at || "").slice(0, 10);
       Object.entries(po.items || {}).forEach(([itemId, item]) => {
         if (movementPoItemPairs.has(`${po.id}::${itemId}`)) return;
         const qty = Number(item?.received_qty) || 0;
-        if (qty > 0) inByItem[itemId] = (inByItem[itemId] || 0) + qty;
+        if (qty > 0) { inByItem[itemId] = (inByItem[itemId] || 0) + qty; addInDate(itemId, date, qty); }
       });
     });
     const { data: receivedChallans } = await supabase.from("vendor_challans")
-      .select("id").eq("location_id", "store").eq("status", "received")
+      .select("id, received_at").eq("location_id", "store").eq("status", "received")
       .gte("received_at", rangeStart).lt("received_at", rangeEnd);
     if (receivedChallans?.length) {
+      const challanDate = {}; (receivedChallans || []).forEach((c) => { challanDate[c.id] = (c.received_at || "").slice(0, 10); });
       const { data: challanItems } = await supabase.from("vendor_challan_items")
-        .select("item_id, qty_base").in("challan_id", receivedChallans.map((c) => c.id));
+        .select("item_id, qty_base, challan_id").in("challan_id", receivedChallans.map((c) => c.id));
       (challanItems || []).forEach((l) => {
         const qty = Number(l.qty_base) || 0;
-        if (qty > 0) inByItem[l.item_id] = (inByItem[l.item_id] || 0) + qty;
+        if (qty > 0) { inByItem[l.item_id] = (inByItem[l.item_id] || 0) + qty; addInDate(l.item_id, challanDate[l.challan_id], qty); }
       });
     }
 
@@ -782,23 +800,47 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
     (items || []).forEach((i) => { if (i.demand_item_id) demandItemIdToInvId[i.demand_item_id] = i.id; });
     const outByItem = {}; // inv_id -> { bk, byOutlet: {outlet_id: qty}, outletTotal, total }
     const { data: demandRows } = await supabase.from("demands")
-      .select("outlet_id, dispatch_items").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
+      .select("outlet_id, dispatch_items, dispatched_at").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled")
       .gte("dispatched_at", rangeStart).lt("dispatched_at", rangeEnd);
     (demandRows || []).forEach((row) => {
+      const date = (row.dispatched_at || "").slice(0, 10);
       Object.entries(row.dispatch_items || {}).forEach(([demandId, qty]) => {
         const invId = demandItemIdToInvId[demandId];
         const q = Number(qty) || 0;
         if (!invId || q <= 0) return;
         const bucket = (outByItem[invId] = outByItem[invId] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 });
-        if (row.outlet_id === "bk") { bucket.bk += q; bucket.total += q; }
-        else if (!isFoodItem(invById[invId])) {
+        const dBucket = outDateBucket(invId, date);
+        if (row.outlet_id === "bk") {
+          bucket.bk += q; bucket.total += q;
+          dBucket.bk += q; dBucket.total += q;
+        } else if (!isFoodItem(invById[invId])) {
           bucket.byOutlet[row.outlet_id] = (bucket.byOutlet[row.outlet_id] || 0) + q;
           bucket.outletTotal += q; bucket.total += q;
+          dBucket.byOutlet[row.outlet_id] = (dBucket.byOutlet[row.outlet_id] || 0) + q;
+          dBucket.outletTotal += q; dBucket.total += q;
         }
       });
     });
 
     const round = (n) => Math.round(n * 1000) / 1000;
+    // Build the per-date rows for one item (union of every date it had IN or OUT activity).
+    const buildByDate = (itemId) => {
+      const inD = inByItemDate[itemId] || {};
+      const outD = outByItemDate[itemId] || {};
+      const dates = new Set([...Object.keys(inD), ...Object.keys(outD)]);
+      return [...dates].sort().map((date) => {
+        const si = inD[date] || 0;
+        const o = outD[date] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 };
+        return {
+          date,
+          stock_in: round(si),
+          bk_out: round(o.bk),
+          outlet_out: Object.fromEntries(Object.entries(o.byOutlet).map(([k, v]) => [k, round(v)])),
+          total_out: round(o.total),
+          net: round(si - o.total),
+        };
+      });
+    };
     const byCategory = {};
     (items || []).forEach((item) => {
       const stockIn = inByItem[item.id] || 0;
@@ -813,6 +855,7 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
         outlet_total: round(out.outletTotal),
         total_out: round(out.total),
         net: round(stockIn - out.total), // + = more came in than went out this month
+        by_date: buildByDate(item.id),
       });
     });
     const categories = Object.entries(byCategory).map(([category, catItems]) => ({

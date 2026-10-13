@@ -5345,7 +5345,12 @@ async function computeBkPurchaseByOutlet(from, to, costingContext) {
 async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
   const { rateMap, bkRecipeMap, demandNameMap, demandUnitMap, convFactorFor } = costingContext;
   // items_units added — same missing-column fix as computeBkPurchaseByOutlet above.
-  const { data: orders, error } = await supabase.from("demands").select("outlet_id, date, items, dispatch_items, status, items_units").eq("outlet_id", outletId).gte("date", from).lte("date", to);
+  // sectionMap gives each item its 8-category bucket (demand_items.section_id) so the
+  // drill-down can offer per-category filter chips — same source computeBkOwnCostByCategory uses.
+  const [{ data: orders, error }, sectionMap] = await Promise.all([
+    supabase.from("demands").select("outlet_id, date, items, dispatch_items, status, items_units").eq("outlet_id", outletId).gte("date", from).lte("date", to),
+    getDemandItemSectionMap(),
+  ]);
   if (error) throw error;
   const dispatched = (orders || []).filter((o) => o.status === "fulfilled" || o.dispatch_items);
   // Franchise outlets are billed a Final Price per item, not BK's raw internal cost — see
@@ -5371,7 +5376,7 @@ async function computeBkPurchaseDetail(outletId, from, to, costingContext) {
       } else {
         return;
       }
-      if (!itemsById[itemId]) itemsById[itemId] = { item_id: itemId, name: demandNameMap[itemId] || itemId.replace(/_/g, " "), unit: demandUnitMap[itemId] || "", byDate: {}, total_qty: 0, total_amount: 0 };
+      if (!itemsById[itemId]) itemsById[itemId] = { item_id: itemId, name: demandNameMap[itemId] || itemId.replace(/_/g, " "), unit: demandUnitMap[itemId] || "", category: sectionMap[itemId] || (bkRecipeMap[itemId] ? "food" : "other"), byDate: {}, total_qty: 0, total_amount: 0 };
       const bucket = itemsById[itemId];
       if (!bucket.byDate[o.date]) bucket.byDate[o.date] = { qty: 0, amount: 0 };
       bucket.byDate[o.date].qty += q;

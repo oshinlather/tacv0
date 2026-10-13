@@ -16978,13 +16978,15 @@ const MonthlyBKAudit = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selCat, setSelCat] = useState(null);
+  const [expanded, setExpanded] = useState({}); // item_id -> bool (date-wise breakdown open)
 
   useEffect(() => {
-    setLoading(true); setSelCat(null);
+    setLoading(true); setSelCat(null); setExpanded({});
     api.getStoreAuditMonthly(selMonth).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
   }, [selMonth]);
 
   const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
+  const fmtDay = (d) => { const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short" }); };
   const total = data?.categories?.reduce((s, c) => s + c.items.length, 0) || 0;
   const visibleCategories = selCat ? (data?.categories || []).filter((c) => c.category === selCat) : (data?.categories || []);
   const visibleCount = visibleCategories.reduce((s, c) => s + c.items.length, 0);
@@ -17039,16 +17041,28 @@ const MonthlyBKAudit = () => {
                 <th style={{ ...thS, textAlign: "right" }}>Net</th>
               </tr></thead>
               <tbody>
-                {cat.items.map((i) => (
-                  <tr key={i.item_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    <td style={{ ...tdS, position: "sticky", left: 0, background: "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{i.name}</div><div style={{ fontSize: 9, color: "#999" }}>{i.unit}</div></td>
+                {cat.items.map((i) => { const open = !!expanded[i.item_id]; const days = i.by_date || []; return (
+                  <Fragment key={i.item_id}>
+                  <tr style={{ borderBottom: open ? "none" : "1px solid #F0F0EC", cursor: days.length ? "pointer" : "default", background: open ? "#FBFAF7" : undefined }} onClick={() => days.length && setExpanded((e) => ({ ...e, [i.item_id]: !e[i.item_id] }))}>
+                    <td style={{ ...tdS, position: "sticky", left: 0, background: open ? "#FBFAF7" : "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{days.length > 0 && <span style={{ color: "#BBB", marginRight: 5, fontSize: 10, display: "inline-block", width: 8 }}>{open ? "▾" : "▸"}</span>}{i.name}</div><div style={{ fontSize: 9, color: "#999", marginLeft: days.length > 0 ? 13 : 0 }}>{i.unit}{days.length > 0 ? ` · ${days.length} day${days.length > 1 ? "s" : ""}` : ""}</div></td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.stock_in > 0 ? "#16A34A" : "#DDD", fontWeight: 700 }}>{i.stock_in > 0 ? "+" : ""}{fmtQty(i.stock_in)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.bk_out)}</td>
                     {outletCols.map((o) => { const q = i.outlet_out?.[o.id] || 0; return <td key={o.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: q > 0 ? "#555" : "#DDD" }}>{fmtQty(q)}</td>; })}
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: i.total_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.total_out)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: i.net > 0 ? "#2563EB" : i.net < 0 ? "#DC2626" : "#16A34A" }}>{i.net > 0 ? "+" : ""}{fmtQty(i.net)}</td>
                   </tr>
-                ))}
+                  {open && days.map((d, di) => (
+                    <tr key={i.item_id + "_" + d.date} style={{ borderBottom: di === days.length - 1 ? "1px solid #F0F0EC" : "1px solid #F5F4F0", background: "#FBFAF7" }}>
+                      <td style={{ ...tdS, position: "sticky", left: 0, background: "#FBFAF7", paddingLeft: 26 }}><span style={{ fontSize: 11, color: "#777", fontWeight: 500 }}>{fmtDay(d.date)}</span></td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.stock_in > 0 ? "#16A34A" : "#DDD" }}>{d.stock_in > 0 ? "+" : ""}{fmtQty(d.stock_in)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(d.bk_out)}</td>
+                      {outletCols.map((o) => { const q = d.outlet_out?.[o.id] || 0; return <td key={o.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: q > 0 ? "#777" : "#DDD" }}>{fmtQty(q)}</td>; })}
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.total_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(d.total_out)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 700, color: d.net > 0 ? "#2563EB" : d.net < 0 ? "#DC2626" : "#16A34A" }}>{d.net > 0 ? "+" : ""}{fmtQty(d.net)}</td>
+                    </tr>
+                  ))}
+                  </Fragment>
+                ); })}
               </tbody>
             </table>
           </div>
@@ -18630,6 +18644,17 @@ const RateAlertPanel = () => {
   }, [filtered]);
   const openingRecordedLabel = openingRecordedAt ? new Date(openingRecordedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : null;
 
+  // Date shown beside each item's "now ₹X" current price — when that price took effect.
+  // A never-changed price sits on the synthetic SEED_DATE (2000-01-01), which isn't a real
+  // event, so fall back to when that baseline was actually recorded (created_at).
+  const fmtCurrentDate = (cur) => {
+    if (!cur) return null;
+    if (cur.effective_date === SEED_DATE) {
+      return cur.created_at ? new Date(cur.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : null;
+    }
+    return new Date(cur.effective_date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  };
+
   const stickyCell = { position: "sticky", left: 0, zIndex: 2, background: "#fff", borderRight: "2px solid #E8E8E4", minWidth: 160, maxWidth: 160 };
 
   return (
@@ -18675,7 +18700,7 @@ const RateAlertPanel = () => {
                   <tr key={it.id}>
                     <td style={{ ...stickyCell, padding: "6px 12px", borderBottom: "1px solid #F0F0EC" }}>
                       <div style={{ fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.name}</div>
-                      <div style={{ fontSize: 10, color: "#AAA" }}>{it.category} · now ₹{current ? Number(current.price).toLocaleString("en-IN") : "—"}{it.unit ? `/${it.unit}` : ""}</div>
+                      <div style={{ fontSize: 10, color: "#AAA" }}>{it.category} · now ₹{current ? Number(current.price).toLocaleString("en-IN") : "—"}{it.unit ? `/${it.unit}` : ""}{current && fmtCurrentDate(current) ? ` · ${fmtCurrentDate(current)}` : ""}</div>
                     </td>
                     {dates.map((d) => {
                       const c = cells[d];
