@@ -16,6 +16,10 @@ import BKClosingWastage from "./BKClosingWastage";
 // Global user ref — set by AnandaCafe on login, read by child components
 let _currentUser = null;
 const getCurrentUser = () => _currentUser;
+// True if the logged-in user carries a given extra responsibility (app_users.responsibilities
+// — duties assigned on top of their base role, e.g. an outlet manager also made responsible
+// for 'cogs' cross-outlet oversight). See the Owner → Users panel to assign them.
+const userHasResp = (resp) => { const u = _currentUser; return Array.isArray(u?.responsibilities) && u.responsibilities.includes(resp); };
 
 const OUTLETS = [
   { id: "sec23", name: "Sector 23", short: "S-23" },
@@ -438,6 +442,12 @@ const ROLE_OPTIONS = [
 ];
 // Roles whose account is tied to exactly one outlet (an outlet_id must be assigned).
 const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
+// Extra cross-cutting duties assignable ON TOP of a user's base role (app_users.responsibilities).
+// 'cogs' gives an outlet manager cross-outlet COGS oversight (Flags + COGS Compare + Sales)
+// while they stay pinned to their own outlet for everything else. Add more here as needed.
+const RESPONSIBILITY_OPTIONS = [
+  { v: "cogs", l: "📊 COGS Oversight", hint: "Flags, COGS Compare & Sales — all outlets" },
+];
 const UsersPanel = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -491,6 +501,15 @@ const UsersPanel = () => {
       await api.updateUser(u.id, { role: newRole, ...(outletScoped ? {} : { outlet_id: null }) });
       load();
     } catch (e) { alert("Error: " + e.message); }
+  };
+
+  // Toggle one extra responsibility on/off for a user — sends the full resulting array
+  // (the backend replaces the column wholesale). Takes effect on their next login/request.
+  const toggleResp = async (u, respV) => {
+    const cur = Array.isArray(u.responsibilities) ? u.responsibilities : [];
+    const next = cur.includes(respV) ? cur.filter((r) => r !== respV) : [...cur, respV];
+    try { await api.updateUser(u.id, { responsibilities: next }); load(); }
+    catch (e) { alert("Error: " + e.message); }
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
@@ -553,6 +572,22 @@ const UsersPanel = () => {
             </select>
           </div>
         )}
+        {/* Extra responsibilities on top of the base role — e.g. an outlet manager also given
+            cross-outlet COGS oversight. Independent of role/outlet; a manager stays pinned to
+            their own outlet for everything except what the responsibility explicitly opens up. */}
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 10, color: "#999", fontWeight: 700, marginBottom: 4 }}>EXTRA RESPONSIBILITIES</div>
+          {RESPONSIBILITY_OPTIONS.map((r) => {
+            const on = Array.isArray(u.responsibilities) && u.responsibilities.includes(r.v);
+            return (
+              <label key={r.v} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 8, border: `1px solid ${on ? "#BFDBFE" : "#E0E0DC"}`, background: on ? "#EFF6FF" : "#fff", cursor: "pointer", marginBottom: 4 }}>
+                <input type="checkbox" checked={on} onChange={() => toggleResp(u, r.v)} />
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{r.l}</span>
+                <span style={{ fontSize: 10, color: "#999" }}>{r.hint}</span>
+              </label>
+            );
+          })}
+        </div>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <button onClick={() => { setEditPinId(u.id); setEditPinVal(u.pin); }} style={{ flex: 1, padding: "6px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Change PIN</button>
           <button onClick={() => toggleActive(u.id, u.active)} style={{ flex: 1, padding: "6px", borderRadius: 6, border: `1px solid ${u.active ? "#FECACA" : "#BBF7D0"}`, background: u.active ? "#FEF2F2" : "#F0FDF4", color: u.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{u.active ? "🚫 Disable" : "✅ Enable"}</button>
@@ -9164,7 +9199,7 @@ const CogsCompare = ({ syncDate, lockedOutlet } = {}) => {
   // to score against.
   const [cogsScoreByOutlet, setCogsScoreByOutlet] = useState({}); // { [outlet_id]: { score, winners, total } }
   useEffect(() => {
-    if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
+    if (!lockedOutlet && (["owner", "avp", "head_chef"].includes(getCurrentUser()?.role) || userHasResp("cogs"))) {
       api.getRecipes(true).then((r) => setAllDishes(r || [])).catch(() => setAllDishes([]));
     }
   }, [lockedOutlet]);
@@ -10036,8 +10071,47 @@ const DC_PURCHASE_CATEGORIES = [
   { id: "cold_drink", label: "🥤 Cold Drink & Water", items: DEMAND_SECTIONS.find((s) => s.id === "cold_drink")?.items || [] },
 ];
 
+// Cross-outlet COGS oversight panel, shown inside OutletMgr for a manager carrying the
+// 'cogs' responsibility (assigned in Owner → Users). Flags + COGS Compare across ALL
+// outlets, plus the Sales upload — reusing the owner components as-is. The backend opens the
+// cross-outlet reads these need to a cogs-responsible manager (authGuards.scopedOutletFilter
+// bypass + requireRoleOrResp on the cold-drink/sales endpoints); their own outlet screens
+// and all writes stay pinned to their outlet exactly as before.
+const MGR_COGS_TABS = [
+  { id: "flags", label: "🚩 Flags" },
+  { id: "compare", label: "📊 COGS Compare" },
+  { id: "sales", label: "📤 Sales" },
+];
+const ManagerCogsView = ({ onBack }) => {
+  const [tab, setTab] = useState("flags");
+  const [selDay, setSelDay] = useState(1);
+  const [selMonth, setSelMonth] = useState(null);
+  const monthOptions = useMemo(monthOptionsLastYear, []);
+  const dateStr = istDateAgo(selDay);
+  const pickTab = (id) => { setTab(id); if (id === "flags") setSelMonth(null); }; // Flags is single-day only
+  const pillStyle = (active) => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap" });
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Home</button>
+        <div><div style={{ fontSize: 16, fontWeight: 800 }}>📊 COGS Oversight</div><div style={{ fontSize: 11, color: "#999" }}>All outlets</div></div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {MGR_COGS_TABS.map((t) => <button key={t.id} onClick={() => pickTab(t.id)} style={pillStyle(tab === t.id)}>{t.label}</button>)}
+      </div>
+      {(tab === "flags" || tab === "compare") && (
+        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={tab === "compare" ? monthOptions : undefined} marginBottom={14} />
+      )}
+      {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={null} />}
+      {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} />}
+      {tab === "sales" && <SalesUpload />}
+    </div>
+  );
+};
+
 const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
+  const cogsResp = userHasResp("cogs"); // extra cross-outlet COGS oversight (see ManagerCogsView)
   const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
   const isDraftRole = currentUser?.role === "chef" || currentUser?.role === "bainmarry";
   // Chef additionally gets a read-only Performance Dashboard tile (COGS Score/RM Audit,
@@ -10708,7 +10782,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    {[{ s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
+    {[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE" }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ width: "100%", padding: "18px 20px", borderRadius: 16, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 10, display: "flex", alignItems: "center", gap: 14, opacity: 1 }}><div style={{ fontSize: 34 }}>{opt.icon}</div><div><div style={{ fontSize: 16, fontWeight: 800 }}>{opt.t}</div><div style={{ fontSize: 12, color: "#888" }}>{opt.sub}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -10718,6 +10792,8 @@ const OutletMgr = ({ onBack }) => {
 
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
+  if (screen === "cogs") return <ManagerCogsView onBack={() => setScreen("home")} />;
+
   if (screen === "performance") return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ fontSize: 15, fontWeight: 800 }}>🏆 Performance Dashboard</div></div>
     <OutletPerformanceDashboard outlet={outlet} hideDiscipline={isChef} />
@@ -12440,7 +12516,7 @@ const SalesUpload = ({ lockedOutlet } = {}) => {
   // once, lazily, only if this role can actually open the Add Recipe form.
   const [rateCardItems, setRateCardItems] = useState([]);
   useEffect(() => {
-    if (!lockedOutlet && ["owner", "avp", "head_chef"].includes(getCurrentUser()?.role)) {
+    if (!lockedOutlet && (["owner", "avp", "head_chef"].includes(getCurrentUser()?.role) || userHasResp("cogs"))) {
       api.getRateCard().then(setRateCardItems).catch(() => setRateCardItems([]));
     }
   }, [lockedOutlet]);
@@ -13566,7 +13642,9 @@ const OutletPerformanceDashboard = ({ outlet, hideDiscipline = false }) => {
       api.getRMAudit(dateStr, outlet).catch(() => null),
       api.getLivePnl(dateStr, outlet).catch(() => null),
       api.getStockUsage(dateStr, outlet).catch(() => null),
-      api.getPunchStatus(dateStr).catch(() => null),
+      // Pass outlet so this stays scoped to THIS outlet even for a 'cogs'-responsible
+      // manager (who is otherwise un-pinned server-side for cross-outlet oversight).
+      api.getPunchStatus(dateStr, outlet).catch(() => null),
       Promise.all(reviewDates.map((d) => api.getDailyReviewSummary(d).then((r) => ({ date: d, rows: r?.rows || [] })).catch(() => ({ date: d, rows: [] })))),
       // Skipped when Discipline is hidden (Chef's cut of this dashboard) — Chef has no
       // access to either endpoint, so there's no point firing (and 403-ing) them.
@@ -19872,12 +19950,12 @@ const OwnerHome = () => {
   // as <Section/> — an inline component gets a fresh identity each render, which would
   // remount FlagsSection/FourWeekComparison/etc. (and refire their data fetches) every time
   // the scroll observer bumps activeSection. Returning a div keeps the subtree mounted.
+  // Each section's title/subtitle is intentionally NOT rendered here — the frozen nav pills
+  // above already label every section, so an in-body "🚩 Flags · S-14 · <date>" heading just
+  // repeats the pill + the outlet/date already shown in the bar. title/sub kept in the
+  // signature (callers still pass them) purely as self-documentation of each section.
   const section = (id, title, sub, child) => (
     <div key={id} ref={(el) => { sectionRefs.current[id] = el; }} data-sid={id} style={{ scrollMarginTop: 150, paddingTop: 10, marginBottom: 34, borderTop: "1px solid #F0F0EC" }}>
-      <div style={{ marginBottom: 10 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 800, margin: "0 0 2px" }}>{title}</h3>
-        {sub && <p style={{ fontSize: 12, color: "#888", margin: 0 }}>{sub}</p>}
-      </div>
       {child}
     </div>
   );
@@ -19888,15 +19966,15 @@ const OwnerHome = () => {
 
   return (
     <div>
-      {/* Shared date + outlet filter */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+      {/* Frozen bar — date + outlet selection on the left, section nav pills pushed to the
+          right (into the previously-empty space); the whole line sticks on scroll. The nav
+          pills still jump-to/highlight the section in view. */}
+      <div style={{ position: "sticky", top: 92, zIndex: 20, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", padding: "10px 0", marginBottom: 12, background: "#FAFAF8", borderBottom: "1px solid #ECECE8" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
         {HOME_OUTLETS.map((o) => pill(selOutlet === o.id, () => setSelOutlet(o.id), o.short, o.id, false))}
-      </div>
-
-      {/* Sticky section nav — tap to jump, highlights the section in view */}
-      <div style={{ position: "sticky", top: 92, zIndex: 20, display: "flex", gap: 6, flexWrap: "wrap", padding: "10px 0", marginBottom: 4, background: "#FAFAF8", borderBottom: "1px solid #ECECE8" }}>
-        {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
+          {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+        </div>
       </div>
 
       {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,

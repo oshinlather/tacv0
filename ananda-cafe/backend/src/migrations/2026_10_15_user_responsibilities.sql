@@ -1,0 +1,14 @@
+-- Reusable per-user "responsibilities" — extra cross-cutting duties a user carries BEYOND
+-- their base role, assigned from the Owner's Users panel. First use: 'cogs' — an outlet
+-- manager also made responsible for cross-outlet COGS oversight (Flags + COGS Compare +
+-- Sales upload across ALL outlets), while otherwise staying a normal outlet_mgr: all WRITES
+-- remain pinned to their own outlet (ensureOutletAccess is untouched), only cross-outlet
+-- READS are opened up (scopedOutletFilter + a few requireRoleOrResp endpoints).
+--
+-- A text[] so a user can hold several responsibilities over time. Empty default = nobody
+-- gets anything new until explicitly assigned, so existing accounts are unaffected.
+--
+-- authGuards.fetchUser selects this column but falls back gracefully if it's absent, so the
+-- backend keeps working between deploy and this migration being applied — but assign/read of
+-- responsibilities only takes effect once this has run.
+ALTER TABLE app_users ADD COLUMN IF NOT EXISTS responsibilities text[] NOT NULL DEFAULT '{}';
