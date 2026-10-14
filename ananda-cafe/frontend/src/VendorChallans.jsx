@@ -44,6 +44,24 @@ const ORDER_VENDORS = [
   { id: "packaging_cleaning", label: "📦 Packaging & Cleaning", categories: ["Packaging", "Cleaning"], period: "10day", color: "#7C3AED", bg: "#F5F3FF", border: "#DDD6FE" },
 ];
 
+// Which vendor bucket a challan was ordered under — the ORDER_VENDORS grouping shown as
+// each row's label ("🛒 Grocery & Masala", "🥬 Vegetables", …). The filter pills key off
+// THIS, not the raw per-item category, because one vendor delivery spans several item
+// categories (a Grocery & Masala order holds Food + Grocery + Masala items). Filtering by
+// item-category made the "Food" pill surface "Grocery & Masala" rows and scattered a single
+// order across three pills, and any stray/mis-tagged category (e.g. an item saved as
+// "Store") became a bogus pill of its own. Mapping category -> bucket folds that back to one
+// pill per vendor that matches the label on screen; anything matching no bucket lands in
+// "Other" rather than inventing a pill. Category->bucket is 1:1 (each of the 8 categories
+// belongs to exactly one vendor), so first-match is unambiguous.
+const challanBucket = (c) => {
+  const set = new Set(c.categories || []);
+  const v = ORDER_VENDORS.find((ov) => ov.categories.some((cat) => set.has(cat)));
+  return v ? v.id : "other";
+};
+const BUCKET_LABEL = Object.fromEntries(ORDER_VENDORS.map((v) => [v.id, v.label]));
+const bucketLabel = (id) => BUCKET_LABEL[id] || "📦 Other";
+
 const STATUS_COLORS = {
   draft: { bg: "#FFFBEB", border: "#FDE68A", text: "#92400E", label: "📝 Draft" },
   received: { bg: "#F0FDF4", border: "#BBF7D0", text: "#166534", label: "✅ Received" },
@@ -116,7 +134,7 @@ function normalizeLegacyPO(po) {
 
 function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   const [status, setStatus] = useState("");
-  const [category, setCategory] = useState("");
+  const [bucket, setBucket] = useState(""); // selected vendor bucket id ("" = All), see challanBucket
   const [challans, setChallans] = useState(null);
   const [legacy, setLegacy] = useState(null);
   const [error, setError] = useState("");
@@ -140,17 +158,20 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   const merged = useMemo(() => {
     let list = [...(challans || []), ...(legacy || [])];
     if (status) list = list.filter((c) => c.status === status);
-    if (category) list = list.filter((c) => (c.categories || []).includes(category));
+    if (bucket) list = list.filter((c) => challanBucket(c) === bucket);
     return list;
-  }, [challans, legacy, status, category]);
+  }, [challans, legacy, status, bucket]);
   merged.sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
   const loaded = challans !== null && legacy !== null;
-  // Was legacy-only — a category that only ever appears on new-system vendor_challans
-  // (e.g. a "Grocery & Masala" vendor's items individually categorized "Food", not
-  // "Grocery" — the vendor bucket name and the item's own category are two different
-  // things) would have no pill to filter by at all, leaving that challan visible under
-  // "All" but permanently unreachable through any category filter.
-  const availableCategories = useMemo(() => [...new Set([...(challans || []), ...(legacy || [])].flatMap((c) => c.categories || []))].sort(), [challans, legacy]);
+  // The vendor buckets actually present in the loaded data, kept in ORDER_VENDORS order
+  // with "Other" (anything matching no bucket) last — so the pills mirror exactly what the
+  // list shows, and the set doesn't reshuffle as the date window changes.
+  const availableBuckets = useMemo(() => {
+    const present = new Set([...(challans || []), ...(legacy || [])].map(challanBucket));
+    const ordered = ORDER_VENDORS.map((v) => v.id).filter((id) => present.has(id));
+    if (present.has("other")) ordered.push("other");
+    return ordered;
+  }, [challans, legacy]);
 
   // Per-challan download, not one bulk file — "i dont want all download at once rather
   // i want download for each challan". List rows don't carry line items, so this
@@ -204,15 +225,12 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
           <button onClick={onNew} style={{ ...btnGhost, background: "#FFF7ED", border: "1px solid #FED7AA", color: "#EA580C" }}>+ Purana Paap</button>
         </div>
       </div>
-      {availableCategories.length > 0 && (
+      {availableBuckets.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          <button onClick={() => setCategory("")} style={{ padding: "6px 12px", borderRadius: 8, border: category === "" ? "none" : "1px solid #E0E0DC", background: category === "" ? "#1A1A1A" : "#fff", color: category === "" ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>All</button>
-          {availableCategories.map((c) => {
-            const m = catMeta(c);
-            return (
-              <button key={c} onClick={() => setCategory(c)} style={{ padding: "6px 12px", borderRadius: 8, border: category === c ? "none" : "1px solid #E0E0DC", background: category === c ? "#1A1A1A" : "#fff", color: category === c ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{m.emoji} {m.label}</button>
-            );
-          })}
+          <button onClick={() => setBucket("")} style={{ padding: "6px 12px", borderRadius: 8, border: bucket === "" ? "none" : "1px solid #E0E0DC", background: bucket === "" ? "#1A1A1A" : "#fff", color: bucket === "" ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>All</button>
+          {availableBuckets.map((id) => (
+            <button key={id} onClick={() => setBucket(id)} style={{ padding: "6px 12px", borderRadius: 8, border: bucket === id ? "none" : "1px solid #E0E0DC", background: bucket === id ? "#1A1A1A" : "#fff", color: bucket === id ? "#fff" : "#555", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{bucketLabel(id)}</button>
+          ))}
         </div>
       )}
 
@@ -685,6 +703,9 @@ function ChallanForm({ onDone, onCancel }) {
 
   const save = async () => {
     setError("");
+    // Vendor is mandatory — no more "(no vendor)" challans going forward (existing ones
+    // stay editable so a vendor can be assigned after the fact, see ChallanDetail).
+    if (!vendorId && !newVendorName.trim()) return setError("Pick a vendor (or type a new one) first.");
     const validLines = lines.filter((l) => l.item_id && Number(l.qty_entered) > 0);
     if (!validLines.length) return setError("Add at least one item with a quantity.");
     setSaving(true);
@@ -709,7 +730,7 @@ function ChallanForm({ onDone, onCancel }) {
       <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: 16, marginBottom: 14 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
           <div>
-            <label style={labelStyle}>Vendor</label>
+            <label style={labelStyle}>Vendor <span style={{ color: "#DC2626" }}>*</span></label>
             <select value={vendorId} onChange={(e) => { setVendorId(e.target.value); if (e.target.value) setNewVendorName(""); }} style={inputStyle}>
               <option value="">— Select or type new below —</option>
               {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
@@ -802,23 +823,55 @@ function ChallanDetail({ id, onBack }) {
   const [draft, setDraft] = useState({}); // item_id -> { qty_entered, total_price } strings
   const [toRemove, setToRemove] = useState(new Set()); // item_ids marked for deletion, applied on Save
   const [saving, setSaving] = useState(false);
+  // Vendor is editable in the same edit mode — a received "(no vendor)" challan needs its
+  // vendor assignable after the fact. Same picker shape as the New Challan form: pick an
+  // existing vendor, or leave the select empty and type a new name (resolved to an id
+  // server-side, see PATCH /challans/:id).
+  const [vendors, setVendors] = useState([]);
+  const [vDraftId, setVDraftId] = useState(""); // selected existing vendor id, or ""
+  const [vDraftNew, setVDraftNew] = useState(""); // typed new vendor name when no id picked
+  // Per-vendor unit conversion, edited inline per row — the display-only reminder shown in
+  // brackets next to each item name ("1 Packe = 10 Pcs"). Independent of the qty/price edit
+  // mode above: a conversion can be set or changed at any time. Keyed on challan.vendor_id
+  // server-side (see POST /vendor-item-units), so it follows whichever vendor is assigned.
+  const [convEdit, setConvEdit] = useState(null); // item_id being edited, or null
+  const [convU, setConvU] = useState("");         // vendor unit name draft
+  const [convF, setConvF] = useState("");         // factor draft — base units per 1 vendor unit
+  const [convSaving, setConvSaving] = useState(false);
 
   // Block body — see the identical fix + comment on LegacyOrderDetail's own `load` above.
   // Same bug, same shape: an expression-body arrow here returns the promise chain, which
   // useEffect below wrongly treats as its unmount cleanup function and tries to call.
   const load = () => { api.getChallan(id).then(setChallan).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
+  useEffect(() => { api.getVendors().then(setVendors).catch(() => {}); }, []);
 
   const startEdit = () => {
     const d = {};
     (challan.items || []).forEach((it) => { d[it.item_id] = { qty_entered: String(it.qty_entered ?? ""), total_price: String(it.line_total ?? "") }; });
     setDraft(d);
     setToRemove(new Set());
+    setVDraftId(challan.vendor_id || "");
+    setVDraftNew("");
     setEditMode(true);
   };
-  const cancelEdit = () => { setEditMode(false); setDraft({}); setToRemove(new Set()); };
+  const cancelEdit = () => { setEditMode(false); setDraft({}); setToRemove(new Set()); setVDraftId(""); setVDraftNew(""); };
   const editLine = (itemId, patch) => setDraft((d) => ({ ...d, [itemId]: { ...d[itemId], ...patch } }));
   const toggleRemove = (itemId) => setToRemove((s) => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
+
+  const startConvEdit = (it) => { setConvEdit(it.item_id); setConvU(it.vendor_unit || ""); setConvF(it.vendor_factor != null ? String(it.vendor_factor) : ""); };
+  const cancelConvEdit = () => { setConvEdit(null); setConvU(""); setConvF(""); };
+  const saveConv = async (it) => {
+    // Conversions are keyed to the challan's vendor — nothing to attach them to without one.
+    if (!challan.vendor_id) { setError("Assign a vendor to this challan first (Edit → pick/add vendor), then set its units."); return; }
+    setConvSaving(true); setError("");
+    try {
+      // Empty vendor_unit clears the conversion server-side (deletes the row).
+      await api.saveVendorItemUnit({ vendor_id: challan.vendor_id, item_id: it.item_id, vendor_unit: convU, factor: convF });
+      cancelConvEdit();
+      load();
+    } catch (e) { setError(e.message); } finally { setConvSaving(false); }
+  };
 
   const saveEdit = async () => {
     setSaving(true);
@@ -857,9 +910,18 @@ function ChallanDetail({ id, onBack }) {
         setSaving(false);
         return;
       }
+      // Vendor edit (metadata only — safe at any non-cancelled stage). Send a change only
+      // when it actually differs from what's stored, so an untouched edit doesn't churn it.
+      const pickedId = vDraftId || "";
+      const typedNew = vDraftNew.trim();
+      if (pickedId && pickedId !== (challan.vendor_id || "")) {
+        await api.updateChallan(id, { vendor_id: pickedId });
+      } else if (!pickedId && typedNew) {
+        await api.updateChallan(id, { vendor_name: typedNew });
+      }
       if (Object.keys(changed).length) await api.updateChallanItems(id, changed);
       for (const itemId of toRemove) await api.deleteChallanItem(id, itemId);
-      setEditMode(false); setDraft({}); setToRemove(new Set());
+      setEditMode(false); setDraft({}); setToRemove(new Set()); setVDraftId(""); setVDraftNew("");
       load();
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
@@ -937,7 +999,17 @@ function ChallanDetail({ id, onBack }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <button onClick={onBack} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
-        <div style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>{challan.vendor_name || "(no vendor)"}</div>
+        {editMode ? (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+            <select value={vDraftId} onChange={(e) => { setVDraftId(e.target.value); if (e.target.value) setVDraftNew(""); }} style={{ ...inputStyle, fontWeight: 700 }}>
+              <option value="">— Select vendor or type new below —</option>
+              {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+            {!vDraftId && <input placeholder="New vendor name" value={vDraftNew} onChange={(e) => setVDraftNew(e.target.value)} style={inputStyle} />}
+          </div>
+        ) : (
+          <div style={{ fontSize: 15, fontWeight: 800, flex: 1 }}>{challan.vendor_name || "(no vendor)"}</div>
+        )}
         <div style={{ fontSize: 11, fontWeight: 700, color: s.text, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "3px 8px" }}>{s.label}</div>
       </div>
 
@@ -963,7 +1035,27 @@ function ChallanDetail({ id, onBack }) {
           const marked = toRemove.has(it.item_id);
           return (
             <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8, opacity: marked ? 0.4 : 1 }}>
-              <div style={{ flex: 1, textDecoration: marked ? "line-through" : "none" }}>{it.item_name}</div>
+              <div style={{ flex: 1, textDecoration: marked ? "line-through" : "none" }}>
+                {it.item_name}
+                {/* Vendor's own unit for this item, in brackets — a reminder for receiving
+                    (the bill says "5 Packe", the store counts in Pcs). Display-only; click to
+                    edit/clear. Keyed to the challan's assigned vendor. */}
+                {convEdit === it.item_id ? (
+                  <span style={{ display: "inline-flex", gap: 4, alignItems: "center", marginLeft: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10, color: "#999" }}>1</span>
+                    <input value={convU} onChange={(e) => setConvU(e.target.value)} placeholder="vendor unit" style={{ ...inputStyle, width: 78, padding: "3px 6px", fontSize: 11 }} />
+                    <span style={{ fontSize: 10, color: "#999" }}>=</span>
+                    <input type="number" min="0" step="any" value={convF} onChange={(e) => setConvF(e.target.value)} placeholder="qty" style={{ ...inputStyle, width: 54, padding: "3px 6px", fontSize: 11 }} />
+                    <span style={{ fontSize: 10, color: "#999" }}>{it.base_unit}</span>
+                    <button onClick={() => saveConv(it)} disabled={convSaving} title="Save conversion" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✓</button>
+                    <button onClick={cancelConvEdit} disabled={convSaving} title="Cancel" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#999", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✕</button>
+                  </span>
+                ) : it.vendor_unit ? (
+                  <span onClick={() => startConvEdit(it)} title="Edit this vendor's unit" style={{ marginLeft: 8, fontSize: 11, color: "#2563EB", cursor: "pointer", whiteSpace: "nowrap" }}>(1 {it.vendor_unit} = {fmtQty(it.vendor_factor)} {it.base_unit}) ✎</span>
+                ) : (
+                  <span onClick={() => startConvEdit(it)} title="Set this vendor's unit for this item" style={{ marginLeft: 8, fontSize: 10, color: "#BBB", cursor: "pointer", whiteSpace: "nowrap" }}>+ vendor unit</span>
+                )}
+              </div>
               {editMode ? (
                 marked ? (
                   <button onClick={() => toggleRemove(it.item_id)} style={{ ...btnGhost, padding: "4px 8px", fontSize: 10 }}>Undo</button>

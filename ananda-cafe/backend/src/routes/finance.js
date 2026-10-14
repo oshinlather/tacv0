@@ -381,6 +381,78 @@ router.get("/outlet-pnl", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── GET /api/finance/store-cost?from=&to= — "Store Cost" tab.
+// Total of every vendor challan RECEIVED into the Store during [from, to], split by
+// items.category, each category expandable to the individual challans that made it up.
+// Unlike the old demand-based "BK Cost" (rate-card-priced, prorated across outlets), this
+// is the real ₹ the Store paid vendors: it sums vendor_challan_items.line_total straight
+// off received challans — no rate-card re-pricing, no outlet split. A line with no recorded
+// price (line_total null and no unit_price) contributes 0 rather than being guessed.
+router.get("/store-cost", async (req, res) => {
+  try {
+    const user = await requireRole(req, res, "owner", "avp", "head_chef");
+    if (!user) return;
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: "from and to are required" });
+    const rangeStart = `${from}T00:00:00Z`;
+    // exclusive upper bound = day after `to` (received_at is a timestamp). UTC boundaries,
+    // same convention as the Monthly BK Audit's received-challan filter, so the two reconcile.
+    const nextDay = (() => { const d = new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })();
+    const rangeEnd = `${nextDay}T00:00:00Z`;
+
+    const { data: challans, error: chErr } = await supabase.from("vendor_challans")
+      .select("id, vendor_id, challan_number, challan_date, received_at")
+      .eq("location_id", "store").eq("status", "received")
+      .gte("received_at", rangeStart).lt("received_at", rangeEnd);
+    if (chErr) throw chErr;
+    if (!challans?.length) return res.json({ from, to, categories: [], grand_total: 0 });
+
+    const challanById = {}; challans.forEach((c) => { challanById[c.id] = c; });
+    const vendorIds = [...new Set(challans.map((c) => c.vendor_id).filter(Boolean))];
+    const { data: vendors } = vendorIds.length
+      ? await supabase.from("vendors").select("id, name").in("id", vendorIds)
+      : { data: [] };
+    const vendorName = {}; (vendors || []).forEach((v) => { vendorName[v.id] = v.name; });
+
+    const { data: lines, error: liErr } = await supabase.from("vendor_challan_items")
+      .select("challan_id, qty_base, unit_price, line_total, items(category)")
+      .in("challan_id", challans.map((c) => c.id));
+    if (liErr) throw liErr;
+
+    // category -> { total, perChallan: { challan_id -> ₹ of this category's lines in it } }
+    const byCat = {};
+    (lines || []).forEach((l) => {
+      const amt = l.line_total != null ? Number(l.line_total)
+        : (l.unit_price != null && l.qty_base != null ? Number(l.unit_price) * Number(l.qty_base) : 0);
+      if (!amt) return;
+      const cat = l.items?.category || "Other";
+      const c = (byCat[cat] = byCat[cat] || { total: 0, perChallan: {} });
+      c.total += amt;
+      c.perChallan[l.challan_id] = (c.perChallan[l.challan_id] || 0) + amt;
+    });
+
+    const round = (n) => Math.round(n || 0);
+    const categories = Object.entries(byCat).map(([category, v]) => ({
+      category,
+      total: round(v.total),
+      challans: Object.entries(v.perChallan).map(([cid, amt]) => {
+        const ch = challanById[cid];
+        return {
+          id: Number(cid),
+          vendor_name: ch ? (vendorName[ch.vendor_id] || "—") : "—",
+          challan_number: ch?.challan_number || null,
+          challan_date: ch?.challan_date || null,
+          received_at: ch?.received_at || null,
+          amount: round(amt),
+        };
+      }).sort((a, b) => b.amount - a.amount),
+    })).sort((a, b) => b.total - a.total);
+    const grand_total = round(categories.reduce((s, c) => s + c.total, 0));
+
+    res.json({ from, to, categories, grand_total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── GET /api/finance/bk-purchase-detail?outlet_id=&from=&to= — the BK Purchase column's
 // drill-down: every item dispatched from Base Kitchen to this one outlet across the range,
 // broken out day by day. Same pricing basis as the summed figure above (see

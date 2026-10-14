@@ -17635,6 +17635,11 @@ const FinancePnL = () => {
   const [expandedBkPurchase, setExpandedBkPurchase] = useState(null); // outlet_id, or null
   const [bkPurchaseDetail, setBkPurchaseDetail] = useState({}); // outlet_id -> { dates, items }
   const [bkPurchaseLoading, setBkPurchaseLoading] = useState(null); // outlet_id currently loading
+  // Store Cost tab — total of vendor challans received into Store this period, by category.
+  // Its own fetch (not outlet-pnl), its own loading, since it has no outlet dimension.
+  const [storeCost, setStoreCost] = useState(null);
+  const [storeCostLoading, setStoreCostLoading] = useState(false);
+  const [expandedCat, setExpandedCat] = useState(null); // category name currently expanded, or null
   // Category filter for the drill-down table ("all" or one of the 8 category keys). Only one
   // outlet's drill-down is open at a time (expandedBkPurchase is single-valued), so a single
   // shared filter is enough; reset to "all" whenever a different outlet's drill-down opens.
@@ -17715,6 +17720,9 @@ const FinancePnL = () => {
     setDailyByDate(null);
     setExpandedDailyBkPurchase(null);
     if (basis === "audit") { setLoading(false); return; }
+    // Store Cost has no outlet dimension and its own fetch (see the effect below) — skip
+    // the outlet-pnl call entirely so switching to it is instant, not an 8s P&L compute.
+    if (basis === "bk_cost") { setLoading(false); return; }
     setLoading(true);
     // One whole-range call for BOTH bases — used to fetch Consumption day-by-day and sum
     // client-side instead (day-by-day was ~9s vs ~18-40s for one request), but that made
@@ -17729,6 +17737,14 @@ const FinancePnL = () => {
     api.getFinanceOutletPnl(range.from, range.to, basis).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
   };
   useEffect(load, [range, basis]);
+
+  // Store Cost tab — fetch vendor challans received this period, grouped by category.
+  useEffect(() => {
+    if (basis !== "bk_cost") return;
+    setStoreCost(null); setExpandedCat(null); setStoreCostLoading(true);
+    api.getFinanceStoreCost(range.from, range.to)
+      .then(setStoreCost).catch(() => setStoreCost(null)).finally(() => setStoreCostLoading(false));
+  }, [range, basis]);
 
   // Shared by both the monthly BK Purchase/Consumption drill-down and each day row's own
   // drill-down below — same item x date breakdown either way, so a day-row expand
@@ -17840,12 +17856,13 @@ const FinancePnL = () => {
       <button onClick={() => setBasis("bk_purchase")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_purchase" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_purchase" ? "#1A1A1A" : "#fff", color: basis === "bk_purchase" ? "#fff" : "#888" }}>💰 BK Purchase</button>
       <button onClick={() => setBasis("consumption")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "consumption" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "consumption" ? "#1A1A1A" : "#fff", color: basis === "consumption" ? "#fff" : "#888" }}>📊 Consumption</button>
       <button onClick={() => setBasis("audit")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "audit" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "audit" ? "#1A1A1A" : "#fff", color: basis === "audit" ? "#fff" : "#888" }}>🔍 Purchase vs Consumption</button>
-      <button onClick={() => setBasis("bk_cost")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_cost" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_cost" ? "#1A1A1A" : "#fff", color: basis === "bk_cost" ? "#fff" : "#888" }}>🏭 BK Cost</button>
+      <button onClick={() => setBasis("bk_cost")} style={{ padding: "8px 16px", borderRadius: 8, fontSize: 12.5, fontWeight: 700, border: basis === "bk_cost" ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: basis === "bk_cost" ? "#1A1A1A" : "#fff", color: basis === "bk_cost" ? "#fff" : "#888" }}>📦 Store Cost</button>
     </div>
 
     {/* Outlet filter — tap to drop an outlet out of the table below; tap again to bring it
-        back. Only shown once data's loaded, since it's built off data.outlets. */}
-    {data && (
+        back. Only shown once data's loaded, since it's built off data.outlets. Hidden on
+        the Store Cost tab, which has no outlet dimension. */}
+    {data && basis !== "bk_cost" && (
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}>Outlets:</span>
         {data.outlets.map((o) => {
@@ -17863,51 +17880,78 @@ const FinancePnL = () => {
 
     {basis === "audit" ? (
       <PurchaseVsConsumptionAudit range={range} monthLabel={monthLabel} hiddenOutlets={hiddenOutlets} toggleOutletVisible={toggleOutletVisible} setHiddenOutlets={setHiddenOutlets} />
+    ) : basis === "bk_cost" ? (
+      <div>
+        <div style={{ fontSize: 11.5, color: "#888", marginBottom: 12 }}>
+          Total of every vendor challan <strong>received into the Store</strong> during {monthLabel}, split by category — the real ₹ paid to vendors (summed off recorded challan amounts, not demand/rate-card). Click a category to see the challans that make it up.
+        </div>
+        {storeCostLoading ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading Store Cost...</div>
+        ) : !storeCost ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Store Cost</div>
+        ) : storeCost.categories.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#BBB" }}>No vendor challans received in {monthLabel}.</div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 }}></th>
+                  {storeCost.categories.map((c) => { const open = expandedCat === c.category; return (
+                    <th key={c.category} onClick={() => setExpandedCat(open ? null : c.category)} style={{ ...thS, textAlign: "right", cursor: "pointer", whiteSpace: "nowrap", background: open ? "#F0F0EC" : "#FAFAF8" }}>{c.category} {open ? "▾" : "▸"}</th>
+                  ); })}
+                  <th style={{ ...thS, textAlign: "right" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  <tr style={{ borderBottom: "1px solid #F0F0EC" }}>
+                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>Received</td>
+                    {storeCost.categories.map((c) => { const open = expandedCat === c.category; return (
+                      <td key={c.category} onClick={() => setExpandedCat(open ? null : c.category)} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", cursor: "pointer", fontWeight: open ? 800 : 600, background: open ? "#FBFAF7" : "#fff", color: c.total > 0 ? "#991B1B" : "#BBB" }}>{c.total > 0 ? `₹${fmt0(c.total)}` : "—"}</td>
+                    ); })}
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800 }}>₹{fmt0(storeCost.grand_total)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {expandedCat && (() => {
+              const cat = storeCost.categories.find((c) => c.category === expandedCat);
+              if (!cat) return null;
+              const fmtChDate = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "—";
+              return (
+                <div style={{ borderTop: "1px solid #E8E8E4", background: "#FBFAF7", padding: "12px 14px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 8 }}>{cat.category} — {cat.challans.length} challan{cat.challans.length !== 1 ? "s" : ""} · ₹{fmt0(cat.total)}</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                      <thead><tr style={{ color: "#999" }}>
+                        <th style={{ ...thS, textAlign: "left" }}>Vendor</th>
+                        <th style={{ ...thS, textAlign: "left" }}>Date</th>
+                        <th style={{ ...thS, textAlign: "left" }}>Challan #</th>
+                        <th style={{ ...thS, textAlign: "right" }}>Amount</th>
+                      </tr></thead>
+                      <tbody>
+                        {cat.challans.map((ch) => (
+                          <tr key={ch.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                            <td style={{ ...tdS, fontWeight: 600, whiteSpace: "nowrap" }}>{ch.vendor_name}</td>
+                            <td style={{ ...tdS, color: "#777" }}>{fmtChDate(ch.challan_date)}</td>
+                            <td style={{ ...tdS, color: "#777", fontFamily: "'JetBrains Mono'" }}>{ch.challan_number || "—"}</td>
+                            <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#991B1B" }}>₹{fmt0(ch.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </div>
     ) : loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Computing {monthLabel}'s P&L...</div>
     ) : !data ? (
       <div style={{ textAlign: "center", padding: 40, color: "#DC2626" }}>Couldn't load Finance P&L</div>
     ) : visibleOutlets.length === 0 ? (
       <div style={{ textAlign: "center", padding: 40, color: "#BBB" }}>Every outlet is filtered out — tap one above to bring it back.</div>
-    ) : basis === "bk_cost" ? (
-      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-        <div style={{ padding: "10px 14px", fontSize: 11.5, color: "#888", borderBottom: "1px solid #F0F0EC" }}>
-          Base Kitchen's own purchases from Store this period — Grocery, Vegetable, Gas and Packaging/Disposals it buys for itself (gas cylinders, cleaning staples, raw commodities for its own prep), not tied to any one outlet's own dispatch. Split across outlets proportional to each outlet's BK Purchase share, same way BK Fixed Share is above — informational, not added into Net P&L.
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead><tr style={{ background: "#FAFAF8" }}>
-              <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 }}>Outlet</th>
-              {BK_COST_COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
-              <th style={{ ...thS, textAlign: "right" }}>Total</th>
-            </tr></thead>
-            <tbody>
-              {visibleOutlets.map((o) => {
-                const oData = OUTLETS.find((x) => x.id === o.outlet_id);
-                const rowTotal = BK_COST_COLS.reduce((s, c) => s + (o[c.key] || 0), 0);
-                return (
-                  <tr key={o.outlet_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
-                    <td style={{ ...tdS, fontWeight: 700, position: "sticky", left: 0, background: "#fff" }}>{oData?.short || o.outlet_id}</td>
-                    {BK_COST_COLS.map((c) => (
-                      <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: o[c.key] > 0 ? "#991B1B" : "#BBB" }}>{o[c.key] > 0 ? `−${fmt0(o[c.key])}` : "—"}</td>
-                    ))}
-                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{rowTotal > 0 ? `−${fmt0(rowTotal)}` : "—"}</td>
-                  </tr>
-                );
-              })}
-              <tr style={{ background: "#FAFAF8", fontWeight: 800 }}>
-                <td style={{ ...tdS, position: "sticky", left: 0, background: "#FAFAF8" }}>All Outlets</td>
-                {BK_COST_COLS.map((c) => (
-                  <td key={c.key} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{computedTotals[c.key] > 0 ? `−${fmt0(computedTotals[c.key])}` : "—"}</td>
-                ))}
-                <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>
-                  {(() => { const grand = BK_COST_COLS.reduce((s, c) => s + (computedTotals[c.key] || 0), 0); return grand > 0 ? `−${fmt0(grand)}` : "—"; })()}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
     ) : (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>

@@ -92,10 +92,41 @@ router.get("/challans/:id", async (req, res) => {
     const { data: signed } = await supabase.storage.from("Photos").createSignedUrl(challan.bill_photo_path, 86400);
     bill_url = signed?.signedUrl || null;
   }
+  // Per-vendor unit conversions for THIS challan's vendor — display-only, shown in brackets
+  // next to each item name on the draft screen ("Duster (1 Packe = 10 Pcs)"). See the
+  // 2026_10_14_vendor_item_units migration for why this is separate from item_units.
+  const convByItem = {};
+  if (challan.vendor_id) {
+    const { data: convRows } = await supabase.from("vendor_item_units").select("item_id, vendor_unit, factor").eq("vendor_id", challan.vendor_id);
+    (convRows || []).forEach((c) => { convByItem[c.item_id] = { vendor_unit: c.vendor_unit, vendor_factor: Number(c.factor) }; });
+  }
   res.json({
     ...challan, vendor_name: challan.vendors?.name || null, vendors: undefined, bill_url,
-    items: (items || []).map((i) => ({ ...i, item_name: i.items?.name, category: i.items?.category, base_unit: i.items?.base_unit, items: undefined })),
+    items: (items || []).map((i) => ({ ...i, item_name: i.items?.name, category: i.items?.category, base_unit: i.items?.base_unit, items: undefined, ...(convByItem[i.item_id] || { vendor_unit: null, vendor_factor: null }) })),
   });
+});
+
+// POST /vendor-item-units — add / update / clear ONE vendor's unit conversion for an item
+// (display-only reminder on the draft challan; see the migration header). Upserts on
+// (vendor_id, item_id). An empty vendor_unit clears the conversion (deletes the row) so the
+// bracket goes back to "+ set vendor unit". factor is base-units-per-1-vendor-unit, same
+// convention as item_units — e.g. vendor_unit 'Packe', factor 10 → "1 Packe = 10 Pcs".
+router.post("/vendor-item-units", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { vendor_id, item_id, vendor_unit, factor } = req.body;
+  if (!vendor_id || !item_id) return res.status(400).json({ error: "vendor_id and item_id are required" });
+  const unit = (vendor_unit || "").trim();
+  if (!unit) {
+    const { error } = await supabase.from("vendor_item_units").delete().eq("vendor_id", vendor_id).eq("item_id", item_id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ cleared: true });
+  }
+  if (!(Number(factor) > 0)) return res.status(400).json({ error: "A positive factor is required" });
+  const { data, error } = await supabase.from("vendor_item_units")
+    .upsert({ vendor_id, item_id, vendor_unit: unit, factor: Number(factor), updated_at: new Date().toISOString() }, { onConflict: "vendor_id,item_id" })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
 });
 
 // POST / — create a draft challan with its line items. Converts each entered qty to
@@ -172,19 +203,39 @@ router.post("/challans", async (req, res) => {
   res.json(challan);
 });
 
-// PATCH /:id — edit a draft (vendor, notes, challan_number, no_bill_reason).
+// PATCH /:id — edit challan metadata (vendor, notes, challan_number, no_bill_reason).
+// Vendor/number/notes are pure metadata — they don't touch the stock ledger or the price
+// ledger the way a qty/price edit does — so they're editable at ANY stage except cancelled
+// (a received "(no vendor)" challan needs its vendor assignable after the fact; see the
+// vendor picker in ChallanDetail). Only no_bill_reason is still meaningful pre-receive,
+// but patching it post-receive is harmless. Mirrors the "edit at all stages" relaxation
+// the /:id/items route already made.
 router.patch("/challans/:id", async (req, res) => {
   if (!await gate(req, res)) return;
   const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
   if (!existing) return res.status(404).json({ error: "Challan not found" });
-  if (existing.status !== "draft") return res.status(400).json({ error: "Only a draft challan can be edited" });
-  const { vendor_id, challan_number, notes, no_bill_reason } = req.body;
+  if (existing.status === "cancelled") return res.status(400).json({ error: "A cancelled challan cannot be edited" });
+  const { vendor_id, vendor_name, challan_number, notes, no_bill_reason } = req.body;
   const patch = {};
-  if (vendor_id !== undefined) patch.vendor_id = vendor_id;
+  // vendor_name (new or existing-by-name) is resolved to an id the same way create does,
+  // so the detail screen can assign/rename a vendor without the client needing its id.
+  if (vendor_name !== undefined && vendor_name !== null && String(vendor_name).trim()) {
+    const name = String(vendor_name).trim();
+    const { data: existingVendor } = await supabase.from("vendors").select("id").ilike("name", name).maybeSingle();
+    if (existingVendor) {
+      patch.vendor_id = existingVendor.id;
+    } else {
+      const { data: v, error: vErr } = await supabase.from("vendors").insert({ name }).select().single();
+      if (vErr) return res.status(500).json({ error: vErr.message });
+      patch.vendor_id = v.id;
+    }
+  } else if (vendor_id !== undefined) {
+    patch.vendor_id = vendor_id;
+  }
   if (challan_number !== undefined) patch.challan_number = challan_number;
   if (notes !== undefined) patch.notes = notes;
   if (no_bill_reason !== undefined) patch.no_bill_reason = no_bill_reason;
-  const { data, error } = await supabase.from("vendor_challans").update(patch).eq("id", req.params.id).select().single();
+  const { data, error } = await supabase.from("vendor_challans").update(patch).eq("id", req.params.id).select("*, vendors(name)").single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });

@@ -228,6 +228,9 @@ const api = {
   // rate-card cost) or consumption (Yesterday Closing + Dispatched − Wastage − Today
   // Closing, same formula RM Audit/Daily P&L use) ──
   getFinanceOutletPnl: (from, to, basis) => get("/api/finance/outlet-pnl", { from, to, basis }),
+  // Store Cost tab — total of all vendor challans received into the Store across [from,to],
+  // split by category, each expandable to its challans. Sourced from challan line totals.
+  getFinanceStoreCost: (from, to) => get("/api/finance/store-cost", { from, to }),
   getFinanceCommissionPct: () => get("/api/finance/commission-pct"),
   setFinanceCommissionPct: (pct) => patch("/api/finance/commission-pct", { pct }),
   getBkPurchaseDetail: (outlet_id, from, to) => get("/api/finance/bk-purchase-detail", { outlet_id, from, to }),
@@ -348,6 +351,9 @@ const api = {
   getStoreStockMovements: (itemId, location) => get(`/api/store/stock/${itemId}/movements`, location ? { location } : {}),
   getStoreItems: () => get("/api/store/items"),
   addItemUnit: (data) => post("/api/store/item-units", data),
+  // Per-vendor display-only unit conversion for the draft challan ("1 Packe = 10 Pcs").
+  // Empty vendor_unit clears it. data: { vendor_id, item_id, vendor_unit, factor }
+  saveVendorItemUnit: (data) => post("/api/store/vendor-item-units", data),
   getRmOrderSuggestNew: () => get("/api/store/rm-order-suggest"),
   adjustStoreStock: (data) => post("/api/store/adjust", data),
   adjustStoreStockBatch: (data) => post("/api/store/adjust-batch", data),
