@@ -10084,6 +10084,7 @@ const MGR_COGS_TABS = [
 ];
 const ManagerCogsView = ({ onBack }) => {
   const [tab, setTab] = useState("flags");
+  const [selOutlet, setSelOutlet] = useState(null); // null = All outlets; a specific id scopes every section to that one outlet (to share with its manager)
   const [selDay, setSelDay] = useState(1);
   const [selMonth, setSelMonth] = useState(null);
   const monthOptions = useMemo(monthOptionsLastYear, []);
@@ -15475,21 +15476,30 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
 //  filter; Punch/Demand are limited to company-owned outlets since franchises
 //  don't punch through this system.
 // ═══════════════════════════════════════════════════════════════════════════
-const FlagCard = ({ icon, title, subtitle, count, extra, children }) => (
-  <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
-    <div style={{ padding: "12px 16px", borderBottom: "1px solid #F0F0EC", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      <div>
-        <div style={{ fontSize: 14, fontWeight: 800 }}>
-          {icon} {title}
-          {count != null && <span style={{ marginLeft: 8, padding: "1px 9px", borderRadius: 10, fontSize: 11, fontWeight: 800, background: count > 0 ? "#FEF2F2" : "#F0FDF4", color: count > 0 ? "#DC2626" : "#16A34A" }}>{count}</span>}
+// collapsible → header is clickable and shows a ▸/▾ chevron; defaultCollapsed starts folded.
+// Non-collapsible cards (e.g. COGS Leakage) keep the old always-open behaviour.
+const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, defaultCollapsed }) => {
+  const [open, setOpen] = useState(!defaultCollapsed);
+  const showBody = !collapsible || open;
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+      <div onClick={collapsible ? () => setOpen((v) => !v) : undefined} style={{ padding: "12px 16px", borderBottom: showBody ? "1px solid #F0F0EC" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", cursor: collapsible ? "pointer" : "default" }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800 }}>
+            {icon} {title}
+            {count != null && <span style={{ marginLeft: 8, padding: "1px 9px", borderRadius: 10, fontSize: 11, fontWeight: 800, background: count > 0 ? "#FEF2F2" : "#F0FDF4", color: count > 0 ? "#DC2626" : "#16A34A" }}>{count}</span>}
+          </div>
+          {subtitle && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{subtitle}</div>}
         </div>
-        {subtitle && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{subtitle}</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {extra}
+          {collapsible && <span style={{ fontSize: 12, color: "#999" }}>{open ? "▾" : "▸"}</span>}
+        </div>
       </div>
-      {extra}
+      {showBody && <div style={{ padding: "12px 16px" }}>{children}</div>}
     </div>
-    <div style={{ padding: "12px 16px" }}>{children}</div>
-  </div>
-);
+  );
+};
 
 const FlagsSection = ({ dateStr, selOutlet }) => {
   const [audit, setAudit] = useState(null);
@@ -15668,7 +15678,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       </FlagCard>
 
       {/* ── 2. Challan mismatches ── */}
-      <FlagCard icon="🧾" title="Challan Mismatches" count={challanRows.length}
+      <FlagCard icon="🧾" title="Challan Mismatches" count={challanRows.length} collapsible defaultCollapsed
         subtitle="Demand ≠ Dispatch (🟠) or Dispatch ≠ Verified receipt (🟡)">
         {challanRows.length === 0 ? goodMsg("Every challan matches — demand, dispatch and verified receipts all agree.") : (
           <div style={{ overflowX: "auto" }}>
@@ -15697,7 +15707,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       </FlagCard>
 
       {/* ── 3. Missing punches (excl. demand, which has its own flag) ── */}
-      <FlagCard icon="🔔" title="Missing Punches" count={punchRows.length}
+      <FlagCard icon="🔔" title="Missing Punches" count={punchRows.length} collapsible defaultCollapsed
         subtitle="Company outlets with unpunched entries (sales, closing, wastage, purchase, verify)">
         {punchRows.length === 0 ? goodMsg("All company outlets have punched everything for the day.") : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -15719,7 +15729,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       </FlagCard>
 
       {/* ── 4. Demand not submitted ── */}
-      <FlagCard icon="✏️" title="Demand Not Submitted" count={demandMissing.length}
+      <FlagCard icon="✏️" title="Demand Not Submitted" count={demandMissing.length} collapsible defaultCollapsed
         subtitle="Company outlets that haven't sent their demand for the day">
         {demandMissing.length === 0 ? goodMsg("Every company outlet has submitted its demand.") : (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
