@@ -32,7 +32,7 @@ async function fetchUser(userId) {
 
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, name, role, outlet_id, active')
+    .select('id, name, role, outlet_id, active, responsibilities')
     .eq('id', userId)
     .single();
 
@@ -82,6 +82,25 @@ async function requireRole(req, res, ...allowedRoles) {
   return user;
 }
 
+// A user's extra cross-cutting duties beyond their base role (app_users.responsibilities,
+// a text[] — e.g. an outlet manager ALSO made responsible for 'cogs' oversight). Lets us
+// grant a few owner-like read endpoints + un-scope cross-outlet reads without changing the
+// person's actual role: they stay an outlet_mgr for everything else (all writes included).
+function hasResponsibility(user, resp) {
+  return Array.isArray(user?.responsibilities) && user.responsibilities.includes(resp);
+}
+
+// Like requireRole, but ALSO passes if the user carries `responsibility` — for the handful
+// of cross-outlet COGS endpoints a 'cogs'-responsible manager needs even though their base
+// role wouldn't normally reach them. Returns the user (truthy) or sends 403 and returns false.
+async function requireRoleOrResp(req, res, responsibility, ...allowedRoles) {
+  const user = await requireAuth(req, res);
+  if (!user) return false;
+  if (allowedRoles.includes(user.role) || hasResponsibility(user, responsibility)) return user;
+  res.status(403).json({ error: 'Insufficient permissions' });
+  return false;
+}
+
 // For routes that return/modify outlet data: outlet_mgr, chef, and bainmarry can only
 // touch their own outlet (chef/bainmarry punch category-scoped demand/wastage/closing
 // stock for one outlet, same as outlet_mgr). franchise is read-only (see route-level
@@ -105,6 +124,9 @@ function ensureOutletAccess(user, requestedOutletId, res) {
 // ask for 'all' or another outlet. Same OUTLET_SCOPED_ROLES list as ensureOutletAccess,
 // but resolves to a value instead of a pass/fail.
 function scopedOutletFilter(user, requestedOutlet) {
+  // A 'cogs'-responsible manager gets cross-outlet oversight on reads — don't collapse their
+  // requested outlet to their own. (Writes stay pinned via ensureOutletAccess, unchanged.)
+  if (hasResponsibility(user, 'cogs')) return requestedOutlet;
   return OUTLET_SCOPED_ROLES.includes(user.role) ? user.outlet_id : requestedOutlet;
 }
 
@@ -171,6 +193,8 @@ module.exports = {
   requireAuth,
   requireOwner,
   requireRole,
+  requireRoleOrResp,
+  hasResponsibility,
   ensureOutletAccess,
   scopedOutletFilter,
   invalidateUser,

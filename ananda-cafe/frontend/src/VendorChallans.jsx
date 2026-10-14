@@ -905,19 +905,44 @@ function ChallanDetail({ id, onBack }) {
     setDraft((p) => { const n = { ...p }; delete n[itemId]; return n; });
   };
 
-  const startConvEdit = (it) => { setConvEdit(it.item_id); setConvU(it.vendor_unit || ""); setConvF(it.vendor_factor != null ? String(it.vendor_factor) : ""); };
+  const startConvEdit = (itemId, vendorUnit, vendorFactor) => { setConvEdit(itemId); setConvU(vendorUnit || ""); setConvF(vendorFactor != null ? String(vendorFactor) : ""); };
   const cancelConvEdit = () => { setConvEdit(null); setConvU(""); setConvF(""); };
-  const saveConv = async (it) => {
+  const saveConv = async (itemId) => {
     // Conversions are keyed to the challan's vendor — nothing to attach them to without one.
     if (!challan.vendor_id) { setError("Assign a vendor to this challan first (Edit → pick/add vendor), then set its units."); return; }
     setConvSaving(true); setError("");
     try {
       // Empty vendor_unit clears the conversion server-side (deletes the row).
-      await api.saveVendorItemUnit({ vendor_id: challan.vendor_id, item_id: it.item_id, vendor_unit: convU, factor: convF });
+      await api.saveVendorItemUnit({ vendor_id: challan.vendor_id, item_id: itemId, vendor_unit: convU, factor: convF });
+      // Reflect it on a newly-added (not-yet-persisted) line too — load() only refreshes
+      // challan.items, which doesn't include added lines until the whole edit is saved.
+      const vu = convU.trim() || null;
+      setAdded((a) => a.map((x) => x.itemId === itemId ? { ...x, vendor_unit: vu, vendor_factor: vu ? Number(convF) : null } : x));
       cancelConvEdit();
       load();
     } catch (e) { setError(e.message); } finally { setConvSaving(false); }
   };
+  // Shared vendor-unit bracket (the "(1 Carton = 10 Pcs) ✎" / "+ vendor unit" reminder),
+  // used by both existing challan lines and newly-added lines so vendor conversion can be
+  // set/seen right while adding an item, not only after it's persisted. Display-only — it's
+  // a receiving reminder keyed to the vendor, it doesn't itself change qty_base.
+  const vendorUnitBracket = (itemId, baseUnit, vendorUnit, vendorFactor) => (
+    convEdit === itemId ? (
+      <span style={{ display: "inline-flex", gap: 4, alignItems: "center", marginLeft: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, color: "#999" }}>1</span>
+        <input value={convU} onChange={(e) => setConvU(e.target.value)} placeholder="vendor unit" style={{ ...inputStyle, width: 78, padding: "3px 6px", fontSize: 11 }} />
+        <span style={{ fontSize: 10, color: "#999" }}>=</span>
+        <input type="number" min="0" step="any" value={convF} onChange={(e) => setConvF(e.target.value)} placeholder="qty" style={{ ...inputStyle, width: 54, padding: "3px 6px", fontSize: 11 }} />
+        <span style={{ fontSize: 10, color: "#999" }}>{baseUnit}</span>
+        <button onClick={() => saveConv(itemId)} disabled={convSaving} title="Save conversion" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✓</button>
+        <button onClick={cancelConvEdit} disabled={convSaving} title="Cancel" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#999", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✕</button>
+      </span>
+    ) : vendorUnit ? (
+      <span onClick={() => startConvEdit(itemId, vendorUnit, vendorFactor)} title="Edit this vendor's unit" style={{ marginLeft: 8, fontSize: 11, color: "#2563EB", cursor: "pointer", whiteSpace: "nowrap" }}>(1 {vendorUnit} = {fmtQty(vendorFactor)} {baseUnit}) ✎</span>
+    ) : (
+      <span onClick={() => startConvEdit(itemId, "", null)} title="Set this vendor's unit for this item" style={{ marginLeft: 8, fontSize: 10, color: "#BBB", cursor: "pointer", whiteSpace: "nowrap" }}>+ vendor unit</span>
+    )
+  );
 
   const saveEdit = async () => {
     setSaving(true);
@@ -1106,21 +1131,7 @@ function ChallanDetail({ id, onBack }) {
                 {/* Vendor's own unit for this item, in brackets — a reminder for receiving
                     (the bill says "5 Packe", the store counts in Pcs). Display-only; click to
                     edit/clear. Keyed to the challan's assigned vendor. */}
-                {convEdit === it.item_id ? (
-                  <span style={{ display: "inline-flex", gap: 4, alignItems: "center", marginLeft: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 10, color: "#999" }}>1</span>
-                    <input value={convU} onChange={(e) => setConvU(e.target.value)} placeholder="vendor unit" style={{ ...inputStyle, width: 78, padding: "3px 6px", fontSize: 11 }} />
-                    <span style={{ fontSize: 10, color: "#999" }}>=</span>
-                    <input type="number" min="0" step="any" value={convF} onChange={(e) => setConvF(e.target.value)} placeholder="qty" style={{ ...inputStyle, width: 54, padding: "3px 6px", fontSize: 11 }} />
-                    <span style={{ fontSize: 10, color: "#999" }}>{it.base_unit}</span>
-                    <button onClick={() => saveConv(it)} disabled={convSaving} title="Save conversion" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✓</button>
-                    <button onClick={cancelConvEdit} disabled={convSaving} title="Cancel" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", color: "#999", cursor: "pointer", fontSize: 11, lineHeight: 1 }}>✕</button>
-                  </span>
-                ) : it.vendor_unit ? (
-                  <span onClick={() => startConvEdit(it)} title="Edit this vendor's unit" style={{ marginLeft: 8, fontSize: 11, color: "#2563EB", cursor: "pointer", whiteSpace: "nowrap" }}>(1 {it.vendor_unit} = {fmtQty(it.vendor_factor)} {it.base_unit}) ✎</span>
-                ) : (
-                  <span onClick={() => startConvEdit(it)} title="Set this vendor's unit for this item" style={{ marginLeft: 8, fontSize: 10, color: "#BBB", cursor: "pointer", whiteSpace: "nowrap" }}>+ vendor unit</span>
-                )}
+                {vendorUnitBracket(it.item_id, it.base_unit, it.vendor_unit, it.vendor_factor)}
               </div>
               {editMode ? (
                 marked ? (
@@ -1159,6 +1170,7 @@ function ChallanDetail({ id, onBack }) {
               <div style={{ flex: 1 }}>
                 {a.name} <span style={{ fontSize: 9, color: "#16A34A", fontWeight: 800 }}>NEW</span>
                 <button onClick={() => removeAdded(a.itemId)} title="Remove this item" style={{ marginLeft: 6, border: "none", background: "none", color: "#DC2626", cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
+                {vendorUnitBracket(a.itemId, a.unit, a.vendor_unit, a.vendor_factor)}
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input type="number" min="0" step="any" value={d.qty_entered ?? ""} onChange={(e) => editLine(a.itemId, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />

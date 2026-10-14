@@ -279,6 +279,8 @@ export const DEMAND_SECTIONS = [
       { id: "butter_paper", name: "Butter Paper", unit: "Pkt" },
       { id: "tape", name: "Tape", unit: "Bundle" },
       { id: "hand_gloves", name: "Hand Gloves", unit: "Pkt" },
+      { id: "gloves_blue", name: "Gloves (Blue)", unit: "Pkt" },
+      { id: "gloves_plastic", name: "Gloves (Plastic)", unit: "Pkt" },
       { id: "kitchen_wipes", name: "Kitchen Wipes", unit: "Pkt" },
       { id: "rasam_glass", name: "Rasam Glass", unit: "Pkt" },
       // 1 Pkt = 100 Pcs sachets, ₹814/Pkt — see unit_conversions/rate_card (2026-08-23).

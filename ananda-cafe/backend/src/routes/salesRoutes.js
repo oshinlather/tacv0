@@ -10,7 +10,7 @@ const router = express.Router();
 const supabase = require('../supabase');
 let sheetsHelper = null;
 try { sheetsHelper = require('../googleSheets'); } catch (e) { console.log('Google Sheets module not found — sheet sync disabled'); }
-const { requireAuth, requireOwner, requireRole, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope, getDemandItemSectionMap } = require('./authGuards');
+const { requireAuth, requireOwner, requireRole, requireRoleOrResp, ensureOutletAccess, scopedOutletFilter, invalidateUser, filterItemsToRoleScope, getDemandItemSectionMap } = require('./authGuards');
 const { todayIST, istMinutesNow } = require('../helpers');
 const { creditStockIn } = require('../inventoryLedger');
 const { applyDispatchStockOut } = require('./stockOutHooks');
@@ -150,7 +150,7 @@ router.get('/sales/menu-items/:outlet', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.post('/sales/upload', upload.single('file'), async (req, res) => {
 try {
-    if (!await requireOwner(req, res)) return;
+    if (!await requireRoleOrResp(req, res, 'cogs', 'owner')) return;
 if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
 const overrideDate = req.body.date || null; // Optional: override date from form
@@ -2739,7 +2739,7 @@ router.post('/auth/login', async (req, res) => {
       .select('*').eq('phone', phone).eq('active', true).single();
     if (error || !data) return res.status(401).json({ error: "User not found" });
     if (data.pin !== pin) return res.status(401).json({ error: "Incorrect PIN" });
-    res.json({ id: data.id, name: data.name, phone: data.phone, role: data.role, outlet_id: data.outlet_id });
+    res.json({ id: data.id, name: data.name, phone: data.phone, role: data.role, outlet_id: data.outlet_id, responsibilities: data.responsibilities || [] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2778,7 +2778,9 @@ router.patch('/auth/users/:id', async (req, res) => {
     if (req.body.role !== undefined) updates.role = req.body.role;
     if (req.body.outlet_id !== undefined) updates.outlet_id = req.body.outlet_id;
     if (req.body.active !== undefined) updates.active = req.body.active;
-    if (req.body.pin) updates.pin = req.body.pin;
+    // Extra cross-cutting duties beyond the base role (e.g. ['cogs'] for a manager given
+    // cross-outlet COGS oversight). Replaces the whole array — the UI sends the full set.
+    if (req.body.responsibilities !== undefined) updates.responsibilities = req.body.responsibilities;
     if (req.body.pin) updates.pin = req.body.pin;
     else if (req.body.reset_pin) updates.pin = String(Math.floor(1000 + Math.random() * 9000));
 
@@ -2794,6 +2796,9 @@ router.patch('/auth/users/:id', async (req, res) => {
 
     const { data, error } = await supabase.from('app_users').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
+    // Drop the 30s auth cache for this user so a role/responsibility/active change takes
+    // effect on their very next request instead of up to 30s later.
+    invalidateUser(req.params.id);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
