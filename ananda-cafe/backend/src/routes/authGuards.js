@@ -30,11 +30,24 @@ async function fetchUser(userId) {
   const cached = userCache.get(userId);
   if (cached && cached.expires > Date.now()) return cached.user;
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('app_users')
     .select('id, name, role, outlet_id, active, responsibilities')
     .eq('id', userId)
     .single();
+
+  // Resilience: if the `responsibilities` column doesn't exist yet (its migration hasn't
+  // been applied to this DB), naming it in the select errors — and because fetchUser
+  // returns null on ANY error, EVERY authenticated request then 401s "Invalid or inactive
+  // user" (a full auth outage). Retry without the column so auth keeps working; the
+  // responsibilities feature simply stays off until the migration lands.
+  if (error) {
+    ({ data, error } = await supabase
+      .from('app_users')
+      .select('id, name, role, outlet_id, active')
+      .eq('id', userId)
+      .single());
+  }
 
   if (error || !data) return null;
   userCache.set(userId, { user: data, expires: Date.now() + CACHE_TTL_MS });
