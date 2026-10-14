@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from "react";
 import api from "./api";
+import { useApiData } from "./useApiData";
 import StoreInventoryStock from "./StoreInventoryStock";
 import VendorChallans from "./VendorChallans";
 import StoreClosingCount from "./StoreClosingCount";
@@ -10114,7 +10115,7 @@ const ManagerCogsView = ({ onBack }) => {
           <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={tab === "compare" ? monthOptions : undefined} marginBottom={0} />
         )}
       </div>
-      {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={selOutlet} />}
+      {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={selOutlet} defaultCogsCount={15} />}
       {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={selOutlet || undefined} />}
       {tab === "sales" && <SalesUpload lockedOutlet={selOutlet || undefined} />}
       </div>
@@ -15508,24 +15509,24 @@ const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, 
   );
 };
 
-const FlagsSection = ({ dateStr, selOutlet }) => {
-  const [audit, setAudit] = useState(null);
-  const [orders, setOrders] = useState([]);
-  const [punch, setPunch] = useState(null);
-  const [coldDrink, setColdDrink] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [cogsCount, setCogsCount] = useState(5);
+const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
+  const [cogsCount, setCogsCount] = useState(defaultCogsCount);
   const [expandedCogs, setExpandedCogs] = useState(null); // "outletId|name" whose dishes breakdown is open
 
-  useEffect(() => {
-    setLoading(true);
+  // Cached-first via useApiData: paints instantly on a revisit, revalidates in the
+  // background. Fetcher returns the merged shape so the rest of the component is unchanged.
+  const { data, loading } = useApiData(`flags:${dateStr}`, () =>
     Promise.all([
       api.getRMAudit(dateStr).catch(() => null),
       api.getOrders({ date: dateStr }).catch(() => []),
       api.getPunchStatus(dateStr).catch(() => null),
       api.getColdDrinkAudit(dateStr).catch(() => null),
-    ]).then(([a, o, p, cd]) => { setAudit(a); setOrders(o || []); setPunch(p); setColdDrink(cd); }).finally(() => setLoading(false));
-  }, [dateStr]);
+    ]).then(([a, o, p, cd]) => ({ audit: a, orders: o || [], punch: p, coldDrink: cd }))
+  );
+  const audit = data?.audit ?? null;
+  const orders = data?.orders ?? [];
+  const punch = data?.punch ?? null;
+  const coldDrink = data?.coldDrink ?? null;
 
   const inScope = (oid) => !selOutlet || oid === selOutlet;
   const oShort = (id) => OUTLETS.find((o) => o.id === id)?.short || id;
