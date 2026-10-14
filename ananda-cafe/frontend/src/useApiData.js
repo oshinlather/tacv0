@@ -23,7 +23,9 @@ export let SWR_ENABLED = true;
 export function setSwrEnabled(v) { SWR_ENABLED = !!v; } // escape hatch if anything misbehaves
 
 const PREFIX = "ananda_swr";
-const MAX_PERSIST_BYTES = 256 * 1024; // bigger payloads stay in memory only
+const MAX_PERSIST_BYTES = 1024 * 1024; // ~1 MB — big enough to persist the Flags/RM-audit
+// payload (~370 KB) so it survives a page refresh too; sessionStorage (~5 MB) holds several.
+// Anything larger stays memory-only; a quota overflow drops this user's namespace and retries.
 
 const uid = () => {
   try { return JSON.parse(localStorage.getItem("ananda_user") || "{}")?.id || "anon"; }
