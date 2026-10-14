@@ -11244,8 +11244,11 @@ const OutletMgr = ({ onBack }) => {
     const activeSec = isRegular ? (visibleSections.find((s) => s.id === expSec) || visibleSections[0]) : null;
     if (!expSec) setExpSec(visibleSections[0].id);
 
-    // Items to hide from manual demand (redundant or not needed by outlets)
-    const manualHidden = new Set(["white_chutney", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice"]);
+    // Items to hide from manual demand (redundant or not needed by outlets). hand_gloves is
+    // retired here — replaced by the distinct Gloves (Blue)/Gloves (Plastic) SKUs — but kept
+    // in DEMAND_SECTIONS so every history/dispatch/COGS view still resolves "Hand Gloves",
+    // and it stays recordable in Wastage/Closing (which build their own lists) for leftover stock.
+    const manualHidden = new Set(["white_chutney", "staff_veg", "plain_idli", "butter_idli", "podi_idli", "dosa", "rawa_mix_item", "vada", "upma", "boiled_rice", "lemon_rice", "tomato_rice", "curd_rice", "hand_gloves"]);
     const filterManualItems = (items) => items.filter((i) => !manualHidden.has(i.id));
 
     // Persists just this one category's items as today's shared draft (merged
