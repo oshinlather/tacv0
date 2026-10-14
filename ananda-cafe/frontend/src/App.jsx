@@ -19891,6 +19891,7 @@ const HOME_SECTIONS = [
   { id: "flags", label: "🚩 Flags" },
   { id: "reviews", label: "⭐ Reviews" },
   { id: "compare", label: "📊 4-Week" },
+  { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   { id: "demand", label: "📦 Demand & Dispatch" },
 ];
 // Same outlets as everywhere else plus BK, but no "All" pill (per the Home spec).
@@ -19985,6 +19986,12 @@ const OwnerHome = () => {
 
       {section("compare", "📊 4-Week Comparison", `${outletShort} — same weekday across the last 4 weeks`,
         <FourWeekComparison selDay={effSelDay} selOutlet={selOutlet} />)}
+
+      {/* dateStr + lockedOutlet put it in embedded mode: its own date/outlet pills + title
+          are suppressed (Home's shared frozen bar drives them), only the category filter
+          stays. Uses the Home date, which defaults to Yesterday. */}
+      {section("demand_vs_closing", "📦 Demand vs Closing", `${outletShort} · ${effDateStr}`,
+        <DemandVsClosingSection dateStr={effDateStr} lockedOutlet={selOutlet} />)}
 
       {section("demand", "📦 Demand & Dispatch", `${outletShort} — last 7 days, AM/PM split`,
         <DemandHistory outletOverride={selOutlet} />)}
