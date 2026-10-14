@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import api from "./api";
 
 // Store Inventory Module — Stage 2: vendor challan (delivery note) -> receive -> auto
@@ -76,6 +76,15 @@ const labelStyle = { fontSize: 11, fontWeight: 700, color: "#888", marginBottom:
 export default function VendorChallans() {
   const [screen, setScreen] = useState("list"); // "list" | "new" | "detail" | "order" | "legacy"
   const [selectedId, setSelectedId] = useState(null);
+  // List filters + scroll live HERE, in the parent, not inside ChallanList — opening a
+  // challan unmounts ChallanList (it and the detail view are mutually exclusive siblings),
+  // so if these lived there they'd reset to defaults on Back. Lifted up, they survive the
+  // round-trip, so Back lands exactly where the user left off.
+  const [listStatus, setListStatus] = useState("");
+  const [listBucket, setListBucket] = useState(""); // selected vendor bucket id ("" = All)
+  const [listFromDate, setListFromDate] = useState("2026-07-01");
+  const listScrollRef = useRef(0); // window scroll offset when the list was last left
+  const leaveList = (go) => { listScrollRef.current = window.scrollY; go(); };
 
   if (screen === "order") return <OrderView onCreated={(id) => { setSelectedId(id); setScreen("detail"); }} onBack={() => setScreen("list")} />;
   if (screen === "new") return <ChallanForm onDone={(id) => { setSelectedId(id); setScreen("detail"); }} onCancel={() => setScreen("list")} />;
@@ -83,10 +92,14 @@ export default function VendorChallans() {
   if (screen === "legacy" && selectedId) return <LegacyOrderDetail id={selectedId} onBack={() => setScreen("list")} />;
   return (
     <ChallanList
-      onNew={() => setScreen("new")}
-      onOrder={() => setScreen("order")}
-      onOpen={(id) => { setSelectedId(id); setScreen("detail"); }}
-      onOpenLegacy={(id) => { setSelectedId(id); setScreen("legacy"); }}
+      status={listStatus} setStatus={setListStatus}
+      bucket={listBucket} setBucket={setListBucket}
+      fromDate={listFromDate} setFromDate={setListFromDate}
+      scrollRef={listScrollRef}
+      onNew={() => leaveList(() => setScreen("new"))}
+      onOrder={() => leaveList(() => setScreen("order"))}
+      onOpen={(id) => leaveList(() => { setSelectedId(id); setScreen("detail"); })}
+      onOpenLegacy={(id) => leaveList(() => { setSelectedId(id); setScreen("legacy"); })}
     />
   );
 }
@@ -132,18 +145,15 @@ function normalizeLegacyPO(po) {
   };
 }
 
-function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
-  const [status, setStatus] = useState("");
-  const [bucket, setBucket] = useState(""); // selected vendor bucket id ("" = All), see challanBucket
+function ChallanList({ status, setStatus, bucket, setBucket, fromDate, setFromDate, scrollRef, onNew, onOrder, onOpen, onOpenLegacy }) {
+  // status / bucket / fromDate are lifted to the parent (see VendorChallans) so they
+  // survive this component unmounting while a challan is open. The date default
+  // ("2026-07-01") lives there too — widened from the old 30-day window ("need all the
+  // challans from july to till date"); neither backend route caps how far back `from`
+  // reaches, so the owner can move it at will.
   const [challans, setChallans] = useState(null);
   const [legacy, setLegacy] = useState(null);
   const [error, setError] = useState("");
-  // Was hardcoded to the last 30 days only — "need all the challans from july to till
-  // date here". Neither backend route caps how far back `from` can reach (vendor_challans
-  // has a 200-row .limit(), purchase_orders has none), so this just widens the default
-  // window and lets the owner move it further back (or narrower) at will instead of a
-  // fixed cutoff nobody could see past.
-  const [fromDate, setFromDate] = useState("2026-07-01");
   const [exporting, setExporting] = useState(null); // challan id currently exporting, or null
 
   const load = () => {
@@ -163,6 +173,16 @@ function ChallanList({ onNew, onOrder, onOpen, onOpenLegacy }) {
   }, [challans, legacy, status, bucket]);
   merged.sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
   const loaded = challans !== null && legacy !== null;
+  // Restore the scroll position the list was left at (saved by the parent on navigate-away)
+  // once the rows have actually rendered — so returning from a challan lands where you were,
+  // not scrolled back to the top. Runs once per mount.
+  const restoredScroll = useRef(false);
+  useEffect(() => {
+    if (loaded && !restoredScroll.current) {
+      restoredScroll.current = true;
+      if (scrollRef?.current) window.scrollTo(0, scrollRef.current);
+    }
+  }, [loaded, scrollRef]);
   // The vendor buckets actually present in the loaded data, kept in ORDER_VENDORS order
   // with "Other" (anything matching no bucket) last — so the pills mirror exactly what the
   // list shows, and the set doesn't reshuffle as the date window changes.
