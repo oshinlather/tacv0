@@ -329,6 +329,78 @@ router.patch("/challans/:id/items", async (req, res) => {
   res.json(data);
 });
 
+// POST /:id/items — ADD a new line to an existing challan. The sibling PATCH /:id/items
+// only edits lines already present; adding was deliberately kept out ("that stays a fresh
+// challan"), but "edit should let me add any item" is a real, recurring need — an item
+// physically delivered but missed when the challan was first punched. Symmetric with the
+// DELETE route (which already lets a line be removed post-receive), so the record can be
+// corrected in both directions without voiding and re-creating the whole challan.
+//   • Draft challan   → just insert the line; Receive will move its stock later, exactly
+//     like every other line already on the draft.
+//   • Received challan → insert the line AND immediately post its RECEIPT movement +
+//     feed the rate-card ledger (effective today, forward-only), the same per-line work
+//     receive() does, so the stock/price ledgers never lag this record.
+// qty→base uses the item's own item_units factor only (never guessed), same rule create
+// follows. unit_price is derived from the whole-line total, never typed.
+router.post("/challans/:id/items", async (req, res) => {
+  const user = await gate(req, res);
+  if (!user) return;
+  const { data: challan } = await supabase.from("vendor_challans").select("status, location_id").eq("id", req.params.id).maybeSingle();
+  if (!challan) return res.status(404).json({ error: "Challan not found" });
+  if (challan.status === "cancelled") return res.status(400).json({ error: "A cancelled challan can't be edited" });
+  const { item_id, qty_entered, unit_entered, total_price } = req.body;
+  if (!item_id) return res.status(400).json({ error: "item_id is required" });
+  const qtyEntered = Number(qty_entered);
+  if (!(qtyEntered > 0)) return res.status(400).json({ error: "A positive quantity is required" });
+
+  // One line per item per challan — if it's already here, the edit path (PATCH) is the
+  // right tool, not a second row that would double-count on receive.
+  const { data: dup } = await supabase.from("vendor_challan_items").select("item_id").eq("challan_id", req.params.id).eq("item_id", item_id).maybeSingle();
+  if (dup) return res.status(400).json({ error: "That item is already on this challan — edit its line instead." });
+
+  const { data: item } = await supabase.from("items").select("id, base_unit").eq("id", item_id).maybeSingle();
+  if (!item) return res.status(400).json({ error: `Unknown item: ${item_id}` });
+  const unit = unit_entered || item.base_unit;
+  let factor = 1;
+  if (unit !== item.base_unit) {
+    const { data: u } = await supabase.from("item_units").select("factor").eq("item_id", item_id).eq("unit", unit).maybeSingle();
+    if (!u) return res.status(400).json({ error: `No known conversion for ${item_id} in unit "${unit}" — add it via Item Units first.` });
+    factor = Number(u.factor);
+  }
+  const qtyBase = qtyEntered * factor;
+  const lineTotal = total_price != null && total_price !== "" ? Number(Number(total_price).toFixed(2)) : null;
+  const unitPrice = lineTotal != null && qtyBase > 0 ? Number((lineTotal / qtyBase).toFixed(2)) : null;
+
+  const { error: insErr } = await supabase.from("vendor_challan_items").insert({
+    challan_id: req.params.id, item_id, qty_entered: qtyEntered, unit_entered: unit,
+    qty_base: qtyBase, unit_price: unitPrice, line_total: lineTotal,
+  });
+  if (insErr) return res.status(500).json({ error: insErr.message });
+
+  if (challan.status === "received") {
+    await supabase.from("stock_movements").upsert({
+      item_id, location_id: challan.location_id, movement_type: "RECEIPT",
+      qty_delta: qtyBase, qty_entered: qtyEntered, unit_entered: unit, rate: unitPrice,
+      source_type: "receipt", source_id: req.params.id,
+      idempotency_key: `receipt:${req.params.id}:${item_id}`, created_by: user.name,
+    }, { onConflict: "idempotency_key", ignoreDuplicates: true });
+    await rebuildStockBalances({ itemId: item_id, locationId: challan.location_id });
+    if (unitPrice != null && unitPrice > 0) {
+      try {
+        const targets = await resolveByItemIds([item_id]);
+        await ingestPrices([{ rateCardId: targets[item_id]?.rateCardId || null, price: unitPrice, priceUnit: targets[item_id]?.baseUnit || unit, label: item_id }],
+          { effectiveDate: todayIST(), source: "challan", sourceId: req.params.id, createdBy: user.name });
+      } catch (e) { console.error(`[rate-card ledger] challan ${req.params.id} add-item price ingest failed:`, e.message); }
+    }
+  }
+
+  const { data: allLines } = await supabase.from("vendor_challan_items").select("line_total").eq("challan_id", req.params.id);
+  const total = (allLines || []).reduce((s, l) => s + (Number(l.line_total) || 0), 0);
+  const { data, error } = await supabase.from("vendor_challans").update({ total_amount: total || null }).eq("id", req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
 // DELETE /:id/items/:itemId — remove one line from a challan (only ever offered from
 // Edit mode on the frontend — "deleting any item only after edit is clicked"). Owner/
 // store_mgr/avp/bk_manager only (not driver — this is a correction to the record

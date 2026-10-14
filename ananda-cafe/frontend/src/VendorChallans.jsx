@@ -838,6 +838,13 @@ function ChallanDetail({ id, onBack }) {
   const [convU, setConvU] = useState("");         // vendor unit name draft
   const [convF, setConvF] = useState("");         // factor draft — base units per 1 vendor unit
   const [convSaving, setConvSaving] = useState(false);
+  // Add-item (typeahead) in edit mode — an item physically delivered but missed when the
+  // challan was punched. Same store item master the New Challan form picks from, so names/
+  // units/ids stay consistent (no free-typed names that match no real item). Mirrors
+  // LegacyOrderDetail's add flow; persisted on Save via api.addChallanItem (POST /:id/items).
+  const [itemMaster, setItemMaster] = useState([]);
+  const [added, setAdded] = useState([]); // [{ itemId, name, unit }] not yet on the challan
+  const [addQuery, setAddQuery] = useState("");
 
   // Block body — see the identical fix + comment on LegacyOrderDetail's own `load` above.
   // Same bug, same shape: an expression-body arrow here returns the promise chain, which
@@ -845,19 +852,38 @@ function ChallanDetail({ id, onBack }) {
   const load = () => { api.getChallan(id).then(setChallan).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
   useEffect(() => { api.getVendors().then(setVendors).catch(() => {}); }, []);
+  useEffect(() => { api.getStoreItems().then((l) => setItemMaster(l || [])).catch(() => setItemMaster([])); }, []);
 
   const startEdit = () => {
     const d = {};
     (challan.items || []).forEach((it) => { d[it.item_id] = { qty_entered: String(it.qty_entered ?? ""), total_price: String(it.line_total ?? "") }; });
     setDraft(d);
     setToRemove(new Set());
+    setAdded([]);
+    setAddQuery("");
     setVDraftId(challan.vendor_id || "");
     setVDraftNew("");
     setEditMode(true);
   };
-  const cancelEdit = () => { setEditMode(false); setDraft({}); setToRemove(new Set()); setVDraftId(""); setVDraftNew(""); };
+  const cancelEdit = () => { setEditMode(false); setDraft({}); setToRemove(new Set()); setAdded([]); setAddQuery(""); setVDraftId(""); setVDraftNew(""); };
   const editLine = (itemId, patch) => setDraft((d) => ({ ...d, [itemId]: { ...d[itemId], ...patch } }));
   const toggleRemove = (itemId) => setToRemove((s) => { const n = new Set(s); n.has(itemId) ? n.delete(itemId) : n.add(itemId); return n; });
+
+  // Add-item typeahead: suggest store items not already on the challan (or already queued
+  // to add). Each add seeds an empty draft row keyed by its item_id — same qty/price shape
+  // as the existing-line drafts, so the live total and Save loop treat them uniformly.
+  const takenIds = new Set([...(challan?.items || []).map((it) => it.item_id), ...added.map((a) => a.itemId)]);
+  const addQ = addQuery.trim().toLowerCase();
+  const addSuggestions = addQ ? itemMaster.filter((i) => !takenIds.has(i.id) && (i.name || "").toLowerCase().includes(addQ)).slice(0, 8) : [];
+  const addItem = (i) => {
+    setAdded((a) => [...a, { itemId: i.id, name: i.name, unit: i.base_unit || i.unit || "" }]);
+    setDraft((p) => ({ ...p, [i.id]: { qty_entered: "", total_price: "" } }));
+    setAddQuery("");
+  };
+  const removeAdded = (itemId) => {
+    setAdded((a) => a.filter((x) => x.itemId !== itemId));
+    setDraft((p) => { const n = { ...p }; delete n[itemId]; return n; });
+  };
 
   const startConvEdit = (it) => { setConvEdit(it.item_id); setConvU(it.vendor_unit || ""); setConvF(it.vendor_factor != null ? String(it.vendor_factor) : ""); };
   const cancelConvEdit = () => { setConvEdit(null); setConvU(""); setConvF(""); };
@@ -921,7 +947,17 @@ function ChallanDetail({ id, onBack }) {
       }
       if (Object.keys(changed).length) await api.updateChallanItems(id, changed);
       for (const itemId of toRemove) await api.deleteChallanItem(id, itemId);
-      setEditMode(false); setDraft({}); setToRemove(new Set()); setVDraftId(""); setVDraftNew("");
+      // Newly-added lines — each posts its own line (and, on a received challan, its RECEIPT
+      // movement + price) server-side. A blank-qty add that was never filled in is skipped.
+      for (const a of added) {
+        const d = draft[a.itemId] || {};
+        if (!(Number(d.qty_entered) > 0)) continue;
+        await api.addChallanItem(id, {
+          item_id: a.itemId, qty_entered: Number(d.qty_entered), unit_entered: a.unit,
+          total_price: d.total_price !== "" && d.total_price != null ? Number(d.total_price) : undefined,
+        });
+      }
+      setEditMode(false); setDraft({}); setToRemove(new Set()); setAdded([]); setAddQuery(""); setVDraftId(""); setVDraftNew("");
       load();
     } catch (e) { setError(e.message); }
     finally { setSaving(false); }
@@ -994,6 +1030,16 @@ function ChallanDetail({ id, onBack }) {
   // post-receive edit also corrects the stock ledger and rate-card price, not just this
   // record.
   const canEditItems = challan.status !== "cancelled";
+
+  // Live total: in edit mode, sum each kept line's drafted total paid + each added line's —
+  // so the figure tracks what's typed, not the last-saved server total. Outside edit mode,
+  // the server's stored total_amount is the source of truth.
+  const liveTotal = editMode
+    ? [
+        ...(challan.items || []).filter((it) => !toRemove.has(it.item_id)).map((it) => Number(draft[it.item_id]?.total_price) || 0),
+        ...added.map((a) => Number(draft[a.itemId]?.total_price) || 0),
+      ].reduce((sum, n) => sum + n, 0)
+    : null;
 
   return (
     <div>
@@ -1084,7 +1130,44 @@ function ChallanDetail({ id, onBack }) {
             </div>
           );
         })}
-        {challan.total_amount != null && <div style={{ marginTop: 10, textAlign: "right", fontSize: 14, fontWeight: 800 }}>Total: {fmtMoney(challan.total_amount)}</div>}
+        {/* Newly-added lines (delivered but not on the challan) — same qty/total inputs as an
+            edit row, tinted green with a NEW badge + remove (✕). */}
+        {editMode && added.map((a) => {
+          const d = draft[a.itemId] || {};
+          return (
+            <div key={`add-${a.itemId}`} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: "1px solid #F0F0EE", fontSize: 13, gap: 8, background: "#F0FDF4" }}>
+              <div style={{ flex: 1 }}>
+                {a.name} <span style={{ fontSize: 9, color: "#16A34A", fontWeight: 800 }}>NEW</span>
+                <button onClick={() => removeAdded(a.itemId)} title="Remove this item" style={{ marginLeft: 6, border: "none", background: "none", color: "#DC2626", cursor: "pointer", fontSize: 12, padding: 0 }}>✕</button>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="number" min="0" step="any" value={d.qty_entered ?? ""} onChange={(e) => editLine(a.itemId, { qty_entered: e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right" }} />
+                <span style={{ fontSize: 10, color: "#999" }}>{a.unit}</span>
+                <span style={{ fontSize: 10, color: "#999" }}>₹</span>
+                <input type="number" min="0" step="any" value={d.total_price ?? ""} onChange={(e) => editLine(a.itemId, { total_price: e.target.value })} placeholder="total paid" style={{ ...inputStyle, width: 84, textAlign: "right" }} />
+              </div>
+            </div>
+          );
+        })}
+        {/* Add-item typeahead — searches the store item master (no free-typed names). */}
+        {editMode && (
+          <div style={{ marginTop: 10, position: "relative" }}>
+            <input value={addQuery} onChange={(e) => setAddQuery(e.target.value)} placeholder="+ Add an item — type to search…" style={inputStyle} />
+            {addSuggestions.length > 0 && (
+              <div style={{ position: "absolute", left: 0, right: 0, top: 44, background: "#fff", border: "1px solid #E0E0DC", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", zIndex: 20, maxHeight: 260, overflowY: "auto" }}>
+                {addSuggestions.map((i) => (
+                  <div key={i.id} onClick={() => addItem(i)} style={{ padding: "10px 12px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid #F5F5F3" }}>
+                    {i.name} <span style={{ fontSize: 10, color: "#999" }}>· {i.base_unit || i.unit || ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {addQuery.trim() && addSuggestions.length === 0 && <div style={{ fontSize: 11, color: "#999", marginTop: 6 }}>No matching item in the store master — it must be added there first.</div>}
+          </div>
+        )}
+        {editMode
+          ? <div style={{ marginTop: 10, textAlign: "right", fontSize: 14, fontWeight: 800 }}>Total: {fmtMoney(liveTotal)}</div>
+          : challan.total_amount != null && <div style={{ marginTop: 10, textAlign: "right", fontSize: 14, fontWeight: 800 }}>Total: {fmtMoney(challan.total_amount)}</div>}
         {challan.notes && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>Note: {challan.notes}</div>}
       </div>
 
