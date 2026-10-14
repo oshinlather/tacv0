@@ -21,66 +21,16 @@ function authHeaders(extra = {}) {
   return h;
 }
 
-// ── Response cache ────────────────────────────────────────────────────────────
-// Every GET funnels through get() below, so ONE cache here makes every screen's
-// tab-switch / Back / refresh instant without touching a single call site. The app
-// renders screens as `tab === "x" && <Screen/>`, so switching tabs fully unmounts the
-// previous screen and its fetched state — this cache is what survives that. Keyed
-// per-user (by the same id api.js already sends as x-user-id) so data never crosses
-// users; mirrored to sessionStorage so a refresh / Back within the tab paints from cache
-// instead of a cold reload. Any write (post/patch/del) nukes the whole cache — writes are
-// rare vs reads, and nuke-all guarantees a save is never followed by a stale number (the
-// ledgers here are correctness-sensitive). Returned data is always cloned, so a caller
-// that mutates its copy (e.g. an in-place sort) can't corrupt the shared cache.
-const CACHE_PREFIX = "ananda_cache";
-const MASTER_TTL = 600_000;        // 10 min — near-static master data
-const VOLATILE_TTL = 30_000;       // 30 s  — live / date-scoped data
-const MAX_PERSIST_BYTES = 256 * 1024; // bigger payloads stay memory-only (don't blow quota)
-// Request-path prefixes whose data is near-static (long TTL). Everything else is volatile.
-const MASTER_PREFIXES = [
-  "/api/rate-card", "/api/master/", "/api/outlets", "/api/recipes",
-  "/api/store/items", "/api/store/vendors", "/api/store/production/recipes",
-  "/api/users", "/api/employees", "/api/crockery", "/api/fixed-cost",
-  "/api/franchise-settings", "/api/staff-demand-items", "/api/finance/commission",
-  "/api/rm-order-config",
-];
-const ttlFor = (path) => (MASTER_PREFIXES.some((p) => path.startsWith(p)) ? MASTER_TTL : VOLATILE_TTL);
-
-const memCache = new Map(); // key -> { data, ts }
-const inflight = new Map(); // key -> Promise  (collapses identical concurrent GETs)
-
-const cacheNs = () => `${CACHE_PREFIX}:${getUserId() || "anon"}:`;
-const clone = (d) => {
-  try { return typeof structuredClone === "function" ? structuredClone(d) : JSON.parse(JSON.stringify(d)); }
-  catch (e) { return d; }
-};
-const readPersisted = (key) => {
-  try { const raw = sessionStorage.getItem(key); return raw ? JSON.parse(raw) : null; }
-  catch (e) { return null; }
-};
-const writePersisted = (key, serialized) => {
-  if (!serialized || serialized.length > MAX_PERSIST_BYTES) return; // too big → mem-only
-  try { sessionStorage.setItem(key, serialized); }
-  catch (e) {
-    // Quota exceeded (or disabled) — drop this user's namespace and carry on; the
-    // in-memory cache still works, we just stop persisting until there's room again.
-    try {
-      const ns = cacheNs();
-      for (let i = sessionStorage.length - 1; i >= 0; i--) {
-        const k = sessionStorage.key(i);
-        if (k && k.startsWith(ns)) sessionStorage.removeItem(k);
-      }
-    } catch (_) {}
-  }
-};
-// Wipe everything — called on every write and on login/logout (see api.clearCache).
+// Client-side response caching was removed — the app fetches fresh on every GET (simple
+// and predictable). clearCache() is kept only to purge any leftover sessionStorage entries
+// a previous cached build may have written, so an old cache can't linger; it's still called
+// on writes/login/logout (harmless no-op once there's nothing to purge). If caching is
+// reintroduced later, do it in-memory-only first, and never let it mask auth/5xx responses.
 function clearCache() {
-  memCache.clear();
-  inflight.clear();
   try {
     for (let i = sessionStorage.length - 1; i >= 0; i--) {
       const k = sessionStorage.key(i);
-      if (k && k.startsWith(CACHE_PREFIX + ":")) sessionStorage.removeItem(k);
+      if (k && k.startsWith("ananda_cache:")) sessionStorage.removeItem(k);
     }
   } catch (e) {}
 }
@@ -309,7 +259,9 @@ const api = {
   // the month view firing 3 calls × ~31 days.
   getPnlMonth: (month, outlet) => get(`/api/pnl/month/${month}`, outlet ? { outlet } : {}),
   getClosingStockDraftAlerts: () => get('/api/closing-stock-draft-alerts'),
-  getPunchStatus: (date) => get(`/api/punch-status/${date}`),
+  // outlet is optional — pass it to stay scoped to one outlet even for a caller whose role
+  // isn't auto-pinned server-side (a 'cogs'-responsible manager, who's otherwise un-scoped).
+  getPunchStatus: (date, outlet) => get(`/api/punch-status/${date}`, outlet ? { outlet } : {}),
   getWastageCost: (from) => get('/api/wastage/cost', { from }),
 
   // RM Order Config
@@ -467,53 +419,15 @@ async function get(path, params = {}) {
   const url = new URL(API + path);
   // Guard: if params is a string (e.g. a date), wrap it as { date: params }
   const safeParams = typeof params === "string" ? { date: params } : params;
-  // Sort params so {a,b} and {b,a} produce the same cache key (and the same URL).
-  const entries = Object.entries(safeParams)
-    .filter(([, v]) => v !== undefined && v !== null)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  entries.forEach(([k, v]) => url.searchParams.set(k, v));
-  const urlStr = url.toString();
-  const key = cacheNs() + urlStr;
-  const ttl = ttlFor(path);
-  const now = Date.now();
-
-  // 1. Fresh in-memory hit → instant, no network.
-  const mem = memCache.get(key);
-  if (mem && now - mem.ts < ttl) return clone(mem.data);
-
-  // 2. Fresh persisted hit (survives refresh / Back within the tab) → hydrate + instant.
-  if (!mem) {
-    const persisted = readPersisted(key);
-    if (persisted && now - persisted.ts < ttl) {
-      memCache.set(key, persisted);
-      return clone(persisted.data);
-    }
+  Object.entries(safeParams).forEach(([k, v]) => { if (v !== undefined && v !== null) url.searchParams.set(k, v); });
+  const res = await fetch(url.toString(), { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `GET ${path} failed: ${res.status}`);
   }
-
-  // 3. Collapse an identical in-flight request instead of firing a duplicate.
-  if (inflight.has(key)) return clone(await inflight.get(key));
-
-  const p = (async () => {
-    const res = await fetch(urlStr, { headers: authHeaders() });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `GET ${path} failed: ${res.status}`);
-    }
-    const data = await res.json();
-    const entry = { data, ts: Date.now() };
-    memCache.set(key, entry);
-    let serialized = null;
-    try { serialized = JSON.stringify(entry); } catch (e) { /* non-serializable → mem-only */ }
-    writePersisted(key, serialized);
-    return data;
-  })();
-  inflight.set(key, p);
-  try { return clone(await p); }
-  finally { inflight.delete(key); }
+  return res.json();
 }
 
-// Every mutation clears the whole cache so the next reads are guaranteed fresh — see the
-// cache-module comment above for why nuke-all over scoped invalidation.
 async function post(path, body) {
   const res = await fetch(API + path, {
     method: "POST",
