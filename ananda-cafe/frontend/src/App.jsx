@@ -10091,7 +10091,11 @@ const ManagerCogsView = ({ onBack }) => {
   const pickTab = (id) => { setTab(id); if (id === "flags") setSelMonth(null); }; // Flags is single-day only
   const pillStyle = (active) => ({ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", whiteSpace: "nowrap" });
   return (
-    <div>
+    // Break out of OutletMgr's ~500px mobile column so the cross-outlet COGS tables get the
+    // full laptop width (capped at 1600 so it stays readable on ultra-wide screens). On a
+    // phone this is just full viewport width, same as before.
+    <div style={{ width: "100vw", marginLeft: "calc(50% - 50vw)", padding: "0 24px", boxSizing: "border-box" }}>
+      <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Home</button>
         <div><div style={{ fontSize: 16, fontWeight: 800 }}>📊 COGS Oversight</div><div style={{ fontSize: 11, color: "#999" }}>All outlets</div></div>
@@ -10105,6 +10109,7 @@ const ManagerCogsView = ({ onBack }) => {
       {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={null} />}
       {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} />}
       {tab === "sales" && <SalesUpload />}
+      </div>
     </div>
   );
 };
