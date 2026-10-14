@@ -10099,17 +10099,23 @@ const ManagerCogsView = ({ onBack }) => {
       <div style={{ maxWidth: 1600, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Home</button>
-        <div><div style={{ fontSize: 16, fontWeight: 800 }}>📊 COGS Oversight</div><div style={{ fontSize: 11, color: "#999" }}>All outlets</div></div>
+        <div><div style={{ fontSize: 16, fontWeight: 800 }}>📊 COGS Oversight</div><div style={{ fontSize: 11, color: "#999" }}>{selOutlet ? (OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet) : "All outlets"}</div></div>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
         {MGR_COGS_TABS.map((t) => <button key={t.id} onClick={() => pickTab(t.id)} style={pillStyle(tab === t.id)}>{t.label}</button>)}
+      </div>
+      {/* Outlet filter — scope every section to one outlet (to screenshot & share with that
+          outlet's manager), or All for the cross-outlet overview. */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        <button onClick={() => setSelOutlet(null)} style={pillStyle(!selOutlet)}>All Outlets</button>
+        {OUTLETS.map((o) => <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>)}
       </div>
       {(tab === "flags" || tab === "compare") && (
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={tab === "compare" ? monthOptions : undefined} marginBottom={14} />
       )}
-      {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={null} />}
-      {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} />}
-      {tab === "sales" && <SalesUpload />}
+      {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={selOutlet} />}
+      {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={selOutlet || undefined} />}
+      {tab === "sales" && <SalesUpload lockedOutlet={selOutlet || undefined} />}
       </div>
     </div>
   );
