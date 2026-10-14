@@ -7340,8 +7340,6 @@ const RecipesPanel = () => {
 //  DEMAND HISTORY — View & Edit last 7 days of demands by outlet
 // ═════════════════════════════════════════════════════════════════════════════
 const DemandHistory = ({ outletOverride } = {}) => {
-  const [demands, setDemands] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [selOutlet, setSelOutlet] = useState(outletOverride || OUTLETS[0]?.id || "sec23");
   // When embedded in Owner Home, the page-level outlet pill drives the outlet — keep this
   // component's own selection in sync and hide its redundant internal picker (below).
@@ -7424,17 +7422,13 @@ const DemandHistory = ({ outletOverride } = {}) => {
     return result;
   }, []);
 
-  const fetchDemands = async () => {
-    setLoading(true);
-    try {
-      const fromDate = days[days.length - 1]?.date;
-      const data = await api.getOrders({ from: fromDate, outlet_id: selOutlet });
-      setDemands((data || []).filter(d => (d.type === "manual" || d.type === "bk_demand") && d.status !== "draft"));
-    } catch (e) { console.error(e); setDemands([]); }
-    setLoading(false);
-  };
-
-  useEffect(() => { fetchDemands(); }, [selOutlet]);
+  // Cached-first (instant on revisit). refetch is exposed as fetchDemands so the edit-save
+  // path below can refresh after a qty edit.
+  const fromDate = days[days.length - 1]?.date;
+  const { data: demands = [], loading, refetch: fetchDemands } = useApiData(`demands:${selOutlet}:${fromDate}`, () =>
+    api.getOrders({ from: fromDate, outlet_id: selOutlet })
+      .then((data) => (data || []).filter(d => (d.type === "manual" || d.type === "bk_demand") && d.status !== "draft"))
+      .catch((e) => { console.error(e); return []; }));
 
   // Group demands by date, then split AM/PM based on submitted_at
   const grouped = useMemo(() => {
@@ -12188,35 +12182,21 @@ const StoreMgr = ({ onBack }) => {
 // morning; this component just reads whatever's in daily_review_summary for the date.
 const DailyReviewSummary = () => {
   const [selDay, setSelDay] = useState(1); // default Yesterday, same rationale as SalesUpload
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState(null);
-  // Customer Complaints — one row per individual complaint pulled from PetPooja
-  // CRM > Feedback > Complaints for the selected date, per outlet/platform. Read
-  // from daily_complaints (populated by the daily scheduled scrape). Replaces the
-  // old manual owner_todos-backed complaint log. Date-scoped to match the review
-  // summary above, so both move together with the day selector.
-  const [complaints, setComplaints] = useState([]);
-  const [complaintsLoading, setComplaintsLoading] = useState(true);
-
   const dateStr = useMemo(() => istDateAgo(selDay), [selDay]);
   const dateLabel = selDay === 0 ? "Today" : selDay === 1 ? "Yesterday" : dateStr;
 
-  useEffect(() => {
-    setComplaintsLoading(true);
-    api.getDailyComplaints(dateStr)
-      .then((res) => setComplaints(res.rows || []))
-      .catch(() => setComplaints([]))
-      .finally(() => setComplaintsLoading(false));
-  }, [dateStr]);
-
-  useEffect(() => {
-    setLoading(true); setErr(null);
-    api.getDailyReviewSummary(dateStr)
-      .then((r) => setRows(r.rows || []))
-      .catch((e) => setErr(e.message))
-      .finally(() => setLoading(false));
-  }, [dateStr]);
+  // Cached-first (instant paint on a revisit). Review summary surfaces its error via the
+  // hook; complaints resolve to [] on failure (same as before).
+  // Customer Complaints — one row per individual complaint pulled from PetPooja
+  // CRM > Feedback > Complaints for the selected date, per outlet/platform (daily_complaints,
+  // populated by the scheduled scrape). Date-scoped to match the review summary above.
+  const { data: reviewRows, loading, error: reviewErr } = useApiData(`review:${dateStr}`, () =>
+    api.getDailyReviewSummary(dateStr).then((r) => r.rows || []));
+  const rows = reviewRows ?? [];
+  const err = reviewErr ? reviewErr.message : null;
+  const { data: complaintsRows, loading: complaintsLoading } = useApiData(`complaints:${dateStr}`, () =>
+    api.getDailyComplaints(dateStr).then((res) => res.rows || []).catch(() => []));
+  const complaints = complaintsRows ?? [];
 
   const byOutletPlatform = useMemo(() => {
     const m = {};
@@ -12331,35 +12311,24 @@ const DailyReviewSummary = () => {
 // existing single-date /api/sales endpoint with 4 parallel calls (same pattern as
 // CogsCompare's multi-date fetch) rather than adding a new backend route.
 const FourWeekComparison = ({ selDay, selOutlet }) => {
-  const [weeks, setWeeks] = useState(null); // [{ date, weekdayShort, weekdayLong, res }] oldest → current
-  const [loading, setLoading] = useState(false);
-
   const offsets = useMemo(() => [selDay + 21, selDay + 14, selDay + 7, selDay], [selDay]);
 
-  useEffect(() => {
-    setLoading(true);
+  // Cached-first (instant on revisit). Fetcher returns the fully-built weeks array.
+  const { data: weeks, loading } = useApiData(`4week:${selOutlet || "all"}:${offsets.join(",")}`, () =>
     Promise.all(offsets.map((d) => api.getSales({ date: istDateAgo(d), outlet: selOutlet || "all" }).catch(() => null)))
-      .then((results) => {
-        setWeeks(offsets.map((d, i) => {
-          const dateStr = istDateAgo(d);
-          // Weekday derived from the date STRING (noon-UTC-anchored), not from a
-          // .toLocaleDateString() call on the istNow()-shifted Date object without an
-          // explicit timeZone — that read the weekday in the browser's own local
-          // timezone, which on a device actually set to IST double-applies the offset
-          // istNow() already added. In the evening (roughly 6:30 PM–midnight IST) that
-          // pushed the reading a full calendar day ahead, so "yesterday" could show as
-          // e.g. Saturday when the date underneath it was genuinely Friday.
-          const weekdayDate = new Date(`${dateStr}T12:00:00Z`);
-          return {
-            date: dateStr,
-            weekdayShort: weekdayDate.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
-            weekdayLong: weekdayDate.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
-            res: results[i],
-          };
-        }));
-      })
-      .finally(() => setLoading(false));
-  }, [offsets, selOutlet]);
+      .then((results) => offsets.map((d, i) => {
+        const dateStr = istDateAgo(d);
+        // Weekday derived from the date STRING (noon-UTC-anchored), not from the istNow()-
+        // shifted Date without an explicit timeZone — that double-applied the IST offset in
+        // the evening and pushed the weekday a day ahead.
+        const weekdayDate = new Date(`${dateStr}T12:00:00Z`);
+        return {
+          date: dateStr,
+          weekdayShort: weekdayDate.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }),
+          weekdayLong: weekdayDate.toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }),
+          res: results[i],
+        };
+      })), { initialLoading: false });
 
   if (loading || !weeks) {
     return (

@@ -1,3 +1,5 @@
+import { invalidateAll } from "./useApiData";
+
 const API = process.env.REACT_APP_API_URL || "http://localhost:3001";
 
 // Read the logged-in user's ID from localStorage on every request.
@@ -100,7 +102,7 @@ const api = {
       method: "POST",
       headers: authHeaders(),
       body: formData,
-    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); clearCache(); return r.json(); });
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); clearCache(); invalidateAll(); return r.json(); });
   },
 
   // ── Issuance Audit ──
@@ -326,7 +328,7 @@ const api = {
       method: "POST",
       headers: authHeaders(),
       body: formData,
-    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); clearCache(); return r.json(); });
+    }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.error); }); clearCache(); invalidateAll(); return r.json(); });
   },
   uploadAttendanceCSVMonth: (file, month) => {
     const formData = new FormData();
@@ -345,7 +347,7 @@ const api = {
         const sample = e.skipped?.length ? ` — e.g. ${e.skipped.slice(0, 5).join("; ")}${e.skipped.length > 5 ? ` (+${e.skipped.length - 5} more)` : ""}` : "";
         throw new Error((e.error || "Upload failed") + sample);
       });
-      clearCache();
+      clearCache(); invalidateAll();
       return r.json();
     });
   },
@@ -438,7 +440,7 @@ async function post(path, body) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `POST ${path} failed: ${res.status}`);
   }
-  clearCache();
+  clearCache(); invalidateAll();
   return res.json();
 }
 
@@ -452,7 +454,7 @@ async function patch(path, body) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `PATCH ${path} failed: ${res.status}`);
   }
-  clearCache();
+  clearCache(); invalidateAll();
   return res.json();
 }
 
@@ -465,7 +467,7 @@ async function del(path) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `DELETE ${path} failed: ${res.status}`);
   }
-  clearCache();
+  clearCache(); invalidateAll();
   return res.json();
 }
 
