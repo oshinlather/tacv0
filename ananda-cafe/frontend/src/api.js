@@ -304,6 +304,10 @@ const api = {
   // ── Live P&L ──
   getLivePnl: (date, outlet) => get(`/api/pnl/live/${date}`, outlet ? { outlet } : {}),
   getStockUsage: (date, outlet) => get(`/api/stock-usage/${date}`, outlet ? { outlet } : {}),
+  // Whole month in one request — returns { month, days: [{ date, pnl, stock, audit }] },
+  // each day's three payloads identical to getLivePnl/getStockUsage/getRMAudit. Replaces
+  // the month view firing 3 calls × ~31 days.
+  getPnlMonth: (month, outlet) => get(`/api/pnl/month/${month}`, outlet ? { outlet } : {}),
   getClosingStockDraftAlerts: () => get('/api/closing-stock-draft-alerts'),
   getPunchStatus: (date) => get(`/api/punch-status/${date}`),
   getWastageCost: (from) => get('/api/wastage/cost', { from }),

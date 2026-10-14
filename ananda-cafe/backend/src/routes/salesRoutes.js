@@ -782,7 +782,7 @@ function classifyColdDrinkSale(name) {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/cold-drink/:date', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    if (!await requireRoleOrResp(req, res, 'cogs', 'owner', 'avp', 'head_chef')) return;
     const { date } = req.params;
     const prevDate = new Date(date);
     prevDate.setDate(prevDate.getDate() - 1);
@@ -927,7 +927,7 @@ router.get('/audit/cold-drink/:date', async (req, res) => {
 // ────────────────────────────────────────────────────────────
 router.get('/audit/cold-drink-monthly/:month', async (req, res) => {
   try {
-    if (!await requireRole(req, res, 'owner', 'avp', 'head_chef')) return;
+    if (!await requireRoleOrResp(req, res, 'cogs', 'owner', 'avp', 'head_chef')) return;
     const { month } = req.params;
     if (!/^\d{4}-\d{2}$/.test(month || '')) return res.status(400).json({ error: 'month must be YYYY-MM' });
     const [y, mo] = month.split('-').map(Number);
@@ -4564,20 +4564,24 @@ router.delete('/crockery-packaging-rules', async (req, res) => {
 // P&L COMPUTATION — Real-time from dispatched items + rate card
 // ============================================================
 
-// ── GET /api/pnl/live/:date — Compute P&L for a date from actual data
-router.get('/pnl/live/:date', async (req, res) => {
-  try {
-    // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score (needs
-    // effective_sale to turn ideal/actual material cost into a % of sale) — forced to
-    // their own outlet below, same as franchise already is. chef added the same way.
-    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr', 'chef');
-    if (!user) return;
-    const { date } = req.params;
-    const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise/outlet_mgr
+// ── Compute P&L for a date from actual data. Extracted from the GET /pnl/live/:date
+// route (below) so the batched month endpoint (GET /pnl/month/:month) can compute a whole
+// month in ONE request instead of the frontend firing 3 calls × ~31 days and hammering the
+// backend. `datedCtx` (optional) lets a range caller share ONE ledger load across days via
+// ctx.withDate(ds) — the single-day route passes none, so its behavior is unchanged (it
+// builds its own costing context for `date`, exactly as before).
+async function computeLivePnl(date, outlet, datedCtx) {
+    // Own costing context (rate_card/BK-recipe pricing) for computeBkPurchaseByOutlet
+    // below — deliberately a separate build rather than reusing this route's own
+    // hand-rolled rateMap/convMap (different shape), so the BK Purchase figure here
+    // exactly matches Finance's. Priced as-of the P&L date; its .priceAsOf ledger resolver
+    // also dates this route's own rateMap below (no second ledger fetch). A month caller
+    // passes a pre-dated ctx so the loop doesn't reload the ledger once per day.
+    const bkPurchaseCostingContext = datedCtx || await buildCostingContext(date);
 
-    // None of these ten queries depend on each other's results — fired concurrently
-    // instead of one-at-a-time, so this endpoint's total latency is bounded by the
-    // slowest single query rather than the sum of all of them.
+    // None of these queries depend on each other's results — fired concurrently instead
+    // of one-at-a-time, so total latency is bounded by the slowest single query rather
+    // than the sum of all of them.
     const [
       { data: rates },
       { data: allOrders },
@@ -4589,7 +4593,6 @@ router.get('/pnl/live/:date', async (req, res) => {
       { data: bkRecipes },
       { data: bkIngredients },
       { data: invItemsList },
-      bkPurchaseCostingContext,
     ] = await Promise.all([
       supabase.from('rate_card').select('id, name, category, unit, price').eq('active', true),
       supabase.from('demands').select('*').eq('date', date),
@@ -4604,13 +4607,6 @@ router.get('/pnl/live/:date', async (req, res) => {
       supabase.from('bk_recipes').select('*'),
       supabase.from('bk_recipe_ingredients').select('*'),
       supabase.from('inventory_items').select('id, name, demand_item_id'),
-      // Own costing context (rate_card/BK-recipe pricing) for computeBkPurchaseByOutlet
-      // below — deliberately a separate build rather than reusing this route's own
-      // hand-rolled rateMap/convMap (different shape), so the BK Purchase figure here
-      // exactly matches Finance's, not a similar-but-drifting variant. Priced as-of the P&L
-      // date; its .priceAsOf ledger resolver also dates this route's own rateMap below (no
-      // second ledger fetch).
-      buildCostingContext(date),
     ]);
     const bkPurchaseByOutlet = await computeBkPurchaseByOutlet(date, date, bkPurchaseCostingContext);
     // Denominator for BK Fixed Cost's proportional split below (see the "BK FIXED COST
@@ -4969,9 +4965,61 @@ router.get('/pnl/live/:date', async (req, res) => {
       pnlResults.unshift(summary);
     }
 
-    res.json({ date, days_in_month: pnlResults[0]?.days_in_month || 30, pnl: pnlResults });
+    return { date, days_in_month: pnlResults[0]?.days_in_month || 30, pnl: pnlResults };
+}
+
+// ── GET /api/pnl/live/:date — single-day P&L (thin wrapper over computeLivePnl above).
+router.get('/pnl/live/:date', async (req, res) => {
+  try {
+    // outlet_mgr added for the outlet-side Performance Dashboard's COGS Score (needs
+    // effective_sale to turn ideal/actual material cost into a % of sale) — forced to
+    // their own outlet, same as franchise already is. chef added the same way.
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr', 'chef');
+    if (!user) return;
+    const outlet = scopedOutletFilter(user, req.query.outlet); // optional outlet filter, forced for franchise/outlet_mgr
+    res.json(await computeLivePnl(req.params.date, outlet));
   } catch (err) {
     console.error('P&L computation error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/pnl/month/:month — whole-month P&L in ONE request. Loops every day up to
+// today, computing the SAME three per-day payloads (pnl / stock-usage / rm-audit) the
+// month view used to fetch with 3 separate calls per day — replacing ~93 HTTP round trips
+// with one. Shares ONE ledger + recipes/rules load across all days (each day re-priced in
+// memory via costingContext.withDate(ds)), exactly the pattern computeRMAuditRange uses.
+router.get('/pnl/month/:month', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, 'owner', 'avp', 'head_chef', 'franchise', 'outlet_mgr', 'chef');
+    if (!user) return;
+    const outlet = scopedOutletFilter(user, req.query.outlet);
+    const month = req.params.month; // 'YYYY-MM'
+    const [y, mo] = (month || '').split('-').map(Number);
+    if (!y || !mo || mo < 1 || mo > 12) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    const lastDay = new Date(y, mo, 0).getDate();
+    const from = `${month}-01`;
+    const monthEnd = `${month}-${String(lastDay).padStart(2, '0')}`;
+    const today = todayIST();
+    const to = monthEnd > today ? today : monthEnd; // never compute future days
+    if (to < from) return res.json({ month, days: [] }); // whole month still in the future
+    const days = rmAuditDaysInRange(from, to);
+    // ONE ledger + recipes/rules load for the whole month; each day re-prices in memory.
+    const rmShared = await buildRMAuditSharedCtx();
+    const results = await rmAuditMapWithConcurrency(days, RM_AUDIT_DAY_CONCURRENCY, async (ds) => {
+      const dayCtx = rmShared.costingContext.withDate(ds);
+      const [pnl, stock, outlets] = await Promise.all([
+        computeLivePnl(ds, outlet, dayCtx),
+        computeStockUsageForDate(ds, outlet, dayCtx),
+        computeRMAudit(ds, outlet, { ...rmShared, costingContext: dayCtx }),
+      ]);
+      // Shapes match the single-day routes exactly: /pnl/live → {date,days_in_month,pnl},
+      // /stock-usage → the computeStockUsageForDate result, /audit → {date,outlets}.
+      return { date: ds, pnl, stock, audit: { date: ds, outlets } };
+    });
+    res.json({ month, days: results });
+  } catch (err) {
+    console.error('Monthly P&L error:', err);
     res.status(500).json({ error: err.message });
   }
 });

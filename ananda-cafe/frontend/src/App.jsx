@@ -3332,18 +3332,12 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
 
   const fetchMonthlyPnl = useCallback((monthStr) => {
     setMonthLoading(true);
-    const [y, mo] = monthStr.split("-").map(Number);
-    const daysInMo = new Date(y, mo, 0).getDate();
-    const todayStr = today();
-    const dates = [];
-    for (let day = 1; day <= daysInMo; day++) {
-      const ds = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      if (ds > todayStr) break; // skip future dates
-      dates.push(ds);
-    }
-    Promise.all(dates.map((ds) =>
-      Promise.all([api.getLivePnl(ds).catch(() => null), api.getStockUsage(ds).catch(() => null), api.getRMAudit(ds).catch(() => null)])
-        .then(([pnl, stock, audit]) => {
+    // One request for the whole month — the backend loops every day up to today and returns
+    // each day's { pnl, stock, audit } (same shapes as getLivePnl/getStockUsage/getRMAudit),
+    // replacing the old fan-out of 3 calls × ~31 days. Each day is merged below exactly as
+    // the single-day view does, then rolled up into the month totals.
+    api.getPnlMonth(monthStr).then((resp) => {
+      const results = (resp?.days || []).map(({ date: ds, pnl, stock, audit }) => {
           // Should-consume (theoretical, recipe x sales) per outlet+item for this one day —
           // same merge fetchPnl does for the single-day view, kept per-day here (not summed)
           // so the Header Wise item dropdown below can render a day-by-day should-vs-actual
@@ -3382,8 +3376,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
             });
           }
           return { date: ds, pnl: pnl?.pnl || [] };
-        })
-    )).then((results) => {
+      });
       const totals = {}; // outlet_id -> summed totals across the month
       const categoryTotals = {}; // outlet_id -> { category -> { total, items: { item_id -> { name, unit, qty, cost, days: { date -> {qty,cost,should,shouldCost,hasShould} } } } } }
       const fixedTotals = {}; // outlet_id -> { cost_head -> { label, total } }
@@ -3444,7 +3437,7 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
       // Margin computed on the summed totals (not an average of daily percentages)
       Object.values(totals).forEach((t) => { t.margin = t.effective_sale > 0 ? Math.round(t.net_profit / t.effective_sale * 1000) / 10 : 0; });
       setMonthData({ totals, categoryTotals, fixedTotals, days: results });
-    }).finally(() => setMonthLoading(false));
+    }).catch(() => setMonthData(null)).finally(() => setMonthLoading(false));
   }, []);
 
   useEffect(() => { if (selMonth) fetchMonthlyPnl(selMonth); }, [selMonth, fetchMonthlyPnl]);
