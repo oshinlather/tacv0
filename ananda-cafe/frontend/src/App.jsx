@@ -10693,7 +10693,7 @@ const OutletMgr = ({ onBack }) => {
 
   if (screen === "done" && last) return (<div style={{ textAlign: "center", padding: "40px 0" }}><div style={{ fontSize: 64, marginBottom: 12 }}>✅</div><h3 style={{ fontSize: 20, fontWeight: 800, color: "#166534", margin: "0 0 4px" }}>{last.type === "closing" ? "Closing Stock Submitted!" : last.type === "wastage" ? "Wastage Recorded!" : last.type === "purchase" ? "Purchase Recorded!" : "Demand Submitted!"}</h3><p style={{ color: "#16A34A", margin: "0 0 24px" }}>{oData?.name} — {last.time}</p><button onClick={() => waMsg(last)} style={{ padding: "14px 32px", borderRadius: 14, border: "none", background: "#25D366", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 8 }}>💬 Share on WhatsApp</button><br /><button onClick={() => setScreen("home")} style={{ padding: "12px 32px", borderRadius: 14, border: "1px solid #E0E0DC", background: "#fff", color: "#1A1A1A", fontWeight: 600, fontSize: 14, cursor: "pointer", fontFamily: "inherit", marginTop: 8 }}>← Back to Home</button></div>);
 
-  if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
+  if (screen === "home") { const dw = getDemandWindow(); return (<div><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}><div><div style={{ fontSize: 16, fontWeight: 800 }}>🏪 {oData?.name}</div><div style={{ fontSize: 11, color: "#999" }}>{today()}</div></div><div style={{ display: "flex", gap: 6 }}>{tSubs.length > 0 && <span style={{ padding: "4px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>✅ {tSubs.length} sent</span>}<button onClick={() => { setOutlet(null); setScreen("pick"); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Switch</button><button onClick={() => { localStorage.removeItem("ananda_user"); api.clearCache(); window.location.reload(); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 600, color: "#DC2626", cursor: "pointer", fontFamily: "inherit" }}>Logout</button></div></div>
     <div style={{ padding: "10px 14px", borderRadius: 10, background: dw.active ? "#F0FDF4" : "#FEF2F2", border: `1px solid ${dw.active ? "#BBF7D0" : "#FECACA"}`, fontSize: 12, color: dw.active ? "#166534" : "#991B1B", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 16 }}>{dw.active ? "🟢" : "🔴"}</span><div><strong>{dw.label}</strong>{!dw.active && <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Demand entry is closed right now</div>}</div></div>
     {stillOwed.length > 0 && (
       <div style={{ borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", marginBottom: 14, overflow: "hidden" }}>
@@ -19673,7 +19673,7 @@ const ScopedDashboard = () => {
   const tabs = SCOPED_ROLE_TABS[currentUser?.role] || [];
   const [tab, setTab] = useState(tabs[0]?.id || null);
   const [storeView, setStoreView] = useState("bk");
-  const doLogout = () => { localStorage.removeItem("ananda_user"); window.location.reload(); };
+  const doLogout = () => { localStorage.removeItem("ananda_user"); api.clearCache(); window.location.reload(); };
 
   return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
@@ -19761,7 +19761,7 @@ const FranchiseDashboard = () => {
   const outletId = currentUser?.outlet_id;
   const outletName = OUTLETS.find((o) => o.id === outletId)?.name || outletId;
   const [tab, setTab] = useState("pnl");
-  const doLogout = () => { localStorage.removeItem("ananda_user"); window.location.reload(); };
+  const doLogout = () => { localStorage.removeItem("ananda_user"); api.clearCache(); window.location.reload(); };
 
   return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>
@@ -19935,6 +19935,7 @@ export default function AnandaCafe() {
     try {
       const user = await api.login(loginPhone, loginPin);
       localStorage.setItem("ananda_user", JSON.stringify(user));
+      api.clearCache(); // fresh start under this user's cache namespace
       _currentUser = user;
       setCurrentUser(user);
       setLoginPhone(""); setLoginPin("");
@@ -19942,7 +19943,7 @@ export default function AnandaCafe() {
     finally { setLoginLoading(false); }
   };
 
-  const doLogout = () => { localStorage.removeItem("ananda_user"); _currentUser = null; setCurrentUser(null); };
+  const doLogout = () => { localStorage.removeItem("ananda_user"); api.clearCache(); _currentUser = null; setCurrentUser(null); };
 
   // Check URL for role parameter: ?role=outlet or ?role=store or ?role=owner
   const [urlRole] = useState(() => {

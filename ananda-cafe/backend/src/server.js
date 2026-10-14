@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const compression = require("compression");
 const multer = require("multer");
 
 const supabase = require("./supabase");
@@ -31,6 +32,10 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+// gzip all responses — the dashboard payloads (P&L, audits, ledgers) are large JSON that
+// compress ~5-10x, cutting transfer time and backend egress, which matters most when
+// several outlets hit the API at once.
+app.use(compression());
 app.use(cors({
   origin: process.env.FRONTEND_URL || "*",
   // Must allow x-user-id so the browser doesn't strip it on preflight
