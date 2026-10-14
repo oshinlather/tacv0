@@ -10101,18 +10101,19 @@ const ManagerCogsView = ({ onBack }) => {
         <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Home</button>
         <div><div style={{ fontSize: 16, fontWeight: 800 }}>📊 COGS Oversight</div><div style={{ fontSize: 11, color: "#999" }}>{selOutlet ? (OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet) : "All outlets"}</div></div>
       </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+      {/* All three filter groups on ONE line on laptop — section tabs, the outlet filter
+          (scope every section to one outlet, to screenshot & share with that outlet's
+          manager), and the date — separated by thin dividers; wraps on a narrow screen. */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         {MGR_COGS_TABS.map((t) => <button key={t.id} onClick={() => pickTab(t.id)} style={pillStyle(tab === t.id)}>{t.label}</button>)}
-      </div>
-      {/* Outlet filter — scope every section to one outlet (to screenshot & share with that
-          outlet's manager), or All for the cross-outlet overview. */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        <span style={{ width: 1, alignSelf: "stretch", background: "#E0E0DC", margin: "2px 4px" }} />
         <button onClick={() => setSelOutlet(null)} style={pillStyle(!selOutlet)}>All Outlets</button>
         {OUTLETS.map((o) => <button key={o.id} onClick={() => setSelOutlet(o.id)} style={pillStyle(selOutlet === o.id)}>{o.short}</button>)}
+        {(tab === "flags" || tab === "compare") && <span style={{ width: 1, alignSelf: "stretch", background: "#E0E0DC", margin: "2px 4px" }} />}
+        {(tab === "flags" || tab === "compare") && (
+          <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={tab === "compare" ? monthOptions : undefined} marginBottom={0} />
+        )}
       </div>
-      {(tab === "flags" || tab === "compare") && (
-        <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={tab === "compare" ? monthOptions : undefined} marginBottom={14} />
-      )}
       {tab === "flags" && <FlagsSection dateStr={dateStr} selOutlet={selOutlet} />}
       {tab === "compare" && <CogsCompare syncDate={{ selDay, selMonth }} lockedOutlet={selOutlet || undefined} />}
       {tab === "sales" && <SalesUpload lockedOutlet={selOutlet || undefined} />}
@@ -15484,11 +15485,11 @@ const ChallansSection = ({ dateStr, selOutlet }) => {
 // ═══════════════════════════════════════════════════════════════════════════
 // collapsible → header is clickable and shows a ▸/▾ chevron; defaultCollapsed starts folded.
 // Non-collapsible cards (e.g. COGS Leakage) keep the old always-open behaviour.
-const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, defaultCollapsed }) => {
+const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, defaultCollapsed, cardStyle }) => {
   const [open, setOpen] = useState(!defaultCollapsed);
   const showBody = !collapsible || open;
   return (
-    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14, ...cardStyle }}>
       <div onClick={collapsible ? () => setOpen((v) => !v) : undefined} style={{ padding: "12px 16px", borderBottom: showBody ? "1px solid #F0F0EC" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", cursor: collapsible ? "pointer" : "default" }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800 }}>
@@ -15683,8 +15684,9 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
         )}
       </FlagCard>
 
-      {/* ── 2. Challan mismatches ── */}
-      <FlagCard icon="🧾" title="Challan Mismatches" count={challanRows.length} collapsible defaultCollapsed
+      {/* ── 2-4. Compact row: three collapsed flag cards side by side (wrap on narrow screens) ── */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 14 }}>
+      <FlagCard icon="🧾" title="Challan Mismatches" count={challanRows.length} collapsible defaultCollapsed cardStyle={{ flex: "1 1 280px", minWidth: 0, marginBottom: 0 }}
         subtitle="Demand ≠ Dispatch (🟠) or Dispatch ≠ Verified receipt (🟡)">
         {challanRows.length === 0 ? goodMsg("Every challan matches — demand, dispatch and verified receipts all agree.") : (
           <div style={{ overflowX: "auto" }}>
@@ -15713,7 +15715,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       </FlagCard>
 
       {/* ── 3. Missing punches (excl. demand, which has its own flag) ── */}
-      <FlagCard icon="🔔" title="Missing Punches" count={punchRows.length} collapsible defaultCollapsed
+      <FlagCard icon="🔔" title="Missing Punches" count={punchRows.length} collapsible defaultCollapsed cardStyle={{ flex: "1 1 280px", minWidth: 0, marginBottom: 0 }}
         subtitle="Company outlets with unpunched entries (sales, closing, wastage, purchase, verify)">
         {punchRows.length === 0 ? goodMsg("All company outlets have punched everything for the day.") : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -15735,7 +15737,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
       </FlagCard>
 
       {/* ── 4. Demand not submitted ── */}
-      <FlagCard icon="✏️" title="Demand Not Submitted" count={demandMissing.length} collapsible defaultCollapsed
+      <FlagCard icon="✏️" title="Demand Not Submitted" count={demandMissing.length} collapsible defaultCollapsed cardStyle={{ flex: "1 1 280px", minWidth: 0, marginBottom: 0 }}
         subtitle="Company outlets that haven't sent their demand for the day">
         {demandMissing.length === 0 ? goodMsg("Every company outlet has submitted its demand.") : (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -15745,6 +15747,7 @@ const FlagsSection = ({ dateStr, selOutlet }) => {
           </div>
         )}
       </FlagCard>
+      </div>
     </div>
   );
 };
