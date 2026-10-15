@@ -5322,6 +5322,32 @@ const Dispatch = () => {
   };
   useEffect(load, []);
 
+  // Emergency dispatch — an outlet urgently needs something they never demanded (or a
+  // top-up after their slot was already dispatched). Creates a fresh on-behalf order for the
+  // selected outlet (backend bypasses the cutoff / already-dispatched guards when
+  // emergency:true, owner/store_mgr/bk_manager only), then opens the add-item picker so you
+  // add what's going and dispatch it through the normal flow — so it's tracked in stock/P&L,
+  // not sent off the books.
+  const [creatingEmergency, setCreatingEmergency] = useState(false);
+  const createEmergencyDispatch = async () => {
+    if (!selOutlet || selOutlet === "bk") { alert("Pick the outlet tab above that you need to emergency-dispatch to first."); return; }
+    const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
+    if (!window.confirm(`🚨 Emergency dispatch for ${outletName}?\n\nThis creates a new on-behalf order (bypassing the normal demand cutoff) that you add items to and dispatch right now. It's flagged as emergency and counts toward ${outletName}'s stock & P&L, same as a normal dispatch.`)) return;
+    setCreatingEmergency(true);
+    try {
+      const istHour = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "2-digit", hour12: false }));
+      const created = await api.createDemand({
+        outlet_id: selOutlet, type: "manual", items: {}, status: "submitted",
+        demand_slot: istHour < 15 ? "morning" : "evening",
+        submitted_by: getCurrentUser()?.name || "Emergency",
+        note: "🚨 Emergency dispatch", emergency: true,
+      });
+      load();
+      if (created?.id) { setAddingItemTo(created.id); setItemSearch(""); } // jump straight to adding items
+    } catch (e) { alert("Error: " + e.message); }
+    finally { setCreatingEmergency(false); }
+  };
+
   // `orders` already covers the last 14 days (see windowStart above), so the 7-day pills
   // are served straight from it with no extra request; only the calendar reaching further
   // back needs a dedicated fetch.
@@ -5627,10 +5653,11 @@ const Dispatch = () => {
           </button>);
         })}
         <div style={{ flex: 1 }} />
+        <button onClick={createEmergencyDispatch} disabled={creatingEmergency} title="Emergency: create an on-behalf dispatch order for the selected outlet (bypasses the normal cutoff)" style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 11, fontWeight: 700, color: "#DC2626", cursor: creatingEmergency ? "not-allowed" : "pointer", flexShrink: 0, fontFamily: "inherit" }}>{creatingEmergency ? "…" : "🚨 Emergency"}</button>
         <button onClick={load} style={{ padding: "5px 10px", borderRadius: 6, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, color: "#777", cursor: "pointer", flexShrink: 0 }}>🔄</button>
       </div>
 
-      {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999" }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div></div>}
+      {pending.length === 0 && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "40px 20px", textAlign: "center" }}><div style={{ fontSize: 36, marginBottom: 8 }}>✓</div><div style={{ color: "#999", marginBottom: selOutlet && selOutlet !== "bk" ? 16 : 0 }}>{selOutlet ? `No pending for ${OUTLETS.find((o) => o.id === selOutlet)?.name}` : "All dispatched for today"}</div>{selOutlet && selOutlet !== "bk" && <button onClick={createEmergencyDispatch} disabled={creatingEmergency} style={{ padding: "10px 18px", borderRadius: 10, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 13, fontWeight: 700, color: "#DC2626", cursor: creatingEmergency ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{creatingEmergency ? "Creating…" : `🚨 Emergency Dispatch to ${OUTLETS.find((o) => o.id === selOutlet)?.short || ""}`}</button>}</div>}
 
       {/* ── PENDING ORDERS ── */}
       {(() => { const renderOrderCard = (order) => {
@@ -5730,7 +5757,7 @@ const Dispatch = () => {
                   </div>}
                 </div>
               );
-            }) : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
+            }) : (order.note && String(order.note).includes("Emergency")) ? <div style={{ padding: "14px 18px", fontSize: 12, color: "#B45309", fontWeight: 600 }}>🚨 Emergency order — add what you're sending with "+ Add Item" below, then dispatch.</div> : <div style={{ padding: "14px 18px", fontSize: 12, color: "#888" }}>📷 Photo order — verify manually.</div>}
 
             {/* Phoned-in item, forgotten at demand time — add it straight into this dispatch */}
             <div style={{ padding: "8px 18px 12px", borderTop: hasItems ? "1px solid #F0F0EC" : "none" }}>
