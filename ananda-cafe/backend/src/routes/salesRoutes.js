@@ -2841,10 +2841,21 @@ async function checkEveningDemandCutoff(outlet_id, type, demand_slot) {
 
 router.post('/demands', async (req, res) => {
   try {
-    const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status } = req.body;
+    const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status, emergency } = req.body;
     if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
-    const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
-    if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
+    // Emergency on-behalf dispatch (owner / store_mgr / bk_manager): an outlet urgently
+    // needs something they never demanded — or a top-up after their slot was already
+    // dispatched. This bypasses the evening cutoff AND the already-dispatched guard below,
+    // and always inserts a fresh, clearly-flagged order (never merges into an existing one),
+    // so the goods still flow through the normal dispatch → RECEIPT / P&L path and the
+    // outlet's consumption stays correct instead of going out untracked. Gated to the roles
+    // that run the Dispatch screen.
+    if (emergency) {
+      if (!await requireRole(req, res, 'owner', 'store_mgr', 'bk_manager')) return;
+    } else {
+      const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
+      if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
+    }
     const targetDate = date || todayIST();
 
     // Server-side safety net against duplicate challans — never let two draft/submitted
@@ -2854,10 +2865,15 @@ router.post('/demands', async (req, res) => {
     // new row. Fulfilled/cancelled rows are deliberately excluded from this match — a
     // second order placed after the first was already dispatched is a real, separate
     // order, not a duplicate.
-    let existingQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', targetDate).eq('type', type).in('status', ['draft', 'submitted']);
-    existingQuery = demand_slot ? existingQuery.eq('demand_slot', demand_slot) : existingQuery.is('demand_slot', null);
-    const { data: existingRows } = await existingQuery.order('submitted_at', { ascending: false }).limit(1);
-    const existingId = existingRows && existingRows[0] && existingRows[0].id;
+    // An emergency order always inserts a fresh row — never merge into (and overwrite) an
+    // outlet's existing active demand; the emergency is a separate, additional order.
+    let existingId = null;
+    if (!emergency) {
+      let existingQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', targetDate).eq('type', type).in('status', ['draft', 'submitted']);
+      existingQuery = demand_slot ? existingQuery.eq('demand_slot', demand_slot) : existingQuery.is('demand_slot', null);
+      const { data: existingRows } = await existingQuery.order('submitted_at', { ascending: false }).limit(1);
+      existingId = existingRows && existingRows[0] && existingRows[0].id;
+    }
 
     // Block a brand-new (not-yet-existing) manual demand for a slot that's already been
     // dispatched — the Aug 12/13 Sector 56 incident this guards against: the old "Which
@@ -2869,7 +2885,7 @@ router.post('/demands', async (req, res) => {
     // (type='wastage') is unaffected — only real demand (type='manual') is slotted this
     // way; a legitimate same-day top-up request after dispatch should go through Transfer
     // or a phoned-in add at BK's dispatch screen instead of a second full demand record.
-    if (!existingId && type === 'manual') {
+    if (!existingId && type === 'manual' && !emergency) {
       let fulfilledQuery = supabase.from('demands').select('id').eq('outlet_id', outlet_id).eq('date', targetDate).eq('type', 'manual').eq('status', 'fulfilled');
       fulfilledQuery = demand_slot ? fulfilledQuery.eq('demand_slot', demand_slot) : fulfilledQuery.is('demand_slot', null);
       const { data: fulfilledRows } = await fulfilledQuery.limit(1);
