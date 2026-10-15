@@ -460,6 +460,11 @@ const UsersPanel = () => {
   const [saving, setSaving] = useState(false);
   const [editPinId, setEditPinId] = useState(null);
   const [editPinVal, setEditPinVal] = useState("");
+  // A role switch that can't be saved yet because the target role is outlet-scoped but the
+  // user has no outlet assigned (e.g. an AVP → Outlet Manager). Held here (user id -> role)
+  // so the outlet dropdown appears and role+outlet commit together — otherwise the backend
+  // rightly rejects an outlet_mgr with no outlet and the switch gets stuck.
+  const [pendingRole, setPendingRole] = useState({});
 
   const load = () => { api.getUsers().then(setUsers).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -493,13 +498,21 @@ const UsersPanel = () => {
     try { await api.updateUser(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
+  const clearPending = (id) => setPendingRole((p) => { const n = { ...p }; delete n[id]; return n; });
+
   const changeRole = async (u, newRole) => {
-    if (newRole === u.role) return;
+    if (newRole === u.role) { clearPending(u.id); return; }
+    const outletScoped = OUTLET_SCOPED_ROLES_FE.includes(newRole);
+    // Switching to an outlet-scoped role but no outlet assigned yet → don't save now.
+    // Hold the switch as pending so the outlet dropdown appears; it commits role+outlet
+    // together once an outlet is picked (see the outlet <select> below). Without this the
+    // backend rejects the outlet_mgr (no outlet) and the role never actually changes.
+    if (outletScoped && !u.outlet_id) { setPendingRole((p) => ({ ...p, [u.id]: newRole })); return; }
     try {
       // Outlet assignment only makes sense for outlet-scoped roles — clear it when
       // switching to a cross-outlet role so a stale outlet_id doesn't linger.
-      const outletScoped = OUTLET_SCOPED_ROLES_FE.includes(newRole);
       await api.updateUser(u.id, { role: newRole, ...(outletScoped ? {} : { outlet_id: null }) });
+      clearPending(u.id);
       load();
     } catch (e) { alert("Error: " + e.message); }
   };
@@ -558,21 +571,39 @@ const UsersPanel = () => {
           )}
         </div>
         <div style={{ marginTop: 8 }}>
-          <select value={u.role} onChange={(e) => changeRole(u, e.target.value)}
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: "#1A1A1A", fontWeight: 600 }}>
+          <select value={pendingRole[u.id] ?? u.role} onChange={(e) => changeRole(u, e.target.value)}
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: pendingRole[u.id] ? "1px solid #B45309" : "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: "#1A1A1A", fontWeight: 600 }}>
             {ROLE_OPTIONS.map(r => <option key={r.v} value={r.v}>{r.l}</option>)}
           </select>
         </div>
-        {/* Outlet assignment for outlet managers, chefs, bainmarry staff, and franchise partners */}
-        {OUTLET_SCOPED_ROLES_FE.includes(u.role) && (
-          <div style={{ marginTop: 8 }}>
-            <select value={u.outlet_id || ""} onChange={async (e) => { try { await api.updateUser(u.id, { outlet_id: e.target.value || null }); load(); } catch (err) { alert("Error: " + err.message); } }}
-              style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: u.outlet_id ? "#1A1A1A" : "#999", fontWeight: 600 }}>
-              <option value="">No outlet assigned</option>
-              {(u.role === "franchise" ? OUTLETS.filter(o => o.franchise) : OUTLETS).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          </div>
-        )}
+        {/* Outlet assignment for outlet managers, chefs, bainmarry staff, and franchise
+            partners. Also shown for a PENDING switch into one of these roles (effectiveRole),
+            so an outlet-less user can pick an outlet to complete the switch — role+outlet
+            then commit together in one update. */}
+        {(() => {
+          const effectiveRole = pendingRole[u.id] ?? u.role;
+          if (!OUTLET_SCOPED_ROLES_FE.includes(effectiveRole)) return null;
+          const isPending = !!pendingRole[u.id];
+          return (
+            <div style={{ marginTop: 8 }}>
+              {isPending && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 600, marginBottom: 4 }}>⚠️ Pick an outlet to finish switching to {ROLE_OPTIONS.find(r => r.v === effectiveRole)?.l || effectiveRole}</div>}
+              <select value={isPending ? "" : (u.outlet_id || "")}
+                onChange={async (e) => {
+                  const outlet_id = e.target.value || null;
+                  if (isPending && !outlet_id) return; // an outlet-scoped role can't be saved with no outlet
+                  try {
+                    await api.updateUser(u.id, { ...(isPending ? { role: effectiveRole } : {}), outlet_id });
+                    clearPending(u.id);
+                    load();
+                  } catch (err) { alert("Error: " + err.message); }
+                }}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: isPending ? "1px solid #B45309" : "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", color: (!isPending && u.outlet_id) ? "#1A1A1A" : "#999", fontWeight: 600 }}>
+                <option value="">No outlet assigned</option>
+                {(effectiveRole === "franchise" ? OUTLETS.filter(o => o.franchise) : OUTLETS).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </div>
+          );
+        })()}
         {/* Extra responsibilities on top of the base role — e.g. an outlet manager also given
             cross-outlet COGS oversight. Independent of role/outlet; a manager stays pinned to
             their own outlet for everything except what the responsibility explicitly opens up. */}
