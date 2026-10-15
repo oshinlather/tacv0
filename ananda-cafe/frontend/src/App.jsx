@@ -3311,8 +3311,8 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   const [selOutlet, setSelOutlet] = useState(lockedOutlet || null);
   const [selDay, setSelDay] = useState(1);
   const [pnlTab, setPnlTab] = useState("pnl"); // pnl | cogs | compare — pill switch so each view is 1 click away, no scrolling
-  const [pnlData, setPnlData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // pnlData / stockData / loading now come from the useApiData hook (see fetchPnl below) —
+  // cached-first so the P&L paints instantly on a revisit instead of re-computing each time.
   // Variable Cost is the useful-by-default view — that's where the leakage numbers live —
   // so it starts expanded; Revenue's breakdown (delivery/commission/cancelled/etc.) starts
   // folded since Total Sale + Effective Sale already say what matters at a glance.
@@ -3374,8 +3374,6 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   const dateStr = useMemo(() => {
     return istDateAgo(selDay);
   }, [selDay]);
-
-  const [stockData, setStockData] = useState(null);
 
   // Month view: aggregate the same per-day P&L + stock-usage calls across a whole month
   const [selMonth, setSelMonth] = useState(null); // 'YYYY-MM', or null for day view
@@ -3512,8 +3510,11 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
   // its data belongs to whichever month/outlet was selected when it was opened.
   useEffect(() => { setMonthExpandedItem(null); }, [selMonth, selOutlet]);
 
-  const fetchPnl = useCallback(() => {
-    setLoading(true);
+  // Cached-first (instant paint on a revisit); the fetcher returns the fully-merged
+  // { pnlData, stockData } — the exact shape the old setPnlData/setStockData pair produced,
+  // so every downstream number is identical. refetch is exposed as fetchPnl so the owner
+  // qty-edit save handlers below can refresh after a correction.
+  const { data: pnlBundle, loading, refetch: fetchPnl } = useApiData(`pnl:${dateStr}`, () =>
     Promise.all([
       api.getLivePnl(dateStr).catch(() => null),
       api.getStockUsage(dateStr).catch(() => null),
@@ -3620,12 +3621,10 @@ const DailyPnL = ({ lockedOutlet } = {}) => {
           }
         });
       }
-      setPnlData(pnl);
-      setStockData(stock);
-    }).finally(() => setLoading(false));
-  }, [dateStr]);
-
-  useEffect(() => { fetchPnl(); }, [fetchPnl]);
+      return { pnlData: pnl, stockData: stock };
+    }));
+  const pnlData = pnlBundle?.pnlData ?? null;
+  const stockData = pnlBundle?.stockData ?? null;
 
   // Save an owner qty correction for a single item, then reload P&L
   const saveQtyEdit = async () => {
@@ -17717,8 +17716,8 @@ const FinancePnL = () => {
   const [basis, setBasis] = useState("bk_purchase");
   const materialCostLabel = basis === "consumption" ? "Consumption" : "BK Purchase";
   const colLabel = (c) => (c.key === "bk_purchase" ? materialCostLabel : c.label);
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // data / loading now come from the useApiData hook (see below) — cached-first so the
+  // Outlet-wise P&L paints instantly on a revisit instead of recomputing (~8s) each time.
   const [commissionPct, setCommissionPct] = useState(null); // server value, kept separate from data.commission_pct so editing doesn't need a full refetch to reflect
   const [editingCommission, setEditingCommission] = useState(false);
   const [commissionInput, setCommissionInput] = useState("");
@@ -17807,12 +17806,10 @@ const FinancePnL = () => {
     return { from: `${selMonth}-01`, to: monthEnd < today() ? monthEnd : today() };
   }, [selMonth]);
 
-  const load = () => {
-    // The third pill (audit — Purchase vs Consumption side by side) manages its own
-    // fetching entirely in PurchaseVsConsumptionAudit below, since it needs BOTH bases
-    // at once rather than the single-basis shape this component's own `data` state is
-    // built around. Still clear the two-pill drill-down caches below so switching back
-    // doesn't show stale state, just skip the actual outlet-pnl fetch.
+  // The drill-down caches are scoped to one (range, basis) — clear them whenever either
+  // changes so switching month/basis never shows another view's stale expansion. (This was
+  // the side-effect half of the old `load`; the fetch half is now the useApiData hook below.)
+  useEffect(() => {
     setExpandedBkPurchase(null);
     setBkPurchaseDetail({});
     setExpandedMisc(null);
@@ -17820,24 +17817,21 @@ const FinancePnL = () => {
     setExpandedDaily(null);
     setDailyByDate(null);
     setExpandedDailyBkPurchase(null);
-    if (basis === "audit") { setLoading(false); return; }
-    // Store Cost has no outlet dimension and its own fetch (see the effect below) — skip
-    // the outlet-pnl call entirely so switching to it is instant, not an 8s P&L compute.
-    if (basis === "bk_cost") { setLoading(false); return; }
-    setLoading(true);
-    // One whole-range call for BOTH bases — used to fetch Consumption day-by-day and sum
-    // client-side instead (day-by-day was ~9s vs ~18-40s for one request), but that made
-    // Total Sale/Effective Sale drift by a rupee or two from BK Purchase basis's own
-    // figures: delivery commission is round((swiggy+zomato)*pct) — computed ONCE over the
-    // whole range here, vs computed separately per day and SUMMED there, and those two
-    // aren't the same number once you're rounding every single day. Now that
-    // fetchAllDailySales's own pagination bug is fixed (see salesRoutes.js), a single
-    // Consumption request is ~8-9s anyway — close enough to the day-by-day version that
-    // it's not worth carrying a real correctness bug (two pills disagreeing on revenue,
-    // which has nothing to do with either basis) for the difference.
-    api.getFinanceOutletPnl(range.from, range.to, basis).then((r) => { setData(r); setCommissionPct(r.commission_pct); }).catch(() => setData(null)).finally(() => setLoading(false));
-  };
-  useEffect(load, [range, basis]);
+  }, [range, basis]);
+
+  // The audit pill (Purchase vs Consumption side-by-side) and the Store Cost pill manage
+  // their own fetching, so for those bases the fetcher resolves null — no outlet-pnl call —
+  // and we don't show the main spinner. Otherwise it's the same single whole-range
+  // getFinanceOutletPnl call as before (one request, not day-by-day — see the long note that
+  // used to live here about why: per-day rounding of delivery commission drifts the revenue
+  // total). Cached-first so revisiting a month is instant instead of an ~8s recompute.
+  // `refetch` is named `load` so the commission-save handler below can refresh unchanged.
+  const noOutletPnl = basis === "audit" || basis === "bk_cost";
+  const { data, loading, refetch: load } = useApiData(`finance:${range.from}:${range.to}:${basis}`, () =>
+    noOutletPnl ? Promise.resolve(null) : api.getFinanceOutletPnl(range.from, range.to, basis).catch(() => null),
+    { initialLoading: !noOutletPnl });
+  // Mirror the server commission % into its own state (editing reflects without a refetch).
+  useEffect(() => { if (data?.commission_pct != null) setCommissionPct(data.commission_pct); }, [data]);
 
   // Store Cost tab — fetch vendor challans received this period, grouped by category.
   useEffect(() => {
