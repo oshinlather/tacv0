@@ -5690,10 +5690,10 @@ const Dispatch = () => {
                     {/* Column headers */}
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", marginBottom: 4 }}>
                       <span style={{ width: 24 }} />
-                      <span style={{ flex: 1, fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase", letterSpacing: 0.5 }}>Item</span>
+                      <span style={{ width: 210, fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase", letterSpacing: 0.5 }}>Item</span>
                       <span style={{ width: 50, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Asked</span>
                       <span style={{ width: 56, textAlign: "center", fontSize: 9, fontWeight: 700, color: "#BBB", textTransform: "uppercase" }}>Send</span>
-                      <span style={{ width: 28 }} />
+                      <span style={{ flex: 1 }} />
                     </div>
                     {cat.items.map(([id, qty]) => {
                       const dispVal = getDispQty(order.id, id, qty);
@@ -5706,7 +5706,7 @@ const Dispatch = () => {
                           <button onClick={() => toggleCheck(order.id, id)} style={{ width: 24, height: 24, borderRadius: 6, border: checked ? "2px solid #16A34A" : "2px solid #D0D0CC", background: checked ? "#16A34A" : "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, padding: 0 }}>
                             {checked && <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>✓</span>}
                           </button>
-                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A", textDecoration: checked ? "line-through" : "none" }}>
+                          <span title={getItemName(id)} style={{ width: 210, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13, fontWeight: 600, color: isZero ? "#DC2626" : "#1A1A1A", textDecoration: checked ? "line-through" : "none" }}>
                             {getItemName(id)}
                             {isExtra && <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 3, fontSize: 8, fontWeight: 700, background: "#2563EB", color: "#fff" }}>➕ PHONED IN</span>}
                           </span>
@@ -5722,6 +5722,7 @@ const Dispatch = () => {
                             disabled={checked}
                             style={{ width: 56, padding: "5px 4px", borderRadius: 6, border: isShort ? "2px solid #F59E0B" : isZero ? "2px solid #DC2626" : "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: isZero ? "#DC2626" : isShort ? "#B45309" : "#16A34A", background: checked ? "#F0FDF4" : "#fff" }} />
                           <span style={{ fontSize: 10, color: "#999", width: 28 }}>{getItemUnit(id)}</span>
+                          <span style={{ flex: 1 }} />
                           <button onClick={() => cancelItem(order, id)} disabled={cancelling === `${order.id}_${id}`} title={isExtra ? "Remove" : "Not sending this — cancel it"} style={{ padding: "2px 4px", border: "none", background: "transparent", color: "#DC2626", fontSize: 13, cursor: "pointer", flexShrink: 0 }}>{isExtra ? "🗑️" : "✕"}</button>
                         </div>
                       );
