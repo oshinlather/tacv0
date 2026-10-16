@@ -19,6 +19,9 @@ const typeDeadlineMin = (type, outletId) =>
   : type === "clean" ? 600            // 10:00 AM
   : type === "briefing" ? 1050        // 5:30 PM
   : /* closing */ (CLOSING_MIN[outletId] ?? 1530); // 1:30 AM next day
+// Code defaults — the baseline the owner's app_config overrides are merged onto.
+const DEFAULT_TIMES = {};
+PHOTO_OUTLETS.forEach((oid) => { DEFAULT_TIMES[oid] = Object.fromEntries(PHOTO_TYPES.map((t) => [t, typeDeadlineMin(t, oid)])); });
 
 const OP_ROLL_MIN = 300; // operational day rolls at 5:00 AM (after all closings, before openings)
 const istNow = () => new Date(Date.now() + 330 * 60000);
@@ -34,6 +37,18 @@ const signPath = async (path) => {
   if (!path) return null;
   const { data } = await supabase.storage.from("Photos").createSignedUrl(path, 86400);
   return data?.signedUrl || null;
+};
+
+// Owner-configurable per-outlet deadlines, stored as one JSON blob in app_config
+// (key 'outlet_photo_times'). Any slot the owner hasn't overridden falls back to the
+// code default, so the module works before — and regardless of — any saved config.
+const getTimesConfig = async () => {
+  const { data } = await supabase.from("app_config").select("value").eq("key", "outlet_photo_times").maybeSingle();
+  let stored = {};
+  try { stored = data?.value ? JSON.parse(data.value) : {}; } catch (e) { stored = {}; }
+  const merged = {};
+  PHOTO_OUTLETS.forEach((oid) => { merged[oid] = { ...DEFAULT_TIMES[oid], ...(stored[oid] || {}) }; });
+  return merged;
 };
 
 // ── POST /api/outlet-photos — capture one photo (camera only, on the client).
@@ -52,7 +67,8 @@ router.post("/", async (req, res) => {
 
     const opDate = currentOpDate();
     if (req.body.date && req.body.date !== opDate) return res.status(409).json({ error: "This photo window is for a different day." });
-    const deadline = typeDeadlineMin(photo_type, outlet_id);
+    const cfg = await getTimesConfig();
+    const deadline = cfg[outlet_id]?.[photo_type] ?? typeDeadlineMin(photo_type, outlet_id);
     if (elapsedMinInOpDate() > deadline) return res.status(403).json({ error: "This photo window has expired for today." });
 
     const buffer = Buffer.from(String(base64).replace(/^data:image\/\w+;base64,/, ""), "base64");
@@ -99,6 +115,44 @@ router.get("/", async (req, res) => {
       url: await signPath(r.storage_path),
     })));
     res.json({ date, op_date: currentOpDate(), photos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/outlet-photos/config — per-outlet deadlines (minutes from the op-day's
+// 00:00; closing values exceed 1440 = next calendar morning). Any authed role can read.
+router.get("/config", async (req, res) => {
+  const user = await requireRole(req, res, "owner", "outlet_mgr", "avp", "head_chef");
+  if (!user) return;
+  try { res.json({ outlets: PHOTO_OUTLETS, types: PHOTO_TYPES, roll_min: OP_ROLL_MIN, times: await getTimesConfig() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── PATCH /api/outlet-photos/config — owner edits deadlines. Body: { times: { outletId:
+// { type: minutes } } }. Merged into the stored blob; unspecified slots keep their value.
+router.patch("/config", async (req, res) => {
+  const user = await requireRole(req, res, "owner");
+  if (!user) return;
+  try {
+    const times = req.body && req.body.times;
+    if (!times || typeof times !== "object") return res.status(400).json({ error: "times object is required" });
+    const clean = {};
+    for (const oid of PHOTO_OUTLETS) {
+      if (!times[oid] || typeof times[oid] !== "object") continue;
+      for (const type of PHOTO_TYPES) {
+        const v = times[oid][type];
+        if (v == null) continue;
+        const n = Math.round(Number(v));
+        if (!Number.isFinite(n) || n < 0 || n > 2000) return res.status(400).json({ error: `invalid deadline for ${oid}/${type}` });
+        (clean[oid] = clean[oid] || {})[type] = n;
+      }
+    }
+    const { data } = await supabase.from("app_config").select("value").eq("key", "outlet_photo_times").maybeSingle();
+    let stored = {}; try { stored = data?.value ? JSON.parse(data.value) : {}; } catch (e) { stored = {}; }
+    const merged = { ...stored };
+    Object.keys(clean).forEach((oid) => { merged[oid] = { ...(stored[oid] || {}), ...clean[oid] }; });
+    const { error } = await supabase.from("app_config").upsert({ key: "outlet_photo_times", value: JSON.stringify(merged) }, { onConflict: "key" });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, times: await getTimesConfig() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

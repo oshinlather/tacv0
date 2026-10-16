@@ -96,17 +96,25 @@ const istMinOfDay = () => { const d = istNow(); return d.getUTCHours() * 60 + d.
 // Current operational date — before 5:00 AM it's still the previous calendar day.
 const currentOpDate = () => (istMinOfDay() < PHOTO_OP_ROLL_MIN ? istDateAgo(1) : today());
 const fmtClock = (mins) => { const mm = ((mins % 1440) + 1440) % 1440; const h = Math.floor(mm / 60), mi = mm % 60; const ap = h < 12 ? "AM" : "PM"; const h12 = h % 12 === 0 ? 12 : h % 12; return `${h12}:${String(mi).padStart(2, "0")} ${ap}`; };
-// 'done' (captured) | 'expired' (deadline passed, no photo) | 'pending' (before deadline).
-const outletPhotoStatus = (outletId, typeKey, opDate, hasPhoto) => {
-  if (hasPhoto) return "done";
+// Resolve a slot's deadline from owner config (cfg[outlet][type]), else the code default.
+const resolvePhotoDeadline = (cfg, outletId, typeKey) => {
+  const v = cfg?.[outletId]?.[typeKey];
+  if (v != null) return v;
   const t = OUTLET_PHOTO_TYPES.find((x) => x.key === typeKey);
-  const deadline = t ? t.deadline(outletId) : 0;
+  return t ? t.deadline(outletId) : 0;
+};
+// 'done' (captured) | 'expired' (deadline passed, no photo) | 'pending' (before deadline).
+const outletPhotoStatus = (deadline, opDate, hasPhoto) => {
+  if (hasPhoto) return "done";
   const curOp = currentOpDate();
   if (opDate < curOp) return "expired";
   if (opDate > curOp) return "pending";
   const elapsed = istMinOfDay() < PHOTO_OP_ROLL_MIN ? istMinOfDay() + 1440 : istMinOfDay();
   return elapsed > deadline ? "expired" : "pending";
 };
+// Clock ⇄ deadline-minutes for the owner editor. Closing in the AM (< noon) is next-day (+1440).
+const minToTimeStr = (min) => { const mm = ((min % 1440) + 1440) % 1440; return `${String(Math.floor(mm / 60)).padStart(2, "0")}:${String(mm % 60).padStart(2, "0")}`; };
+const timeStrToMin = (str, typeKey) => { const [h, m] = (str || "0:0").split(":").map(Number); let cm = (h || 0) * 60 + (m || 0); if (typeKey === "closing" && cm < 720) cm += 1440; return cm; };
 const PHOTO_STATUS_STYLE = {
   done: { bg: "#F0FDF4", border: "#BBF7D0", color: "#16A34A" },
   expired: { bg: "#FEF2F2", border: "#FECACA", color: "#DC2626" },
@@ -10693,6 +10701,7 @@ const OutletPhotoCapture = ({ outlet, onBack }) => {
   const [busy, setBusy] = useState(null);
   const [viewUrl, setViewUrl] = useState(null);
   const [err, setErr] = useState("");
+  const [cfg, setCfg] = useState({}); // owner-configured deadlines
   const load = () => {
     setLoading(true);
     api.getOutletPhotos({ date: opDate, outlet_id: outlet })
@@ -10700,6 +10709,7 @@ const OutletPhotoCapture = ({ outlet, onBack }) => {
       .catch(() => setPhotos({})).finally(() => setLoading(false));
   };
   useEffect(load, [outlet]);
+  useEffect(() => { api.getOutletPhotoConfig().then((r) => setCfg(r?.times || {})).catch(() => {}); }, []);
   const onCapture = (typeKey, dataUrl) => {
     setBusy(typeKey); setErr("");
     api.captureOutletPhoto({ outlet_id: outlet, photo_type: typeKey, base64: dataUrl, date: opDate })
@@ -10714,9 +10724,10 @@ const OutletPhotoCapture = ({ outlet, onBack }) => {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {OUTLET_PHOTO_TYPES.map((t) => {
           const photo = photos[t.key];
-          const status = outletPhotoStatus(outlet, t.key, opDate, !!photo);
+          const deadline = resolvePhotoDeadline(cfg, outlet, t.key);
+          const status = outletPhotoStatus(deadline, opDate, !!photo);
           const st = PHOTO_STATUS_STYLE[status];
-          const beforeDeadline = outletPhotoStatus(outlet, t.key, opDate, false) === "pending";
+          const beforeDeadline = outletPhotoStatus(deadline, opDate, false) === "pending";
           const canCapture = status === "pending" || (status === "done" && beforeDeadline);
           const uid = `op-cap-${t.key}`;
           return (
@@ -10726,7 +10737,7 @@ const OutletPhotoCapture = ({ outlet, onBack }) => {
                 <span style={{ marginLeft: "auto", fontSize: 15 }}>{status === "done" ? "✅" : status === "expired" ? "🔒" : "⏳"}</span>
               </div>
               {photo?.url && <img src={photo.url} alt={t.label} onClick={() => setViewUrl(photo.url)} style={{ width: "100%", height: 74, objectFit: "cover", borderRadius: 8, cursor: "pointer", border: "1px solid #E8E8E4" }} />}
-              <div style={{ fontSize: 10.5, color: st.color, fontWeight: 600 }}>{status === "done" ? `Captured ${clockOf(photo?.captured_at)}` : status === "expired" ? `Expired — was due by ${fmtClock(t.deadline(outlet))}` : `Due by ${fmtClock(t.deadline(outlet))}`}</div>
+              <div style={{ fontSize: 10.5, color: st.color, fontWeight: 600 }}>{status === "done" ? `Captured ${clockOf(photo?.captured_at)}` : status === "expired" ? `Expired — was due by ${fmtClock(deadline)}` : `Due by ${fmtClock(deadline)}`}</div>
               {canCapture && (
                 <label htmlFor={uid} style={{ marginTop: "auto", display: "block", textAlign: "center", padding: "8px", borderRadius: 10, background: status === "done" ? "#fff" : "#1A1A1A", color: status === "done" ? "#555" : "#fff", border: status === "done" ? "1px solid #E0E0DC" : "none", fontSize: 12, fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
                   {busy === t.key ? "⏳ Uploading…" : status === "done" ? "📷 Retake" : "📷 Capture"}
@@ -10749,7 +10760,12 @@ const OutletPhotoStatus = () => {
   const [photos, setPhotos] = useState({}); // outlet -> type -> photo
   const [loading, setLoading] = useState(true);
   const [viewUrl, setViewUrl] = useState(null);
+  const [cfg, setCfg] = useState({}); // owner-configured deadlines (outlet -> type -> min)
+  const [editTimes, setEditTimes] = useState(false);
+  const [draft, setDraft] = useState({}); // outlet -> type -> "HH:MM" while editing
+  const [savingCfg, setSavingCfg] = useState(false);
   const cols = OUTLETS.filter((o) => PHOTO_OUTLET_IDS.includes(o.id));
+  useEffect(() => { api.getOutletPhotoConfig().then((r) => setCfg(r?.times || {})).catch(() => {}); }, []);
   useEffect(() => {
     setLoading(true);
     api.getOutletPhotos({ date }).then((r) => {
@@ -10757,13 +10773,47 @@ const OutletPhotoStatus = () => {
     }).catch(() => setPhotos({})).finally(() => setLoading(false));
   }, [date]);
   const shift = (n) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); const s = d.toISOString().slice(0, 10); if (s <= currentOpDate()) setDate(s); };
+  const openEditor = () => { const d = {}; cols.forEach((o) => { d[o.id] = {}; OUTLET_PHOTO_TYPES.forEach((t) => { d[o.id][t.key] = minToTimeStr(resolvePhotoDeadline(cfg, o.id, t.key)); }); }); setDraft(d); setEditTimes(true); };
+  const saveTimes = () => {
+    const times = {};
+    cols.forEach((o) => { times[o.id] = {}; OUTLET_PHOTO_TYPES.forEach((t) => { times[o.id][t.key] = timeStrToMin(draft[o.id]?.[t.key], t.key); }); });
+    setSavingCfg(true);
+    api.saveOutletPhotoConfig(times).then((r) => { setCfg(r?.times || times); setEditTimes(false); }).catch((e) => alert(e.message || "Save failed")).finally(() => setSavingCfg(false));
+  };
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: "1 1 auto" }}>📸 Outlet Photos</h3>
       <button onClick={() => shift(-1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>←</button>
       <input type="date" max={currentOpDate()} value={date} onChange={(e) => setDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
       <button onClick={() => shift(1)} disabled={date >= currentOpDate()} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: date >= currentOpDate() ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: date >= currentOpDate() ? 0.4 : 1 }}>→</button>
+      {getCurrentUser()?.role === "owner" && <button onClick={() => (editTimes ? setEditTimes(false) : openEditor())} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: editTimes ? "#1A1A1A" : "#fff", color: editTimes ? "#fff" : "#555", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700 }}>{editTimes ? "✕ Close" : "⚙️ Edit times"}</button>}
     </div>
+    {editTimes && (
+      <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: 12, marginBottom: 12 }}>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 8 }}>Deadline time per photo, per outlet. Opening / Clean / Briefing are same-day; Closing is the next early morning (e.g. 01:00). Keep openings after 5:00 AM and closings before 5:00 AM so the daily reset stays clean.</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr><th style={{ ...thS, textAlign: "left" }}>Outlet</th>{OUTLET_PHOTO_TYPES.map((t) => <th key={t.key} style={{ ...thS, textAlign: "center" }}>{t.icon} {t.label}</th>)}</tr></thead>
+            <tbody>
+              {cols.map((o) => (
+                <tr key={o.id} style={{ borderTop: "1px solid #F0F0EC" }}>
+                  <td style={{ ...tdS, fontWeight: 700 }}>{o.short}</td>
+                  {OUTLET_PHOTO_TYPES.map((t) => (
+                    <td key={t.key} style={{ ...tdS, textAlign: "center" }}>
+                      <input type="time" value={draft[o.id]?.[t.key] || ""} onChange={(e) => setDraft((p) => ({ ...p, [o.id]: { ...p[o.id], [t.key]: e.target.value } }))} style={{ padding: "4px 6px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={saveTimes} disabled={savingCfg} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: savingCfg ? "wait" : "pointer", fontFamily: "inherit" }}>{savingCfg ? "⏳ Saving…" : "💾 Save times"}</button>
+          <button onClick={() => setEditTimes(false)} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+        </div>
+      </div>
+    )}
     <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#888", marginBottom: 12, flexWrap: "wrap" }}>
       <span><span style={{ color: "#16A34A" }}>●</span> Done</span><span><span style={{ color: "#DC2626" }}>●</span> Expired</span><span><span style={{ color: "#BBB" }}>●</span> Pending</span>
       <span style={{ marginLeft: "auto" }}>Tap a tile to view the photo</span>
@@ -10776,7 +10826,7 @@ const OutletPhotoStatus = () => {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, flex: 1 }}>
               {OUTLET_PHOTO_TYPES.map((t) => {
                 const photo = photos[o.id]?.[t.key];
-                const status = outletPhotoStatus(o.id, t.key, date, !!photo);
+                const status = outletPhotoStatus(resolvePhotoDeadline(cfg, o.id, t.key), date, !!photo);
                 const st = PHOTO_STATUS_STYLE[status];
                 return (
                   <button key={t.key} onClick={() => photo?.url && setViewUrl(photo.url)} title={`${t.label} — ${status}`} style={{ borderRadius: 10, border: `1.5px solid ${st.border}`, background: st.bg, color: st.color, padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: photo?.url ? "pointer" : "default", fontFamily: "inherit" }}>
@@ -20767,6 +20817,14 @@ const HOME_SECTIONS = [
   { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   { id: "demand", label: "📦 Demand & Dispatch" },
 ];
+// Nav pills for the BK cockpit (shown when the BK pill is selected) — jump straight to each
+// BK section, same scroll-spy mechanism as HOME_SECTIONS.
+const BK_SECTIONS = [
+  { id: "bk_dispatch", label: "🚚 Dispatch" },
+  { id: "bk_vendor", label: "🧾 Vendor Challans" },
+  { id: "bk_closing", label: "🏭 BK Closing" },
+  { id: "bk_audit", label: "📅 Monthly Audit" },
+];
 // Same outlets as everywhere else plus BK, but no "All" pill (per the Home spec).
 const HOME_OUTLETS = [...OUTLETS, { id: "bk", short: "🏭 BK" }];
 
@@ -20862,19 +20920,6 @@ const BKVendorChallansCard = ({ setOwnerTab }) => {
   );
 };
 
-const BKHomeDashboard = ({ setOwnerTab }) => (
-  <div>
-    <BKDispatchToday />
-    <BKVendorChallansCard setOwnerTab={setOwnerTab} />
-    <FlagCard icon="🏭" title="BK Closing & Wastage" subtitle="Base Kitchen's own daily closing + wastage" collapsible defaultCollapsed>
-      <BKClosingWastage />
-    </FlagCard>
-    <FlagCard icon="📅" title="Monthly Store Audit" subtitle="Per-item opening, in/out & closing — stock position over the month" collapsible defaultCollapsed>
-      <MonthlyBKAudit />
-    </FlagCard>
-  </div>
-);
-
 const OwnerHome = ({ setOwnerTab }) => {
   const [selOutlet, setSelOutlet] = useState("sec23");
   const isBK = selOutlet === "bk";
@@ -20917,9 +20962,12 @@ const OwnerHome = ({ setOwnerTab }) => {
       },
       { rootMargin: "-150px 0px -55% 0px" },
     );
-    HOME_SECTIONS.forEach((s) => { const el = sectionRefs.current[s.id]; if (el) obs.observe(el); });
+    (isBK ? BK_SECTIONS : HOME_SECTIONS).forEach((s) => { const el = sectionRefs.current[s.id]; if (el) obs.observe(el); });
     return () => obs.disconnect();
-  }, []);
+  }, [isBK]);
+  // Reset the highlighted nav pill to the first section of whichever layout is showing when
+  // switching between an outlet and BK, so a stale pill from the other layout doesn't linger.
+  useEffect(() => { setActiveSection(isBK ? "bk_dispatch" : "flags"); }, [isBK]);
 
   const jumpTo = (id) => {
     setActiveSection(id);
@@ -20952,16 +21000,27 @@ const OwnerHome = ({ setOwnerTab }) => {
       <div style={{ position: "sticky", top: 92, zIndex: 20, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", padding: "10px 0", marginBottom: 12, background: "#FAFAF8", borderBottom: "1px solid #ECECE8" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
         {HOME_OUTLETS.map((o) => pill(selOutlet === o.id, () => setSelOutlet(o.id), o.short, o.id, false))}
-        {!isBK && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
-            {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
-          </div>
-        )}
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
+          {(isBK ? BK_SECTIONS : HOME_SECTIONS).map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+        </div>
       </div>
 
-      {/* BK is a Base-Kitchen cockpit, not a sales/flags outlet — show its own dashboard
-          instead of the generic sections (which render empty for 'bk' anyway). */}
-      {isBK ? <BKHomeDashboard setOwnerTab={setOwnerTab} /> : <>
+      {/* BK is a Base-Kitchen cockpit, not a sales/flags outlet — show its own sections
+          instead of the generic ones (which render empty for 'bk' anyway). Each is wrapped in
+          section() so the top BK nav pills can scroll-jump to it. Closing & Monthly Audit are
+          expanded (not folded) so their category pills show inline. */}
+      {isBK ? <>
+      {section("bk_dispatch", "", "", <BKDispatchToday />)}
+      {section("bk_vendor", "", "", <BKVendorChallansCard setOwnerTab={setOwnerTab} />)}
+      {section("bk_closing", "", "",
+        <FlagCard icon="🏭" title="BK Closing & Wastage" subtitle="Base Kitchen's own daily closing + wastage">
+          <BKClosingWastage />
+        </FlagCard>)}
+      {section("bk_audit", "", "",
+        <FlagCard icon="📅" title="Monthly Store Audit" subtitle="Per-item opening, in/out & closing — stock position over the month">
+          <MonthlyBKAudit />
+        </FlagCard>)}
+      </> : <>
       {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,
         <FlagsSection dateStr={effDateStr} selOutlet={selOutlet} />)}
 

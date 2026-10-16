@@ -408,6 +408,8 @@ const api = {
   // ── Outlet daily photos (opening / clean / briefing / closing) ──
   captureOutletPhoto: (data) => post("/api/outlet-photos", data),
   getOutletPhotos: (params) => get("/api/outlet-photos", params),
+  getOutletPhotoConfig: () => get("/api/outlet-photos/config"),
+  saveOutletPhotoConfig: (times) => patch("/api/outlet-photos/config", { times }),
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),
   deleteChallan: (id) => del(`/api/store/challans/${id}`),
