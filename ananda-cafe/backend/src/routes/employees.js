@@ -62,6 +62,8 @@ const FULL_EDIT_FIELDS = [
   'name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active',
   'salary', 'salary_type', 'leave_allowed', 'shift_start', 'shift_end', 'weekly_off',
   'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id',
+  // Roster (DOD → Roster): named shift (morning/evening), position bucket, daily break hours.
+  'shift', 'position', 'break_hours',
 ];
 // What a scoped manager (outlet_mgr/store_mgr/bk_manager) may create/edit — no
 // salary, bank/UPI, app-login linking, or department reassignment. 'active' is

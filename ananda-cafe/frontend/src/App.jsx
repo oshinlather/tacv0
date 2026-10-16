@@ -14762,6 +14762,109 @@ const OutletPickerRow = ({ selOutlet, setSelOutlet }) => (<>
   {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
 </>);
 
+// ─── Roster (DOD → Roster). Assign each employee a named shift (Morning/Evening), a
+// position bucket, and a daily break length — all new per-employee fields (see
+// 2026_10_16_employee_roster.sql). Nothing was set before, so everything starts
+// unassigned and is edited here. Each control saves on change (dropdowns) / blur (break).
+const ROSTER_POSITIONS = ["Manager", "Chef", "Bainmarry", "Helper", "House Keeping", "Other"];
+const ROSTER_SHIFTS = [{ v: "", l: "— Unassigned" }, { v: "morning", l: "🌅 Morning" }, { v: "evening", l: "🌙 Evening" }];
+// Best-guess position from the free-text designation, used until one is explicitly set —
+// so grouping is sensible on day one instead of dumping everyone into "Other".
+const deriveRosterPosition = (desig) => {
+  const d = (desig || "").toLowerCase();
+  if (/manager/.test(d)) return "Manager";
+  if (/chef/.test(d)) return "Chef";
+  if (/bain|bamb|banmarr/.test(d)) return "Bainmarry";
+  if (/house ?keep|housekeep/.test(d)) return "House Keeping";
+  if (/helper/.test(d)) return "Helper";
+  return "Other";
+};
+const effectiveRosterPosition = (e) => e.position || deriveRosterPosition(e.designation);
+const ROSTER_SELECT_STYLE = { padding: "7px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#1A1A1A", fontWeight: 600, cursor: "pointer" };
+const rosterPill = (on) => ({ padding: "7px 12px", borderRadius: 8, border: on ? "none" : "1px solid #E0E0DC", background: on ? "#1A1A1A" : "#fff", color: on ? "#fff" : "#888", fontWeight: on ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
+
+const RosterPage = () => {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selDept, setSelDept] = useState(null); // null = All outlets
+  const [groupBy, setGroupBy] = useState("position"); // 'position' | 'shift'
+  const [breakDraft, setBreakDraft] = useState({}); // id -> string being typed (saved on blur)
+
+  const load = () => { setLoading(true); api.getEmployees().then((r) => setEmployees((r || []).filter((e) => e.active))).catch(() => setEmployees([])).finally(() => setLoading(false)); };
+  useEffect(load, []);
+
+  const saveField = async (emp, field, value) => {
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, [field]: value } : e))); // optimistic
+    try { await api.updateEmployee(emp.id, { [field]: value }); }
+    catch (err) { alert("Error: " + err.message); load(); }
+  };
+
+  const shown = selDept ? employees.filter((e) => e.department === selDept) : employees;
+
+  const groups = useMemo(() => {
+    if (groupBy === "position") {
+      return ROSTER_POSITIONS
+        .map((p) => ({ key: p, label: p, rows: shown.filter((e) => effectiveRosterPosition(e) === p) }))
+        .filter((g) => g.rows.length);
+    }
+    return [{ k: "morning", l: "🌅 Morning" }, { k: "evening", l: "🌙 Evening" }, { k: "", l: "— Unassigned" }]
+      .map((s) => ({ key: s.k || "unassigned", label: s.l, rows: shown.filter((e) => (e.shift || "") === s.k) }))
+      .filter((g) => g.rows.length);
+  }, [shown, groupBy]);
+
+  const deptLabel = (id) => EMPLOYEE_DEPARTMENTS.find((d) => d.id === id)?.label || id;
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>🗓️ Roster</h3>
+      <div style={{ fontSize: 11, color: "#999" }}>Shift, position & break hours per employee</div>
+      <div style={{ flex: 1 }} />
+      <div style={{ display: "flex", gap: 6 }}>
+        {[{ k: "position", l: "By Position" }, { k: "shift", l: "By Shift" }].map((t) => (
+          <button key={t.k} onClick={() => setGroupBy(t.k)} style={rosterPill(groupBy === t.k)}>{t.l}</button>
+        ))}
+      </div>
+    </div>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+      <button onClick={() => setSelDept(null)} style={rosterPill(selDept === null)}>All Outlets</button>
+      {EMPLOYEE_DEPARTMENTS.map((d) => (
+        <button key={d.id} onClick={() => setSelDept(d.id)} style={rosterPill(selDept === d.id)}>{d.label}</button>
+      ))}
+    </div>
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+      : shown.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No employees</div>
+      : groups.map((g) => (
+        <div key={g.key} style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#555", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>{g.label} <span style={{ color: "#BBB", fontWeight: 600 }}>({g.rows.length})</span></div>
+          {g.rows.map((e) => (
+            <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div style={{ flex: "1 1 150px", minWidth: 120 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{e.name}</div>
+                  <div style={{ fontSize: 11, color: "#999" }}>{e.designation || "—"} · {deptLabel(e.department)}</div>
+                </div>
+                <select title="Position" value={effectiveRosterPosition(e)} onChange={(ev) => saveField(e, "position", ev.target.value)} style={ROSTER_SELECT_STYLE}>
+                  {ROSTER_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <select title="Shift" value={e.shift || ""} onChange={(ev) => saveField(e, "shift", ev.target.value || null)} style={ROSTER_SELECT_STYLE}>
+                  {ROSTER_SHIFTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input type="number" inputMode="decimal" min="0" step="any" placeholder="0" title="Daily break hours"
+                    value={breakDraft[e.id] ?? (e.break_hours ?? "")}
+                    onChange={(ev) => setBreakDraft((p) => ({ ...p, [e.id]: ev.target.value.replace(/[^0-9.]/g, "") }))}
+                    onBlur={() => { const v = breakDraft[e.id]; setBreakDraft((p) => { const n = { ...p }; delete n[e.id]; return n; }); if (v === undefined) return; const num = v === "" ? null : Number(v); if (num !== (e.break_hours ?? null)) saveField(e, "break_hours", num); }}
+                    style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
+                  <span style={{ fontSize: 11, color: "#999" }}>br hr</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+  </div>);
+};
+
 const MissingPunchesTab = () => {
   const [selDay, setSelDay] = useState(1);
   const [selMonth, setSelMonth] = useState(null);
@@ -20556,7 +20659,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","monthly_bk_audit","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
@@ -20575,6 +20678,7 @@ export default function AnandaCafe() {
           { id: "mgr_perf", label: "🏆 Managers Performance", sub: "Cross-outlet manager scorecard" },
           { id: "punches", label: "🔔 Missing Punches", sub: "Owner nudge tool, own outlets" },
           { id: "attendance", label: "👥 Attendance", sub: "Daily attendance & monthly payroll" },
+          { id: "roster", label: "🗓️ Roster", sub: "Shifts, positions & breaks per employee" },
           { id: "challans", label: "🧾 Challans", sub: "Demand vs dispatch vs verified" },
           { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
         ].map((t) => (
@@ -20708,6 +20812,7 @@ export default function AnandaCafe() {
       {ownerTab === "mgr_perf" && <ManagersPerformance />}
       {ownerTab === "punches" && <MissingPunchesTab />}
       {ownerTab === "attendance" && <AttendanceTab />}
+      {ownerTab === "roster" && <RosterPage />}
       {ownerTab === "challans" && <ChallansTab />}
       {ownerTab === "demand_vs_closing" && <DemandVsClosingSection />}
       {ownerTab === "kitchen" && <BaseKitchen />}
