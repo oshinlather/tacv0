@@ -148,6 +148,15 @@ router.get('/', async (req, res) => {
     // down outstanding_advance (or payroll's deduction, see payroll.js) until approved.
     const { data: advances } = await supabase.from('books_ledger')
       .select('employee_id, amount, settled, status, entry_date').eq('is_advance', true).not('employee_id', 'is', null);
+
+    // Shift-manager login credentials — so the card can keep showing the phone + PIN to
+    // share for as long as the person is a shift manager (not just a one-time popup).
+    const smUserIds = (employees || []).filter((e) => e.is_shift_manager && e.app_user_id).map((e) => e.app_user_id);
+    const loginById = {};
+    if (smUserIds.length) {
+      const { data: logins } = await supabase.from('app_users').select('id, phone, pin, active').in('id', smUserIds);
+      (logins || []).forEach((u) => { loginById[u.id] = { phone: u.phone, pin: u.pin, active: u.active }; });
+    }
     // First day of the current IST month (UTC+5:30) — entry_date is a plain 'YYYY-MM-DD', so
     // a lexical >= compare against this string is the same as a date compare.
     const istNow = new Date(Date.now() + 330 * 60000);
@@ -168,7 +177,7 @@ router.get('/', async (req, res) => {
       else if (a.entry_date && a.entry_date >= lastMonthStart) lastMonthBalances[a.employee_id] = (lastMonthBalances[a.employee_id] || 0) + amt;
     });
 
-    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0, last_month_advance: lastMonthBalances[e.id] || 0 }, user)));
+    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0, last_month_advance: lastMonthBalances[e.id] || 0, shift_login: (e.is_shift_manager && e.app_user_id) ? (loginById[e.app_user_id] || null) : null }, user)));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

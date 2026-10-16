@@ -55,7 +55,10 @@ const getTimesConfig = async () => {
 // Body: { outlet_id, photo_type, base64, date? }. Enforces: own-outlet only (non-owner),
 // current operational day only, and not past the type's deadline (hard lock).
 router.post("/", async (req, res) => {
-  const user = await requireRole(req, res, "owner", "outlet_mgr");
+  // shift_manager is the dedicated on-the-ground role that actually captures these — its
+  // login is pinned to one outlet (app_users.outlet_id), so the own-outlet check below
+  // confines it exactly like an outlet manager.
+  const user = await requireRole(req, res, "owner", "outlet_mgr", "shift_manager");
   if (!user) return;
   try {
     const { outlet_id, photo_type, base64 } = req.body;
@@ -98,12 +101,12 @@ router.post("/", async (req, res) => {
 // scoped to their own. Returns captured rows with signed URLs; the client derives
 // per-slot done/expired/pending from the deadlines + current time.
 router.get("/", async (req, res) => {
-  const user = await requireRole(req, res, "owner", "outlet_mgr", "avp", "head_chef");
+  const user = await requireRole(req, res, "owner", "outlet_mgr", "avp", "head_chef", "shift_manager");
   if (!user) return;
   try {
     const date = req.query.date || currentOpDate();
     let outletFilter = req.query.outlet_id || null;
-    if (user.role === "outlet_mgr") outletFilter = user.outlet_id; // force own outlet
+    if (user.role === "outlet_mgr" || user.role === "shift_manager") outletFilter = user.outlet_id; // force own outlet
     let q = supabase.from("outlet_photos").select("outlet_id, photo_type, storage_path, captured_by, captured_at").eq("date", date);
     if (outletFilter) q = q.eq("outlet_id", outletFilter);
     const { data: rows, error } = await q;
@@ -121,7 +124,7 @@ router.get("/", async (req, res) => {
 // ── GET /api/outlet-photos/config — per-outlet deadlines (minutes from the op-day's
 // 00:00; closing values exceed 1440 = next calendar morning). Any authed role can read.
 router.get("/config", async (req, res) => {
-  const user = await requireRole(req, res, "owner", "outlet_mgr", "avp", "head_chef");
+  const user = await requireRole(req, res, "owner", "outlet_mgr", "avp", "head_chef", "shift_manager");
   if (!user) return;
   try { res.json({ outlets: PHOTO_OUTLETS, types: PHOTO_TYPES, roll_min: OP_ROLL_MIN, times: await getTimesConfig() }); }
   catch (e) { res.status(500).json({ error: e.message }); }

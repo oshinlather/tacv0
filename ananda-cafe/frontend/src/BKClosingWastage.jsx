@@ -18,7 +18,10 @@ const getCurrentUserName = () => { try { return JSON.parse(localStorage.getItem(
 const btnPrimary = { padding: "10px 16px", borderRadius: 10, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const inputStyle = { width: 76, padding: "8px 6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 };
 
-export default function BKClosingWastage() {
+export default function BKClosingWastage({ date }) {
+  // Embedded on BK Home, the shared date picker drives which day's closing/wastage shows (and
+  // gets written to). Standalone (no prop) it stays on today, as before.
+  const effDate = date || todayStr();
   const [mode, setMode] = useState("closing"); // "closing" | "wastage"
   const [section, setSection] = useState(DEMAND_SECTIONS[0].id);
   const [draft, setDraft] = useState({}); // item_id -> qty string
@@ -29,8 +32,12 @@ export default function BKClosingWastage() {
   const saveTimer = useRef(null);
 
   const load = () => {
+    // Switching date/mode: drop any pending debounced save (so it can't write the old draft to
+    // the newly-selected date) and clear the stale saved/error indicators before reloading.
+    clearTimeout(saveTimer.current);
+    setSavedAt(null); setError("");
     if (mode === "closing") {
-      api.getClosingStock({ outlet_id: "bk", date: todayStr() }).then((rows) => {
+      api.getClosingStock({ outlet_id: "bk", date: effDate }).then((rows) => {
         const row = (rows || [])[0];
         setExisting(row || null);
         if (row?.items) {
@@ -43,7 +50,7 @@ export default function BKClosingWastage() {
       // GET /api/demands only filters by outlet_id/date, not type — a 'bk' outlet_id
       // could have both this wastage row and a 'bk_demand' row on the same date, so the
       // type match has to happen client-side.
-      api.getDemands({ outlet_id: "bk", date: todayStr() }).then((rows) => {
+      api.getDemands({ outlet_id: "bk", date: effDate }).then((rows) => {
         const row = (Array.isArray(rows) ? rows : []).find((r) => r.type === "wastage") || null;
         setExisting(row);
         if (row?.items) {
@@ -52,7 +59,7 @@ export default function BKClosingWastage() {
       }).catch(() => {});
     }
   };
-  useEffect(load, [mode]);
+  useEffect(load, [mode, date]);
 
   const setQty = (itemId, val) => {
     setDraft((p) => ({ ...p, [itemId]: val }));
@@ -78,9 +85,9 @@ export default function BKClosingWastage() {
         // column the real OutletMgr closing-stock screen never populates either
         // (confirmed against real data: always null there); demands.submitted_by below
         // is a plain text column, different from this one despite the similar name.
-        await api.submitClosingStock({ outlet_id: "bk", items, items_units, date: todayStr() });
+        await api.submitClosingStock({ outlet_id: "bk", items, items_units, date: effDate });
       } else {
-        await api.createDemand({ outlet_id: "bk", type: "wastage", items, items_units, submitted_by: getCurrentUserName(), date: todayStr(), status: "submitted" });
+        await api.createDemand({ outlet_id: "bk", type: "wastage", items, items_units, submitted_by: getCurrentUserName(), date: effDate, status: "submitted" });
       }
       setSavedAt(new Date());
     } catch (e) { setError(e.message); } finally { setSaving(false); }
@@ -107,7 +114,7 @@ export default function BKClosingWastage() {
       </div>
 
       <div style={{ fontSize: 11, color: saving ? "#B45309" : savedAt ? "#16A34A" : "#999", marginBottom: 8 }}>
-        {saving ? "Saving…" : savedAt ? `✓ Saved ${savedAt.toLocaleTimeString()}` : `${filledCount} item(s) entered today`}
+        {saving ? "Saving…" : savedAt ? `✓ Saved ${savedAt.toLocaleTimeString()}` : `${filledCount} item(s) entered${effDate === todayStr() ? " today" : " for " + effDate}`}
       </div>
       {error && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 8 }}>{error}</div>}
 

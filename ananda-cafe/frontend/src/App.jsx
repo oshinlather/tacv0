@@ -1452,12 +1452,20 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
     catch (err) { alert("Error: " + err.message); load(); }
   };
   // Shift-manager toggle also provisions/deactivates the restricted app login (see backend).
+  // On enable, stash the returned phone+PIN on the row so the card keeps showing it to share.
   const toggleShiftMgr = async (emp, enabled) => {
-    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled } : e)));
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled, ...(enabled ? {} : { shift_login: null }) } : e)));
     try {
       const res = await api.setShiftManagerLogin(emp.id, enabled);
-      if (enabled && res?.pin) window.alert(`⭐ Shift Manager login ready for ${res.name}\n\n📱 Phone: ${res.phone}\n🔑 PIN: ${res.pin}\n\nShare these so they can log in. Flip this off any time to deactivate the login.`);
+      if (enabled && res?.phone) setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, shift_login: { phone: res.phone, pin: res.pin, active: true } } : e)));
     } catch (err) { alert("Error: " + err.message); load(); }
+  };
+  const shareShiftLoginWA = (emp) => {
+    const l = emp.shift_login; if (!l) return;
+    const text = `*The Ananda Cafe — Shift Manager Login*\n👤 ${emp.name}\n📱 Phone: ${l.phone}\n🔑 PIN: ${l.pin}\n\nLog in on the app with these.`;
+    const phone = (l.phone || "").replace(/\D/g, "");
+    const url = phone.length === 10 ? `https://wa.me/91${phone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank");
   };
 
   // Exited staff are hidden from the operational roster — they live only in the Onboarding
@@ -1659,6 +1667,14 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
               </div>
             );
           })()}
+          {/* Shift-manager app login — stays visible to share until the toggle is turned off. */}
+          {!fineOnly && emp.is_shift_manager && emp.shift_login && (
+            <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 8, padding: "6px 10px" }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "#7C3AED" }}>🔑 App login</span>
+              <span style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono', monospace", color: "#1A1A1A" }}>📱 {emp.shift_login.phone} · PIN {emp.shift_login.pin}</span>
+              <button onClick={() => shareShiftLoginWA(emp)} style={{ marginLeft: "auto", padding: "4px 10px", borderRadius: 6, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 10.5, cursor: "pointer", fontFamily: "inherit" }}>📲 Share</button>
+            </div>
+          )}
           {emp.current_month_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.current_month_advance)} advance this month</div>}
           {/* The "this month" figure resets on the 1st — keep last month's visible for reference. */}
           {emp.last_month_advance > 0 && <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 600, marginTop: 2 }}>🗓️ {fmt(emp.last_month_advance)} advance last month</div>}
@@ -6562,31 +6578,13 @@ const DriverVegetables = () => {
   </div>);
 };
 
-// Shift Manager portal — the restricted screen a shift-manager login lands on. Just the 4
-// photo-capture tiles (Opening / Clean Kitchen / Briefing / Closing), nothing else. The
-// actual capture+upload flow is being built in a separate workstream; this is the scaffold
-// it drops into — replace each tile's onClick/body when that lands. Kept intentionally bare
-// so a shift manager sees only these four actions.
-const SHIFT_MANAGER_TASKS = [
-  { key: "opening", icon: "🌅", label: "Opening", sub: "Shift start photos" },
-  { key: "clean_kitchen", icon: "🧽", label: "Clean Kitchen", sub: "Kitchen cleanliness photos" },
-  { key: "briefing", icon: "📣", label: "Briefing", sub: "Team briefing photos" },
-  { key: "closing", icon: "🌙", label: "Closing", sub: "Shift end photos" },
-];
-const ShiftManagerApp = () => {
-  return (<div>
-    <div style={{ fontSize: 13, color: "#999", marginBottom: 16 }}>Tap a task to capture its photos.</div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-      {SHIFT_MANAGER_TASKS.map((t) => (
-        <button key={t.key} onClick={() => alert(`📸 ${t.label} capture — coming soon.`)}
-          style={{ background: "#fff", border: "1.5px solid #E8E8E4", borderRadius: 16, padding: "24px 14px", textAlign: "center", cursor: "pointer", fontFamily: "inherit" }}>
-          <div style={{ fontSize: 40, marginBottom: 6 }}>{t.icon}</div>
-          <div style={{ fontSize: 16, fontWeight: 800 }}>{t.label}</div>
-          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{t.sub}</div>
-        </button>
-      ))}
-    </div>
-  </div>);
+// Shift Manager portal — the restricted screen a shift-manager login lands on. It's exactly
+// the outlet manager's Daily Photos capture (Opening / Clean Kitchen / Briefing / Closing),
+// scoped to this shift manager's own outlet, and nothing else. OutletPhotoCapture is defined
+// later in the file (module-level, so available at render time); no onBack — this IS the app.
+const ShiftManagerApp = ({ outlet }) => {
+  if (!outlet) return <div style={{ textAlign: "center", padding: 40, color: "#999", fontSize: 13 }}>No outlet is assigned to this login. Ask your manager to fix it.</div>;
+  return <OutletPhotoCapture outlet={outlet} onBack={null} />;
 };
 
 const DriverPortal = () => {
@@ -10717,7 +10715,7 @@ const OutletPhotoCapture = ({ outlet, onBack }) => {
   };
   const clockOf = (iso) => iso ? new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "";
   return (<div>
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}><BackBtn onClick={onBack} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📸 Daily Photos</div></div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>{onBack && <BackBtn onClick={onBack} />}<div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📸 Daily Photos</div></div>
     <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{oData?.name} · {opDate} — capture each with the camera before its deadline. A missed deadline locks red.</div>
     {err && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", fontSize: 12, marginBottom: 12 }}>{err}</div>}
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading…</div> : (
@@ -15198,11 +15196,12 @@ const RosterPage = () => {
     catch (err) { alert("Error: " + err.message); load(); }
   };
   // Shift-manager toggle also provisions/deactivates the restricted app login (see backend).
+  // On enable, stash the returned phone+PIN on the row so the card keeps showing it to share.
   const toggleShiftMgr = async (emp, enabled) => {
-    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled } : e)));
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled, ...(enabled ? {} : { shift_login: null }) } : e)));
     try {
       const res = await api.setShiftManagerLogin(emp.id, enabled);
-      if (enabled && res?.pin) window.alert(`⭐ Shift Manager login ready for ${res.name}\n\n📱 Phone: ${res.phone}\n🔑 PIN: ${res.pin}\n\nShare these so they can log in. Flip this off any time to deactivate the login.`);
+      if (enabled && res?.phone) setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, shift_login: { phone: res.phone, pin: res.pin, active: true } } : e)));
     } catch (err) { alert("Error: " + err.message); load(); }
   };
 
@@ -15296,6 +15295,10 @@ const RosterPage = () => {
                     {ROSTER_TIME_OPTS.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
                 </div>
+                {/* Persistent login credentials for a shift manager — visible until deactivated. */}
+                {e.is_shift_manager && e.shift_login && (
+                  <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>🔑 {e.shift_login.phone} · PIN {e.shift_login.pin}</span>
+                )}
               </div>
             </div>
             );
@@ -20838,30 +20841,39 @@ const BKDispatchToday = () => {
   const [orders, setOrders] = useState(null);
   const [open, setOpen] = useState({}); // order id -> expanded?
   useEffect(() => {
-    api.getOrders({ date: today(), status: "fulfilled" })
+    // No status filter — we want today's PENDING (submitted, awaiting dispatch) as well as the
+    // already-dispatched (fulfilled) ones. /api/orders?date= filters on the demand date.
+    api.getOrders({ date: today() })
       .then((d) => setOrders((d || []).filter((o) => o.type === "manual")))
       .catch(() => setOrders([]));
   }, []);
   const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" }) : "—";
-  const sorted = (orders || []).slice().sort((a, b) => (a.dispatched_at || "").localeCompare(b.dispatched_at || ""));
+  const slot = (o) => o.demand_slot === "morning" ? " · 🌅 Morning" : o.demand_slot === "evening" ? " · 🌙 Evening" : "";
+  const all = orders || [];
+  const dispatched = all.filter((o) => o.status === "fulfilled").sort((a, b) => (a.dispatched_at || "").localeCompare(b.dispatched_at || ""));
+  const pending = all.filter((o) => o.status === "submitted").sort((a, b) => (a.submitted_at || "").localeCompare(b.submitted_at || ""));
+  const rows = [...pending, ...dispatched]; // pending first — they still need dispatching
   return (
-    <FlagCard icon="🚚" title="Today's Dispatch" subtitle="Challans sent to outlets today — tap a time to see items" count={orders ? sorted.length : null}>
+    <FlagCard icon="🚚" title="Today's Dispatch" subtitle={orders ? `${pending.length} pending · ${dispatched.length} dispatched — tap to see items` : "Today's challans — tap to see items"} count={orders ? rows.length : null}>
       {orders === null ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>⏳ Loading…</div>
-       : sorted.length === 0 ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>No challans dispatched today yet.</div>
+       : rows.length === 0 ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>No challans for today yet.</div>
        : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {sorted.map((o) => {
+          {rows.map((o) => {
+            const isDone = o.status === "fulfilled";
             const outlet = findOutletForDisplay(o.outlet_id);
-            const disp = o.dispatch_items || o.items || {};
-            const ids = Object.keys(disp).filter((id) => (disp[id] || 0) > 0);
+            const data = isDone ? (o.dispatch_items || o.items || {}) : (o.items || {});
+            const ids = Object.keys(data).filter((id) => (data[id] || 0) > 0);
             const isOpen = !!open[o.id];
             return (
-              <div key={o.id} style={{ border: "1px solid #E8E8E4", borderRadius: 10, overflow: "hidden" }}>
-                <div onClick={() => setOpen((s) => ({ ...s, [o.id]: !s[o.id] }))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", cursor: "pointer", background: isOpen ? "#FBFAF7" : "#fff" }}>
+              <div key={o.id} style={{ border: "1px solid " + (isDone ? "#E8E8E4" : "#FED7AA"), borderRadius: 10, overflow: "hidden", background: isDone ? "#fff" : "#FFFBF5" }}>
+                <div onClick={() => setOpen((s) => ({ ...s, [o.id]: !s[o.id] }))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", cursor: "pointer", background: isOpen ? "#FBFAF7" : "transparent" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 14, color: "#1A1A1A", whiteSpace: "nowrap" }}>{fmtTime(o.dispatched_at)}</span>
+                    {isDone
+                      ? <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 14, color: "#1A1A1A", whiteSpace: "nowrap" }}>{fmtTime(o.dispatched_at)}</span>
+                      : <span style={{ fontSize: 10, fontWeight: 800, color: "#EA580C", background: "#FFEDD5", borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap" }}>⏳ PENDING</span>}
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{outlet?.name || o.outlet_id}</div>
-                      <div style={{ fontSize: 10, color: "#999" }}>{ids.length} items{o.demand_slot === "morning" ? " · 🌅 Morning" : o.demand_slot === "evening" ? " · 🌙 Evening" : ""}</div>
+                      <div style={{ fontSize: 10, color: "#999" }}>{ids.length} items{slot(o)}</div>
                     </div>
                   </div>
                   <span style={{ fontSize: 12, color: "#999" }}>{isOpen ? "▾" : "▸"}</span>
@@ -20871,7 +20883,7 @@ const BKDispatchToday = () => {
                     {ids.map((id) => (
                       <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F5F4F0", fontSize: 12.5 }}>
                         <span>{getBk(id)}</span>
-                        <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{disp[id]} <span style={{ color: "#999", fontWeight: 400 }}>{bkDisplayUnit(id, BK_ITEMS.find((b) => b.id === id)?.unit || "")}</span></span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{data[id]} <span style={{ color: "#999", fontWeight: 400 }}>{bkDisplayUnit(id, BK_ITEMS.find((b) => b.id === id)?.unit || "")}</span></span>
                       </div>
                     ))}
                   </div>
@@ -21013,8 +21025,8 @@ const OwnerHome = ({ setOwnerTab }) => {
       {section("bk_dispatch", "", "", <BKDispatchToday />)}
       {section("bk_vendor", "", "", <BKVendorChallansCard setOwnerTab={setOwnerTab} />)}
       {section("bk_closing", "", "",
-        <FlagCard icon="🏭" title="BK Closing & Wastage" subtitle="Base Kitchen's own daily closing + wastage">
-          <BKClosingWastage />
+        <FlagCard icon="🏭" title="BK Closing & Wastage" subtitle={`Base Kitchen's own closing + wastage · ${effDateStr}`}>
+          <BKClosingWastage date={effDateStr} />
         </FlagCard>)}
       {section("bk_audit", "", "",
         <FlagCard icon="📅" title="Monthly Store Audit" subtitle="Per-item opening, in/out & closing — stock position over the month">
@@ -21462,7 +21474,7 @@ export default function AnandaCafe() {
   </div>);
   if (effectiveApp === "shift_manager") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}><div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>⭐ Shift Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
-    <div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><ShiftManagerApp /></div>
+    <div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><ShiftManagerApp outlet={currentUser?.outlet_id} /></div>
   </div>);
   if (effectiveApp === "driver") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{currentUser?.role !== "driver" && !urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>🚚 Driver Portal</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
