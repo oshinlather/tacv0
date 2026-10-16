@@ -1235,8 +1235,13 @@ const TeamAttendance = ({ department = null }) => {
             </div>
           );
         })}
-        <button onClick={submit} disabled={saving} style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "default" : "pointer", fontFamily: "inherit", marginTop: 4, opacity: saving ? 0.6 : 1 }}>{saving ? "⏳ Saving..." : "✅ Submit Attendance"}</button>
-        {savedMsg && <div style={{ textAlign: "center", marginTop: 10, color: "#16A34A", fontWeight: 700, fontSize: 13 }}>{savedMsg}</div>}
+        {/* Sticky footer so a manager with a long roster never has to scroll to the end to
+            submit. Sits at the bottom of the viewport while the list scrolls beneath it; the
+            gradient fades the page bg (#FAFAF8) under it so rows don't abut the button hard. */}
+        <div style={{ position: "sticky", bottom: 0, marginTop: 4, paddingTop: 12, paddingBottom: 8, background: "linear-gradient(to top, #FAFAF8 72%, rgba(250,250,248,0))", zIndex: 5 }}>
+          <button onClick={submit} disabled={saving} style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "default" : "pointer", fontFamily: "inherit", opacity: saving ? 0.6 : 1, boxShadow: "0 4px 14px rgba(22,163,74,0.28)" }}>{saving ? "⏳ Saving..." : "✅ Submit Attendance"}</button>
+          {savedMsg && <div style={{ textAlign: "center", marginTop: 8, color: "#16A34A", fontWeight: 700, fontSize: 13 }}>{savedMsg}</div>}
+        </div>
       </>)}
   </div>);
 };
@@ -10528,7 +10533,7 @@ const OutletMgr = ({ onBack }) => {
   // as a same-day ("evening"/today) submit so all the downstream date/label logic just works;
   // emergencyMode is what flips the submit to createDemand(emergency:true).
   const [emergencyMode, setEmergencyMode] = useState(false);
-  const startEmergency = () => { setMorningDeliveryDate(null); setEmergencyMode(true); setDemandSlot("evening"); };
+  const startEmergency = () => { setMorningDeliveryDate(null); setEmergencyMode(true); setDemandSlot("emergency"); };
   const selectDemandSlot = async (slot) => {
     setEmergencyMode(false); // picking a normal slot clears emergency mode
     if (slot === "morning" && !closingIsCurrent) return;
@@ -10955,7 +10960,7 @@ const OutletMgr = ({ onBack }) => {
           // Emergency always creates a FRESH order (never updates an existing evening record) —
           // it's an additional, separate emergency demand; the backend emergency flag bypasses
           // the cutoff + already-dispatched guards and always-inserts.
-          if (emergencyMode) result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: `[🚨 Emergency ${today()}]${note ? " " + note : ""}`.trim(), date: today(), demand_slot: demandSlot, emergency: true, submitted_by: currentUser?.name || outlet });
+          if (emergencyMode) result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: `[🚨 Emergency ${today()}]${note ? " " + note : ""}`.trim(), date: today(), demand_slot: "evening", emergency: true, submitted_by: currentUser?.name || outlet });
           else if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: currentUser?.name || outlet });
