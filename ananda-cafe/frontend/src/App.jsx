@@ -878,6 +878,10 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
     finally { setSaving(false); }
   };
   const toggleActive = async () => {
+    // Exiting hides the person from every operational screen (team, attendance, payroll,
+    // advances) — they remain only in the Onboarding directory, where they can be re-activated
+    // if they rejoin. Confirm the exit so it isn't a slip; re-activating is harmless, no prompt.
+    if (emp.active && !window.confirm(`Mark ${emp.name} as Exited?\n\nThey'll be hidden everywhere except the Onboarding directory, where you can re-activate them if they come back.`)) return;
     setBusy(true);
     try { await api.updateEmployee(employeeId, { active: !emp.active }); load(); }
     catch (e) { alert("Error: " + e.message); }
@@ -945,7 +949,7 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
         <div style={{ fontSize: 17, fontWeight: 800 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 12, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
         <div style={{ fontSize: 12, color: "#888" }}>{emp.designation} · {EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</div>
       </div>
-      <span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emp.active ? "#F0FDF4" : "#FEF2F2", color: emp.active ? "#16A34A" : "#DC2626", border: `1px solid ${emp.active ? "#BBF7D0" : "#FECACA"}` }}>{emp.active ? "✅ Active" : "🚫 Churned"}</span>
+      <span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emp.active ? "#F0FDF4" : "#FEF2F2", color: emp.active ? "#16A34A" : "#DC2626", border: `1px solid ${emp.active ? "#BBF7D0" : "#FECACA"}` }}>{emp.active ? "✅ Active" : "🚪 Exited"}</span>
     </div>
 
     <button onClick={generateOfferLetter} style={{ width: "100%", padding: "11px", borderRadius: 12, border: "1px solid #FDE68A", background: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", color: "#B45309", fontWeight: 800, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>📄 Generate Offer Letter</button>
@@ -1007,7 +1011,7 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
       </div>
 
       <button onClick={toggleActive} disabled={busy} style={{ width: "100%", padding: 12, borderRadius: 12, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
-        {busy ? "⏳..." : emp.active ? "🚫 Mark as Churned" : "✅ Mark as Active"}
+        {busy ? "⏳..." : emp.active ? "🚪 Mark as Exited" : "✅ Re-activate"}
       </button>
     </>)}
   </div>);
@@ -1087,6 +1091,9 @@ const EmployeeMasterPanel = ({ onBack } = {}) => {
   };
 
   const toggleActive = async (id, active) => {
+    // Exit hides the person everywhere except here (the Onboarding directory); re-activate brings
+    // them back. Confirm the exit so it isn't an accidental tap on a team member who's still here.
+    if (active) { const emp = employees.find((e) => e.id === id); if (!window.confirm(`Mark ${emp?.name || "this employee"} as Exited?\n\nThey'll be hidden everywhere except here, where you can re-activate them if they rejoin.`)) return; }
     try { await api.updateEmployee(id, { active: !active }); load(); } catch (e) { alert("Error: " + e.message); }
   };
 
@@ -1161,7 +1168,7 @@ const EmployeeMasterPanel = ({ onBack } = {}) => {
               </>) : (<>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ flex: 1 }}>
-                    <div onClick={() => setProfileId(emp.id)} style={{ fontSize: 14, fontWeight: 700, color: "#2563EB", cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}</div>
+                    <div onClick={() => setProfileId(emp.id)} style={{ fontSize: 14, fontWeight: 700, color: "#2563EB", cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}{!emp.active && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700 }}> · 🚪 Exited</span>}</div>
                     <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}{emp.phone ? ` · ${emp.phone}` : ""}{emp.joining_date ? ` · joined ${emp.joining_date}` : ""}</div>
                     <div style={{ fontSize: 11, color: "#999", marginTop: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {emp.salary != null && <span>💰 {fmt(emp.salary)}/{emp.salary_type === "daily" ? "day" : "mo"}</span>}
@@ -1175,7 +1182,7 @@ const EmployeeMasterPanel = ({ onBack } = {}) => {
                 <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                   <button onClick={() => startEdit(emp)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", color: "#2563EB", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
                   <button onClick={() => setAttendanceOpenId(attendanceOpenId === emp.id ? null : emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: attendanceOpenId === emp.id ? "#EDE9FE" : "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>📅 Attendance</button>
-                  <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚫 Disable" : "✅ Enable"}</button>
+                  <button onClick={() => toggleActive(emp.id, emp.active)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: `1px solid ${emp.active ? "#FECACA" : "#BBF7D0"}`, background: emp.active ? "#FEF2F2" : "#F0FDF4", color: emp.active ? "#DC2626" : "#16A34A", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{emp.active ? "🚪 Exit" : "✅ Re-activate"}</button>
                   <button onClick={() => openAdvance(emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>
                   <button onClick={() => openFine(emp.id)} style={{ flex: "1 1 30%", padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
                 </div>
@@ -1398,7 +1405,9 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
     catch (err) { alert("Error: " + err.message); load(); }
   };
 
-  const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
+  // Exited staff are hidden from the operational roster — they live only in the Onboarding
+  // directory, where an onboarding manager/owner can re-activate them if they rejoin.
+  const load = () => { api.getEmployees().then((r) => setEmployees((r || []).filter((e) => e.active))).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
 
   const loadSalary = (id, month) => {
@@ -1606,8 +1615,9 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
                   which state is currently selected is unambiguous at a glance. */}
               <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                 <button type="button" onClick={() => setEditActive(true)} style={{ flex: 1, padding: 8, borderRadius: 8, border: editActive ? "none" : "1px solid #E0E0DC", background: editActive ? "#16A34A" : "#fff", color: editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✅ Active</button>
-                <button type="button" onClick={() => setEditActive(false)} style={{ flex: 1, padding: 8, borderRadius: 8, border: !editActive ? "none" : "1px solid #E0E0DC", background: !editActive ? "#DC2626" : "#fff", color: !editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🚫 Inactive</button>
+                <button type="button" onClick={() => setEditActive(false)} style={{ flex: 1, padding: 8, borderRadius: 8, border: !editActive ? "none" : "1px solid #E0E0DC", background: !editActive ? "#DC2626" : "#fff", color: !editActive ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🚪 Exited</button>
               </div>
+              {!editActive && <div style={{ fontSize: 10.5, color: "#B45309", marginBottom: 8 }}>On save, they're hidden from the team, attendance & payroll. Re-activate anytime from the Onboarding directory if they rejoin.</div>}
               {/* KYC — only the two doc types a scoped manager is allowed to handle
                   (backend enforces this too); PAN/offer letter/ID card stay owner-only. */}
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
@@ -3139,7 +3149,7 @@ const BooksLedger = () => {
             setForm({ ...form, employee_id: e.target.value, advance_to: emp ? emp.name : form.advance_to });
           }} style={{ width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }}>
             <option value="">Not linked — enter a name below</option>
-            {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.name} ({emp.designation})</option>)}
+            {employees.filter((emp) => emp.active).map((emp) => <option key={emp.id} value={emp.id}>{emp.name} ({emp.designation})</option>)}
           </select>
           <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Advance to</div>
           <input value={form.advance_to} onChange={(e) => setForm({ ...form, advance_to: e.target.value })} placeholder="person's name"

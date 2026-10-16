@@ -719,11 +719,13 @@ router.get("/store-audit/:date", async (req, res) => {
 // ── GET /api/inventory/store-audit-monthly/:month (YYYY-MM) — the monthly companion to the
 // daily BK Store Audit above: a pure stock-IN vs stock-OUT flow report for Store over a
 // whole month, per item, with OUT broken down by Base Kitchen and each outlet ("ordered by
-// outlets and base kitchen"). Deliberately NOT a closing-count reconciliation like the daily
-// one — no prior-closing anchor / should-be / actual — because closing counts are periodic
-// now, so a month rarely has a clean start+end count to reconcile against; this answers the
-// simpler, always-answerable question "what came in, and where did it go". Same source
-// tables + same dedup rules as the daily audit so the two always agree when summed.
+// outlets and base kitchen"). Now also carries an opening balance forward: each item is
+// anchored to the last submitted Store count before the month and rolled forward (same source
+// tables) to the 1st, giving Opening + In − Out = Closing (real stock position), not just this
+// month's flow. Items with no prior count show opening=null rather than a guessed 0. The live
+// stock_movements ledger is NOT the anchor — mid-period it can read negative before the count-
+// adjustments catch up; physical counts are the trustworthy opening (see the opening block
+// below). Same source tables + same dedup rules as the daily audit so the two always agree.
 //   Stock In  = received Vendor Challans + received Order Challans (POs) + stock_in movements
 //               (deduped by po_id::item_id, exactly as the daily audit does).
 //   Stock Out = demand dispatched this month, split: bk (outlet_id='bk') vs each outlet.
@@ -822,15 +824,96 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
       });
     });
 
+    // ── Opening carry-forward — anchor each ACTIVE item to its latest submitted Store count
+    // before the month and roll it forward (same source tables) to the 1st: Opening + In − Out =
+    // Closing (real stock position), not just this month's flow. Physical counts are the anchor,
+    // NOT the live stock_movements ledger (which reads negative mid-period before the periodic
+    // count-adjustments catch up). Items with no prior count show opening=null, never a guessed 0.
+    const activeIds = new Set([...Object.keys(inByItem), ...Object.keys(outByItem)]);
+    const anchorQty = {}, anchorDate = {}; // inv item id -> latest counted qty / its count date
+    if (activeIds.size) {
+      const lookbackStart = (() => { const d = new Date(`${monthStart}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 3); return d.toISOString().slice(0, 10); })();
+      const { data: priorCounts } = await supabase.from("stock_counts")
+        .select("id, count_date").eq("location_id", "store").eq("status", "submitted")
+        .gte("count_date", lookbackStart).lt("count_date", monthStart)
+        .order("count_date", { ascending: false });
+      // Newest count first; each item anchors to the first (latest) count that includes it. Fetch
+      // only the still-unanchored active items per count and stop once all are anchored — avoids
+      // pulling every count's full item list, which would blow past PostgREST's 1000-row cap and
+      // silently truncate to a stale anchor (the bug that made opening balances read negative).
+      for (const c of (priorCounts || [])) {
+        const need = [...activeIds].filter((id) => anchorQty[id] === undefined);
+        if (!need.length) break;
+        const { data: rows } = await supabase.from("stock_count_items")
+          .select("item_id, counted_qty").eq("count_id", c.id).in("item_id", need);
+        (rows || []).forEach((r) => { if (anchorQty[r.item_id] === undefined) { anchorQty[r.item_id] = Number(r.counted_qty); anchorDate[r.item_id] = c.count_date; } });
+      }
+    }
+    // Roll-forward: IN − OUT strictly AFTER each item's anchor date, up to the month start (a
+    // movement ON the anchor date is already inside that day's closing count). Window starts at
+    // the earliest anchor actually used, so it only spans what's needed. Same source tables +
+    // dedup + bk/outlet(non-food) split as the in-month figures above.
+    const rollIn = {}, rollOut = {};
+    const anchoredDates = Object.values(anchorDate);
+    if (anchoredDates.length) {
+      const rollBump = (invId, date, inQ, outQ) => {
+        if (invId == null || anchorDate[invId] === undefined) return;
+        if (!date || date <= anchorDate[invId]) return;
+        if (inQ) rollIn[invId] = (rollIn[invId] || 0) + inQ;
+        if (outQ) rollOut[invId] = (rollOut[invId] || 0) + outQ;
+      };
+      const minAnchor = anchoredDates.reduce((a, b) => (a < b ? a : b));
+      const rfStart = `${minAnchor}T00:00:00Z`, rfEnd = rangeStart; // per-item date<=anchor is skipped inside rollBump
+      const { data: rfMoves } = await supabase.from("inventory_movements")
+        .select("item_id, quantity, po_id, created_at").eq("type", "stock_in").gte("created_at", rfStart).lt("created_at", rfEnd);
+      const rfPairs = new Set();
+      (rfMoves || []).forEach((m) => { rollBump(m.item_id, (m.created_at || "").slice(0, 10), Number(m.quantity) || 0, 0); if (m.po_id) rfPairs.add(`${m.po_id}::${m.item_id}`); });
+      const { data: rfPOs } = await supabase.from("purchase_orders")
+        .select("id, items, received_at").eq("status", "received").gte("received_at", rfStart).lt("received_at", rfEnd);
+      (rfPOs || []).forEach((po) => { const date = (po.received_at || "").slice(0, 10); Object.entries(po.items || {}).forEach(([itemId, item]) => { if (rfPairs.has(`${po.id}::${itemId}`)) return; rollBump(itemId, date, Number(item?.received_qty) || 0, 0); }); });
+      const { data: rfChallans } = await supabase.from("vendor_challans")
+        .select("id, received_at").eq("location_id", "store").eq("status", "received").gte("received_at", rfStart).lt("received_at", rfEnd);
+      if (rfChallans?.length) {
+        const cDate = {}; rfChallans.forEach((c) => { cDate[c.id] = (c.received_at || "").slice(0, 10); });
+        const { data: rfCI } = await supabase.from("vendor_challan_items").select("item_id, qty_base, challan_id").in("challan_id", rfChallans.map((c) => c.id));
+        (rfCI || []).forEach((l) => rollBump(l.item_id, cDate[l.challan_id], Number(l.qty_base) || 0, 0));
+      }
+      const { data: rfDem } = await supabase.from("demands")
+        .select("outlet_id, dispatch_items, dispatched_at").in("type", ["manual", "bk_demand"]).eq("status", "fulfilled").gte("dispatched_at", rfStart).lt("dispatched_at", rfEnd);
+      (rfDem || []).forEach((row) => {
+        const date = (row.dispatched_at || "").slice(0, 10);
+        Object.entries(row.dispatch_items || {}).forEach(([demandId, qty]) => {
+          const invId = demandItemIdToInvId[demandId]; const q = Number(qty) || 0;
+          if (!invId || q <= 0) return;
+          if (row.outlet_id === "bk") rollBump(invId, date, 0, q);
+          else if (!isFoodItem(invById[invId])) rollBump(invId, date, 0, q);
+        });
+      });
+    }
+    const openingByItem = {}; // inv item id -> opening balance at month start (only when reliably derivable)
+    (items || []).forEach((item) => {
+      if (anchorQty[item.id] === undefined) return; // no prior count to anchor to -> "—"
+      const op = anchorQty[item.id] + (rollIn[item.id] || 0) - (rollOut[item.id] || 0);
+      // A negative opening means dispatches since the last count exceed (counted + recorded
+      // receipts) — true of fresh veg/milk dispatched from Store without a tracked stock-in.
+      // Physical stock can't be negative, so the opening isn't reliably derivable here: show
+      // "—" rather than a misleading negative, never a guessed number.
+      if (op < -0.001) return;
+      openingByItem[item.id] = op;
+    });
+
     const round = (n) => Math.round(n * 1000) / 1000;
-    // Build the per-date rows for one item (union of every date it had IN or OUT activity).
-    const buildByDate = (itemId) => {
+    // Build the per-date rows for one item (union of every date it had IN or OUT activity),
+    // carrying a running balance forward from `opening` (null when the item had no prior count).
+    const buildByDate = (itemId, opening) => {
       const inD = inByItemDate[itemId] || {};
       const outD = outByItemDate[itemId] || {};
       const dates = new Set([...Object.keys(inD), ...Object.keys(outD)]);
+      let running = opening;
       return [...dates].sort().map((date) => {
         const si = inD[date] || 0;
         const o = outD[date] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 };
+        if (running != null) running = running + si - o.total;
         return {
           date,
           stock_in: round(si),
@@ -838,6 +921,7 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
           outlet_out: Object.fromEntries(Object.entries(o.byOutlet).map(([k, v]) => [k, round(v)])),
           total_out: round(o.total),
           net: round(si - o.total),
+          balance: running != null ? round(running) : null,
         };
       });
     };
@@ -847,15 +931,20 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
       const out = outByItem[item.id] || { bk: 0, byOutlet: {}, outletTotal: 0, total: 0 };
       if (stockIn === 0 && out.total === 0) return; // no activity this month — skip
       const cat = item.category || "Other";
+      const hasOpening = openingByItem[item.id] !== undefined;
+      const opening = hasOpening ? openingByItem[item.id] : null;
       (byCategory[cat] = byCategory[cat] || []).push({
         item_id: item.id, name: item.name, unit: item.unit,
+        opening: hasOpening ? round(opening) : null,
+        anchor_date: hasOpening ? anchorDate[item.id] : null,
         stock_in: round(stockIn),
         bk_out: round(out.bk),
         outlet_out: Object.fromEntries(Object.entries(out.byOutlet).map(([k, v]) => [k, round(v)])),
         outlet_total: round(out.outletTotal),
         total_out: round(out.total),
         net: round(stockIn - out.total), // + = more came in than went out this month
-        by_date: buildByDate(item.id),
+        closing: hasOpening ? round(opening + stockIn - out.total) : null, // Opening + In − Out = real stock position
+        by_date: buildByDate(item.id, hasOpening ? opening : null),
       });
     });
     const categories = Object.entries(byCategory).map(([category, catItems]) => ({
