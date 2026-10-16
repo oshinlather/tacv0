@@ -1152,6 +1152,12 @@ const TeamAttendance = ({ department = null }) => {
   const [savedMsg, setSavedMsg] = useState("");
 
   const shown = department ? employees.filter((e) => e.department === department) : employees;
+  // Editable only for the last 3 days (today, yesterday, day-before). Older days are
+  // view-only — a manager can look back but can't silently rewrite settled attendance
+  // (payroll reads off these rows). ISO date strings compare correctly with >=.
+  const EDIT_WINDOW_DAYS = 3;
+  const editCutoff = istDateAgo(EDIT_WINDOW_DAYS - 1);
+  const editable = date >= editCutoff;
 
   const loadFor = (d) => {
     setLoading(true); setSavedMsg("");
@@ -1174,14 +1180,16 @@ const TeamAttendance = ({ department = null }) => {
   };
   useEffect(() => { loadFor(date); }, [date]);
 
-  const setStatus = (id, status) => { setDraft((p) => ({ ...p, [id]: { ...p[id], status } })); setSavedMsg(""); };
+  const setStatus = (id, status) => { if (!editable) return; setDraft((p) => ({ ...p, [id]: { ...p[id], status } })); setSavedMsg(""); };
   const setOt = (id, ot) => {
+    if (!editable) return;
     let v = ot.replace(/[^0-9.]/g, "");
     if (v !== "" && Number(v) > MAX_OT_HOURS) v = String(MAX_OT_HOURS); // OT capped at 6h
     setDraft((p) => ({ ...p, [id]: { ...p[id], ot: v } })); setSavedMsg("");
   };
 
   const submit = async () => {
+    if (!editable) return;
     setSaving(true); setSavedMsg("");
     try {
       for (const e of shown) {
@@ -1209,6 +1217,11 @@ const TeamAttendance = ({ department = null }) => {
       <input type="date" max={today()} value={date} onChange={(e) => setDate(e.target.value)} style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit" }} />
       {!loading && shown.length > 0 && <div style={{ fontSize: 12, color: "#999", fontWeight: 600, whiteSpace: "nowrap" }}>{presentCount}/{shown.length} present{halfCount > 0 ? ` · ${halfCount} ½` : ""}</div>}
     </div>
+    {!editable && (
+      <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 10, padding: "9px 12px", marginBottom: 12, fontSize: 12, color: "#92400E", fontWeight: 600 }}>
+        👁️ View only — you can edit attendance only for the last {EDIT_WINDOW_DAYS} days.
+      </div>
+    )}
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       : shown.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
       : (<>
@@ -1219,16 +1232,16 @@ const TeamAttendance = ({ department = null }) => {
           const absent = d.status === "absent";
           return (
             <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, opacity: editable ? 1 : 0.65, pointerEvents: editable ? "auto" : "none" }}>
                 <div style={{ flex: 1, fontSize: 14, fontWeight: 700 }}>{e.name}{e.designation && <span style={{ fontSize: 11, color: "#999", fontWeight: 500 }}> · {e.designation}</span>}</div>
-                <button onClick={() => setStatus(e.id, "present")} style={{ padding: "7px 10px", borderRadius: 8, border: present ? "none" : "1px solid #E0E0DC", background: present ? "#16A34A" : "#fff", color: present ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Present</button>
-                <button onClick={() => setStatus(e.id, "half_day")} style={{ padding: "7px 10px", borderRadius: 8, border: half ? "none" : "1px solid #E0E0DC", background: half ? "#B45309" : "#fff", color: half ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>½ Day</button>
-                <button onClick={() => setStatus(e.id, "absent")} style={{ padding: "7px 10px", borderRadius: 8, border: absent ? "none" : "1px solid #E0E0DC", background: absent ? "#DC2626" : "#fff", color: absent ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Absent</button>
+                <button onClick={() => setStatus(e.id, "present")} style={{ padding: "7px 10px", borderRadius: 8, border: present ? "none" : "1px solid #E0E0DC", background: present ? "#16A34A" : "#fff", color: present ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: editable ? "pointer" : "default", fontFamily: "inherit" }}>Present</button>
+                <button onClick={() => setStatus(e.id, "half_day")} style={{ padding: "7px 10px", borderRadius: 8, border: half ? "none" : "1px solid #E0E0DC", background: half ? "#B45309" : "#fff", color: half ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: editable ? "pointer" : "default", fontFamily: "inherit", whiteSpace: "nowrap" }}>½ Day</button>
+                <button onClick={() => setStatus(e.id, "absent")} style={{ padding: "7px 10px", borderRadius: 8, border: absent ? "none" : "1px solid #E0E0DC", background: absent ? "#DC2626" : "#fff", color: absent ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: editable ? "pointer" : "default", fontFamily: "inherit" }}>Absent</button>
               </div>
               {present && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                   <span style={{ fontSize: 12, color: "#666" }}>OT hours</span>
-                  <input type="number" inputMode="decimal" min="0" max={MAX_OT_HOURS} step="any" placeholder="0" value={d.ot} onChange={(ev) => setOt(e.id, ev.target.value)} style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
+                  <input type="number" inputMode="decimal" min="0" max={MAX_OT_HOURS} step="any" placeholder="0" disabled={!editable} value={d.ot} onChange={(ev) => setOt(e.id, ev.target.value)} style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "right", background: editable ? "#fff" : "#F5F5F3" }} />
                   <span style={{ fontSize: 11, color: "#BBB" }}>blank = 0 · max {MAX_OT_HOURS}</span>
                 </div>
               )}
@@ -1237,11 +1250,12 @@ const TeamAttendance = ({ department = null }) => {
         })}
         {/* Sticky footer so a manager with a long roster never has to scroll to the end to
             submit. Sits at the bottom of the viewport while the list scrolls beneath it; the
-            gradient fades the page bg (#FAFAF8) under it so rows don't abut the button hard. */}
-        <div style={{ position: "sticky", bottom: 0, marginTop: 4, paddingTop: 12, paddingBottom: 8, background: "linear-gradient(to top, #FAFAF8 72%, rgba(250,250,248,0))", zIndex: 5 }}>
+            gradient fades the page bg (#FAFAF8) under it so rows don't abut the button hard.
+            Hidden on view-only (older-than-3-days) days — nothing to submit there. */}
+        {editable && <div style={{ position: "sticky", bottom: 0, marginTop: 4, paddingTop: 12, paddingBottom: 8, background: "linear-gradient(to top, #FAFAF8 72%, rgba(250,250,248,0))", zIndex: 5 }}>
           <button onClick={submit} disabled={saving} style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "default" : "pointer", fontFamily: "inherit", opacity: saving ? 0.6 : 1, boxShadow: "0 4px 14px rgba(22,163,74,0.28)" }}>{saving ? "⏳ Saving..." : "✅ Submit Attendance"}</button>
           {savedMsg && <div style={{ textAlign: "center", marginTop: 8, color: "#16A34A", fontWeight: 700, fontSize: 13 }}>{savedMsg}</div>}
-        </div>
+        </div>}
       </>)}
   </div>);
 };
@@ -1307,7 +1321,9 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
   // Daily attendance punch tab — only roles the backend lets mark attendance (and not the
   // Chef's fine-only cut). See ATTENDANCE_MARK_ROLES in employees.js.
   const canMarkAttendance = ["outlet_mgr", "owner", "avp", "head_chef", "store_mgr"].includes(getCurrentUser()?.role);
-  const [view, setView] = useState("team"); // 'team' (roster) | 'attendance' (daily punch)
+  // Default to the Attendance punch (the daily job) when the manager can actually mark it;
+  // fall back to the roster for the Chef cut / roles without attendance access.
+  const [view, setView] = useState(canMarkAttendance && !fineOnly ? "attendance" : "team");
 
   const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -10452,6 +10468,9 @@ const OutletMgr = ({ onBack }) => {
   const [existingRecord, setExistingRecord] = useState(null);
   // true = showing the read-only "already submitted, tap Edit" recap instead of the form.
   const [viewingSubmitted, setViewingSubmitted] = useState(false);
+  // True when a LOCKED slot (e.g. evening past 11:45) was opened purely to VIEW the demand
+  // already submitted for it — read-only, no Edit/Submit. Set in selectDemandSlot, cleared on back.
+  const [slotViewOnly, setSlotViewOnly] = useState(false);
   const [outlet, setOutlet] = useState(null); const [screen, setScreen] = useState("pick"); const [images, setImages] = useState({}); const [draft, setDraft] = useState({}); const [closing, setClosing] = useState({}); const [expSec, setExpSec] = useState(null); const [note, setNote] = useState(""); const [subs, setSubs] = useState([]); const [last, setLast] = useState(null); const [saving, setSaving] = useState(false); const [err, setErr] = useState(null); const [itemSearch, setItemSearch] = useState("");
   // Most recent SUBMITTED closing stock (looking back a few days) — shown alongside each
   // item in the Demand form so a manager can see what's actually on the shelf while
@@ -10536,16 +10555,22 @@ const OutletMgr = ({ onBack }) => {
   const startEmergency = () => { setMorningDeliveryDate(null); setEmergencyMode(true); setDemandSlot("emergency"); };
   const selectDemandSlot = async (slot) => {
     setEmergencyMode(false); // picking a normal slot clears emergency mode
+    setSlotViewOnly(false);
     if (slot === "morning" && !closingIsCurrent) return;
-    if (slot === "evening" && eveningLocked) {
-      alert("Evening demand closes at 11:45 AM.\n\nNeed a late order today? Call the owner — they can open it for this outlet from the Owner Dashboard.");
-      return;
-    }
     const resolvedDate = slot === "morning" ? morningSlotDate() : today();
     setCheckingSlotDispatch(true);
     try {
       const rows = await api.getOrders({ outlet_id: outlet, date: resolvedDate });
+      const pending = (rows || []).find((r) => r.type === "manual" && r.demand_slot === slot && ["draft", "submitted"].includes(r.status));
       const already = (rows || []).find((r) => r.type === "manual" && r.demand_slot === slot && r.status === "fulfilled");
+      // Evening closed for the day — still let them VIEW the demand they already submitted
+      // (read-only). Nothing submitted yet → it stays closed with the usual nudge.
+      if (slot === "evening" && eveningLocked) {
+        if (pending) { setSlotViewOnly(true); setDemandSlot(slot); }
+        else if (already) { alert("This evening's demand has already been dispatched by Base Kitchen — open Dispatched Challans to see it."); }
+        else { alert("Evening demand closes at 11:45 AM.\n\nNeed a late order today? Call the owner — they can open it for this outlet from the Owner Dashboard."); }
+        return;
+      }
       if (already) {
         alert(`${slot === "morning" ? "Morning" : "Evening"} demand for ${resolvedDate} has already been dispatched by Base Kitchen — a second demand can't be created for the same slot.\n\nNeed something extra? Use Transfer, or ask Base Kitchen to add it when they next dispatch.`);
         return;
@@ -10553,6 +10578,7 @@ const OutletMgr = ({ onBack }) => {
       if (slot === "morning") setMorningDeliveryDate(resolvedDate);
       setDemandSlot(slot);
     } catch (e) {
+      if (slot === "evening" && eveningLocked) return; // couldn't check — don't open a locked slot blindly
       // Network hiccup on the pre-check shouldn't block a manager who has a real slot to
       // fill — proceed and let the backend's own authoritative guard catch it on submit.
       if (slot === "morning") setMorningDeliveryDate(resolvedDate);
@@ -11622,12 +11648,12 @@ const OutletMgr = ({ onBack }) => {
           same locked/unlocked visual language as Morning Delivery's own closing-stock
           gate above. eveningExceptionGranted === undefined means still checking; treated
           as locked (not falsely open) until that resolves. */}
-      <button onClick={() => selectDemandSlot("evening")} disabled={eveningLocked || checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${eveningLocked ? "#FECACA" : "#BFDBFE"}`, background: eveningLocked ? "#FEF2F2" : "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: eveningLocked || checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: eveningExceptionGranted === undefined && pastEveningCutoff ? 0.6 : 1 }}>
+      <button onClick={() => selectDemandSlot("evening")} disabled={checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: `1px solid ${eveningLocked ? "#FECACA" : "#BFDBFE"}`, background: eveningLocked ? "#FEF2F2" : "linear-gradient(135deg, #EFF6FF, #F0F9FF)", cursor: checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: eveningExceptionGranted === undefined && pastEveningCutoff ? 0.6 : 1 }}>
         <div style={{ fontSize: 40 }}>{eveningLocked ? "🔒" : "🌇"}</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: eveningLocked ? "#991B1B" : "#2563EB" }}>Evening Delivery</div>
           {eveningLocked ? (
-            <div style={{ fontSize: 12, color: "#991B1B", marginTop: 2 }}>Closed for today at 11:45 AM — call the owner if you need a late order; they can open it for you.</div>
+            <div style={{ fontSize: 12, color: "#991B1B", marginTop: 2 }}>Closed at 11:45 AM — tap to view the demand you already submitted, or call the owner for a late order.</div>
           ) : (<>
             <div style={{ fontSize: 13, color: "#1D4ED8", marginTop: 2 }}>{checkingSlotDispatch ? "Checking…" : today()} {checkingSlotDispatch ? "" : "(Today)"}</div>
             <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Items needed for today's evening shift{pastEveningCutoff && eveningExceptionGranted ? " — opened for you today by the owner" : ""}</div>
@@ -11741,10 +11767,10 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emergencyMode ? "#FEF2F2" : demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: emergencyMode ? "#DC2626" : demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${emergencyMode ? "#FECACA" : demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{emergencyMode ? "🚨 Emergency" : demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {emergencyMode ? today() : demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => { setDemandSlot(null); setSlotViewOnly(false); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emergencyMode ? "#FEF2F2" : demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: emergencyMode ? "#DC2626" : demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${emergencyMode ? "#FECACA" : demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{emergencyMode ? "🚨 Emergency" : demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {emergencyMode ? today() : demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
-    {viewingSubmitted && !isDraftRole ? (<>
-      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for this slot — {ft} items. Tap Edit to change.</div>
+    {(viewingSubmitted || slotViewOnly) && !isDraftRole ? (<>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: slotViewOnly ? "#FEF2F2" : "#F0FDF4", border: `1px solid ${slotViewOnly ? "#FECACA" : "#BBF7D0"}`, fontSize: 12, color: slotViewOnly ? "#991B1B" : "#166534", marginBottom: 14 }}>{slotViewOnly ? "🔒 This slot is closed — here's the demand you already submitted (view only)." : `✅ Already submitted for this slot — ${ft} items. Tap Edit to change.`}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
         {Object.entries(existingRecord?.items || {}).filter(([, q]) => q > 0).map(([id, q]) => (
           <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
@@ -11753,7 +11779,7 @@ const OutletMgr = ({ onBack }) => {
           </div>
         ))}
       </div>
-      <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>
+      {!slotViewOnly && <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
     </>) : (<>
     {isDraftRole && existingRecord?.status === "submitted" && (
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized this slot's demand — showing what was submitted.</div>

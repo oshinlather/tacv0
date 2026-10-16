@@ -23,8 +23,19 @@ const csv = require('csv-parser');
 const { Readable } = require('stream');
 const supabase = require('../supabase');
 const { requireRole } = require('./authGuards');
+const { todayIST } = require('../helpers');
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+// Outlet managers may only mark/correct attendance for the last 3 days (today and the two
+// prior) — older days are view-only for them in the app; this is the server-side backstop.
+// Owner/AVP/Head Chef/Store Manager keep unrestricted control via the owner attendance screen.
+const OUTLET_MGR_ATTENDANCE_EDIT_DAYS = 3;
+function outletMgrAttendanceCutoff() {
+  const d = new Date(todayIST() + 'T00:00:00');
+  d.setDate(d.getDate() - (OUTLET_MGR_ATTENDANCE_EDIT_DAYS - 1));
+  return d.toISOString().slice(0, 10);
+}
 
 const ATTENDANCE_STATUSES = ['present', 'absent', 'half_day', 'leave', 'holiday'];
 const DOC_TYPES = ['aadhar', 'pan', 'police_verification', 'offer_letter', 'id_card'];
@@ -380,6 +391,11 @@ router.post('/attendance', async (req, res) => {
     const { employee_id, date, status, note, hours_worked } = req.body;
     if (!employee_id || !date || !status) return res.status(400).json({ error: 'employee_id, date, and status are required' });
     if (!ATTENDANCE_STATUSES.includes(status)) return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` });
+
+    // Outlet managers: last-3-days edit window (see OUTLET_MGR_ATTENDANCE_EDIT_DAYS).
+    if (user.role === 'outlet_mgr' && date < outletMgrAttendanceCutoff()) {
+      return res.status(403).json({ error: `Attendance older than ${OUTLET_MGR_ATTENDANCE_EDIT_DAYS} days can't be edited` });
+    }
 
     const scope = scopeForUser(user);
     if (requireScope(scope, res)) return;
