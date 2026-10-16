@@ -15816,7 +15816,7 @@ const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
           const leakCost = Number(it.actual_consumed_cost || 0) - Number(it.should_consume_cost || 0);
           if (!(leakCost > 0)) return;
           rows.push({
-            outletId: o.outlet_id, name: it.raw_material, unit: it.unit,
+            outletId: o.outlet_id, itemId: it.item_id, name: it.raw_material, unit: it.unit,
             should: Number(it.should_consume), actual: Number(it.actual_consumed),
             variance: Number(it.variance), leakCost,
             variancePct: (it.variance_pct != null && isFinite(it.variance_pct)) ? Number(it.variance_pct) : null,
