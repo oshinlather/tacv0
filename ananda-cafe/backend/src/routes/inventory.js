@@ -731,15 +731,16 @@ router.get("/store-audit/:date", async (req, res) => {
 //   Stock Out = demand dispatched this month, split: bk (outlet_id='bk') vs each outlet.
 //               Outlet out excludes the "food" category (BK-prepared items outlets get from
 //               BK, not Store), same rule as the daily audit.
-router.get("/store-audit-monthly/:month", async (req, res) => {
-  if (!await gate(req, res)) return;
-  const { month } = req.params;
-  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "month must be YYYY-MM" });
-  try {
-    const monthStart = `${month}-01`;
-    const rangeStart = `${monthStart}T00:00:00Z`;
-    const nextMonth = (() => { const d = new Date(`${monthStart}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1); return d.toISOString().slice(0, 10); })();
-    const rangeEnd = `${nextMonth}T00:00:00Z`; // exclusive upper bound
+// Shared core for the store audit — computes per-item Opening (anchored to the last submitted
+// Store count BEFORE startDate, rolled forward) + Stock In + Stock Out (split BK vs each outlet)
+// + Closing over the window [startDate, endDateExcl). The monthly and daily routes below are thin
+// wrappers: a day is a one-day window, a month a whole-month window. The opening logic is identical
+// either way — which is exactly why "yesterday's closing = today's opening" falls out for free in
+// the day view (the anchor is the latest count before the day, i.e. yesterday's, carried forward).
+async function buildStoreAudit(startDate, endDateExcl) {
+    const monthStart = startDate; // window start (kept the name so the body below reads unchanged)
+    const rangeStart = `${startDate}T00:00:00Z`;
+    const rangeEnd = `${endDateExcl}T00:00:00Z`; // exclusive upper bound
 
     const { data: items } = await supabase.from("inventory_items").select("id, name, category, unit, demand_item_id");
     const { data: demandItems } = await supabase.from("demand_items").select("id, section_id");
@@ -947,11 +948,34 @@ router.get("/store-audit-monthly/:month", async (req, res) => {
         by_date: buildByDate(item.id, hasOpening ? opening : null),
       });
     });
-    const categories = Object.entries(byCategory).map(([category, catItems]) => ({
+    return Object.entries(byCategory).map(([category, catItems]) => ({
       category, items: catItems.sort((a, b) => b.total_out - a.total_out),
     }));
+}
 
+router.get("/store-audit-monthly/:month", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { month } = req.params;
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "month must be YYYY-MM" });
+  try {
+    const monthStart = `${month}-01`;
+    const nextMonth = (() => { const d = new Date(`${monthStart}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 1); return d.toISOString().slice(0, 10); })();
+    const categories = await buildStoreAudit(monthStart, nextMonth);
     res.json({ month, from: monthStart, to: prevDay(nextMonth), categories });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/inventory/store-audit-day/:date (YYYY-MM-DD) — same shape as the monthly audit but
+// for a single day: Opening ≈ yesterday's closing (the day's carry-forward), Closing = Opening +
+// that day's In − Out. Powers the BK Home audit's default Day view (toggle to Month hits the
+// monthly route above).
+router.get("/store-audit-day/:date", async (req, res) => {
+  if (!await gate(req, res)) return;
+  const { date } = req.params;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: "date must be YYYY-MM-DD" });
+  try {
+    const categories = await buildStoreAudit(date, nextDay(date));
+    res.json({ date, from: date, to: date, categories });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
