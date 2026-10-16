@@ -10962,7 +10962,7 @@ const OutletMgr = ({ onBack }) => {
           const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
           setSubs((p) => [e, ...p]); setLast(e);
           clearWip(wipKey("manual", outlet, deliveryDate, demandSlot));
-          showToastThen(`✅ Demand submitted successfully!\n🏪 ${oData?.name}  📅 ${deliveryDate}  ${demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"}  📦 ${filledCount} items`, () => { reset(); setClosing({}); setClosingUnits({}); setScreen("done"); });
+          showToastThen(`✅ Demand submitted successfully!\n🏪 ${oData?.name}  📅 ${emergencyMode ? today() : deliveryDate}  ${emergencyMode ? "🚨 Emergency" : demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"}  📦 ${filledCount} items`, () => { reset(); setClosing({}); setClosingUnits({}); setScreen("done"); });
         }
       }
     } catch (error) {
@@ -11061,14 +11061,17 @@ const OutletMgr = ({ onBack }) => {
         // Only draft/submitted — a demand already received/issued/fulfilled by BK is a
         // separate completed order, not today's shared draft, and must never be reopened
         // and silently rewritten here.
-        const rec = (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot && ["draft", "submitted"].includes(r.status));
+        // Emergency always starts a blank, fresh order — never reopen (and accidentally
+        // re-send) the outlet's existing evening demand; the backend inserts a separate
+        // emergency record on submit.
+        const rec = emergencyMode ? null : (rows || []).find((r) => r.type === "manual" && r.demand_slot === demandSlot && ["draft", "submitted"].includes(r.status));
         if (rec) setExistingRecord(rec);
         setDraft({ ...(rec?.items || {}), ...wip });
         setDraftUnits(rec?.items_units || {});
         setViewingSubmitted(rec?.status === "submitted");
       }).catch(() => { setDraft(wip); });
     }
-  }, [screen, outlet, selectedDate, demandSlot, morningDeliveryDate]);
+  }, [screen, outlet, selectedDate, demandSlot, morningDeliveryDate, emergencyMode]);
 
   // Write-through: whatever's typed persists to localStorage immediately, independent of
   // the save button, so it survives a reload even if the user never successfully saves.
@@ -11628,20 +11631,24 @@ const OutletMgr = ({ onBack }) => {
         <span style={{ color: eveningLocked ? "#DC2626" : "#2563EB", fontSize: 18 }}>{eveningLocked ? "🔒" : "→"}</span>
       </button>
 
-      {/* Emergency slot — only when the owner has opened a one-time emergency demand window
-          for this outlet today (Demand Approval → "🚨 Open Emergency Demand"). Always unlocked;
-          bypasses the closed-slot / already-dispatched limits via the backend emergency flag. */}
-      {emergencyGranted && (
-        <button onClick={startEmergency} disabled={checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FECACA", background: "linear-gradient(135deg, #FEF2F2, #FFF1F2)", cursor: checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-          <div style={{ fontSize: 40 }}>🚨</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#DC2626" }}>Emergency (needed now)</div>
+      {/* Emergency slot — ALWAYS shown, but LOCKED by default (disabled + 🔒). It only becomes
+          usable when the owner opens a one-time emergency demand window for this outlet
+          (Demand Approval → "🚨 Open Emergency Demand"); granted, it bypasses the closed-slot /
+          already-dispatched limits via the backend emergency flag. Same locked visual language
+          as Morning/Evening above. */}
+      <button onClick={emergencyGranted ? startEmergency : undefined} disabled={!emergencyGranted || checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FECACA", background: emergencyGranted ? "linear-gradient(135deg, #FEF2F2, #FFF1F2)" : "#FEF2F2", cursor: (emergencyGranted && !checkingSlotDispatch) ? "pointer" : "not-allowed", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12, opacity: emergencyGranted ? 1 : 0.7 }}>
+        <div style={{ fontSize: 40 }}>{emergencyGranted ? "🚨" : "🔒"}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: emergencyGranted ? "#DC2626" : "#991B1B" }}>Emergency (needed now)</div>
+          {emergencyGranted ? (<>
             <div style={{ fontSize: 13, color: "#B91C1C", marginTop: 2 }}>{today()} (Today)</div>
             <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Opened by the owner — send this even if the slot's closed or already dispatched.</div>
-          </div>
-          <span style={{ color: "#DC2626", fontSize: 18 }}>→</span>
-        </button>
-      )}
+          </>) : (
+            <div style={{ fontSize: 12, color: "#991B1B", marginTop: 2 }}>Locked — only the owner can open an emergency window for this outlet.</div>
+          )}
+        </div>
+        <span style={{ color: "#DC2626", fontSize: 18 }}>{emergencyGranted ? "→" : "🔒"}</span>
+      </button>
     </div>);
   }
 
@@ -11729,7 +11736,7 @@ const OutletMgr = ({ onBack }) => {
     const dressRoles = tshirtConfig?.options?.role || ["Chef", "Helper", "Manager", "Housekeeping"];
     const dressSizes = tshirtConfig?.options?.size || ["S", "M", "L", "XL", "XXL"];
 
-    return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
+    return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setDemandSlot(null)} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emergencyMode ? "#FEF2F2" : demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: emergencyMode ? "#DC2626" : demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${emergencyMode ? "#FECACA" : demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{emergencyMode ? "🚨 Emergency" : demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {emergencyMode ? today() : demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {viewingSubmitted && !isDraftRole ? (<>
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Already submitted for this slot — {ft} items. Tap Edit to change.</div>
