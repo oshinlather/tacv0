@@ -11262,7 +11262,11 @@ const OutletMgr = ({ onBack }) => {
 
   // ── TEAM — onboard staff for this outlet, give an advance (Chef: fine-only cut, see
   // TeamPanel's fineOnly prop) ──
-  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} fineOnly={isChef} />;
+  // Pin to this outlet: a manager with the Onboarding responsibility has a cross-outlet
+  // getEmployees identity (so the Onboarding directory can span outlets), which would otherwise
+  // make their own Team/Attendance card show every outlet's staff. The department prop narrows it
+  // back to their outlet client-side — exactly the unscoped-identity case TeamPanel anticipates.
+  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} fineOnly={isChef} department={outlet} />;
 
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
@@ -14889,6 +14893,7 @@ const RosterPage = () => {
   const [loading, setLoading] = useState(true);
   const [selDept, setSelDept] = useState(null); // null = All outlets
   const [selPos, setSelPos] = useState(null); // null = All positions
+  const [selShift, setSelShift] = useState(null); // null = All shifts, 'morning'|'evening'|'none'
   const [groupBy, setGroupBy] = useState("position"); // 'position' | 'shift'
   const [breakDraft, setBreakDraft] = useState({}); // id -> start/end being picked
 
@@ -14903,7 +14908,8 @@ const RosterPage = () => {
 
   const shown = employees
     .filter((e) => !selDept || e.department === selDept)
-    .filter((e) => !selPos || effectiveRosterPosition(e) === selPos);
+    .filter((e) => !selPos || effectiveRosterPosition(e) === selPos)
+    .filter((e) => !selShift || (selShift === "none" ? !e.shift : e.shift === selShift));
 
   const groups = useMemo(() => {
     if (groupBy === "position") {
@@ -14933,10 +14939,14 @@ const RosterPage = () => {
         <button key={d.id} onClick={() => setSelDept(d.id)} style={rosterPill(selDept === d.id)}>{d.label}</button>
       ))}
     </div>
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
       <button onClick={() => setSelPos(null)} style={rosterPill(selPos === null)}>All Positions</button>
       {ROSTER_POSITIONS.map((p) => (
         <button key={p} onClick={() => setSelPos(p)} style={rosterPill(selPos === p)}>{p}</button>
+      ))}
+      <span style={{ width: 1, height: 20, background: "#E0E0DC", margin: "0 4px" }} />
+      {[{ v: null, l: "All Shifts" }, { v: "morning", l: "🌅 Morning" }, { v: "evening", l: "🌙 Evening" }, { v: "none", l: "— Unassigned" }].map((s) => (
+        <button key={s.v || "all"} onClick={() => setSelShift(s.v)} style={rosterPill(selShift === s.v)}>{s.l}</button>
       ))}
     </div>
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
@@ -14956,7 +14966,9 @@ const RosterPage = () => {
             return (
             <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <div style={{ flex: "1 1 150px", minWidth: 120 }}>
+                {/* Fixed-width name column (no grow) so the controls sit left-aligned right
+                    after the name instead of being pushed to the far right of a wide screen. */}
+                <div style={{ flex: "0 0 220px", minWidth: 160 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{e.name}</div>
                   <div style={{ fontSize: 11, color: "#999" }}>{e.designation || "—"}</div>
                 </div>
