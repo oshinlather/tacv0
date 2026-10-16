@@ -14878,8 +14878,9 @@ const RosterPage = () => {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selDept, setSelDept] = useState(null); // null = All outlets
+  const [selPos, setSelPos] = useState(null); // null = All positions
   const [groupBy, setGroupBy] = useState("position"); // 'position' | 'shift'
-  const [breakDraft, setBreakDraft] = useState({}); // id -> string being typed (saved on blur)
+  const [breakDraft, setBreakDraft] = useState({}); // id -> start/end being picked
 
   const load = () => { setLoading(true); api.getEmployees().then((r) => setEmployees((r || []).filter((e) => e.active))).catch(() => setEmployees([])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -14890,7 +14891,9 @@ const RosterPage = () => {
     catch (err) { alert("Error: " + err.message); load(); }
   };
 
-  const shown = selDept ? employees.filter((e) => e.department === selDept) : employees;
+  const shown = employees
+    .filter((e) => !selDept || e.department === selDept)
+    .filter((e) => !selPos || effectiveRosterPosition(e) === selPos);
 
   const groups = useMemo(() => {
     if (groupBy === "position") {
@@ -14903,8 +14906,6 @@ const RosterPage = () => {
       .filter((g) => g.rows.length);
   }, [shown, groupBy]);
 
-  const deptLabel = (id) => EMPLOYEE_DEPARTMENTS.find((d) => d.id === id)?.label || id;
-
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>🗓️ Roster</h3>
@@ -14916,10 +14917,16 @@ const RosterPage = () => {
         ))}
       </div>
     </div>
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
       <button onClick={() => setSelDept(null)} style={rosterPill(selDept === null)}>All Outlets</button>
       {EMPLOYEE_DEPARTMENTS.map((d) => (
         <button key={d.id} onClick={() => setSelDept(d.id)} style={rosterPill(selDept === d.id)}>{d.label}</button>
+      ))}
+    </div>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+      <button onClick={() => setSelPos(null)} style={rosterPill(selPos === null)}>All Positions</button>
+      {ROSTER_POSITIONS.map((p) => (
+        <button key={p} onClick={() => setSelPos(p)} style={rosterPill(selPos === p)}>{p}</button>
       ))}
     </div>
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
@@ -14941,8 +14948,11 @@ const RosterPage = () => {
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ flex: "1 1 150px", minWidth: 120 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{e.name}</div>
-                  <div style={{ fontSize: 11, color: "#999" }}>{e.designation || "—"} · {deptLabel(e.department)}</div>
+                  <div style={{ fontSize: 11, color: "#999" }}>{e.designation || "—"}</div>
                 </div>
+                <select title="Outlet" value={e.department || ""} onChange={(ev) => saveField(e, "department", ev.target.value)} style={ROSTER_SELECT_STYLE}>
+                  {EMPLOYEE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                </select>
                 <select title="Position" value={effectiveRosterPosition(e)} onChange={(ev) => saveField(e, "position", ev.target.value)} style={ROSTER_SELECT_STYLE}>
                   {ROSTER_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
@@ -17820,10 +17830,10 @@ const MonthlyBKAudit = () => {
   // CSV — the full visible set (respects the category filter), one row per item with a
   // leading Category column so the flattened file stays grouped. Same columns as the table.
   const exportMonthly = () => {
-    const headers = ["Category", "Item", "Unit", "Stock In", "BK", ...outletCols.map((o) => o.short), "Total Out", "Net"];
+    const headers = ["Category", "Item", "Unit", "Opening", "Stock In", "BK", ...outletCols.map((o) => o.short), "Total Out", "Net", "Closing"];
     const rows = visibleCategories.flatMap((cat) => cat.items.map((i) => [
-      cat.category, i.name, i.unit, i.stock_in, i.bk_out,
-      ...outletCols.map((o) => i.outlet_out?.[o.id] || 0), i.total_out, i.net,
+      cat.category, i.name, i.unit, i.opening == null ? "" : i.opening, i.stock_in, i.bk_out,
+      ...outletCols.map((o) => i.outlet_out?.[o.id] || 0), i.total_out, i.net, i.closing == null ? "" : i.closing,
     ]));
     exportCSV(headers, rows, `monthly_bk_audit_${selMonth}.csv`);
   };
@@ -17842,7 +17852,7 @@ const MonthlyBKAudit = () => {
       </>)}
     </div>
 
-    <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}>Stock <strong style={{ color: "#16A34A" }}>In</strong> = purchases received into Store (challans + orders). Stock <strong style={{ color: "#B45309" }}>Out</strong> = dispatched, split by Base Kitchen and each outlet. Net = In − Out.</div>
+    <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}><strong style={{ color: "#888" }}>Opening</strong> = stock carried from last month (last count before the 1st, rolled forward). Stock <strong style={{ color: "#16A34A" }}>In</strong> = purchases received into Store (challans + orders). Stock <strong style={{ color: "#B45309" }}>Out</strong> = dispatched, split by Base Kitchen and each outlet. <strong style={{ color: "#1A1A1A" }}>Closing</strong> = Opening + In − Out (real stock position). "—" where there's no prior count to carry forward.</div>
 
     {loading ? (
       <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading monthly audit...</div>
@@ -17858,31 +17868,37 @@ const MonthlyBKAudit = () => {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
                 <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8" }}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Opening</th>
                 <th style={{ ...thS, textAlign: "right" }}>Stock In</th>
                 <th style={{ ...thS, textAlign: "right" }}>🏭 BK</th>
                 {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right" }}>{o.short}</th>)}
                 <th style={{ ...thS, textAlign: "right" }}>Total Out</th>
                 <th style={{ ...thS, textAlign: "right" }}>Net</th>
+                <th style={{ ...thS, textAlign: "right" }}>Closing</th>
               </tr></thead>
               <tbody>
                 {cat.items.map((i) => { const open = !!expanded[i.item_id]; const days = i.by_date || []; return (
                   <Fragment key={i.item_id}>
                   <tr style={{ borderBottom: open ? "none" : "1px solid #F0F0EC", cursor: days.length ? "pointer" : "default", background: open ? "#FBFAF7" : undefined }} onClick={() => days.length && setExpanded((e) => ({ ...e, [i.item_id]: !e[i.item_id] }))}>
                     <td style={{ ...tdS, position: "sticky", left: 0, background: open ? "#FBFAF7" : "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{days.length > 0 && <span style={{ color: "#BBB", marginRight: 5, fontSize: 10, display: "inline-block", width: 8 }}>{open ? "▾" : "▸"}</span>}{i.name}</div><div style={{ fontSize: 9, color: "#999", marginLeft: days.length > 0 ? 13 : 0 }}>{i.unit}{days.length > 0 ? ` · ${days.length} day${days.length > 1 ? "s" : ""}` : ""}</div></td>
+                    <td title={i.anchor_date ? `carried from count on ${i.anchor_date}` : "no prior count to carry forward"} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.opening == null ? "#DDD" : "#888", fontWeight: 600 }}>{i.opening == null ? "—" : fmtQty(i.opening)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.stock_in > 0 ? "#16A34A" : "#DDD", fontWeight: 700 }}>{i.stock_in > 0 ? "+" : ""}{fmtQty(i.stock_in)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.bk_out)}</td>
                     {outletCols.map((o) => { const q = i.outlet_out?.[o.id] || 0; return <td key={o.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: q > 0 ? "#555" : "#DDD" }}>{fmtQty(q)}</td>; })}
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: i.total_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.total_out)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: i.net > 0 ? "#2563EB" : i.net < 0 ? "#DC2626" : "#16A34A" }}>{i.net > 0 ? "+" : ""}{fmtQty(i.net)}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: i.closing == null ? "#DDD" : i.closing < 0 ? "#DC2626" : "#1A1A1A" }}>{i.closing == null ? "—" : fmtQty(i.closing)}</td>
                   </tr>
                   {open && days.map((d, di) => (
                     <tr key={i.item_id + "_" + d.date} style={{ borderBottom: di === days.length - 1 ? "1px solid #F0F0EC" : "1px solid #F5F4F0", background: "#FBFAF7" }}>
                       <td style={{ ...tdS, position: "sticky", left: 0, background: "#FBFAF7", paddingLeft: 26 }}><span style={{ fontSize: 11, color: "#777", fontWeight: 500 }}>{fmtDay(d.date)}</span></td>
+                      <td style={{ ...tdS, textAlign: "right", color: "#DDD" }}></td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.stock_in > 0 ? "#16A34A" : "#DDD" }}>{d.stock_in > 0 ? "+" : ""}{fmtQty(d.stock_in)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(d.bk_out)}</td>
                       {outletCols.map((o) => { const q = d.outlet_out?.[o.id] || 0; return <td key={o.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: q > 0 ? "#777" : "#DDD" }}>{fmtQty(q)}</td>; })}
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, color: d.total_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(d.total_out)}</td>
                       <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 700, color: d.net > 0 ? "#2563EB" : d.net < 0 ? "#DC2626" : "#16A34A" }}>{d.net > 0 ? "+" : ""}{fmtQty(d.net)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontSize: 11, fontWeight: 700, color: d.balance == null ? "#DDD" : d.balance < 0 ? "#DC2626" : "#555" }}>{d.balance == null ? "—" : fmtQty(d.balance)}</td>
                     </tr>
                   ))}
                   </Fragment>
@@ -20894,7 +20910,7 @@ export default function AnandaCafe() {
         </div>
       </div>
     </>)}
-    <div style={{ maxWidth: ["home", "payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance", "demands"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
+    <div style={{ maxWidth: ["home", "payroll", "pnl", "finance", "sales", "franchise_billing", "franchise_pricing", "rate_alert", "monthly_sales", "attendance", "demands", "roster"].includes(ownerTab) ? "100%" : 960, margin: "0 auto", padding: "20px 18px 40px" }}>
       <ClosingStockDraftBanner />
       {ownerTab === "sales" && <SalesUpload />}
       {ownerTab === "reviews" && <DailyReviewSummary />}
