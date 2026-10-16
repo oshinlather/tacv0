@@ -20895,9 +20895,10 @@ const BKDispatchToday = () => {
               <div key={o.id} style={{ border: "1px solid " + (isDone ? "#E8E8E4" : "#FED7AA"), borderRadius: 10, overflow: "hidden", background: isDone ? "#fff" : "#FFFBF5" }}>
                 <div onClick={() => setOpen((s) => ({ ...s, [o.id]: !s[o.id] }))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", cursor: "pointer", background: isOpen ? "#FBFAF7" : "transparent" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    {isDone
-                      ? <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 14, color: "#1A1A1A", whiteSpace: "nowrap" }}>{fmtTime(o.dispatched_at)}</span>
-                      : <span style={{ fontSize: 10, fontWeight: 800, color: "#EA580C", background: "#FFEDD5", borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap" }}>⏳ PENDING</span>}
+                    <div style={{ textAlign: "center", minWidth: 60, whiteSpace: "nowrap" }}>
+                      <div style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 13, color: isDone ? "#1A1A1A" : "#EA580C" }}>{fmtTime(isDone ? o.dispatched_at : o.submitted_at)}</div>
+                      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: isDone ? "#16A34A" : "#EA580C" }}>{isDone ? "✅ sent" : "⏳ pending"}</div>
+                    </div>
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 700 }}>{outlet?.name || o.outlet_id}</div>
                       <div style={{ fontSize: 10, color: "#999" }}>{ids.length} items{slot(o)}</div>
