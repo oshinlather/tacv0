@@ -20770,8 +20770,114 @@ const HOME_SECTIONS = [
 // Same outlets as everywhere else plus BK, but no "All" pill (per the Home spec).
 const HOME_OUTLETS = [...OUTLETS, { id: "bk", short: "🏭 BK" }];
 
-const OwnerHome = () => {
+// ═════════════════════════════════════════════════════════════════════════════
+//  BK HOME — shown when the "🏭 BK" pill is picked on Home. A Base-Kitchen cockpit
+//  (replaces the generic outlet dashboard, which has nothing to show for BK): today's
+//  dispatch challans folded to just their time, vendor challans with drafts surfaced
+//  and received ones folded away, plus BK closing and the Monthly Store Audit on tap.
+// ═════════════════════════════════════════════════════════════════════════════
+const BKDispatchToday = () => {
+  const [orders, setOrders] = useState(null);
+  const [open, setOpen] = useState({}); // order id -> expanded?
+  useEffect(() => {
+    api.getOrders({ date: today(), status: "fulfilled" })
+      .then((d) => setOrders((d || []).filter((o) => o.type === "manual")))
+      .catch(() => setOrders([]));
+  }, []);
+  const fmtTime = (ts) => ts ? new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" }) : "—";
+  const sorted = (orders || []).slice().sort((a, b) => (a.dispatched_at || "").localeCompare(b.dispatched_at || ""));
+  return (
+    <FlagCard icon="🚚" title="Today's Dispatch" subtitle="Challans sent to outlets today — tap a time to see items" count={orders ? sorted.length : null}>
+      {orders === null ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>⏳ Loading…</div>
+       : sorted.length === 0 ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>No challans dispatched today yet.</div>
+       : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {sorted.map((o) => {
+            const outlet = findOutletForDisplay(o.outlet_id);
+            const disp = o.dispatch_items || o.items || {};
+            const ids = Object.keys(disp).filter((id) => (disp[id] || 0) > 0);
+            const isOpen = !!open[o.id];
+            return (
+              <div key={o.id} style={{ border: "1px solid #E8E8E4", borderRadius: 10, overflow: "hidden" }}>
+                <div onClick={() => setOpen((s) => ({ ...s, [o.id]: !s[o.id] }))} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 14px", cursor: "pointer", background: isOpen ? "#FBFAF7" : "#fff" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 800, fontSize: 14, color: "#1A1A1A", whiteSpace: "nowrap" }}>{fmtTime(o.dispatched_at)}</span>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{outlet?.name || o.outlet_id}</div>
+                      <div style={{ fontSize: 10, color: "#999" }}>{ids.length} items{o.demand_slot === "morning" ? " · 🌅 Morning" : o.demand_slot === "evening" ? " · 🌙 Evening" : ""}</div>
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 12, color: "#999" }}>{isOpen ? "▾" : "▸"}</span>
+                </div>
+                {isOpen && (
+                  <div style={{ borderTop: "1px solid #F0F0EC" }}>
+                    {ids.map((id) => (
+                      <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F5F4F0", fontSize: 12.5 }}>
+                        <span>{getBk(id)}</span>
+                        <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{disp[id]} <span style={{ color: "#999", fontWeight: 400 }}>{bkDisplayUnit(id, BK_ITEMS.find((b) => b.id === id)?.unit || "")}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>}
+    </FlagCard>
+  );
+};
+
+const BKVendorChallansCard = ({ setOwnerTab }) => {
+  const [challans, setChallans] = useState(null);
+  useEffect(() => {
+    api.getChallans({ from: istDateAgo(90) }).then((d) => setChallans(d || [])).catch(() => setChallans([]));
+  }, []);
+  const drafts = (challans || []).filter((c) => c.status === "draft");
+  const rest = (challans || []).filter((c) => c.status !== "draft").sort((a, b) => (b.challan_date || "").localeCompare(a.challan_date || ""));
+  const row = (c, draft) => (
+    <div key={c.id} onClick={() => setOwnerTab && setOwnerTab("vendor_challans")} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", border: "1px solid " + (draft ? "#FED7AA" : "#E8E8E4"), borderRadius: 10, background: draft ? "#FFFBF5" : "#fff", cursor: "pointer" }}>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>{c.vendor_name || "(no vendor)"} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
+        <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.status === "received" ? " · 📥 received" : ""}</div>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        {c.total_amount != null && <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>{fmt(c.total_amount)}</div>}
+        <div style={{ fontSize: 10, fontWeight: 700, color: draft ? "#EA580C" : "#16A34A", marginTop: 2 }}>{draft ? "📝 Draft" : "✅ " + (c.status || "received")}</div>
+      </div>
+    </div>
+  );
+  return (
+    <FlagCard icon="🧾" title="Vendor Challans" subtitle="Drafts need receiving — last 90 days" count={challans ? drafts.length : null}
+      extra={<button onClick={(e) => { e.stopPropagation(); setOwnerTab && setOwnerTab("vendor_challans"); }} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open →</button>}>
+      {challans === null ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>⏳ Loading…</div>
+       : <>
+          {drafts.length === 0 ? <div style={{ color: "#16A34A", fontSize: 12.5, padding: "2px 2px 8px" }}>✅ No draft challans pending.</div>
+           : <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: rest.length ? 12 : 0 }}>{drafts.map((c) => row(c, true))}</div>}
+          {rest.length > 0 && (
+            <FlagCard icon="✅" title="Received / older" count={rest.length} collapsible defaultCollapsed cardStyle={{ marginBottom: 0, border: "1px solid #F0F0EC" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{rest.slice(0, 40).map((c) => row(c, false))}</div>
+            </FlagCard>
+          )}
+        </>}
+    </FlagCard>
+  );
+};
+
+const BKHomeDashboard = ({ setOwnerTab }) => (
+  <div>
+    <BKDispatchToday />
+    <BKVendorChallansCard setOwnerTab={setOwnerTab} />
+    <FlagCard icon="🏭" title="BK Closing & Wastage" subtitle="Base Kitchen's own daily closing + wastage" collapsible defaultCollapsed>
+      <BKClosingWastage />
+    </FlagCard>
+    <FlagCard icon="📅" title="Monthly Store Audit" subtitle="Per-item opening, in/out & closing — stock position over the month" collapsible defaultCollapsed>
+      <MonthlyBKAudit />
+    </FlagCard>
+  </div>
+);
+
+const OwnerHome = ({ setOwnerTab }) => {
   const [selOutlet, setSelOutlet] = useState("sec23");
+  const isBK = selOutlet === "bk";
   const [selDay, setSelDay] = useState(1); // yesterday — the latest fully-closed day
   const [selMonth, setSelMonth] = useState(null);
   const [activeSection, setActiveSection] = useState("flags");
@@ -20846,11 +20952,16 @@ const OwnerHome = () => {
       <div style={{ position: "sticky", top: 92, zIndex: 20, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", padding: "10px 0", marginBottom: 12, background: "#FAFAF8", borderBottom: "1px solid #ECECE8" }}>
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
         {HOME_OUTLETS.map((o) => pill(selOutlet === o.id, () => setSelOutlet(o.id), o.short, o.id, false))}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
-          {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
-        </div>
+        {!isBK && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
+            {HOME_SECTIONS.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+          </div>
+        )}
       </div>
 
+      {/* BK is a Base-Kitchen cockpit, not a sales/flags outlet — show its own dashboard
+          instead of the generic sections (which render empty for 'bk' anyway). */}
+      {isBK ? <BKHomeDashboard setOwnerTab={setOwnerTab} /> : <>
       {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,
         <FlagsSection dateStr={effDateStr} selOutlet={selOutlet} />)}
 
@@ -20868,6 +20979,7 @@ const OwnerHome = () => {
 
       {section("demand", "📦 Demand & Dispatch", `${outletShort} — last 7 days, AM/PM split`,
         <DemandHistory outletOverride={selOutlet} />)}
+      </>}
     </div>
   );
 };
@@ -21197,7 +21309,7 @@ export default function AnandaCafe() {
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "monthly_sales" && <MonthlySalesMatrix />}
-      {ownerTab === "home" && <OwnerHome />}
+      {ownerTab === "home" && <OwnerHome setOwnerTab={setOwnerTab} />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "finance" && <FinancePnL />}
       {ownerTab === "demands" && <DemandHistory />}
