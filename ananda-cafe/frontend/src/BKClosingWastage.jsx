@@ -29,6 +29,7 @@ export default function BKClosingWastage({ date }) {
   const [savedAt, setSavedAt] = useState(null);
   const [error, setError] = useState("");
   const [existing, setExisting] = useState(null);
+  const [showEmpties, setShowEmpties] = useState(false); // fold items with no qty entered
   const saveTimer = useRef(null);
 
   const load = () => {
@@ -60,6 +61,8 @@ export default function BKClosingWastage({ date }) {
     }
   };
   useEffect(load, [mode, date]);
+  // Re-collapse the empty items whenever the section / mode / date changes.
+  useEffect(() => { setShowEmpties(false); }, [section, mode, date]);
 
   const setQty = (itemId, val) => {
     setDraft((p) => ({ ...p, [itemId]: val }));
@@ -95,6 +98,12 @@ export default function BKClosingWastage({ date }) {
 
   const sec = DEMAND_SECTIONS.find((s) => s.id === section);
   const filledCount = Object.values(draft).filter((v) => v !== "" && v != null).length;
+  // "Filled" = a positive qty entered. By default only those show; the zero/empty rest fold
+  // under a toggle (expanding shows the whole section in its natural order so entry is normal).
+  const hasQty = (id) => { const v = draft[id]; return v != null && v !== "" && Number(v) > 0; };
+  const filledItems = sec ? sec.items.filter((i) => hasQty(i.id)) : [];
+  const emptyItems = sec ? sec.items.filter((i) => !hasQty(i.id)) : [];
+  const visibleItems = showEmpties ? (sec ? sec.items : []) : filledItems;
 
   return (
     <div>
@@ -118,14 +127,24 @@ export default function BKClosingWastage({ date }) {
       </div>
       {error && <div style={{ color: "#DC2626", fontSize: 12, marginBottom: 8 }}>{error}</div>}
 
-      <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 10, overflow: "hidden" }}>
-        {sec.items.map((item, idx) => (
-          <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderTop: idx === 0 ? "none" : "1px solid #F0F0EE" }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 500 }}>({item.unit})</span></div>
-            <input type="number" min="0" step="any" value={draft[item.id] || ""} onChange={(e) => setQty(item.id, e.target.value)} placeholder="0" style={inputStyle} />
-          </div>
-        ))}
-      </div>
+      {visibleItems.length > 0 && (
+        <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 10, overflow: "hidden" }}>
+          {visibleItems.map((item, idx) => (
+            <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderTop: idx === 0 ? "none" : "1px solid #F0F0EE" }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 500 }}>({item.unit})</span></div>
+              <input type="number" min="0" step="any" value={draft[item.id] || ""} onChange={(e) => setQty(item.id, e.target.value)} placeholder="0" style={inputStyle} />
+            </div>
+          ))}
+        </div>
+      )}
+      {!showEmpties && filledItems.length === 0 && (
+        <div style={{ textAlign: "center", padding: "18px", color: "#999", fontSize: 13, background: "#fff", border: "1px solid #E8E8E4", borderRadius: 10 }}>Nothing entered in {sec?.titleHi} for this day — tap below to add.</div>
+      )}
+      {emptyItems.length > 0 && (
+        <button onClick={() => setShowEmpties((v) => !v)} style={{ width: "100%", marginTop: 8, padding: "9px", borderRadius: 10, border: "1px dashed #D0D0CC", background: "#FAFAF8", color: "#777", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          {showEmpties ? `➖ Hide ${emptyItems.length} empty item${emptyItems.length > 1 ? "s" : ""}` : `➕ Show ${emptyItems.length} more item${emptyItems.length > 1 ? "s" : ""} (no qty)`}
+        </button>
+      )}
 
       {/* Explicit Save — flushes the current draft immediately (cancels the pending
           auto-save timer first so it doesn't double-fire). Labelled + coloured per mode, so

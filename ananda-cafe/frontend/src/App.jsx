@@ -18153,6 +18153,17 @@ const MonthlyBKAudit = ({ defaultMode = "month", stickyTop = 96 }) => {
   const [loading, setLoading] = useState(true);
   const [selCat, setSelCat] = useState(null);
   const [expanded, setExpanded] = useState({}); // item_id -> bool (date-wise breakdown open)
+  // The controls/pills bar is sticky; measure its height so the category header row below it can
+  // stack right underneath (both stay frozen for the whole audit, not just per-category).
+  const barRef = useRef(null);
+  const [barH, setBarH] = useState(50);
+  useEffect(() => {
+    const el = barRef.current; if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setBarH(el.offsetHeight);
+    update();
+    const ro = new ResizeObserver(update); ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     setLoading(true); setSelCat(null); setExpanded({});
@@ -18182,7 +18193,7 @@ const MonthlyBKAudit = ({ defaultMode = "month", stickyTop = 96 }) => {
   };
 
   return (<div>
-    <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+    <div ref={barRef} style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center", position: "sticky", top: stickyTop, zIndex: 11, background: "#fff", paddingTop: 6, paddingBottom: 8, borderBottom: "1px solid #F0F0EC" }}>
       {/* Day / Month toggle — day view carries yesterday's closing as today's opening. */}
       <div style={{ display: "flex", border: "1px solid #E0E0DC", borderRadius: 8, overflow: "hidden" }}>
         {["day", "month"].map((m) => (
@@ -18224,14 +18235,14 @@ const MonthlyBKAudit = ({ defaultMode = "month", stickyTop = 96 }) => {
         <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ ...thS, position: "sticky", left: 0, top: stickyTop, zIndex: 3, background: "#FAFAF8" }}>Item</th>
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Opening</th>
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Stock In</th>
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>🏭 BK</th>
-                {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>{o.short}</th>)}
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Total Out</th>
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Net</th>
-                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Closing</th>
+                <th style={{ ...thS, position: "sticky", left: 0, top: stickyTop + barH, zIndex: 3, background: "#FAFAF8" }}>Item</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>Opening</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>Stock In</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>🏭 BK</th>
+                {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>{o.short}</th>)}
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>Total Out</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>Net</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop + barH, zIndex: 2, background: "#FAFAF8" }}>Closing</th>
               </tr></thead>
               <tbody>
                 {cat.items.map((i) => { const open = !!expanded[i.item_id]; const days = mode === "day" ? [] : (i.by_date || []); return (
@@ -20842,6 +20853,7 @@ const ClosingStockDraftBanner = () => {
 // Reviews stays cross-outlet by design (its data is platform-wide, not per-outlet).
 const HOME_SECTIONS = [
   { id: "flags", label: "🚩 Flags" },
+  { id: "photos", label: "📸 Photos" },
   { id: "reviews", label: "⭐ Reviews" },
   { id: "compare", label: "📊 4-Week" },
   { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
@@ -20867,6 +20879,7 @@ const HOME_OUTLETS = [...OUTLETS, { id: "bk", short: "🏭 BK" }];
 const BKDispatchToday = () => {
   const [orders, setOrders] = useState(null);
   const [open, setOpen] = useState({}); // order id -> expanded?
+  const [filter, setFilter] = useState("all"); // all | pending | dispatched
   useEffect(() => {
     // No status filter — we want today's PENDING (submitted, awaiting dispatch) as well as the
     // already-dispatched (fulfilled) ones. /api/orders?date= filters on the demand date.
@@ -20880,12 +20893,19 @@ const BKDispatchToday = () => {
   const dispatched = all.filter((o) => o.status === "fulfilled").sort((a, b) => (a.dispatched_at || "").localeCompare(b.dispatched_at || ""));
   const pending = all.filter((o) => o.status === "submitted").sort((a, b) => (a.submitted_at || "").localeCompare(b.submitted_at || ""));
   const rows = [...pending, ...dispatched]; // pending first — they still need dispatching
+  const shown = filter === "pending" ? pending : filter === "dispatched" ? dispatched : rows;
   return (
     <FlagCard icon="🚚" title="Today's Dispatch" subtitle={orders ? `${pending.length} pending · ${dispatched.length} dispatched — tap to see items` : "Today's challans — tap to see items"} count={orders ? rows.length : null}>
       {orders === null ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>⏳ Loading…</div>
        : rows.length === 0 ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>No challans for today yet.</div>
-       : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {rows.map((o) => {
+       : <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+            {[["all", `All (${rows.length})`], ["pending", `⏳ Pending (${pending.length})`], ["dispatched", `✅ Dispatched (${dispatched.length})`]].map(([f, label]) => (
+              <button key={f} onClick={() => setFilter(f)} style={{ padding: "5px 12px", borderRadius: 999, border: filter === f ? "none" : "1px solid #E0E0DC", background: filter === f ? "#1A1A1A" : "#fff", color: filter === f ? "#fff" : "#888", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+            ))}
+          </div>
+          {shown.length === 0 ? <div style={{ color: "#999", fontSize: 13, padding: 8 }}>Nothing {filter === "pending" ? "pending" : "dispatched"} right now.</div> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {shown.map((o) => {
             const isDone = o.status === "fulfilled";
             const outlet = findOutletForDisplay(o.outlet_id);
             const data = isDone ? (o.dispatch_items || o.items || {}) : (o.items || {});
@@ -20920,6 +20940,7 @@ const BKDispatchToday = () => {
             );
           })}
         </div>}
+        </>}
     </FlagCard>
   );
 };
@@ -20960,9 +20981,53 @@ const BKVendorChallansCard = ({ setOwnerTab }) => {
   );
 };
 
+// Outlet daily op/clean/briefing/closing photos — four rows for the selected outlet + date,
+// each showing the captured time + a thumbnail that opens the full photo. Reuses the outlet-photo
+// module's types/data (same as the Owner's "Outlet Photos" grid), just one outlet at a time.
+const OutletPhotoStrip = ({ outlet, date }) => {
+  const [photos, setPhotos] = useState(null); // photo_type -> photo
+  const [viewUrl, setViewUrl] = useState(null);
+  useEffect(() => {
+    setPhotos(null);
+    api.getOutletPhotos({ date, outlet_id: outlet })
+      .then((r) => { const m = {}; (r?.photos || []).forEach((p) => { m[p.photo_type] = p; }); setPhotos(m); })
+      .catch(() => setPhotos({}));
+  }, [outlet, date]);
+  const fmtT = (ts) => ts ? new Date(ts).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" }) : "";
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
+      {OUTLET_PHOTO_TYPES.map((t, idx) => {
+        const p = photos?.[t.key];
+        return (
+          <div key={t.key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderTop: idx === 0 ? "none" : "1px solid #F0F0EC" }}>
+            <span style={{ fontSize: 20, width: 26, textAlign: "center", flexShrink: 0 }}>{t.icon}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{t.label}</div>
+              <div style={{ fontSize: 11, color: p ? "#16A34A" : "#BBB" }}>
+                {photos === null ? "…" : p ? `✓ ${fmtT(p.captured_at)}${p.captured_by ? " · " + p.captured_by : ""}` : "not captured"}
+              </div>
+            </div>
+            {p?.url
+              ? <img src={p.url} alt={t.label} onClick={() => setViewUrl(p.url)} style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 8, border: "1px solid #E8E8E4", cursor: "pointer", flexShrink: 0 }} />
+              : <div style={{ width: 48, height: 48, borderRadius: 8, border: "1px dashed #E0E0DC", display: "flex", alignItems: "center", justifyContent: "center", color: "#CCC", fontSize: 18, flexShrink: 0 }}>📷</div>}
+          </div>
+        );
+      })}
+      {viewUrl && (
+        <div onClick={() => setViewUrl(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, cursor: "zoom-out" }}>
+          <img src={viewUrl} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10 }} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 const OwnerHome = ({ setOwnerTab }) => {
   const [selOutlet, setSelOutlet] = useState("sec23");
   const isBK = selOutlet === "bk";
+  const showPhotos = !isBK && PHOTO_OUTLET_IDS.includes(selOutlet);
+  // The Photos nav pill + section only apply to outlets that capture photos (not BK, not Elan).
+  const homeSections = isBK ? BK_SECTIONS : (showPhotos ? HOME_SECTIONS : HOME_SECTIONS.filter((s) => s.id !== "photos"));
   const [selDay, setSelDay] = useState(1); // yesterday — the latest fully-closed day
   const [selMonth, setSelMonth] = useState(null);
   const [activeSection, setActiveSection] = useState("flags");
@@ -21002,9 +21067,9 @@ const OwnerHome = ({ setOwnerTab }) => {
       },
       { rootMargin: "-150px 0px -55% 0px" },
     );
-    (isBK ? BK_SECTIONS : HOME_SECTIONS).forEach((s) => { const el = sectionRefs.current[s.id]; if (el) obs.observe(el); });
+    homeSections.forEach((s) => { const el = sectionRefs.current[s.id]; if (el) obs.observe(el); });
     return () => obs.disconnect();
-  }, [isBK]);
+  }, [isBK, showPhotos]);
   // Reset the highlighted nav pill to the first section of whichever layout is showing when
   // switching between an outlet and BK, so a stale pill from the other layout doesn't linger.
   useEffect(() => { setActiveSection(isBK ? "bk_dispatch" : "flags"); }, [isBK]);
@@ -21041,7 +21106,7 @@ const OwnerHome = ({ setOwnerTab }) => {
         <DateRangeDropdown selDay={selDay} setSelDay={setSelDay} selMonth={selMonth} setSelMonth={setSelMonth} monthOptions={monthOptions} marginBottom={0} />
         {HOME_OUTLETS.map((o) => pill(selOutlet === o.id, () => setSelOutlet(o.id), o.short, o.id, false))}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginLeft: "auto" }}>
-          {(isBK ? BK_SECTIONS : HOME_SECTIONS).map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
+          {homeSections.map((s) => pill(activeSection === s.id, () => jumpTo(s.id), s.label, s.id, true))}
         </div>
       </div>
 
@@ -21057,12 +21122,15 @@ const OwnerHome = ({ setOwnerTab }) => {
           <BKClosingWastage date={effDateStr} />
         </FlagCard>)}
       {section("bk_audit", "", "",
-        <FlagCard icon="📅" title="Store Audit" subtitle="Per-item opening, in/out & closing — today by default, toggle to month">
+        <FlagCard icon="📅" title="Store Audit" subtitle="Per-item opening, in/out & closing — today by default, toggle to month" cardStyle={{ overflow: "visible" }}>
           <MonthlyBKAudit defaultMode="day" stickyTop={142} />
         </FlagCard>)}
       </> : <>
       {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,
         <FlagsSection dateStr={effDateStr} selOutlet={selOutlet} />)}
+
+      {showPhotos && section("photos", "📸 Photos", `${outletShort} · ${effDateStr} — op / clean / briefing / closing`,
+        <OutletPhotoStrip outlet={selOutlet} date={effDateStr} />)}
 
       {section("reviews", "⭐ Reviews", "Zomato & Swiggy ratings and complaints — all outlets",
         <DailyReviewSummary />)}
