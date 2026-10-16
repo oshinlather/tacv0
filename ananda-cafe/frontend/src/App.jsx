@@ -890,6 +890,48 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
     finally { setUploadingDoc(null); }
   };
 
+  // Standard offer letter, generated from the employee's current details (print → Save as PDF).
+  // Same window.open + document.write + print pattern as the dispatch/vendor challans. Owner can
+  // refine the wording later; the signed copy goes back up via the "offer_letter" KYC slot below.
+  const generateOfferLetter = () => {
+    if (!emp) return;
+    const outletName = EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department || "—";
+    const dateStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+    const salaryStr = emp.salary != null && emp.salary !== "" ? `₹${Number(emp.salary).toLocaleString("en-IN")} per ${emp.salary_type === "daily" ? "day" : "month"}` : "—";
+    const joining = emp.joining_date ? new Date(emp.joining_date + "T00:00:00Z").toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }) : "—";
+    const row = (k, v) => `<tr><td style="padding:5px 28px 5px 0;color:#666;white-space:nowrap">${k}</td><td style="font-weight:700">${v}</td></tr>`;
+    const pw = window.open("", "_blank");
+    if (!pw) { alert("Please allow pop-ups to generate the offer letter."); return; }
+    pw.document.write(`<!DOCTYPE html><html><head><title>Offer Letter — ${emp.name}</title>
+      <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
+      <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;color:#1A1A1A;line-height:1.7;font-size:14px;max-width:820px;margin:0 auto;padding:48px 56px}@media print{body{padding:28px}}h1{font-size:22px}ul{margin:8px 0 8px 22px}li{margin:4px 0}</style>
+      </head><body>
+      <div style="display:flex;align-items:center;gap:14px;border-bottom:2px solid #1A1A1A;padding-bottom:14px;margin-bottom:28px">
+        <img src="/logo.png" style="height:52px" onerror="this.style.display='none'"/>
+        <div><h1>The Ananda Cafe</h1><div style="font-size:12px;color:#666">Offer of Employment</div></div>
+        <div style="margin-left:auto;text-align:right;font-size:12px;color:#666">${dateStr}</div>
+      </div>
+      <p>Dear <strong>${emp.name}</strong>,</p>
+      <p style="margin-top:12px">We are pleased to offer you employment with <strong>The Ananda Cafe</strong>. The details of your offer are as below:</p>
+      <table style="margin:16px 0;border-collapse:collapse">${row("Position", emp.designation || "—")}${row("Outlet / Location", outletName)}${row("Salary", salaryStr)}${row("Date of Joining", joining)}</table>
+      <p><strong>Terms &amp; Conditions</strong></p>
+      <ul>
+        <li>You will be on probation for the first <strong>3 months</strong> from your date of joining; confirmation is subject to satisfactory performance.</li>
+        <li>After confirmation, either party may end this employment with <strong>one month's</strong> written notice (or salary in lieu).</li>
+        <li>Working hours and weekly off will be as per the outlet roster communicated to you.</li>
+        <li>You are expected to uphold The Ananda Cafe's standards of hygiene, conduct and punctuality at all times.</li>
+        <li>This offer is subject to successful police verification and submission of valid ID (Aadhaar) proof.</li>
+      </ul>
+      <p style="margin-top:12px">We look forward to welcoming you to the team. Kindly sign a copy of this letter to confirm your acceptance.</p>
+      <div style="margin-top:60px;display:flex;justify-content:space-between">
+        <div style="text-align:center"><div style="border-top:1px solid #999;width:190px;margin-top:40px;padding-top:4px;font-size:12px;color:#666">Authorized Signatory · The Ananda Cafe</div></div>
+        <div style="text-align:center"><div style="border-top:1px solid #999;width:190px;margin-top:40px;padding-top:4px;font-size:12px;color:#666">Accepted — ${emp.name}</div></div>
+      </div>
+      </body></html>`);
+    pw.document.close();
+    setTimeout(() => { pw.focus(); pw.print(); }, 400);
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
   if (!emp) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Employee not found</div>;
 
@@ -905,6 +947,8 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
       </div>
       <span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emp.active ? "#F0FDF4" : "#FEF2F2", color: emp.active ? "#16A34A" : "#DC2626", border: `1px solid ${emp.active ? "#BBF7D0" : "#FECACA"}` }}>{emp.active ? "✅ Active" : "🚫 Churned"}</span>
     </div>
+
+    <button onClick={generateOfferLetter} style={{ width: "100%", padding: "11px", borderRadius: 12, border: "1px solid #FDE68A", background: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", color: "#B45309", fontWeight: 800, fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>📄 Generate Offer Letter</button>
 
     {editing ? (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 16, marginBottom: 16 }}>
