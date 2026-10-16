@@ -22,7 +22,7 @@ const multer = require('multer');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 const supabase = require('../supabase');
-const { requireRole } = require('./authGuards');
+const { requireRole, requireRoleOrResp, hasResponsibility } = require('./authGuards');
 const { todayIST } = require('../helpers');
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -62,8 +62,8 @@ const FULL_EDIT_FIELDS = [
   'name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active',
   'salary', 'salary_type', 'leave_allowed', 'shift_start', 'shift_end', 'weekly_off',
   'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id',
-  // Roster (DOD → Roster): named shift (morning/evening), position bucket, daily break hours.
-  'shift', 'position', 'break_hours',
+  // Roster (DOD → Roster): named shift (morning/evening), position bucket, break time window.
+  'shift', 'position', 'break_window',
 ];
 // What a scoped manager (outlet_mgr/store_mgr/bk_manager) may create/edit — no
 // salary, bank/UPI, app-login linking, or department reassignment. 'active' is
@@ -71,7 +71,10 @@ const FULL_EDIT_FIELDS = [
 // themselves — otherwise a former employee keeps accumulating 0%s in the
 // Performance Dashboard's Discipline score (personRatio scores "not marked" as 0)
 // until the owner happens to notice and deactivate them.
-const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active', 'bank_account_number', 'bank_ifsc'];
+// Roster fields (shift/position/break_window) are included — an outlet/BK manager runs the
+// shift on the ground, so they assign and change their own team's position, shift and break
+// window (the PATCH route already confines a scoped manager to their own department).
+const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active', 'bank_account_number', 'bank_ifsc', 'shift', 'position', 'break_window'];
 // Fields stripped out of API responses for scoped managers — payroll/bank data
 // isn't their business even read-only.
 const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
@@ -95,6 +98,15 @@ function scopeForUser(user) {
   if (user.role === 'store_mgr' || user.role === 'bk_manager') return 'bk';
   return false;
 }
+// Scope for the employee DIRECTORY (list / profile / edit / documents). The 'onboarding'
+// responsibility grants owner-tier, cross-outlet access there — a delegated hiring manager
+// manages every outlet's staff (position/outlet/salary/joining + Aadhaar/police/offer-letter
+// docs). Deliberately NOT used by advance / fine / attendance routes, so an onboarding manager
+// still gives advances & marks attendance only for their own outlet, same as before.
+function directoryScope(user) {
+  if (hasResponsibility(user, 'onboarding')) return null;
+  return scopeForUser(user);
+}
 // Call right after scopeForUser() in every scoped route. Returns true (and
 // already responded 403) if this account is scope-restricted but misconfigured.
 function requireScope(scope, res) {
@@ -104,8 +116,10 @@ function requireScope(scope, res) {
   }
   return false;
 }
-function sanitize(emp, role) {
-  if (OWNER_LEVEL_ROLES.includes(role)) return emp;
+function sanitize(emp, user) {
+  // Owner tier OR an onboarding-responsibility manager sees everything (salary/bank) — the
+  // latter needs it to do the hiring they're delegated, same widening as directoryScope above.
+  if (OWNER_LEVEL_ROLES.includes(user.role) || hasResponsibility(user, 'onboarding')) return emp;
   const clean = { ...emp };
   SENSITIVE_FIELDS.filter((f) => !SCOPED_VISIBLE_FIELDS.includes(f)).forEach((f) => delete clean[f]);
   return clean;
@@ -120,7 +134,7 @@ router.get('/', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES, 'chef');
     if (!user) return;
-    const scope = scopeForUser(user);
+    const scope = directoryScope(user);
     if (requireScope(scope, res)) return;
 
     let query = supabase.from('employees').select('*').order('name');
@@ -153,7 +167,7 @@ router.get('/', async (req, res) => {
       else if (a.entry_date && a.entry_date >= lastMonthStart) lastMonthBalances[a.employee_id] = (lastMonthBalances[a.employee_id] || 0) + amt;
     });
 
-    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0, last_month_advance: lastMonthBalances[e.id] || 0 }, user.role)));
+    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0, last_month_advance: lastMonthBalances[e.id] || 0 }, user)));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -164,7 +178,7 @@ router.post('/', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
-    const scope = scopeForUser(user);
+    const scope = directoryScope(user);
     if (requireScope(scope, res)) return;
     const isScoped = scope !== null;
 
@@ -188,7 +202,7 @@ router.post('/', async (req, res) => {
 
     const { data, error } = await supabase.from('employees').insert(insertRow).select('*').single();
     if (error) throw error;
-    res.json(sanitize(data, user.role));
+    res.json(sanitize(data, user));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -198,7 +212,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
-    const scope = scopeForUser(user);
+    const scope = directoryScope(user);
     if (requireScope(scope, res)) return;
 
     if (scope) {
@@ -213,7 +227,7 @@ router.patch('/:id', async (req, res) => {
     }
     const { data, error } = await supabase.from('employees').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
-    res.json(sanitize(data, user.role));
+    res.json(sanitize(data, user));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -629,7 +643,9 @@ router.delete('/attendance/:id', async (req, res) => {
 // scoped manager.
 router.get('/:id', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    // Owner tier OR an onboarding-responsibility manager (full cross-outlet profile incl. all
+    // KYC docs — Aadhaar/police/offer letter — which they need to onboard a hire).
+    const user = await requireRoleOrResp(req, res, 'onboarding', ...OWNER_LEVEL_ROLES);
     if (!user) return;
 
     const { data: emp, error } = await supabase.from('employees').select('*').eq('id', req.params.id).single();
@@ -666,7 +682,7 @@ router.post('/:id/documents', async (req, res) => {
     if (!doc_type || !DOC_TYPES.includes(doc_type)) return res.status(400).json({ error: `doc_type must be one of: ${DOC_TYPES.join(', ')}` });
     if (!base64) return res.status(400).json({ error: 'base64 file data is required' });
 
-    const scope = scopeForUser(user);
+    const scope = directoryScope(user); // onboarding resp → null → all DOC_TYPES, every outlet
     if (requireScope(scope, res)) return;
     if (scope && !SCOPED_DOC_TYPES.includes(doc_type)) return res.status(403).json({ error: `You can only upload: ${SCOPED_DOC_TYPES.join(', ')}` });
 
@@ -707,7 +723,7 @@ router.get('/:id/documents', async (req, res) => {
   try {
     const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
     if (!user) return;
-    const scope = scopeForUser(user);
+    const scope = directoryScope(user);
     if (requireScope(scope, res)) return;
 
     const { data: emp } = await supabase.from('employees').select('id, department').eq('id', req.params.id).single();

@@ -448,6 +448,7 @@ const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
 // while they stay pinned to their own outlet for everything else. Add more here as needed.
 const RESPONSIBILITY_OPTIONS = [
   { v: "cogs", l: "📊 COGS Oversight", hint: "Flags, COGS Compare & Sales — all outlets" },
+  { v: "onboarding", l: "🧑‍💼 Onboarding", hint: "Add & manage team across ALL outlets + offer letters" },
 ];
 const UsersPanel = () => {
   const [users, setUsers] = useState([]);
@@ -644,6 +645,24 @@ const EMPLOYEE_DEPARTMENTS = [
   { id: "bk", label: "🏭 Base Kitchen" },
   { id: "top_mgmt", label: "👑 Top Management" },
 ];
+// Roster (DOD → Roster) — shared with the outlet-manager Team cards so both show the same
+// position/shift/break, assigned centrally by the owner.
+const ROSTER_POSITIONS = ["Manager", "Chef", "Bainmarry", "Helper", "House Keeping", "Other"];
+const ROSTER_SHIFTS = [{ v: "", l: "— Unassigned" }, { v: "morning", l: "🌅 Morning" }, { v: "evening", l: "🌙 Evening" }];
+const rosterShiftLabel = (v) => ROSTER_SHIFTS.find((s) => s.v === (v || ""))?.l || "— Unassigned";
+// Best-guess position from the free-text designation, used until one is explicitly set.
+const deriveRosterPosition = (desig) => {
+  const d = (desig || "").toLowerCase();
+  if (/manager/.test(d)) return "Manager";
+  if (/chef/.test(d)) return "Chef";
+  if (/bain|bamb|banmarr/.test(d)) return "Bainmarry";
+  if (/house ?keep|housekeep/.test(d)) return "House Keeping";
+  if (/helper/.test(d)) return "Helper";
+  return "Other";
+};
+const effectiveRosterPosition = (e) => e.position || deriveRosterPosition(e.designation);
+// 12-hour clock labels for the break-window start/end pickers → "12am".."11pm".
+const ROSTER_TIME_OPTS = Array.from({ length: 24 }, (_, h) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`);
 const SALARY_TYPES = [{ v: "monthly", l: "Monthly" }, { v: "daily", l: "Daily" }];
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const EMPLOYEE_FORM_DEFAULTS = {
@@ -950,7 +969,7 @@ const EmployeeProfile = ({ employeeId, onBack }) => {
   </div>);
 };
 
-const EmployeeMasterPanel = () => {
+const EmployeeMasterPanel = ({ onBack } = {}) => {
   const [employees, setEmployees] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1051,7 +1070,8 @@ const EmployeeMasterPanel = () => {
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>👤 Employee Master ({activeCount}/{employees.length})</h3>
+      {onBack && <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#555", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>← Back</button>}
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>👤 {onBack ? "Onboarding" : "Employee Master"} ({activeCount}/{employees.length})</h3>
       <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add Employee</button>
     </div>
 
@@ -1324,6 +1344,15 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
   // Default to the Attendance punch (the daily job) when the manager can actually mark it;
   // fall back to the roster for the Chef cut / roles without attendance access.
   const [view, setView] = useState(canMarkAttendance && !fineOnly ? "attendance" : "team");
+  // Roster edit on the Team card — managers run the shift on the ground, so they assign/change
+  // position, shift and break window right here (saves on change). break_window needs a draft
+  // to hold a half-picked start/end before both are chosen.
+  const [rosterBreakDraft, setRosterBreakDraft] = useState({});
+  const saveRoster = async (emp, field, value) => {
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, [field]: value } : e))); // optimistic
+    try { await api.updateEmployee(emp.id, { [field]: value }); }
+    catch (err) { alert("Error: " + err.message); load(); }
+  };
 
   const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -1487,6 +1516,36 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
           </div>
           {emp.phone && <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>📞 {emp.phone}</div>}
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}</div>
+          {/* Roster — position / shift / break window. Editable for a manager (they run the
+              shift on the ground, saves on change); read-only chips for the Chef fine-only cut. */}
+          {fineOnly ? (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: "#800000", background: "#F7ECEC", border: "1px solid #E8D5D5", borderRadius: 6, padding: "2px 8px" }}>🧑‍💼 {effectiveRosterPosition(emp)}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: emp.shift ? "#2563EB" : "#9CA3AF", background: emp.shift ? "#EFF6FF" : "#F5F5F3", border: `1px solid ${emp.shift ? "#BFDBFE" : "#E8E8E4"}`, borderRadius: 6, padding: "2px 8px" }}>{rosterShiftLabel(emp.shift)}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: emp.break_window ? "#92400E" : "#9CA3AF", background: emp.break_window ? "#FEF3C7" : "#F5F5F3", border: `1px solid ${emp.break_window ? "#FDE68A" : "#E8E8E4"}`, borderRadius: 6, padding: "2px 8px" }}>☕ {emp.break_window || "—"}</span>
+            </div>
+          ) : (() => {
+            const parsed = (emp.break_window || "").split("-");
+            const bd = rosterBreakDraft[emp.id] || { start: parsed[0] || "", end: parsed[1] || "" };
+            const onBreak = (next) => { setRosterBreakDraft((p) => ({ ...p, [emp.id]: next })); if (next.start && next.end) saveRoster(emp, "break_window", `${next.start}-${next.end}`); else if (!next.start && !next.end) saveRoster(emp, "break_window", null); };
+            const sel = { padding: "6px 6px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 11.5, fontFamily: "inherit", background: "#fff", color: "#1A1A1A", fontWeight: 600, cursor: "pointer" };
+            return (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
+                <select title="Position" value={effectiveRosterPosition(emp)} onChange={(ev) => saveRoster(emp, "position", ev.target.value)} style={{ ...sel, color: "#800000", fontWeight: 700 }}>
+                  {ROSTER_POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <select title="Shift" value={emp.shift || ""} onChange={(ev) => saveRoster(emp, "shift", ev.target.value || null)} style={sel}>
+                  {ROSTER_SHIFTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 3 }} title="Break window">
+                  <span style={{ fontSize: 12 }}>☕</span>
+                  <select value={bd.start} onChange={(ev) => onBreak({ ...bd, start: ev.target.value })} style={{ ...sel, padding: "6px 3px" }}><option value="">Break</option>{ROSTER_TIME_OPTS.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                  <span style={{ fontSize: 12, color: "#999" }}>–</span>
+                  <select value={bd.end} onChange={(ev) => onBreak({ ...bd, end: ev.target.value })} style={{ ...sel, padding: "6px 3px" }}><option value="">to</option>{ROSTER_TIME_OPTS.map((t) => <option key={t} value={t}>{t}</option>)}</select>
+                </div>
+              </div>
+            );
+          })()}
           {emp.current_month_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.current_month_advance)} advance this month</div>}
           {/* The "this month" figure resets on the 1st — keep last month's visible for reference. */}
           {emp.last_month_advance > 0 && <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 600, marginTop: 2 }}>🗓️ {fmt(emp.last_month_advance)} advance last month</div>}
@@ -10443,6 +10502,7 @@ const ManagerCogsView = ({ onBack }) => {
 const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
   const cogsResp = userHasResp("cogs"); // extra cross-outlet COGS oversight (see ManagerCogsView)
+  const onboardingResp = userHasResp("onboarding"); // cross-outlet staff onboarding (EmployeeMasterPanel)
   const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
   const isDraftRole = currentUser?.role === "chef" || currentUser?.role === "bainmarry";
   // Chef additionally gets a read-only Performance Dashboard tile (COGS Score/RM Audit,
@@ -11142,7 +11202,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -11153,6 +11213,7 @@ const OutletMgr = ({ onBack }) => {
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
   if (screen === "cogs") return <ManagerCogsView onBack={() => setScreen("home")} />;
+  if (screen === "onboarding") return <EmployeeMasterPanel onBack={() => setScreen("home")} />;
 
   if (screen === "performance") return (<div><SavingOverlay />
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ fontSize: 15, fontWeight: 800 }}>🏆 Performance Dashboard</div></div>
@@ -14762,24 +14823,10 @@ const OutletPickerRow = ({ selOutlet, setSelOutlet }) => (<>
   {OUTLETS.map((o) => (<button key={o.id} onClick={() => setSelOutlet(o.id)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: selOutlet === o.id ? 700 : 500, border: selOutlet === o.id ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: selOutlet === o.id ? "#1A1A1A" : "#fff", color: selOutlet === o.id ? "#fff" : "#888" }}>{o.short}</button>))}
 </>);
 
-// ─── Roster (DOD → Roster). Assign each employee a named shift (Morning/Evening), a
-// position bucket, and a daily break length — all new per-employee fields (see
-// 2026_10_16_employee_roster.sql). Nothing was set before, so everything starts
-// unassigned and is edited here. Each control saves on change (dropdowns) / blur (break).
-const ROSTER_POSITIONS = ["Manager", "Chef", "Bainmarry", "Helper", "House Keeping", "Other"];
-const ROSTER_SHIFTS = [{ v: "", l: "— Unassigned" }, { v: "morning", l: "🌅 Morning" }, { v: "evening", l: "🌙 Evening" }];
-// Best-guess position from the free-text designation, used until one is explicitly set —
-// so grouping is sensible on day one instead of dumping everyone into "Other".
-const deriveRosterPosition = (desig) => {
-  const d = (desig || "").toLowerCase();
-  if (/manager/.test(d)) return "Manager";
-  if (/chef/.test(d)) return "Chef";
-  if (/bain|bamb|banmarr/.test(d)) return "Bainmarry";
-  if (/house ?keep|housekeep/.test(d)) return "House Keeping";
-  if (/helper/.test(d)) return "Helper";
-  return "Other";
-};
-const effectiveRosterPosition = (e) => e.position || deriveRosterPosition(e.designation);
+// ─── Roster (DOD → Roster). Assign each employee a position bucket, a named shift
+// (Morning/Evening), and a break time window (e.g. 2pm–5pm). Dropdowns save on change; the
+// shared ROSTER_* helpers live up near EMPLOYEE_DEPARTMENTS so the outlet Team cards show
+// the same values read-only.
 const ROSTER_SELECT_STYLE = { padding: "7px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#1A1A1A", fontWeight: 600, cursor: "pointer" };
 const rosterPill = (on) => ({ padding: "7px 12px", borderRadius: 8, border: on ? "none" : "1px solid #E0E0DC", background: on ? "#1A1A1A" : "#fff", color: on ? "#fff" : "#888", fontWeight: on ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
@@ -14835,8 +14882,17 @@ const RosterPage = () => {
       : shown.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No employees</div>
       : groups.map((g) => (
         <div key={g.key} style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#555", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.3 }}>{g.label} <span style={{ color: "#BBB", fontWeight: 600 }}>({g.rows.length})</span></div>
-          {g.rows.map((e) => (
+          <div style={{ fontSize: 13, fontWeight: 900, color: "#800000", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>{g.label} <span style={{ color: "#B08080", fontWeight: 700 }}>({g.rows.length})</span></div>
+          {g.rows.map((e) => {
+            const parsedBreak = (e.break_window || "").split("-");
+            const bd = breakDraft[e.id] || { start: parsedBreak[0] || "", end: parsedBreak[1] || "" };
+            // Save the composed window only when both ends are chosen; clear to null when both empty.
+            const onBreak = (next) => {
+              setBreakDraft((p) => ({ ...p, [e.id]: next }));
+              if (next.start && next.end) saveField(e, "break_window", `${next.start}-${next.end}`);
+              else if (!next.start && !next.end) saveField(e, "break_window", null);
+            };
+            return (
             <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <div style={{ flex: "1 1 150px", minWidth: 120 }}>
@@ -14849,17 +14905,21 @@ const RosterPage = () => {
                 <select title="Shift" value={e.shift || ""} onChange={(ev) => saveField(e, "shift", ev.target.value || null)} style={ROSTER_SELECT_STYLE}>
                   {ROSTER_SHIFTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
                 </select>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <input type="number" inputMode="decimal" min="0" step="any" placeholder="0" title="Daily break hours"
-                    value={breakDraft[e.id] ?? (e.break_hours ?? "")}
-                    onChange={(ev) => setBreakDraft((p) => ({ ...p, [e.id]: ev.target.value.replace(/[^0-9.]/g, "") }))}
-                    onBlur={() => { const v = breakDraft[e.id]; setBreakDraft((p) => { const n = { ...p }; delete n[e.id]; return n; }); if (v === undefined) return; const num = v === "" ? null : Number(v); if (num !== (e.break_hours ?? null)) saveField(e, "break_hours", num); }}
-                    style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
-                  <span style={{ fontSize: 11, color: "#999" }}>br hr</span>
+                <div style={{ display: "flex", alignItems: "center", gap: 3 }} title="Break window">
+                  <select value={bd.start} onChange={(ev) => onBreak({ ...bd, start: ev.target.value })} style={{ ...ROSTER_SELECT_STYLE, padding: "7px 4px" }}>
+                    <option value="">Break</option>
+                    {ROSTER_TIME_OPTS.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <span style={{ fontSize: 12, color: "#999" }}>–</span>
+                  <select value={bd.end} onChange={(ev) => onBreak({ ...bd, end: ev.target.value })} style={{ ...ROSTER_SELECT_STYLE, padding: "7px 4px" }}>
+                    <option value="">to</option>
+                    {ROSTER_TIME_OPTS.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       ))}
   </div>);
