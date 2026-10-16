@@ -10515,7 +10515,14 @@ const OutletMgr = ({ onBack }) => {
   // same check the backend enforces authoritatively (POST /demands / PATCH
   // /demands/draft), this is just the fast, friendly version so a manager finds out
   // before filling in a whole form instead of after hitting submit.
+  // Emergency slot — an owner-opened one-time demand that ignores the slot locks AND the
+  // already-dispatched guard (the backend's emergency flag carries the real bypass). Modeled
+  // as a same-day ("evening"/today) submit so all the downstream date/label logic just works;
+  // emergencyMode is what flips the submit to createDemand(emergency:true).
+  const [emergencyMode, setEmergencyMode] = useState(false);
+  const startEmergency = () => { setMorningDeliveryDate(null); setEmergencyMode(true); setDemandSlot("evening"); };
   const selectDemandSlot = async (slot) => {
+    setEmergencyMode(false); // picking a normal slot clears emergency mode
     if (slot === "morning" && !closingIsCurrent) return;
     if (slot === "evening" && eveningLocked) {
       alert("Evening demand closes at 11:45 AM.\n\nNeed a late order today? Call the owner — they can open it for this outlet from the Owner Dashboard.");
@@ -10588,7 +10595,7 @@ const OutletMgr = ({ onBack }) => {
       .catch(() => { setDcExisting(null); setDcEditing(true); setDcColdDrinkSkipped(false); })
       .finally(() => setDcLoading(false));
   }, [screen, selectedDate, outlet]);
-  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
+  const oData = OUTLETS.find((o) => o.id === outlet); const tSubs = subs.filter((s) => s.outlet === outlet && s.date === today()); const reset = () => { setImages({}); setDraft({}); setDraftUnits({}); setNote(""); setExpSec(null); setErr(null); setStaffFood({}); setStaffShift("am"); setStaffDress([]); setDemandSlot(null); setEmergencyMode(false); setMorningDeliveryDate(null); setSavedSections({}); setDraftId(null); setSelectedDate(smartDefaultDate()); };
   // True right after the smart default has kicked in (past midnight, date still sitting on
   // yesterday) — shown as a banner so the auto-switch is visible, not silent. Goes away the
   // moment the manager picks a date themselves, since selectedDate then stops matching.
@@ -10937,7 +10944,11 @@ const OutletMgr = ({ onBack }) => {
           showToastThen(`✅ Your section saved — the manager will see it when finalizing.`, () => setScreen("home"));
         } else {
           let result;
-          if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
+          // Emergency always creates a FRESH order (never updates an existing evening record) —
+          // it's an additional, separate emergency demand; the backend emergency flag bypasses
+          // the cutoff + already-dispatched guards and always-inserts.
+          if (emergencyMode) result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: `[🚨 Emergency ${today()}]${note ? " " + note : ""}`.trim(), date: today(), demand_slot: demandSlot, emergency: true, submitted_by: currentUser?.name || outlet });
+          else if (existingRecord?.status === "draft") result = await api.finalizeDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else if (existingRecord?.status === "submitted") result = await api.updateDemand(existingRecord.id, { items: draft, items_units: draftItemsUnits, submitted_by: currentUser?.name || outlet });
           else result = await api.createDemand({ outlet_id: outlet, type: "manual", items: draft, items_units: draftItemsUnits, note: slotNote, date: deliveryDate, demand_slot: demandSlot, submitted_by: currentUser?.name || outlet });
           const e = { ...result, type: "manual", outlet, time: timeNow(), date: deliveryDate };
@@ -11608,6 +11619,21 @@ const OutletMgr = ({ onBack }) => {
         </div>
         <span style={{ color: eveningLocked ? "#DC2626" : "#2563EB", fontSize: 18 }}>{eveningLocked ? "🔒" : "→"}</span>
       </button>
+
+      {/* Emergency slot — only when the owner has opened a one-time emergency demand window
+          for this outlet today (Demand Approval → "🚨 Open Emergency Demand"). Always unlocked;
+          bypasses the closed-slot / already-dispatched limits via the backend emergency flag. */}
+      {emergencyGranted && (
+        <button onClick={startEmergency} disabled={checkingSlotDispatch} style={{ width: "100%", padding: "20px", borderRadius: 16, border: "1px solid #FECACA", background: "linear-gradient(135deg, #FEF2F2, #FFF1F2)", cursor: checkingSlotDispatch ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+          <div style={{ fontSize: 40 }}>🚨</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#DC2626" }}>Emergency (needed now)</div>
+            <div style={{ fontSize: 13, color: "#B91C1C", marginTop: 2 }}>{today()} (Today)</div>
+            <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>Opened by the owner — send this even if the slot's closed or already dispatched.</div>
+          </div>
+          <span style={{ color: "#DC2626", fontSize: 18 }}>→</span>
+        </button>
+      )}
     </div>);
   }
 
