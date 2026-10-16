@@ -363,6 +363,9 @@ const api = {
   getEmployeeDocuments: (id) => get(`/api/employees/${id}/documents`),
   // Monthly Payroll
   getPayroll: (month) => get("/api/payroll", { month }),
+  // One employee's payroll breakdown — scoped so an outlet manager can see/share the salary
+  // slip for their own staff (full payroll sheet stays owner-tier). See payroll.js.
+  getEmployeePayroll: (id, month) => get(`/api/payroll/employee/${id}`, { month }),
   setEmployeeOT: (data) => post("/api/payroll/ot", data),
   setPayrollOverride: (data) => patch("/api/payroll/override", data),
   finalizePayroll: (data) => post("/api/payroll/finalize", data),

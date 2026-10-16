@@ -38,11 +38,13 @@ const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef'];
 const SCOPED_MANAGER_ROLES = ['outlet_mgr', 'store_mgr', 'bk_manager'];
 const ALL_EMPLOYEE_ROLES = [...OWNER_LEVEL_ROLES, ...SCOPED_MANAGER_ROLES];
 const ATTENDANCE_ROLES = [...OWNER_LEVEL_ROLES, 'store_mgr'];
-// Read-only extension of ATTENDANCE_ROLES — outlet_mgr can now VIEW (not mark/edit)
-// their own outlet's attendance, for the Performance Dashboard's Discipline score.
-// Deliberately not added to ATTENDANCE_ROLES itself, which still gates marking/editing
-// (POST/DELETE) — the original "no attendance" restriction for scoped managers stays,
-// this only widens the GET.
+// outlet_mgr can MARK their own outlet's daily attendance (Team → Attendance punch) — the
+// scope check in POST /attendance already confines them to their own department, and this
+// daily punch now feeds Punch Score / Missing Punches. Bulk CSV backfill and DELETE stay
+// owner-tier (ATTENDANCE_ROLES) — a scoped manager marks today's punch, not rewrites history.
+const ATTENDANCE_MARK_ROLES = [...ATTENDANCE_ROLES, 'outlet_mgr'];
+// Read-only extension — outlet_mgr can also VIEW their own outlet's attendance (Performance
+// Dashboard's Discipline score, and pre-filling today's punch screen).
 const ATTENDANCE_READ_ROLES = [...ATTENDANCE_ROLES, 'outlet_mgr'];
 
 const FULL_EDIT_FIELDS = [
@@ -122,16 +124,23 @@ router.get('/', async (req, res) => {
     // a lexical >= compare against this string is the same as a date compare.
     const istNow = new Date(Date.now() + 330 * 60000);
     const monthStart = `${istNow.getUTCFullYear()}-${String(istNow.getUTCMonth() + 1).padStart(2, '0')}-01`;
-    const balances = {};      // all-time outstanding (payroll deduction / Employee Master)
-    const monthBalances = {}; // just this month's un-repaid advances (Team view)
+    // First day of the PREVIOUS IST month. The Team view's advance figure resets to this
+    // month's on the 1st, so last month's total is kept available alongside it for reference
+    // (a manager still wants to see what was given last month after the monthly reset).
+    const lmDate = new Date(Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth() - 1, 1));
+    const lastMonthStart = `${lmDate.getUTCFullYear()}-${String(lmDate.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const balances = {};          // all-time outstanding (payroll deduction / Employee Master)
+    const monthBalances = {};     // just this month's un-repaid advances (Team view)
+    const lastMonthBalances = {}; // the previous calendar month's un-repaid advances (Team view)
     (advances || []).forEach((a) => {
       if (a.settled || a.status !== 'approved') return;
       const amt = Number(a.amount || 0);
       balances[a.employee_id] = (balances[a.employee_id] || 0) + amt;
       if (a.entry_date && a.entry_date >= monthStart) monthBalances[a.employee_id] = (monthBalances[a.employee_id] || 0) + amt;
+      else if (a.entry_date && a.entry_date >= lastMonthStart) lastMonthBalances[a.employee_id] = (lastMonthBalances[a.employee_id] || 0) + amt;
     });
 
-    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0 }, user.role)));
+    res.json((employees || []).map((e) => sanitize({ ...e, outstanding_advance: balances[e.id] || 0, current_month_advance: monthBalances[e.id] || 0, last_month_advance: lastMonthBalances[e.id] || 0 }, user.role)));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -366,7 +375,7 @@ router.get('/attendance', async (req, res) => {
 // date (upsert on employee_id+date, so re-tapping a day just overwrites it)
 router.post('/attendance', async (req, res) => {
   try {
-    const user = await requireRole(req, res, ...ATTENDANCE_ROLES);
+    const user = await requireRole(req, res, ...ATTENDANCE_MARK_ROLES);
     if (!user) return;
     const { employee_id, date, status, note, hours_worked } = req.body;
     if (!employee_id || !date || !status) return res.status(400).json({ error: 'employee_id, date, and status are required' });

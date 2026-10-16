@@ -200,12 +200,12 @@ export const DEMAND_SECTIONS = [
       { id: "besan", name: "Besan", unit: "Kg" },
       { id: "atta", name: "Atta", unit: "Kg" },
       { id: "sugar", name: "Sugar", unit: "Kg" },
-      { id: "salt", name: "Tata Salt", unit: "Kg" },
+      { id: "salt", name: "Salt", unit: "Kg" },
       { id: "poha", name: "Poha", unit: "Kg" },
       { id: "rice_powder", name: "Rice Powder", unit: "Kg" },
-      { id: "safed_til", name: "Safed Til", unit: "Kg" },
+      { id: "safed_til", name: "til", unit: "Kg" },
       { id: "semiyan", name: "Semiyan", unit: "Kg" },
-      { id: "fortune_refined", name: "Fortune Refined Oil", unit: "Tin" },
+      { id: "fortune_refined", name: "Fortune Refined", unit: "Tin" },
       { id: "desi_ghee", name: "Desi Ghee", unit: "Tin" },
       { id: "sarson_tel", name: "Sarson Tel", unit: "Kg" },
       { id: "gur", name: "Gur", unit: "Kg" },
@@ -224,7 +224,7 @@ export const DEMAND_SECTIONS = [
       { id: "meetha_soda", name: "Meetha Soda", unit: "Kg" },
       { id: "dhaniya_whole", name: "Dhaniya Whole", unit: "Kg" },
       { id: "whole_red_chilli", name: "Whole Red Chilli", unit: "Kg" },
-      { id: "filter_coffee_powder", name: "Filter Coffee Powder", unit: "Pkt" },
+      { id: "filter_coffee_powder", name: "Filter Coffee Pow.", unit: "Pkt" },
       { id: "chai_patti", name: "Chai Patti", unit: "Pkt" },
       { id: "papad_777", name: "777 Papad", unit: "Pkt" },
       { id: "achar", name: "Achar", unit: "Box" },
@@ -234,25 +234,25 @@ export const DEMAND_SECTIONS = [
     items: [
       { id: "deggi_mirch", name: "Deggi Mirch", unit: "Kg" },
       { id: "garam_masala", name: "Garam Masala", unit: "Kg" },
-      { id: "hing_powder", name: "Hing Powder", unit: "Kg" },
+      { id: "hing_powder", name: "hing pow.", unit: "Kg" },
       { id: "jeera", name: "Jeera (Cumin)", unit: "Kg" },
       { id: "kali_mirch", name: "Kali Mirch (Black Pepper)", unit: "Kg" },
       { id: "red_chilli_powder", name: "Red Chilli Powder", unit: "Kg" },
-      { id: "amchoor_powder", name: "Amchoor Powder", unit: "Kg" },
+      { id: "amchoor_powder", name: "Amchoor powder", unit: "Kg" },
       { id: "sambhar_masala_777", name: "Sambhar Masala 777", unit: "Kg" },
       { id: "dhaniya_powder", name: "Dhaniya Powder", unit: "Kg" },
-      { id: "haldi_powder", name: "Haldi Powder", unit: "Kg" },
+      { id: "haldi_powder", name: "haldi pow.", unit: "Kg" },
       { id: "kitchen_king", name: "Kitchen King", unit: "Kg" },
-      { id: "chat_masala", name: "Chat Masala", unit: "Kg" },
+      { id: "chat_masala", name: "chat masala", unit: "Kg" },
       { id: "kasturi_methi", name: "Kasturi Methi", unit: "Kg" },
       { id: "mustard_seeds", name: "Mustard Seeds (Rai)", unit: "Kg" },
       { id: "methi_dana", name: "Methi Dana", unit: "Kg" },
-      { id: "ilaychi", name: "Hari Ilaychi", unit: "Kg" },
+      { id: "ilaychi", name: "ilaychi", unit: "Kg" },
       { id: "long", name: "Long (Clove)", unit: "Kg" },
       { id: "black_salt", name: "Black Salt", unit: "Kg" },
       { id: "kesar", name: "Kesar", unit: "Kg" },
       { id: "yellow_colour", name: "Yellow Colour", unit: "Gm" },
-      { id: "red_colour", name: "Red Colour", unit: "Gm" },
+      { id: "red_colour", name: "Food colour", unit: "Gm" },
     ]},
   { id: "packaging", titleHi: "Packaging & Disposal", emoji: "📦", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE",
     items: [
@@ -268,7 +268,7 @@ export const DEMAND_SECTIONS = [
       { id: "dosa_box_big", name: "Dosa Box Big", unit: "Pcs" },
       { id: "biopoly_16x20", name: "16*20 Biopolythene", unit: "Kg" },
       { id: "biopoly_13x16", name: "13*16 Biopolythene", unit: "Kg" },
-      { id: "bio_garbage_bag", name: "Bio Garbage Bag Big Size", unit: "Pkt" },
+      { id: "bio_garbage_bag", name: "Bio Garbagebag Big Size", unit: "Pkt" },
       { id: "printer_roll", name: "Printer Roll", unit: "Pcs" },
       { id: "bio_spoon", name: "Bio Spoon", unit: "Pkt" },
       { id: "wooden_plates", name: "Wooden Plates", unit: "Pcs" },
@@ -283,9 +283,9 @@ export const DEMAND_SECTIONS = [
       { id: "chef_cap", name: "Chef Cap", unit: "Pkt" },
       { id: "butter_paper", name: "Butter Paper", unit: "Pkt" },
       { id: "tape", name: "Tape", unit: "Bundle" },
-      { id: "hand_gloves", name: "Hand Gloves", unit: "Pkt" },
-      { id: "gloves_blue", name: "Gloves (Blue)", unit: "Pkt" },
-      { id: "gloves_plastic", name: "Gloves (Plastic)", unit: "Pkt" },
+      { id: "hand_gloves", name: "hand gloves", unit: "Pkt" },
+      { id: "gloves_blue", name: "hand gloves (blue)", unit: "Pkt" },
+      { id: "gloves_plastic", name: "hand gloves (plastic)", unit: "Pkt" },
       { id: "kitchen_wipes", name: "Kitchen Wipes", unit: "Pkt" },
       { id: "rasam_glass", name: "Rasam Glass", unit: "Pkt" },
       // 1 Pkt = 100 Pcs sachets, ₹814/Pkt — see unit_conversions/rate_card (2026-08-23).
@@ -294,7 +294,7 @@ export const DEMAND_SECTIONS = [
   { id: "cleaning", titleHi: "Cleaning", emoji: "🧹", color: "#9333EA", bg: "#FAF5FF", border: "#E9D5FF",
     items: [
       { id: "pochha", name: "Pochha", unit: "Pcs" },
-      { id: "duster", name: "Duster", unit: "Pcs" },
+      { id: "duster", name: "Duster Heavy", unit: "Pcs" },
       { id: "seek_jhadu", name: "Seek Jhadu", unit: "Pcs" },
       { id: "wiper", name: "Wiper", unit: "Pcs" },
       { id: "sarf", name: "Surf", unit: "Pkt" },
@@ -1132,6 +1132,108 @@ const EmployeeMasterPanel = () => {
 //  see routes/employees.js). AVP/Head Chef get the full EmployeeMasterPanel
 //  instead, wired into their scoped dashboard tabs.
 // ═════════════════════════════════════════════════════════════════════════════
+// Daily attendance punch (Team → Attendance tab). Deliberately simple: one tap per person
+// — Present or Absent — and OT hours asked only when Present (blank = 0, capped at 6).
+// Everyone defaults to ABSENT on purpose: a manager must actively mark each present person,
+// so a lazy "submit without looking" marks everyone absent rather than handing out free
+// present credit. Writes to the same employee_attendance table Monthly Payroll, Punch Score
+// and Missing Punches all read from, so marking here feeds all three. OT maps to
+// hours_worked = standard shift (11h) + OT — exactly how payroll derives OT back out
+// (max(0, hours_worked − 11)), so a Present day with OT 3 means 14h worked, 3h OT. Absent →
+// status 'absent', 0 hours (counts as a leave in payroll).
+const STANDARD_SHIFT_HOURS = 11; // mirrors DAILY_STANDARD_HOURS / payroll's OT threshold
+const MAX_OT_HOURS = 6;
+const TeamAttendance = ({ department = null }) => {
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [date, setDate] = useState(() => today());
+  const [draft, setDraft] = useState({}); // emp_id -> { status: 'present'|'absent', ot: string }
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+
+  const shown = department ? employees.filter((e) => e.department === department) : employees;
+
+  const loadFor = (d) => {
+    setLoading(true); setSavedMsg("");
+    Promise.all([api.getEmployees(), api.getAttendance({ date: d })])
+      .then(([emps, att]) => {
+        const active = (emps || []).filter((e) => e.active);
+        setEmployees(active);
+        const byEmp = {}; (att || []).forEach((r) => { byEmp[r.employee_id] = r; });
+        const d0 = {};
+        active.forEach((e) => {
+          const row = byEmp[e.id];
+          if (row && row.status === "present") d0[e.id] = { status: "present", ot: String(Math.min(MAX_OT_HOURS, Math.max(0, Number(row.hours_worked || 0) - STANDARD_SHIFT_HOURS)) || "") };
+          else d0[e.id] = { status: "absent", ot: "" }; // unmarked OR previously absent/leave → default Absent
+        });
+        setDraft(d0);
+      })
+      .catch(() => { setEmployees([]); setDraft({}); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { loadFor(date); }, [date]);
+
+  const setStatus = (id, status) => { setDraft((p) => ({ ...p, [id]: { ...p[id], status } })); setSavedMsg(""); };
+  const setOt = (id, ot) => {
+    let v = ot.replace(/[^0-9.]/g, "");
+    if (v !== "" && Number(v) > MAX_OT_HOURS) v = String(MAX_OT_HOURS); // OT capped at 6h
+    setDraft((p) => ({ ...p, [id]: { ...p[id], ot: v } })); setSavedMsg("");
+  };
+
+  const submit = async () => {
+    setSaving(true); setSavedMsg("");
+    try {
+      for (const e of shown) {
+        const d = draft[e.id]; if (!d || !d.status) continue;
+        const ot = Math.min(MAX_OT_HOURS, Math.max(0, Number(d.ot) || 0)); // clamp 0–6
+        const payload = d.status === "present"
+          ? { employee_id: e.id, date, status: "present", hours_worked: STANDARD_SHIFT_HOURS + ot }
+          : { employee_id: e.id, date, status: "absent", hours_worked: 0 };
+        await api.markAttendance(payload);
+      }
+      setSavedMsg(`✅ Attendance saved for ${date}`);
+    } catch (err) { alert("Error: " + err.message); }
+    finally { setSaving(false); }
+  };
+
+  const presentCount = shown.filter((e) => draft[e.id]?.status === "present").length;
+
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <input type="date" max={today()} value={date} onChange={(e) => setDate(e.target.value)} style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit" }} />
+      {!loading && shown.length > 0 && <div style={{ fontSize: 12, color: "#999", fontWeight: 600, whiteSpace: "nowrap" }}>{presentCount}/{shown.length} present</div>}
+    </div>
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
+      : shown.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
+      : (<>
+        {shown.map((e) => {
+          const d = draft[e.id] || {};
+          const present = d.status === "present";
+          const absent = d.status === "absent";
+          return (
+            <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, fontSize: 14, fontWeight: 700 }}>{e.name}{e.designation && <span style={{ fontSize: 11, color: "#999", fontWeight: 500 }}> · {e.designation}</span>}</div>
+                <button onClick={() => setStatus(e.id, "present")} style={{ padding: "7px 12px", borderRadius: 8, border: present ? "none" : "1px solid #E0E0DC", background: present ? "#16A34A" : "#fff", color: present ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Present</button>
+                <button onClick={() => setStatus(e.id, "absent")} style={{ padding: "7px 12px", borderRadius: 8, border: absent ? "none" : "1px solid #E0E0DC", background: absent ? "#DC2626" : "#fff", color: absent ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Absent</button>
+              </div>
+              {present && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                  <span style={{ fontSize: 12, color: "#666" }}>OT hours</span>
+                  <input type="number" inputMode="decimal" min="0" max={MAX_OT_HOURS} step="any" placeholder="0" value={d.ot} onChange={(ev) => setOt(e.id, ev.target.value)} style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", textAlign: "right" }} />
+                  <span style={{ fontSize: 11, color: "#BBB" }}>blank = 0 · max {MAX_OT_HOURS}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <button onClick={submit} disabled={saving} style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 15, cursor: saving ? "default" : "pointer", fontFamily: "inherit", marginTop: 4, opacity: saving ? 0.6 : 1 }}>{saving ? "⏳ Saving..." : "✅ Submit Attendance"}</button>
+        {savedMsg && <div style={{ textAlign: "center", marginTop: 10, color: "#16A34A", fontWeight: 700, fontSize: 13 }}>{savedMsg}</div>}
+      </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 // fineOnly: Chef's cut of this same panel — sees every team member at their outlet but
 // can only Impose Fine (no onboarding, editing, or advances). Backend enforces this too
 // (POST /:id/fine is the only employees.js write route chef is allowed to call), this
@@ -1176,9 +1278,76 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
   const [fineAmount, setFineAmount] = useState("");
   const [fineReason, setFineReason] = useState("");
   const [fineSaving, setFineSaving] = useState(false);
+  // Salary Calculation — the outlet manager's own window onto Monthly Payroll, scoped to
+  // this one staff member (api.getEmployeePayroll hits a department-scoped endpoint; the
+  // full payroll sheet stays owner-tier). Shows the exact same breakdown and lets the
+  // manager WhatsApp a plain-text salary slip to the employee.
+  const [salaryId, setSalaryId] = useState(null);
+  const [salaryMonth, setSalaryMonth] = useState(() => today().slice(0, 7));
+  const [salaryData, setSalaryData] = useState(null);
+  const [salaryLoading, setSalaryLoading] = useState(false);
+
+  // Salary is reachable by the staff member's own outlet manager (and owner-tier roles who
+  // may be previewing); other scoped roles (chef/bainmarry/BK/store) can't, so don't offer
+  // them a button that would only 403.
+  const canSeeSalary = ["outlet_mgr", "owner", "avp", "head_chef"].includes(getCurrentUser()?.role);
+  // Daily attendance punch tab — only roles the backend lets mark attendance (and not the
+  // Chef's fine-only cut). See ATTENDANCE_MARK_ROLES in employees.js.
+  const canMarkAttendance = ["outlet_mgr", "owner", "avp", "head_chef", "store_mgr"].includes(getCurrentUser()?.role);
+  const [view, setView] = useState("team"); // 'team' (roster) | 'attendance' (daily punch)
 
   const load = () => { api.getEmployees().then(setEmployees).catch(() => {}).finally(() => setLoading(false)); };
   useEffect(load, []);
+
+  const loadSalary = (id, month) => {
+    setSalaryLoading(true); setSalaryData(null);
+    api.getEmployeePayroll(id, month).then(setSalaryData).catch((e) => setSalaryData({ error: e.message })).finally(() => setSalaryLoading(false));
+  };
+  const openSalary = (emp) => { setSalaryId(emp.id); loadSalary(emp.id, salaryMonth); };
+  const closeSalary = () => { setSalaryId(null); setSalaryData(null); };
+  const changeSalaryMonth = (id, m) => { setSalaryMonth(m); loadSalary(id, m); };
+
+  // "YYYY-MM" -> "Sep 2026"; day/number fractions trimmed to a clean 0 or 2-dp.
+  const monthLabel = (m) => { const [y, mo] = (m || "").split("-").map(Number); return y ? new Date(y, mo - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" }) : m; };
+  const n2 = (v) => { const x = Number(v || 0); return Number.isInteger(x) ? String(x) : x.toFixed(2); };
+
+  // Plain-text salary slip — self-explanatory line-by-line so the employee can follow the
+  // math (WhatsApp can't carry an attachment, only text, so the calculation IS the slip).
+  const salarySlipText = (emp, d, m) => {
+    const deptLabel = EMPLOYEE_DEPARTMENTS.find((x) => x.id === emp.department)?.label || emp.department || "";
+    const L = [];
+    L.push("🧾 *THE ANANDA CAFE — Salary Slip*");
+    L.push(`📅 ${monthLabel(m)}${deptLabel ? ` · ${deptLabel}` : ""}`);
+    L.push("");
+    L.push(`👤 *${emp.name}*${emp.employee_code ? ` (${emp.employee_code})` : ""}`);
+    if (emp.designation) L.push(emp.designation);
+    L.push("");
+    L.push("*Attendance*");
+    L.push(`• Days in month: ${n2(d.month_days)}`);
+    L.push(`• Leave allowed: ${n2(d.leave_allowed)}`);
+    L.push(`• Leaves taken: ${n2(d.leaves_taken)}`);
+    L.push(`• Leaves cash-in (allowed − taken): ${n2(d.leaves_cashin)}`);
+    L.push(`• OT hours: ${n2(d.ot_hours)}  →  OT days (÷10): ${n2(d.ot_days)}`);
+    L.push(`• Working days (month + cash-in + OT): ${n2(d.working_days)}`);
+    L.push("");
+    L.push("*Salary*");
+    L.push(`• Base salary: ₹${fmt(Math.round(d.base_salary))}`);
+    L.push(`• Prorated (${n2(d.working_days)} ÷ ${n2(d.month_days)} × base): ₹${fmt(Math.round(d.prorated_salary))}`);
+    if (Number(d.advances_deducted) > 0) L.push(`• Advance deducted: −₹${fmt(Math.round(d.advances_deducted))}`);
+    L.push("━━━━━━━━━━━━━━");
+    L.push(`💰 *NET PAYABLE: ₹${fmt(Math.round(d.net_payable))}*`);
+    L.push("");
+    L.push(d.status === "finalized" ? "✅ Finalized" : "📝 Provisional — not yet finalized");
+    return L.join("\n");
+  };
+  const shareSalaryWA = (emp, d, m) => {
+    const text = salarySlipText(emp, d, m);
+    const phone = (emp.phone || "").replace(/\D/g, "");
+    // Send straight to the employee's number when we have a valid 10-digit one; otherwise
+    // fall back to WhatsApp's share picker (same pattern the rest of the app uses).
+    const url = phone.length === 10 ? `https://wa.me/91${phone}?text=${encodeURIComponent(text)}` : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank");
+  };
 
   const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" };
 
@@ -1258,8 +1427,18 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
         <div style={{ fontSize: 15, fontWeight: 800 }}>👥 Team</div>
         <div style={{ fontSize: 11, color: "#999" }}>{fineOnly ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff & record advances"}</div>
       </div>
-      {!fineOnly && <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>}
+      {!fineOnly && view === "team" && <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>}
     </div>
+
+    {!fineOnly && canMarkAttendance && (
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {[{ k: "team", l: "👥 Team" }, { k: "attendance", l: "🧑‍💼 Attendance" }].map((t) => (
+          <button key={t.k} onClick={() => setView(t.k)} style={{ flex: 1, padding: "9px", borderRadius: 10, border: view === t.k ? "none" : "1px solid #E0E0DC", background: view === t.k ? "#1A1A1A" : "#fff", color: view === t.k ? "#fff" : "#888", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{t.l}</button>
+        ))}
+      </div>
+    )}
+
+    {view === "attendance" ? <TeamAttendance department={department} /> : (<>
 
     {showAdd && !fineOnly && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
@@ -1280,6 +1459,8 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
           {emp.phone && <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>📞 {emp.phone}</div>}
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}</div>
           {emp.current_month_advance > 0 && <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 2 }}>🤝 {fmt(emp.current_month_advance)} advance this month</div>}
+          {/* The "this month" figure resets on the 1st — keep last month's visible for reference. */}
+          {emp.last_month_advance > 0 && <div style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 600, marginTop: 2 }}>🗓️ {fmt(emp.last_month_advance)} advance last month</div>}
 
           {editId === emp.id ? (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
@@ -1327,15 +1508,62 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
                 <button onClick={() => setFineId(null)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
               </div>
             </div>
+          ) : salaryId === emp.id ? (
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, flex: 1 }}>💰 Salary — {monthLabel(salaryMonth)}</div>
+                <input type="month" max={today().slice(0, 7)} value={salaryMonth} onChange={(e) => changeSalaryMonth(emp.id, e.target.value)} style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+              </div>
+              {salaryLoading && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+              {!salaryLoading && salaryData?.error && <div style={{ color: "#DC2626", fontSize: 12, padding: 8 }}>{salaryData.error}</div>}
+              {!salaryLoading && salaryData?.row && (() => {
+                const d = salaryData.row;
+                const line = (label, value, strong, color) => (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12.5, fontWeight: strong ? 800 : 500 }}>
+                    <span style={{ color: "#666" }}>{label}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', monospace", color: color || "#1A1A1A" }}>{value}</span>
+                  </div>
+                );
+                return (<>
+                  <div style={{ background: "#FAFAF8", borderRadius: 10, padding: "8px 12px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#999", marginBottom: 2 }}>ATTENDANCE</div>
+                    {line("Days in month", n2(d.month_days))}
+                    {line("Leave allowed", n2(d.leave_allowed))}
+                    {line("Leaves taken", n2(d.leaves_taken))}
+                    {line("Leaves cash-in (allowed − taken)", n2(d.leaves_cashin), false, d.leaves_cashin < 0 ? "#DC2626" : "#16A34A")}
+                    {line(`OT hrs ${n2(d.ot_hours)} → OT days (÷10)`, n2(d.ot_days))}
+                    {line("Working days (month + cash-in + OT)", n2(d.working_days), true)}
+                  </div>
+                  <div style={{ background: "#FAFAF8", borderRadius: 10, padding: "8px 12px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#999", marginBottom: 2 }}>SALARY</div>
+                    {line("Base salary", `₹${fmt(Math.round(d.base_salary))}`)}
+                    {line(`Prorated (${n2(d.working_days)} ÷ ${n2(d.month_days)} × base)`, `₹${fmt(Math.round(d.prorated_salary))}`)}
+                    {Number(d.advances_deducted) > 0 && line("Advance deducted", `−₹${fmt(Math.round(d.advances_deducted))}`, false, "#B45309")}
+                    <div style={{ borderTop: "1px solid #E8E8E4", marginTop: 4, paddingTop: 4 }}>
+                      {line("NET PAYABLE", `₹${fmt(Math.round(d.net_payable))}`, true)}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: d.status === "finalized" ? "#16A34A" : "#B45309", fontWeight: 700, marginBottom: 8 }}>{d.status === "finalized" ? "✅ Finalized" : "📝 Provisional — not yet finalized"}</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => shareSalaryWA(emp, d, salaryMonth)} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>📲 Share on WhatsApp</button>
+                    <button onClick={closeSalary} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+                  </div>
+                </>);
+              })()}
+            </div>
           ) : (
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              {!fineOnly && <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
-              {!fineOnly && <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>}
-              <button onClick={() => openFine(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+              {!fineOnly && canSeeSalary && <button onClick={() => openSalary(emp)} style={{ width: "100%", padding: 8, borderRadius: 8, border: "1px solid #BBF7D0", background: "#F0FDF4", color: "#16A34A", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>💰 Salary Calculation</button>}
+              <div style={{ display: "flex", gap: 8 }}>
+                {!fineOnly && <button onClick={() => openEdit(emp)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
+                {!fineOnly && <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>}
+                <button onClick={() => openFine(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
+              </div>
             </div>
           )}
         </div>
       ))}
+    </>)}
   </div>);
 };
 
@@ -2949,6 +3177,7 @@ const PUNCH_TYPES = [
   { key: "sales", icon: "💰", label: "Sales" },
   { key: "wastage", icon: "🗑️", label: "Wastage" },
   { key: "closing", icon: "📊", label: "Closing Stock" },
+  { key: "attendance", icon: "🧑‍💼", label: "Attendance" },
   // bk_closing (Store Manager's daily BK Closing Stock punch, on a synthetic 'bk'
   // pseudo-outlet) removed — the backend no longer emits it now that the old Inventory
   // module is retired (see salesRoutes.js's punch-status comment for why a daily manual
@@ -3054,9 +3283,9 @@ const DemandApprovalPanel = () => {
 
   const grantedByOutlet = useMemo(() => { const m = {}; exceptions.forEach((e) => { m[e.outlet_id] = e; }); return m; }, [exceptions]);
 
-  const grant = async (outletId) => {
+  const grant = async (outletId, emergency = false) => {
     setBusyOutlet(outletId);
-    try { await api.grantDemandException({ outlet_id: outletId, reason: (reasonDraft[outletId] || "").trim() || null }); load(); }
+    try { await api.grantDemandException({ outlet_id: outletId, reason: (reasonDraft[outletId] || "").trim() || null, emergency }); load(); }
     catch (e) { alert("Error: " + e.message); }
     finally { setBusyOutlet(null); }
   };
@@ -3071,14 +3300,17 @@ const DemandApprovalPanel = () => {
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Evening demand closes for every outlet at 11:45 AM. If an outlet calls asking for a late order today, open it here — their Evening Delivery button unlocks within a few seconds. Only applies to today; nothing to remember to turn back off.</div>
+      <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>Evening demand closes for every outlet at 11:45 AM. If an outlet calls asking for a late order today, <strong>Open for Today</strong> unlocks their Evening Delivery. For a true emergency (they need something now, or already got today's dispatch), <strong>🚨 Open Emergency Demand</strong> — that adds a one-time Emergency option on their demand screen that bypasses the closed-slot / already-dispatched limits. Only applies to today; nothing to turn back off.</div>
       {OUTLETS.map((o) => {
         const granted = grantedByOutlet[o.id];
+        const isEmergency = granted && String(granted.reason || "").startsWith("🚨 EMERGENCY");
         return (
-          <div key={o.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${granted ? "#BBF7D0" : "#E8E8E4"}`, padding: "12px 14px", marginBottom: 8 }}>
+          <div key={o.id} style={{ background: "#fff", borderRadius: 12, border: `1px solid ${isEmergency ? "#FECACA" : granted ? "#BBF7D0" : "#E8E8E4"}`, padding: "12px 14px", marginBottom: 8 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{o.name}</div>
-              {granted ? (
+              {isEmergency ? (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#991B1B", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6, padding: "3px 8px" }}>🚨 Emergency open</span>
+              ) : granted ? (
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "3px 8px" }}>✅ Open for today</span>
               ) : (
                 <span style={{ fontSize: 11, fontWeight: 700, color: "#991B1B", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 6, padding: "3px 8px" }}>🔒 Closed after 11:45</span>
@@ -3088,12 +3320,16 @@ const DemandApprovalPanel = () => {
               <div style={{ marginTop: 8 }}>
                 {granted.reason && <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>{granted.reason}</div>}
                 <div style={{ fontSize: 10.5, color: "#AAA", marginBottom: 8 }}>Granted by {granted.granted_by || "owner"}</div>
-                <button onClick={() => revoke(granted.id, o.id)} disabled={busyOutlet === o.id} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{busyOutlet === o.id ? "⏳..." : "Revoke"}</button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {!isEmergency && <button onClick={() => grant(o.id, true)} disabled={busyOutlet === o.id} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{busyOutlet === o.id ? "⏳..." : "🚨 Upgrade to Emergency"}</button>}
+                  <button onClick={() => revoke(granted.id, o.id)} disabled={busyOutlet === o.id} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#555", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>{busyOutlet === o.id ? "⏳..." : "Revoke"}</button>
+                </div>
               </div>
             ) : (
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <input placeholder="Reason (optional) — e.g. large event tonight" value={reasonDraft[o.id] || ""} onChange={(e) => setReasonDraft((p) => ({ ...p, [o.id]: e.target.value }))} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
-                <button onClick={() => grant(o.id)} disabled={busyOutlet === o.id} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyOutlet === o.id ? "⏳..." : "Open for Today"}</button>
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                <input placeholder="Reason (optional) — e.g. large event tonight" value={reasonDraft[o.id] || ""} onChange={(e) => setReasonDraft((p) => ({ ...p, [o.id]: e.target.value }))} style={{ flex: 1, minWidth: 160, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit" }} />
+                <button onClick={() => grant(o.id, false)} disabled={busyOutlet === o.id} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#16A34A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyOutlet === o.id ? "⏳..." : "Open for Today"}</button>
+                <button onClick={() => grant(o.id, true)} disabled={busyOutlet === o.id} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyOutlet === o.id ? "⏳..." : "🚨 Open Emergency Demand"}</button>
               </div>
             )}
           </div>
@@ -10234,14 +10470,19 @@ const OutletMgr = ({ onBack }) => {
   // out from the slot-picker screen instead of after filling in a whole order. undefined =
   // not checked yet (don't show a false "open" state while the fetch is in flight).
   const [eveningExceptionGranted, setEveningExceptionGranted] = useState(undefined);
+  // emergencyGranted = the owner opened a one-time EMERGENCY demand window for this outlet
+  // today (Demand Approval → "🚨 Open Emergency Demand"). When true, an always-unlocked
+  // Emergency slot appears below that bypasses the closed-slot / already-dispatched limits.
+  const [emergencyGranted, setEmergencyGranted] = useState(false);
   useEffect(() => {
     if (!outlet) return;
     setEveningExceptionGranted(undefined);
+    setEmergencyGranted(false);
     // Fails OPEN on error (treated as granted, same as the backend's own fail-open on this
     // check) — this is only ever a courtesy lock, so a network hiccup or the migration not
     // having run yet on this DB should let a manager through to actually attempt the
     // submission, not show a confusing false lock the real (server-side) check disagrees with.
-    api.checkMyDemandException(outlet).then((r) => setEveningExceptionGranted(!!r?.granted)).catch(() => setEveningExceptionGranted(true));
+    api.checkMyDemandException(outlet).then((r) => { setEveningExceptionGranted(!!r?.granted); setEmergencyGranted(!!r?.emergency); }).catch(() => setEveningExceptionGranted(true));
   }, [outlet]);
   const EVENING_CUTOFF_MINUTES = 11 * 60 + 45; // 11:45 AM, matching the backend's own cutoff
   const pastEveningCutoff = istHour() * 60 + istNow().getUTCMinutes() >= EVENING_CUTOFF_MINUTES;
@@ -13634,11 +13875,13 @@ const NeverMappedReport = ({ items }) => {
 const COGS_SCORE_THRESHOLDS = { good: 85, ok: 60 };
 // Punch Score weights, as specified: Closing 30% (split equally across its 6 tracked
 // categories, 5% each), Demand 20%, Wastage 20%, Verify Dispatch Challan 10%, Sales 10%,
-// Dairy + Cold Drink Purchase 20% (10% each). These literally sum to 110, not 100 — kept
-// as given rather than silently altering the relative weights, and normalized by the
-// actual total (PUNCH_TOTAL_WEIGHT) below so the score still tops out at 100.
+// Dairy + Cold Drink Purchase 20% (10% each), Attendance 10% (daily Team punch). The raw
+// weights don't sum to 100 — kept as given rather than silently altering the relative
+// weights, and normalized by the actual total (PUNCH_TOTAL_WEIGHT) below so the score
+// still tops out at 100. Attendance is an Outlet-Manager duty (not Chef's — see the
+// otherWeightsForRole split in the dashboard, which drops it for the Chef cut).
 const PUNCH_CLOSING_WEIGHT = 30;
-const PUNCH_OTHER_WEIGHTS = { demand: 20, wastage: 20, dispatch_verify: 10, sales: 10, dairy_purchase: 10, cold_drink_purchase: 10 };
+const PUNCH_OTHER_WEIGHTS = { demand: 20, wastage: 20, dispatch_verify: 10, sales: 10, dairy_purchase: 10, cold_drink_purchase: 10, attendance: 10 };
 const PUNCH_CLOSING_SUB_WEIGHT = PUNCH_CLOSING_WEIGHT / CLOSING_CATEGORY_META.length;
 const PUNCH_TOTAL_WEIGHT = PUNCH_CLOSING_WEIGHT + Object.values(PUNCH_OTHER_WEIGHTS).reduce((s, w) => s + w, 0);
 // hideDiscipline: omits the Discipline card + detail panel entirely — used to give Chef

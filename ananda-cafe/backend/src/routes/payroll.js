@@ -32,7 +32,7 @@
 const express = require('express');
 const router = express.Router();
 const supabase = require('../supabase');
-const { requireRole } = require('./authGuards');
+const { requireRole, requireAuth } = require('./authGuards');
 const { todayIST } = require('../helpers');
 
 const PAYROLL_ROLES = ['owner', 'avp', 'head_chef'];
@@ -178,6 +178,63 @@ router.get('/', async (req, res) => {
     });
 
     res.json({ month, rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/payroll/employee/:id?month=YYYY-MM — ONE employee's payroll for the
+// month, the exact same figures GET / returns, but reachable by that employee's own
+// outlet manager (scoped to their own department) in addition to owner/avp/head_chef.
+// This is what powers the Salary Calculation / salary-slip view in the Outlet module's
+// Team section — the full payroll sheet stays owner-tier, but a manager can see and
+// share the breakdown for a staff member they actually manage. Finalized months return
+// the frozen snapshot; otherwise it's computed live, identical to the list endpoint.
+router.get('/employee/:id', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { id } = req.params;
+    const month = req.query.month || new Date().toISOString().slice(0, 7);
+    const { monthDays, from, to } = monthRange(month);
+
+    const { data: emp, error: empErr } = await supabase.from('employees').select('*').eq('id', id).single();
+    if (empErr || !emp) return res.status(404).json({ error: 'Employee not found' });
+
+    // Owner/avp/head_chef see anyone; an outlet manager only their own department's staff.
+    // Salary stays off-limits to every other scoped role (chef/bainmarry/franchise/driver).
+    const privileged = PAYROLL_ROLES.includes(user.role);
+    const ownsDepartment = user.role === 'outlet_mgr' && emp.department && emp.department === user.outlet_id;
+    if (!privileged && !ownsDepartment) return res.status(403).json({ error: 'Insufficient permissions' });
+
+    const base = {
+      employee_id: emp.id, name: emp.name, employee_code: emp.employee_code,
+      designation: emp.designation, department: emp.department, phone: emp.phone,
+    };
+
+    const { data: run } = await supabase.from('employee_payroll_runs').select('*').eq('employee_id', id).eq('month', month).maybeSingle();
+    if (run) {
+      return res.json({ month, month_days: monthDays, row: {
+        ...base,
+        base_salary: run.base_salary, leave_allowed: run.leave_allowed, leaves_taken: run.leaves_taken,
+        ot_hours: run.ot_hours, month_days: run.month_days, leaves_cashin: run.leaves_cashin,
+        ot_days: run.ot_days, working_days: run.working_days, prorated_salary: run.prorated_salary,
+        advances_deducted: run.advances_deducted, net_payable: run.net_payable,
+        status: 'finalized', finalized_at: run.finalized_at, finalized_by: run.finalized_by,
+      } });
+    }
+
+    const [{ data: attendance }, { data: otRow }, { data: advances }, { data: overrideRow }] = await Promise.all([
+      supabase.from('employee_attendance').select('employee_id, status, date, hours_worked').eq('employee_id', id).gte('date', from).lte('date', to),
+      supabase.from('employee_monthly_ot').select('ot_hours').eq('employee_id', id).eq('month', month).maybeSingle(),
+      supabase.from('books_ledger').select('amount, settled, status').eq('is_advance', true).eq('employee_id', id),
+      supabase.from('employee_payroll_overrides').select('*').eq('employee_id', id).eq('month', month).maybeSingle(),
+    ]);
+
+    const totals = (computeAttendanceTotals([emp], attendance, from, to))[id] || { leaves: 0, otHours: 0 };
+    const otHours = otRow ? Number(otRow.ot_hours || 0) : totals.otHours;
+    const advancesDeducted = (advances || []).reduce((s, a) => (!a.settled && a.status === 'approved' ? s + Number(a.amount || 0) : s), 0);
+    const computed = computeRow(emp, { leavesTaken: totals.leaves, otHours, advancesDeducted, monthDays, overrides: overrideRow || {} });
+
+    res.json({ month, month_days: monthDays, row: { ...base, ...computed, status: 'draft', has_overrides: !!overrideRow } });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

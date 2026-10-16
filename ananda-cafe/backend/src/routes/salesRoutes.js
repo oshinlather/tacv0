@@ -1377,6 +1377,15 @@ const RECIPE_RAW_MATERIAL_MAP = {
   'roasted karipatta': 'roasted_karipatta',
   'boiled rice': 'boiled_rice',
   'upma sooji': 'upma_sooji',
+  // Items renamed to match the owner's sheet (vendor challan / rate card display names),
+  // but dish recipe_ingredients still store the OLD ingredient text — map by that old name
+  // to the rate_card id so costing keeps resolving regardless of the new display name.
+  'tata salt': 'salt',
+  'haldi powder': 'haldi_powder',
+  'hing powder': 'hing_powder',
+  'fortune refined oil': 'fortune_refined',
+  'filter coffee powder': 'filter_coffee_powder',
+  'hari ilaychi': 'ilaychi',
 };
 
 // Dish names: PetPooja exports and recipe entries can differ in case/spacing/trailing
@@ -2839,19 +2848,46 @@ async function checkEveningDemandCutoff(outlet_id, type, demand_slot) {
   return "Evening demand closes at 11:45 AM. Call the owner if you need a late order today — they can open it for you from the Owner Dashboard.";
 }
 
+// Emergency-demand grant marker. There's exactly one demand_exceptions row per (outlet,date)
+// — a normal "Open for Today" (evening) grant vs an "Open Emergency Demand" grant are the
+// same row, distinguished by this sentinel prefix on `reason` (deliberately no new column —
+// a missing column just caused a full auth outage; this needs no migration). An emergency
+// grant is a strict superset: it also satisfies checkEveningDemandCutoff above (any row =
+// evening open) AND authorizes the outlet to create a guard-bypassing emergency demand below.
+const EMERGENCY_GRANT_PREFIX = '🚨 EMERGENCY';
+async function hasEmergencyGrant(outlet_id) {
+  try {
+    const { data } = await supabase.from('demand_exceptions')
+      .select('reason').eq('outlet_id', outlet_id).eq('date', todayIST()).limit(1);
+    const r = data && data[0] && data[0].reason;
+    return !!(r && String(r).startsWith(EMERGENCY_GRANT_PREFIX));
+  } catch (e) { return false; } // fail safe: no column/row/network → not granted
+}
+
 router.post('/demands', async (req, res) => {
   try {
     const { outlet_id, type, items, items_units, note, date, demand_slot, submitted_by, status, emergency } = req.body;
     if (!outlet_id || !type) return res.status(400).json({ error: "outlet_id and type are required" });
-    // Emergency on-behalf dispatch (owner / store_mgr / bk_manager): an outlet urgently
-    // needs something they never demanded — or a top-up after their slot was already
-    // dispatched. This bypasses the evening cutoff AND the already-dispatched guard below,
-    // and always inserts a fresh, clearly-flagged order (never merges into an existing one),
-    // so the goods still flow through the normal dispatch → RECEIPT / P&L path and the
-    // outlet's consumption stays correct instead of going out untracked. Gated to the roles
-    // that run the Dispatch screen.
+    // Emergency order — an outlet urgently needs something they never demanded, or a top-up
+    // after their slot was already dispatched. Bypasses the evening cutoff AND the
+    // already-dispatched guard below, and always inserts a fresh, clearly-flagged order
+    // (never merges), so the goods still flow through the normal dispatch → RECEIPT / P&L
+    // path instead of going out untracked. Two authorized ways in:
+    //   • owner / store_mgr / bk_manager — the on-behalf "Emergency Dispatch" from the
+    //     Dispatch screen (they run it directly);
+    //   • an outlet manager submitting for ITS OWN outlet, but ONLY when the owner has opened
+    //     an emergency-demand window for it today — the authorization comes from the owner's
+    //     grant (hasEmergencyGrant), not the outlet's role.
     if (emergency) {
-      if (!await requireRole(req, res, 'owner', 'store_mgr', 'bk_manager')) return;
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const privileged = ['owner', 'store_mgr', 'bk_manager'].includes(user.role);
+      if (!privileged) {
+        if (!ensureOutletAccess(user, outlet_id, res)) return;
+        if (!await hasEmergencyGrant(outlet_id)) {
+          return res.status(403).json({ error: 'No emergency demand is open for your outlet. Ask the owner to open one from the Owner Dashboard.' });
+        }
+      }
     } else {
       const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
       if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
@@ -3059,9 +3095,10 @@ router.get('/demand-exceptions/mine', async (req, res) => {
     const { outlet_id } = req.query;
     if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
     if (!ensureOutletAccess(user, outlet_id, res)) return;
-    const { data, error } = await supabase.from('demand_exceptions').select('id').eq('outlet_id', outlet_id).eq('date', todayIST()).limit(1);
+    const { data, error } = await supabase.from('demand_exceptions').select('id, reason').eq('outlet_id', outlet_id).eq('date', todayIST()).limit(1);
     if (error) throw error;
-    res.json({ granted: !!(data && data.length) });
+    const row = data && data[0];
+    res.json({ granted: !!row, emergency: !!(row && String(row.reason || '').startsWith(EMERGENCY_GRANT_PREFIX)) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3072,11 +3109,18 @@ router.post('/demand-exceptions', async (req, res) => {
   try {
     const user = await requireOwner(req, res);
     if (!user) return;
-    const { outlet_id, reason } = req.body;
+    const { outlet_id, reason, emergency } = req.body;
     if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
     const date = req.body.date || todayIST();
+    // An "Open Emergency Demand" grant is the same one-row-per-(outlet,date) exception, tagged
+    // via a sentinel prefix on `reason` (no new column — see EMERGENCY_GRANT_PREFIX). It's a
+    // strict superset of a plain evening grant: it unlocks evening AND authorizes the outlet's
+    // guard-bypassing emergency submit (hasEmergencyGrant).
+    const storedReason = emergency
+      ? (EMERGENCY_GRANT_PREFIX + (reason && reason.trim() ? ` — ${reason.trim()}` : ''))
+      : (reason || null);
     const { data, error } = await supabase.from('demand_exceptions')
-      .upsert({ outlet_id, date, reason: reason || null, granted_by: user.name }, { onConflict: 'outlet_id,date' })
+      .upsert({ outlet_id, date, reason: storedReason, granted_by: user.name }, { onConflict: 'outlet_id,date' })
       .select('*').single();
     if (error) throw error;
     res.json(data);
@@ -5710,6 +5754,8 @@ router.get('/punch-status/:date', async (req, res) => {
       { data: closing },
       { data: purchases },
       { data: dispatched },
+      { data: activeEmps },
+      { data: attendanceRows },
       sectionMap,
     ] = await Promise.all([
       supabase.from('daily_outlet_sales').select('outlet_id').eq('date', date).in('outlet_id', outletIds),
@@ -5721,13 +5767,27 @@ router.get('/punch-status/:date', async (req, res) => {
       // an outlet with nothing dispatched that day has nothing to verify, so it's not
       // flagged at all rather than showing a false-positive missing punch.
       supabase.from('demands').select('outlet_id, received_at').eq('date', date).eq('status', 'fulfilled').in('outlet_id', outletIds),
+      // Daily attendance punch (Team → Attendance): an outlet's attendance counts as "done"
+      // once MORE THAN 5 of its staff are marked for the date (present/absent/etc) — enough
+      // to show the manager actually ran the punch, without demanding a perfect full roster.
+      // Small outlets (≤5 staff) are done when all of them are marked. No staff → not flagged.
+      supabase.from('employees').select('id, department').eq('active', true).in('department', outletIds),
+      supabase.from('employee_attendance').select('employee_id').eq('date', date),
       getDemandItemSectionMap(),
     ]);
+
+    const empsByOutlet = {};
+    (activeEmps || []).forEach((e) => { (empsByOutlet[e.department] || (empsByOutlet[e.department] = [])).push(e.id); });
+    const markedSet = new Set((attendanceRows || []).map((r) => r.employee_id));
 
     const has = (rows, oid) => (rows || []).some(r => r.outlet_id === oid);
     const outlets = outletIds.map((oid) => {
       const missing = [];
       if (!has(sales, oid)) missing.push('sales');
+      const deptEmps = empsByOutlet[oid] || [];
+      const markedCount = deptEmps.filter((id) => markedSet.has(id)).length;
+      const attendanceDone = markedCount > 5 || (deptEmps.length > 0 && markedCount >= deptEmps.length);
+      if (deptEmps.length > 0 && !attendanceDone) missing.push('attendance');
       if (!has(wastage, oid)) missing.push('wastage');
       if (!has(demand, oid)) missing.push('demand');
       if (!has(closing, oid)) missing.push('closing');
