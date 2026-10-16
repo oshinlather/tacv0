@@ -496,6 +496,7 @@ const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
 const RESPONSIBILITY_OPTIONS = [
   { v: "cogs", l: "📊 COGS Oversight", hint: "Flags, COGS Compare & Sales — all outlets" },
   { v: "onboarding", l: "🧑‍💼 Onboarding", hint: "Add & manage team across ALL outlets + offer letters" },
+  { v: "reviews", l: "⭐ Reviews", hint: "Daily Review & Rating Summary — all outlets" },
 ];
 const UsersPanel = () => {
   const [users, setUsers] = useState([]);
@@ -10846,6 +10847,7 @@ const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
   const cogsResp = userHasResp("cogs"); // extra cross-outlet COGS oversight (see ManagerCogsView)
   const onboardingResp = userHasResp("onboarding"); // cross-outlet staff onboarding (EmployeeMasterPanel)
+  const reviewsResp = userHasResp("reviews"); // cross-outlet Daily Review & Rating Summary
   const roleCategoryScope = CATEGORY_SCOPE[currentUser?.role] || null;
   const isDraftRole = currentUser?.role === "chef" || currentUser?.role === "bainmarry";
   // Chef additionally gets a read-only Performance Dashboard tile (COGS Score/RM Audit,
@@ -11545,7 +11547,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, ...(PHOTO_OUTLET_IDS.includes(outlet) ? [{ s: "outlet_photo", icon: "📸", t: "Daily Photos", tag: "⏱️ Time-bound", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }] : []), { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), ...(reviewsResp ? [{ s: "reviews", icon: "⭐", t: "Reviews", sub: "Daily Review & Rating Summary — all outlets", tag: "⭐ Added responsibility", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, ...(PHOTO_OUTLET_IDS.includes(outlet) ? [{ s: "outlet_photo", icon: "📸", t: "Daily Photos", tag: "⏱️ Time-bound", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }] : []), { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -11561,6 +11563,10 @@ const OutletMgr = ({ onBack }) => {
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
   if (screen === "cogs") return <ManagerCogsView onBack={() => setScreen("home")} />;
+  if (screen === "reviews") return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => setScreen("home")} /><div style={{ fontSize: 15, fontWeight: 800 }}>⭐ Reviews</div></div>
+    <DailyReviewSummary />
+  </div>);
   if (screen === "onboarding") return <EmployeeMasterPanel onBack={() => setScreen("home")} />;
 
   if (screen === "performance") return (<div><SavingOverlay />
@@ -18136,8 +18142,13 @@ const BKStoreAudit = ({ dateStr, selDay, setSelDay }) => {
 //  closing-count reconciliation like the daily BK Store Audit) — backed by
 //  GET /api/inventory/store-audit-monthly/:month.
 // ═════════════════════════════════════════════════════════════════════════════
-const MonthlyBKAudit = () => {
+// stickyTop = px offset where each category's header row freezes while scrolling that category
+// (then the next category's header takes over). Standalone it sits just below the owner nav (~96);
+// embedded on BK Home it's passed higher to clear Home's own sticky filter bar.
+const MonthlyBKAudit = ({ defaultMode = "month", stickyTop = 96 }) => {
+  const [mode, setMode] = useState(defaultMode); // "day" | "month"
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
+  const [selDate, setSelDate] = useState(() => today());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selCat, setSelCat] = useState(null);
@@ -18145,8 +18156,11 @@ const MonthlyBKAudit = () => {
 
   useEffect(() => {
     setLoading(true); setSelCat(null); setExpanded({});
-    api.getStoreAuditMonthly(selMonth).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
-  }, [selMonth]);
+    const req = mode === "day" ? api.getStoreAuditDay(selDate) : api.getStoreAuditMonthly(selMonth);
+    req.then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [mode, selMonth, selDate]);
+  const navBtn = { padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 };
+  const shiftDate = (ds, n) => { const d = new Date(ds + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
   const fmtQty = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
   const fmtDay = (d) => { const dt = new Date(d + "T00:00:00"); return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short" }); };
@@ -18164,14 +18178,26 @@ const MonthlyBKAudit = () => {
       cat.category, i.name, i.unit, i.opening == null ? "" : i.opening, i.stock_in, i.bk_out,
       ...outletCols.map((o) => i.outlet_out?.[o.id] || 0), i.total_out, i.net, i.closing == null ? "" : i.closing,
     ]));
-    exportCSV(headers, rows, `monthly_store_audit_${selMonth}.csv`);
+    exportCSV(headers, rows, `store_audit_${mode === "day" ? selDate : selMonth}.csv`);
   };
 
   return (<div>
     <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
-      <input type="month" max={today().slice(0, 7)} value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", fontWeight: 700 }} />
-      <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); const m = d.toISOString().slice(0, 7); if (m <= today().slice(0, 7)) setSelMonth(m); }} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>→</button>
+      {/* Day / Month toggle — day view carries yesterday's closing as today's opening. */}
+      <div style={{ display: "flex", border: "1px solid #E0E0DC", borderRadius: 8, overflow: "hidden" }}>
+        {["day", "month"].map((m) => (
+          <button key={m} onClick={() => setMode(m)} style={{ padding: "7px 14px", border: "none", background: mode === m ? "#1A1A1A" : "#fff", color: mode === m ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{m === "day" ? "Day" : "Month"}</button>
+        ))}
+      </div>
+      {mode === "day" ? (<>
+        <button onClick={() => setSelDate(shiftDate(selDate, -1))} style={navBtn}>←</button>
+        <input type="date" max={today()} value={selDate} onChange={(e) => setSelDate(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", fontWeight: 700 }} />
+        <button onClick={() => { const n = shiftDate(selDate, 1); if (n <= today()) setSelDate(n); }} style={navBtn}>→</button>
+      </>) : (<>
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() - 1); setSelMonth(d.toISOString().slice(0, 7)); }} style={navBtn}>←</button>
+        <input type="month" max={today().slice(0, 7)} value={selMonth} onChange={(e) => setSelMonth(e.target.value)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", fontWeight: 700 }} />
+        <button onClick={() => { const d = new Date(selMonth + "-01"); d.setMonth(d.getMonth() + 1); const m = d.toISOString().slice(0, 7); if (m <= today().slice(0, 7)) setSelMonth(m); }} style={navBtn}>→</button>
+      </>)}
       {!loading && data && total > 0 && (<>
         <button onClick={() => setSelCat(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: !selCat ? 700 : 500, border: !selCat ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: !selCat ? "#1A1A1A" : "#fff", color: !selCat ? "#fff" : "#888" }}>All ({total})</button>
         {data.categories.map((c) => (
@@ -18181,35 +18207,37 @@ const MonthlyBKAudit = () => {
       </>)}
     </div>
 
-    <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}><strong style={{ color: "#888" }}>Opening</strong> = stock carried from last month (last count before the 1st, rolled forward). Stock <strong style={{ color: "#16A34A" }}>In</strong> = purchases received into Store (challans + orders). Stock <strong style={{ color: "#B45309" }}>Out</strong> = dispatched, split by Base Kitchen and each outlet. <strong style={{ color: "#1A1A1A" }}>Closing</strong> = Opening + In − Out (real stock position). "—" where there's no prior count to carry forward.</div>
+    <div style={{ fontSize: 11, color: "#999", marginBottom: 12 }}><strong style={{ color: "#888" }}>Opening</strong> = {mode === "day" ? "yesterday's closing (last count before the day, carried forward)" : "stock carried from last month (last count before the 1st, rolled forward)"}. Stock <strong style={{ color: "#16A34A" }}>In</strong> = purchases received into Store (challans + orders). Stock <strong style={{ color: "#B45309" }}>Out</strong> = dispatched, split by Base Kitchen and each outlet. <strong style={{ color: "#1A1A1A" }}>Closing</strong> = Opening + In − Out (real stock position). "—" where there's no prior count to carry forward.</div>
 
     {loading ? (
-      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading monthly audit...</div>
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading {mode === "day" ? "daily" : "monthly"} audit...</div>
     ) : !data ? (
-      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {selMonth}</div>
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {mode === "day" ? selDate : selMonth}</div>
     ) : visibleCount === 0 ? (
-      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No stock movement recorded for {selMonth}.</div>
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>No stock movement recorded for {mode === "day" ? selDate : selMonth}.</div>
     ) : visibleCategories.map((cat) => (
       <div key={cat.category} style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 6 }}>{cat.category} <span style={{ color: "#BBB", fontWeight: 400 }}>({cat.items.length})</span></div>
-        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
+        {/* No overflow wrapper here on purpose — an overflow container would clip the per-category
+            sticky header. The wide table falls back to page horizontal scroll; the Item column
+            stays frozen on the left via position:sticky left:0. */}
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>
-                <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8" }}>Item</th>
-                <th style={{ ...thS, textAlign: "right" }}>Opening</th>
-                <th style={{ ...thS, textAlign: "right" }}>Stock In</th>
-                <th style={{ ...thS, textAlign: "right" }}>🏭 BK</th>
-                {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right" }}>{o.short}</th>)}
-                <th style={{ ...thS, textAlign: "right" }}>Total Out</th>
-                <th style={{ ...thS, textAlign: "right" }}>Net</th>
-                <th style={{ ...thS, textAlign: "right" }}>Closing</th>
+                <th style={{ ...thS, position: "sticky", left: 0, top: stickyTop, zIndex: 3, background: "#FAFAF8" }}>Item</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Opening</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Stock In</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>🏭 BK</th>
+                {outletCols.map((o) => <th key={o.id} style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>{o.short}</th>)}
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Total Out</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Net</th>
+                <th style={{ ...thS, textAlign: "right", position: "sticky", top: stickyTop, zIndex: 2, background: "#FAFAF8" }}>Closing</th>
               </tr></thead>
               <tbody>
-                {cat.items.map((i) => { const open = !!expanded[i.item_id]; const days = i.by_date || []; return (
+                {cat.items.map((i) => { const open = !!expanded[i.item_id]; const days = mode === "day" ? [] : (i.by_date || []); return (
                   <Fragment key={i.item_id}>
                   <tr style={{ borderBottom: open ? "none" : "1px solid #F0F0EC", cursor: days.length ? "pointer" : "default", background: open ? "#FBFAF7" : undefined }} onClick={() => days.length && setExpanded((e) => ({ ...e, [i.item_id]: !e[i.item_id] }))}>
-                    <td style={{ ...tdS, position: "sticky", left: 0, background: open ? "#FBFAF7" : "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{days.length > 0 && <span style={{ color: "#BBB", marginRight: 5, fontSize: 10, display: "inline-block", width: 8 }}>{open ? "▾" : "▸"}</span>}{i.name}</div><div style={{ fontSize: 9, color: "#999", marginLeft: days.length > 0 ? 13 : 0 }}>{i.unit}{days.length > 0 ? ` · ${days.length} day${days.length > 1 ? "s" : ""}` : ""}</div></td>
+                    <td style={{ ...tdS, position: "sticky", left: 0, zIndex: 1, background: open ? "#FBFAF7" : "#fff" }}><div style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{days.length > 0 && <span style={{ color: "#BBB", marginRight: 5, fontSize: 10, display: "inline-block", width: 8 }}>{open ? "▾" : "▸"}</span>}{i.name}</div><div style={{ fontSize: 9, color: "#999", marginLeft: days.length > 0 ? 13 : 0 }}>{i.unit}{days.length > 0 ? ` · ${days.length} day${days.length > 1 ? "s" : ""}` : ""}</div></td>
                     <td title={i.anchor_date ? `carried from count on ${i.anchor_date}` : "no prior count to carry forward"} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.opening == null ? "#DDD" : "#888", fontWeight: 600 }}>{i.opening == null ? "—" : fmtQty(i.opening)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.stock_in > 0 ? "#16A34A" : "#DDD", fontWeight: 700 }}>{i.stock_in > 0 ? "+" : ""}{fmtQty(i.stock_in)}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.bk_out > 0 ? "#B45309" : "#DDD" }}>{fmtQty(i.bk_out)}</td>
@@ -18234,7 +18262,6 @@ const MonthlyBKAudit = () => {
                 ); })}
               </tbody>
             </table>
-          </div>
         </div>
       </div>
     ))}
@@ -21029,8 +21056,8 @@ const OwnerHome = ({ setOwnerTab }) => {
           <BKClosingWastage date={effDateStr} />
         </FlagCard>)}
       {section("bk_audit", "", "",
-        <FlagCard icon="📅" title="Monthly Store Audit" subtitle="Per-item opening, in/out & closing — stock position over the month">
-          <MonthlyBKAudit />
+        <FlagCard icon="📅" title="Store Audit" subtitle="Per-item opening, in/out & closing — today by default, toggle to month">
+          <MonthlyBKAudit defaultMode="day" stickyTop={142} />
         </FlagCard>)}
       </> : <>
       {section("flags", "🚩 Flags", `${outletShort} · ${effDateStr} — the day's problem list`,
