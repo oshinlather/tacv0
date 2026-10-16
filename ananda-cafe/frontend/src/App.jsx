@@ -1164,6 +1164,7 @@ const TeamAttendance = ({ department = null }) => {
         active.forEach((e) => {
           const row = byEmp[e.id];
           if (row && row.status === "present") d0[e.id] = { status: "present", ot: String(Math.min(MAX_OT_HOURS, Math.max(0, Number(row.hours_worked || 0) - STANDARD_SHIFT_HOURS)) || "") };
+          else if (row && row.status === "half_day") d0[e.id] = { status: "half_day", ot: "" };
           else d0[e.id] = { status: "absent", ot: "" }; // unmarked OR previously absent/leave → default Absent
         });
         setDraft(d0);
@@ -1186,9 +1187,13 @@ const TeamAttendance = ({ department = null }) => {
       for (const e of shown) {
         const d = draft[e.id]; if (!d || !d.status) continue;
         const ot = Math.min(MAX_OT_HOURS, Math.max(0, Number(d.ot) || 0)); // clamp 0–6
+        // present → full shift + OT; half_day → half shift (payroll counts it as 0.5
+        // leave regardless, OT only applies to full present days); absent → 0.
         const payload = d.status === "present"
           ? { employee_id: e.id, date, status: "present", hours_worked: STANDARD_SHIFT_HOURS + ot }
-          : { employee_id: e.id, date, status: "absent", hours_worked: 0 };
+          : d.status === "half_day"
+            ? { employee_id: e.id, date, status: "half_day", hours_worked: STANDARD_SHIFT_HOURS / 2 }
+            : { employee_id: e.id, date, status: "absent", hours_worked: 0 };
         await api.markAttendance(payload);
       }
       setSavedMsg(`✅ Attendance saved for ${date}`);
@@ -1197,11 +1202,12 @@ const TeamAttendance = ({ department = null }) => {
   };
 
   const presentCount = shown.filter((e) => draft[e.id]?.status === "present").length;
+  const halfCount = shown.filter((e) => draft[e.id]?.status === "half_day").length;
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
       <input type="date" max={today()} value={date} onChange={(e) => setDate(e.target.value)} style={{ flex: 1, padding: "9px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit" }} />
-      {!loading && shown.length > 0 && <div style={{ fontSize: 12, color: "#999", fontWeight: 600, whiteSpace: "nowrap" }}>{presentCount}/{shown.length} present</div>}
+      {!loading && shown.length > 0 && <div style={{ fontSize: 12, color: "#999", fontWeight: 600, whiteSpace: "nowrap" }}>{presentCount}/{shown.length} present{halfCount > 0 ? ` · ${halfCount} ½` : ""}</div>}
     </div>
     {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>
       : shown.length === 0 ? <div style={{ textAlign: "center", padding: 30, color: "#BBB", fontSize: 13 }}>No team members yet</div>
@@ -1209,13 +1215,15 @@ const TeamAttendance = ({ department = null }) => {
         {shown.map((e) => {
           const d = draft[e.id] || {};
           const present = d.status === "present";
+          const half = d.status === "half_day";
           const absent = d.status === "absent";
           return (
             <div key={e.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ flex: 1, fontSize: 14, fontWeight: 700 }}>{e.name}{e.designation && <span style={{ fontSize: 11, color: "#999", fontWeight: 500 }}> · {e.designation}</span>}</div>
-                <button onClick={() => setStatus(e.id, "present")} style={{ padding: "7px 12px", borderRadius: 8, border: present ? "none" : "1px solid #E0E0DC", background: present ? "#16A34A" : "#fff", color: present ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Present</button>
-                <button onClick={() => setStatus(e.id, "absent")} style={{ padding: "7px 12px", borderRadius: 8, border: absent ? "none" : "1px solid #E0E0DC", background: absent ? "#DC2626" : "#fff", color: absent ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Absent</button>
+                <button onClick={() => setStatus(e.id, "present")} style={{ padding: "7px 10px", borderRadius: 8, border: present ? "none" : "1px solid #E0E0DC", background: present ? "#16A34A" : "#fff", color: present ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Present</button>
+                <button onClick={() => setStatus(e.id, "half_day")} style={{ padding: "7px 10px", borderRadius: 8, border: half ? "none" : "1px solid #E0E0DC", background: half ? "#B45309" : "#fff", color: half ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>½ Day</button>
+                <button onClick={() => setStatus(e.id, "absent")} style={{ padding: "7px 10px", borderRadius: 8, border: absent ? "none" : "1px solid #E0E0DC", background: absent ? "#DC2626" : "#fff", color: absent ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Absent</button>
               </div>
               {present && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
