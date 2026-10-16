@@ -15184,10 +15184,11 @@ const OutletPickerRow = ({ selOutlet, setSelOutlet }) => (<>
 const ROSTER_SELECT_STYLE = { padding: "7px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", color: "#1A1A1A", fontWeight: 600, cursor: "pointer" };
 const rosterPill = (on) => ({ padding: "7px 12px", borderRadius: 8, border: on ? "none" : "1px solid #E0E0DC", background: on ? "#1A1A1A" : "#fff", color: on ? "#fff" : "#888", fontWeight: on ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
 
-const RosterPage = () => {
+const RosterPage = ({ lockedOutlet = null, date = null } = {}) => {
   const [employees, setEmployees] = useState([]);
+  const [att, setAtt] = useState({}); // employee_id -> attendance row for `date` (present/absent/OT overlay)
   const [loading, setLoading] = useState(true);
-  const [selDept, setSelDept] = useState(null); // null = All outlets
+  const [selDept, setSelDept] = useState(lockedOutlet); // null = All outlets; locked when embedded on Home
   const [selPos, setSelPos] = useState(null); // null = All positions
   const [selShift, setSelShift] = useState(null); // null = All shifts, 'morning'|'evening'|'none'
   const [groupBy, setGroupBy] = useState("position"); // 'position' | 'shift'
@@ -15195,6 +15196,11 @@ const RosterPage = () => {
 
   const load = () => { setLoading(true); api.getEmployees().then((r) => setEmployees((r || []).filter((e) => e.active))).catch(() => setEmployees([])).finally(() => setLoading(false)); };
   useEffect(load, []);
+  // Attendance overlay (only when a date is supplied — i.e. embedded on Home): present/absent + OT.
+  useEffect(() => {
+    if (!date) { setAtt({}); return; }
+    api.getAttendance({ date }).then((rows) => { const m = {}; (rows || []).forEach((r) => { m[r.employee_id] = r; }); setAtt(m); }).catch(() => setAtt({}));
+  }, [date]);
 
   const saveField = async (emp, field, value) => {
     setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, [field]: value } : e))); // optimistic
@@ -15238,12 +15244,14 @@ const RosterPage = () => {
         ))}
       </div>
     </div>
-    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-      <button onClick={() => setSelDept(null)} style={rosterPill(selDept === null)}>All Outlets</button>
-      {EMPLOYEE_DEPARTMENTS.map((d) => (
-        <button key={d.id} onClick={() => setSelDept(d.id)} style={rosterPill(selDept === d.id)}>{d.label}</button>
-      ))}
-    </div>
+    {!lockedOutlet && (
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        <button onClick={() => setSelDept(null)} style={rosterPill(selDept === null)}>All Outlets</button>
+        {EMPLOYEE_DEPARTMENTS.map((d) => (
+          <button key={d.id} onClick={() => setSelDept(d.id)} style={rosterPill(selDept === d.id)}>{d.label}</button>
+        ))}
+      </div>
+    )}
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16, alignItems: "center" }}>
       <button onClick={() => setSelPos(null)} style={rosterPill(selPos === null)}>All Positions</button>
       {ROSTER_POSITIONS.map((p) => (
@@ -15305,6 +15313,20 @@ const RosterPage = () => {
                 {e.is_shift_manager && e.shift_login && (
                   <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>🔑 {e.shift_login.phone} · PIN {e.shift_login.pin}</span>
                 )}
+                {/* Attendance + OT for `date` — fills the empty right side of each row (read-only;
+                    marked over in the Attendance screen). */}
+                {date && (() => {
+                  const a = att[e.id]; const stKey = a?.status;
+                  const stv = stKey ? ATTENDANCE_STYLE[stKey] : null;
+                  const ot = stKey === "present" ? Math.min(MAX_OT_HOURS, Math.max(0, Number(a.hours_worked || 0) - STANDARD_SHIFT_HOURS)) : 0;
+                  const label = stKey === "present" ? "Present" : stKey === "absent" ? "Absent" : stKey === "half_day" ? "Half-day" : stKey === "leave" ? "Leave" : "Not marked";
+                  return (
+                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+                      {ot > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: 6, padding: "4px 8px", whiteSpace: "nowrap" }}>+{ot}h OT</span>}
+                      <span style={{ fontSize: 11.5, fontWeight: 800, borderRadius: 6, padding: "4px 10px", whiteSpace: "nowrap", background: stv ? stv.bg : "#F3F4F6", color: stv ? stv.color : "#9CA3AF" }}>{label}</span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
             );
@@ -20858,6 +20880,7 @@ const HOME_SECTIONS = [
   { id: "compare", label: "📊 4-Week" },
   { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   { id: "demand", label: "📦 Demand & Dispatch" },
+  { id: "team", label: "👥 Team" },
 ];
 // Nav pills for the BK cockpit (shown when the BK pill is selected) — jump straight to each
 // BK section, same scroll-spy mechanism as HOME_SECTIONS.
@@ -21146,6 +21169,9 @@ const OwnerHome = ({ setOwnerTab }) => {
 
       {section("demand", "📦 Demand & Dispatch", `${outletShort} — last 7 days, AM/PM split`,
         <DemandHistory outletOverride={selOutlet} />)}
+
+      {section("team", "👥 Team", `${outletShort} · ${effDateStr} — roster, attendance & OT`,
+        <RosterPage lockedOutlet={selOutlet} date={effDateStr} />)}
       </>}
     </div>
   );
