@@ -27,6 +27,7 @@ const bkProductionRouter = require("./routes/bkProduction");
 // bk_closing_stock was BK's own data; confirmed with the owner it's actually always
 // been Store's real physical count, mislabeled. This one reflects that correction.
 const storeLedgerHistoryRouter = require("./routes/storeLedgerHistory");
+const outletPhotosRouter = require("./routes/outletPhotos");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -68,6 +69,7 @@ app.use("/api/store", vendorChallansRouter);
 app.use("/api/store", stockCountsRouter);
 app.use("/api/store", bkProductionRouter);
 app.use("/api/store", storeLedgerHistoryRouter);
+app.use("/api/outlet-photos", outletPhotosRouter);
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {

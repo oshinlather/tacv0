@@ -73,6 +73,45 @@ const getDemandWindow = () => {
   return { id: "anytime", label: "📋 Manual Entry", active: true };
 };
 const timeNow = () => new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
+
+// ── Outlet daily photo module ──────────────────────────────────────────────
+// 4 time-bound photos per outlet per operational day. Opening AND closing deadlines
+// are per-outlet (most close 1:30 AM, GSID closes 1:00 AM). Closing runs past
+// midnight, so the operational day rolls over at 5:00 AM (not midnight) — well after
+// every outlet's closing and before any opening — so an after-midnight closing photo
+// counts for the day that just ended, not the next. All deadlines are MINUTES from the
+// op-day's own 00:00 (closing values exceed 1440 since it's the next calendar morning).
+const PHOTO_OUTLET_IDS = ["sec23", "sec31", "sec56", "sec14", "gaursid"];
+const OUTLET_OPENING_MIN = { sec23: 6 * 60 + 5, sec31: 7 * 60 + 5, sec56: 6 * 60 + 35, sec14: 6 * 60 + 5, gaursid: 8 * 60 + 15 };
+const OUTLET_CLOSING_MIN = { gaursid: 24 * 60 + 60 }; // GSID 1:00 AM; others fall back to 1:30 AM below
+const DEFAULT_CLOSING_MIN = 24 * 60 + 90;             // 1:30 AM next day
+const PHOTO_OP_ROLL_MIN = 5 * 60; // 5:00 AM — operational day boundary
+const OUTLET_PHOTO_TYPES = [
+  { key: "opening", label: "Opening", icon: "🌅", deadline: (oid) => OUTLET_OPENING_MIN[oid] ?? (6 * 60 + 5) },
+  { key: "clean", label: "Clean", icon: "🧹", deadline: () => 10 * 60 },            // 10:00 AM
+  { key: "briefing", label: "Briefing", icon: "📢", deadline: () => 17 * 60 + 30 }, // 5:30 PM
+  { key: "closing", label: "Closing", icon: "🌙", deadline: (oid) => OUTLET_CLOSING_MIN[oid] ?? DEFAULT_CLOSING_MIN },
+];
+const istMinOfDay = () => { const d = istNow(); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
+// Current operational date — before 5:00 AM it's still the previous calendar day.
+const currentOpDate = () => (istMinOfDay() < PHOTO_OP_ROLL_MIN ? istDateAgo(1) : today());
+const fmtClock = (mins) => { const mm = ((mins % 1440) + 1440) % 1440; const h = Math.floor(mm / 60), mi = mm % 60; const ap = h < 12 ? "AM" : "PM"; const h12 = h % 12 === 0 ? 12 : h % 12; return `${h12}:${String(mi).padStart(2, "0")} ${ap}`; };
+// 'done' (captured) | 'expired' (deadline passed, no photo) | 'pending' (before deadline).
+const outletPhotoStatus = (outletId, typeKey, opDate, hasPhoto) => {
+  if (hasPhoto) return "done";
+  const t = OUTLET_PHOTO_TYPES.find((x) => x.key === typeKey);
+  const deadline = t ? t.deadline(outletId) : 0;
+  const curOp = currentOpDate();
+  if (opDate < curOp) return "expired";
+  if (opDate > curOp) return "pending";
+  const elapsed = istMinOfDay() < PHOTO_OP_ROLL_MIN ? istMinOfDay() + 1440 : istMinOfDay();
+  return elapsed > deadline ? "expired" : "pending";
+};
+const PHOTO_STATUS_STYLE = {
+  done: { bg: "#F0FDF4", border: "#BBF7D0", color: "#16A34A" },
+  expired: { bg: "#FEF2F2", border: "#FECACA", color: "#DC2626" },
+  pending: { bg: "#FAFAF8", border: "#E0E0DC", color: "#999" },
+};
 const fmt = (n) => "₹" + Math.round(n).toLocaleString("en-IN");
 const pct = (n) => (n || 0).toFixed(1) + "%";
 // Mirrors the backend's normalizeDishName (salesRoutes.js) so PetPooja sales rows key
@@ -529,7 +568,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -1404,6 +1443,14 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
     try { await api.updateEmployee(emp.id, { [field]: value }); }
     catch (err) { alert("Error: " + err.message); load(); }
   };
+  // Shift-manager toggle also provisions/deactivates the restricted app login (see backend).
+  const toggleShiftMgr = async (emp, enabled) => {
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled } : e)));
+    try {
+      const res = await api.setShiftManagerLogin(emp.id, enabled);
+      if (enabled && res?.pin) window.alert(`⭐ Shift Manager login ready for ${res.name}\n\n📱 Phone: ${res.phone}\n🔑 PIN: ${res.pin}\n\nShare these so they can log in. Flip this off any time to deactivate the login.`);
+    } catch (err) { alert("Error: " + err.message); load(); }
+  };
 
   // Exited staff are hidden from the operational roster — they live only in the Onboarding
   // directory, where an onboarding manager/owner can re-activate them if they rejoin.
@@ -1576,6 +1623,7 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
               <span style={{ fontSize: 10.5, fontWeight: 700, color: "#800000", background: "#F7ECEC", border: "1px solid #E8D5D5", borderRadius: 6, padding: "2px 8px" }}>🧑‍💼 {effectiveRosterPosition(emp)}</span>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: emp.shift ? "#2563EB" : "#9CA3AF", background: emp.shift ? "#EFF6FF" : "#F5F5F3", border: `1px solid ${emp.shift ? "#BFDBFE" : "#E8E8E4"}`, borderRadius: 6, padding: "2px 8px" }}>{rosterShiftLabel(emp.shift)}</span>
               <span style={{ fontSize: 10.5, fontWeight: 700, color: emp.break_window ? "#92400E" : "#9CA3AF", background: emp.break_window ? "#FEF3C7" : "#F5F5F3", border: `1px solid ${emp.break_window ? "#FDE68A" : "#E8E8E4"}`, borderRadius: 6, padding: "2px 8px" }}>☕ {emp.break_window || "—"}</span>
+              {emp.is_shift_manager && <span style={{ fontSize: 10.5, fontWeight: 700, color: "#7C3AED", background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "2px 8px" }}>⭐ Shift Mgr</span>}
             </div>
           ) : (() => {
             const parsed = (emp.break_window || "").split("-");
@@ -1589,6 +1637,10 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
                 </select>
                 <select title="Shift" value={emp.shift || ""} onChange={(ev) => saveRoster(emp, "shift", ev.target.value || null)} style={sel}>
                   {ROSTER_SHIFTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                </select>
+                <select title="Shift manager (auto-creates app login)" value={emp.is_shift_manager ? "yes" : "no"} onChange={(ev) => toggleShiftMgr(emp, ev.target.value === "yes")} style={{ ...sel, ...(emp.is_shift_manager ? { color: "#7C3AED", fontWeight: 700 } : {}) }}>
+                  <option value="no">Staff</option>
+                  <option value="yes">⭐ Shift Mgr</option>
                 </select>
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }} title="Break window">
                   <span style={{ fontSize: 12 }}>☕</span>
@@ -1843,6 +1895,36 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
     finally { setBusyId(null); }
   };
 
+  const markPaid = async (employeeId, name) => {
+    if (!window.confirm(`Mark ${month} salary as PAID for ${name}?`)) return;
+    setBusyId(employeeId);
+    try { await api.markPayrollPaid({ employee_id: employeeId, month }); load(); }
+    catch (e) { alert("Error: " + e.message); } finally { setBusyId(null); }
+  };
+  const reverse = async (employeeId, name) => {
+    if (!window.confirm(`Reverse ${month} payroll for ${name}?\n\nThis undoes the finalize/payment and RESTORES the advances it deducted (they become outstanding again). The row stays on record as "Got Reversed" and can be edited & re-finalized.`)) return;
+    setBusyId(employeeId);
+    try { await api.reversePayroll({ employee_id: employeeId, month }); load(); }
+    catch (e) { alert("Error: " + e.message); } finally { setBusyId(null); }
+  };
+  const changeDept = async (employeeId, department) => {
+    setBusyId(employeeId);
+    try { await api.updateEmployee(employeeId, { department }); load(); }
+    catch (e) { alert("Error: " + e.message); } finally { setBusyId(null); }
+  };
+  const markInactive = async (employeeId, name) => {
+    if (!window.confirm(`Mark ${name} INACTIVE?\n\nThey'll be hidden from payroll, but all their history is kept. (Use this, not Delete, for anyone with advances/payroll history.)`)) return;
+    setBusyId(employeeId);
+    try { await api.updateEmployee(employeeId, { active: false }); load(); }
+    catch (e) { alert("Error: " + e.message); } finally { setBusyId(null); }
+  };
+  const deleteEmp = async (employeeId, name) => {
+    if (!window.confirm(`Permanently DELETE ${name}?\n\nThis only works if they have no advances and no payroll history — otherwise use Mark Inactive. Cannot be undone.`)) return;
+    setBusyId(employeeId);
+    try { await api.deleteEmployee(employeeId); load(); }
+    catch (e) { alert(e.message); } finally { setBusyId(null); }
+  };
+
   // selOutlet, when passed (e.g. embedded inside Daily P&L's Attendance pill, which
   // shares that page's outlet pills), filters to just that department — payroll rows
   // already carry `department`, so no extra API call is needed, just a client-side
@@ -1852,7 +1934,7 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
   const visibleRows = rows.filter((r) => (!selOutlet || r.department === selOutlet) && (!deptFilter || r.department === deptFilter));
   const totalNet = visibleRows.reduce((s, r) => s + Number(r.net_payable || 0), 0);
   const totalAdvances = visibleRows.reduce((s, r) => s + Number(r.advances_deducted || 0), 0);
-  const finalizedCount = visibleRows.filter((r) => r.status === "finalized").length;
+  const finalizedCount = visibleRows.filter((r) => r.status === "finalized" || r.status === "paid").length;
   const numS = { ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" };
 
   // Sorting is display-only — computed off visibleRows (already outlet/dept-filtered),
@@ -1987,7 +2069,9 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
             </tr></thead>
             <tbody>
               {sortedRows.map((r) => {
-                const isFinal = r.status === "finalized";
+                // Locked (read-only cells) when finalized or paid. A 'reversed' row is editable
+                // again (recomputes live) so it can be corrected and re-finalized.
+                const isFinal = r.status === "finalized" || r.status === "paid";
                 const otVal = otDraft[r.employee_id] !== undefined ? otDraft[r.employee_id] : String(r.ot_hours || 0);
                 const otChanged = otDraft[r.employee_id] !== undefined && Number(otDraft[r.employee_id]) !== r.ot_hours;
                 return (
@@ -1995,8 +2079,18 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
                     <td style={tdS}>
                       <div onClick={() => setProfileId(r.employee_id)} style={{ fontWeight: 700, color: "#2563EB", cursor: "pointer" }}>{r.name}{r.has_overrides && <span title="Has manual corrections" style={{ marginLeft: 4 }}>✎</span>}</div>
                       <div style={{ fontSize: 9, color: "#999" }}>{r.designation}{r.employee_code ? ` · ${r.employee_code}` : ""}</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 3 }}>
+                        <button onClick={() => markInactive(r.employee_id, r.name)} disabled={busyId === r.employee_id} title="Hide from payroll, keep history" style={{ padding: "1px 5px", borderRadius: 4, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#B45309", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>🚫 Inactive</button>
+                        <button onClick={() => deleteEmp(r.employee_id, r.name)} disabled={busyId === r.employee_id} title="Permanently delete (only if no advances/payroll history)" style={{ padding: "1px 5px", borderRadius: 4, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>🗑️ Delete</button>
+                      </div>
                     </td>
-                    <td style={tdS}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === r.department)?.label || r.department}</td>
+                    <td style={tdS}>
+                      {/* Reassign an employee's outlet/department inline — owner-tier only, which
+                          this whole screen is. */}
+                      <select value={r.department} onChange={(e) => changeDept(r.employee_id, e.target.value)} disabled={busyId === r.employee_id} style={{ padding: "3px 5px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 10, fontFamily: "inherit", background: "#fff", cursor: "pointer", maxWidth: 110 }}>
+                        {EMPLOYEE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+                      </select>
+                    </td>
                     <td style={numS}>{isFinal ? fmt(r.base_salary) : <PayrollEditableCell {...cellProps(r, "base_salary")} />}</td>
                     <td style={numS}>{isFinal ? r.leave_allowed : <PayrollEditableCell {...cellProps(r, "leave_allowed")} />}</td>
                     <td style={numS}>{isFinal ? r.leaves_taken : <PayrollEditableCell {...cellProps(r, "leaves_taken")} />}</td>
@@ -2016,12 +2110,20 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
                     <td style={{ ...numS, color: r.advances_deducted > 0 ? "#B45309" : "#999" }}>{isFinal ? fmt(r.advances_deducted) : <PayrollEditableCell {...cellProps(r, "advances_deducted")} />}</td>
                     <td style={{ ...numS, fontWeight: 800, color: "#1A1A1A" }}>{isFinal ? fmt(r.net_payable) : <PayrollEditableCell {...cellProps(r, "net_payable")} />}</td>
                     <td style={tdS}>
-                      {isFinal ? (<>
-                        <div style={{ color: "#16A34A", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>✅ Finalized</div>
-                        <button onClick={() => reopen(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #E0E0DC", background: "#fff", fontSize: 10, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>🔓 Reopen</button>
-                      </>) : (
+                      {/* draft / reversed → Finalize ; finalized → Mark Paid + Reverse ; paid → Reverse */}
+                      {(r.status === "draft" || r.status === "reversed") ? (<>
+                        {r.status === "reversed" && <div title={r.reversed_by ? `by ${r.reversed_by}` : ""} style={{ color: "#B45309", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>↩️ Got Reversed</div>}
                         <button onClick={() => finalize(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "5px 10px", borderRadius: 6, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{busyId === r.employee_id ? "⏳..." : "🔒 Finalize"}</button>
-                      )}
+                      </>) : r.status === "paid" ? (<>
+                        <div title={r.paid_by ? `by ${r.paid_by}` : ""} style={{ color: "#2563EB", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>💰 Paid</div>
+                        <button onClick={() => reverse(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>↩️ Reverse</button>
+                      </>) : (<>
+                        <div style={{ color: "#16A34A", fontWeight: 700, fontSize: 10, marginBottom: 4 }}>✅ Finalized</div>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => markPaid(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "3px 8px", borderRadius: 5, border: "none", background: "#2563EB", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>💰 Mark Paid</button>
+                          <button onClick={() => reverse(r.employee_id, r.name)} disabled={busyId === r.employee_id} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>↩️ Reverse</button>
+                        </div>
+                      </>)}
                     </td>
                   </tr>
                 );
@@ -6452,6 +6554,33 @@ const DriverVegetables = () => {
   </div>);
 };
 
+// Shift Manager portal — the restricted screen a shift-manager login lands on. Just the 4
+// photo-capture tiles (Opening / Clean Kitchen / Briefing / Closing), nothing else. The
+// actual capture+upload flow is being built in a separate workstream; this is the scaffold
+// it drops into — replace each tile's onClick/body when that lands. Kept intentionally bare
+// so a shift manager sees only these four actions.
+const SHIFT_MANAGER_TASKS = [
+  { key: "opening", icon: "🌅", label: "Opening", sub: "Shift start photos" },
+  { key: "clean_kitchen", icon: "🧽", label: "Clean Kitchen", sub: "Kitchen cleanliness photos" },
+  { key: "briefing", icon: "📣", label: "Briefing", sub: "Team briefing photos" },
+  { key: "closing", icon: "🌙", label: "Closing", sub: "Shift end photos" },
+];
+const ShiftManagerApp = () => {
+  return (<div>
+    <div style={{ fontSize: 13, color: "#999", marginBottom: 16 }}>Tap a task to capture its photos.</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      {SHIFT_MANAGER_TASKS.map((t) => (
+        <button key={t.key} onClick={() => alert(`📸 ${t.label} capture — coming soon.`)}
+          style={{ background: "#fff", border: "1.5px solid #E8E8E4", borderRadius: 16, padding: "24px 14px", textAlign: "center", cursor: "pointer", fontFamily: "inherit" }}>
+          <div style={{ fontSize: 40, marginBottom: 6 }}>{t.icon}</div>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>{t.label}</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{t.sub}</div>
+        </button>
+      ))}
+    </div>
+  </div>);
+};
+
 const DriverPortal = () => {
   const [tab, setTab] = useState("challans");
   return (<div>
@@ -10553,6 +10682,118 @@ const ManagerCogsView = ({ onBack }) => {
   );
 };
 
+// Outlet daily photo CAPTURE screen (outlet manager). 4 time-bound tiles: capture
+// (camera only), view the captured shot, or locked-expired. Uses the shared
+// operational-day + deadline helpers; the backend re-enforces the deadline on save.
+const OutletPhotoCapture = ({ outlet, onBack }) => {
+  const oData = OUTLETS.find((o) => o.id === outlet);
+  const opDate = currentOpDate();
+  const [photos, setPhotos] = useState({}); // type -> { url, captured_at }
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(null);
+  const [viewUrl, setViewUrl] = useState(null);
+  const [err, setErr] = useState("");
+  const load = () => {
+    setLoading(true);
+    api.getOutletPhotos({ date: opDate, outlet_id: outlet })
+      .then((r) => { const m = {}; (r?.photos || []).forEach((p) => { m[p.photo_type] = p; }); setPhotos(m); })
+      .catch(() => setPhotos({})).finally(() => setLoading(false));
+  };
+  useEffect(load, [outlet]);
+  const onCapture = (typeKey, dataUrl) => {
+    setBusy(typeKey); setErr("");
+    api.captureOutletPhoto({ outlet_id: outlet, photo_type: typeKey, base64: dataUrl, date: opDate })
+      .then(load).catch((e) => setErr(e.message || "Upload failed")).finally(() => setBusy(null));
+  };
+  const clockOf = (iso) => iso ? new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : "";
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}><BackBtn onClick={onBack} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>📸 Daily Photos</div></div>
+    <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{oData?.name} · {opDate} — capture each with the camera before its deadline. A missed deadline locks red.</div>
+    {err && <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", fontSize: 12, marginBottom: 12 }}>{err}</div>}
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading…</div> : (
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {OUTLET_PHOTO_TYPES.map((t) => {
+          const photo = photos[t.key];
+          const status = outletPhotoStatus(outlet, t.key, opDate, !!photo);
+          const st = PHOTO_STATUS_STYLE[status];
+          const beforeDeadline = outletPhotoStatus(outlet, t.key, opDate, false) === "pending";
+          const canCapture = status === "pending" || (status === "done" && beforeDeadline);
+          const uid = `op-cap-${t.key}`;
+          return (
+            <div key={t.key} style={{ borderRadius: 14, border: `1.5px solid ${st.border}`, background: st.bg, padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 150 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 20 }}>{t.icon}</span><span style={{ fontSize: 14, fontWeight: 800 }}>{t.label}</span>
+                <span style={{ marginLeft: "auto", fontSize: 15 }}>{status === "done" ? "✅" : status === "expired" ? "🔒" : "⏳"}</span>
+              </div>
+              {photo?.url && <img src={photo.url} alt={t.label} onClick={() => setViewUrl(photo.url)} style={{ width: "100%", height: 74, objectFit: "cover", borderRadius: 8, cursor: "pointer", border: "1px solid #E8E8E4" }} />}
+              <div style={{ fontSize: 10.5, color: st.color, fontWeight: 600 }}>{status === "done" ? `Captured ${clockOf(photo?.captured_at)}` : status === "expired" ? `Expired — was due by ${fmtClock(t.deadline(outlet))}` : `Due by ${fmtClock(t.deadline(outlet))}`}</div>
+              {canCapture && (
+                <label htmlFor={uid} style={{ marginTop: "auto", display: "block", textAlign: "center", padding: "8px", borderRadius: 10, background: status === "done" ? "#fff" : "#1A1A1A", color: status === "done" ? "#555" : "#fff", border: status === "done" ? "1px solid #E0E0DC" : "none", fontSize: 12, fontWeight: 700, cursor: busy ? "wait" : "pointer" }}>
+                  {busy === t.key ? "⏳ Uploading…" : status === "done" ? "📷 Retake" : "📷 Capture"}
+                  <input id={uid} type="file" accept="image/*" capture="environment" disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; if (f) { const r = new FileReader(); r.onload = (ev) => onCapture(t.key, ev.target.result); r.readAsDataURL(f); } e.target.value = ""; }} style={{ display: "none" }} />
+                </label>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    )}
+    {viewUrl && <div onClick={() => setViewUrl(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}><img src={viewUrl} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10 }} /></div>}
+  </div>);
+};
+
+// Owner view — every company outlet's daily photo status on one screen. Green = done,
+// red = expired, gray = pending. Tap any captured tile to view the photo full-screen.
+const OutletPhotoStatus = () => {
+  const [date, setDate] = useState(() => currentOpDate());
+  const [photos, setPhotos] = useState({}); // outlet -> type -> photo
+  const [loading, setLoading] = useState(true);
+  const [viewUrl, setViewUrl] = useState(null);
+  const cols = OUTLETS.filter((o) => PHOTO_OUTLET_IDS.includes(o.id));
+  useEffect(() => {
+    setLoading(true);
+    api.getOutletPhotos({ date }).then((r) => {
+      const m = {}; (r?.photos || []).forEach((p) => { (m[p.outlet_id] = m[p.outlet_id] || {})[p.photo_type] = p; }); setPhotos(m);
+    }).catch(() => setPhotos({})).finally(() => setLoading(false));
+  }, [date]);
+  const shift = (n) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); const s = d.toISOString().slice(0, 10); if (s <= currentOpDate()) setDate(s); };
+  return (<div>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+      <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: "1 1 auto" }}>📸 Outlet Photos</h3>
+      <button onClick={() => shift(-1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit" }}>←</button>
+      <input type="date" max={currentOpDate()} value={date} onChange={(e) => setDate(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", fontWeight: 700 }} />
+      <button onClick={() => shift(1)} disabled={date >= currentOpDate()} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: date >= currentOpDate() ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: date >= currentOpDate() ? 0.4 : 1 }}>→</button>
+    </div>
+    <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#888", marginBottom: 12, flexWrap: "wrap" }}>
+      <span><span style={{ color: "#16A34A" }}>●</span> Done</span><span><span style={{ color: "#DC2626" }}>●</span> Expired</span><span><span style={{ color: "#BBB" }}>●</span> Pending</span>
+      <span style={{ marginLeft: "auto" }}>Tap a tile to view the photo</span>
+    </div>
+    {loading ? <div style={{ textAlign: "center", padding: 30, color: "#999" }}>⏳ Loading…</div> : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {cols.map((o) => (
+          <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "10px 12px" }}>
+            <div style={{ width: 46, fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{o.short}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, flex: 1 }}>
+              {OUTLET_PHOTO_TYPES.map((t) => {
+                const photo = photos[o.id]?.[t.key];
+                const status = outletPhotoStatus(o.id, t.key, date, !!photo);
+                const st = PHOTO_STATUS_STYLE[status];
+                return (
+                  <button key={t.key} onClick={() => photo?.url && setViewUrl(photo.url)} title={`${t.label} — ${status}`} style={{ borderRadius: 10, border: `1.5px solid ${st.border}`, background: st.bg, color: st.color, padding: "8px 4px", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, cursor: photo?.url ? "pointer" : "default", fontFamily: "inherit" }}>
+                    <span style={{ fontSize: 18 }}>{t.icon}</span><span style={{ fontSize: 9.5, fontWeight: 700 }}>{t.label}</span>
+                    <span style={{ fontSize: 10 }}>{status === "done" ? "✓" : status === "expired" ? "✕" : "·"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+    {viewUrl && <div onClick={() => setViewUrl(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}><img src={viewUrl} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 10 }} /></div>}
+  </div>);
+};
+
 const OutletMgr = ({ onBack }) => {
   const currentUser = getCurrentUser();
   const cogsResp = userHasResp("cogs"); // extra cross-outlet COGS oversight (see ManagerCogsView)
@@ -11256,7 +11497,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, ...(PHOTO_OUTLET_IDS.includes(outlet) ? [{ s: "outlet_photo", icon: "📸", t: "Daily Photos", tag: "⏱️ Time-bound", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }] : []), { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -11267,6 +11508,7 @@ const OutletMgr = ({ onBack }) => {
   // make their own Team/Attendance card show every outlet's staff. The department prop narrows it
   // back to their outlet client-side — exactly the unscoped-identity case TeamPanel anticipates.
   if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} fineOnly={isChef} department={outlet} />;
+  if (screen === "outlet_photo") return <OutletPhotoCapture outlet={outlet} onBack={() => setScreen("home")} />;
 
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
@@ -14905,6 +15147,14 @@ const RosterPage = () => {
     try { await api.updateEmployee(emp.id, { [field]: value }); }
     catch (err) { alert("Error: " + err.message); load(); }
   };
+  // Shift-manager toggle also provisions/deactivates the restricted app login (see backend).
+  const toggleShiftMgr = async (emp, enabled) => {
+    setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, is_shift_manager: enabled } : e)));
+    try {
+      const res = await api.setShiftManagerLogin(emp.id, enabled);
+      if (enabled && res?.pin) window.alert(`⭐ Shift Manager login ready for ${res.name}\n\n📱 Phone: ${res.phone}\n🔑 PIN: ${res.pin}\n\nShare these so they can log in. Flip this off any time to deactivate the login.`);
+    } catch (err) { alert("Error: " + err.message); load(); }
+  };
 
   const shown = employees
     .filter((e) => !selDept || e.department === selDept)
@@ -14980,6 +15230,10 @@ const RosterPage = () => {
                 </select>
                 <select title="Shift" value={e.shift || ""} onChange={(ev) => saveField(e, "shift", ev.target.value || null)} style={ROSTER_SELECT_STYLE}>
                   {ROSTER_SHIFTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
+                </select>
+                <select title="Shift manager (auto-creates app login)" value={e.is_shift_manager ? "yes" : "no"} onChange={(ev) => toggleShiftMgr(e, ev.target.value === "yes")} style={{ ...ROSTER_SELECT_STYLE, ...(e.is_shift_manager ? { color: "#7C3AED", fontWeight: 700 } : {}) }}>
+                  <option value="no">Staff</option>
+                  <option value="yes">⭐ Shift Mgr</option>
                 </select>
                 <div style={{ display: "flex", alignItems: "center", gap: 3 }} title="Break window">
                   <select value={bd.start} onChange={(ev) => onBreak({ ...bd, start: ev.target.value })} style={{ ...ROSTER_SELECT_STYLE, padding: "7px 4px" }}>
@@ -20729,7 +20983,7 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : null;
+  const lockedApp = currentUser?.role === "shift_manager" ? "shift_manager" : currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : null;
   const effectiveApp = lockedApp || app;
 
   // Load master data from DB on startup — updates in-memory arrays
@@ -20801,7 +21055,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
@@ -20824,6 +21078,7 @@ export default function AnandaCafe() {
           { id: "challans", label: "🧾 Challans", sub: "Demand vs dispatch vs verified" },
           { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
           { id: "monthly_bk_audit", label: "📅 Monthly Store Audit", sub: "Per-item opening, in/out & closing, split by outlet & BK" },
+          { id: "outlet_photos", label: "📸 OP/CL/BR", sub: "Daily opening / closing / clean / briefing photos per outlet" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setDodDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -20965,6 +21220,7 @@ export default function AnandaCafe() {
       {ownerTab === "bk_audit" && <BKAudit />}
       {ownerTab === "inv_ledger" && <InventoryLedger />}
       {ownerTab === "monthly_bk_audit" && <MonthlyBKAudit />}
+      {ownerTab === "outlet_photos" && <OutletPhotoStatus />}
       {ownerTab === "new_store_stock" && <StoreInventoryStock />}
       {ownerTab === "vendor_challans" && <VendorChallans />}
       {ownerTab === "stock_counts" && <StoreClosingCount />}
@@ -21032,6 +21288,10 @@ export default function AnandaCafe() {
       {storeView === "bk_production" && <BKProduction />}
       {storeView === "master" && <MasterData hideRecipes />}
     </div>
+  </div>);
+  if (effectiveApp === "shift_manager") return (<div style={PAGE}>{FONT}
+    <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}><div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>⭐ Shift Manager</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
+    <div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><ShiftManagerApp /></div>
   </div>);
   if (effectiveApp === "driver") return (<div style={PAGE}>{FONT}
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{currentUser?.role !== "driver" && !urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>🚚 Driver Portal</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>

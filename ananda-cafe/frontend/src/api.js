@@ -317,6 +317,12 @@ const api = {
   getEmployees: () => get("/api/employees"),
   createEmployee: (data) => post("/api/employees", data),
   updateEmployee: (id, data) => patch(`/api/employees/${id}`, data),
+  // Hard delete — only succeeds for an employee with no advances and no payroll history
+  // (backend refuses otherwise, telling you to mark Inactive instead).
+  deleteEmployee: (id) => del(`/api/employees/${id}`),
+  // Toggle shift-manager flag + auto-provision/deactivate the restricted app login.
+  // Returns { enabled, phone, pin } on enable so the manager can share the credentials.
+  setShiftManagerLogin: (id, enabled) => post(`/api/employees/${id}/shift-manager`, { enabled }),
   getAttendance: (params) => get("/api/employees/attendance", params),
   markAttendance: (data) => post("/api/employees/attendance", data),
   deleteAttendance: (id) => del(`/api/employees/attendance/${id}`),
@@ -369,6 +375,8 @@ const api = {
   setEmployeeOT: (data) => post("/api/payroll/ot", data),
   setPayrollOverride: (data) => patch("/api/payroll/override", data),
   finalizePayroll: (data) => post("/api/payroll/finalize", data),
+  markPayrollPaid: (data) => post("/api/payroll/mark-paid", data),
+  reversePayroll: (data) => post("/api/payroll/reverse", data),
   reopenPayroll: (data) => post("/api/payroll/reopen", data),
 
   // ── Store Inventory Module (new item master + stock_movements ledger) ──
@@ -396,6 +404,10 @@ const api = {
   addChallanItem: (id, item) => post(`/api/store/challans/${id}/items`, item),
   deleteChallanItem: (id, itemId) => del(`/api/store/challans/${id}/items/${itemId}`),
   uploadChallanBill: (id, base64) => post(`/api/store/challans/${id}/bill`, { base64 }),
+
+  // ── Outlet daily photos (opening / clean / briefing / closing) ──
+  captureOutletPhoto: (data) => post("/api/outlet-photos", data),
+  getOutletPhotos: (params) => get("/api/outlet-photos", params),
   receiveChallan: (id) => post(`/api/store/challans/${id}/receive`, {}),
   cancelChallan: (id) => post(`/api/store/challans/${id}/cancel`, {}),
   deleteChallan: (id) => del(`/api/store/challans/${id}`),

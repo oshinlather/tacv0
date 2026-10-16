@@ -62,8 +62,9 @@ const FULL_EDIT_FIELDS = [
   'name', 'designation', 'department', 'phone', 'joining_date', 'notes', 'app_user_id', 'active',
   'salary', 'salary_type', 'leave_allowed', 'shift_start', 'shift_end', 'weekly_off',
   'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id',
-  // Roster (DOD → Roster): named shift (morning/evening), position bucket, break time window.
-  'shift', 'position', 'break_window',
+  // Roster (DOD → Roster): named shift (morning/evening), position bucket, break time window,
+  // shift-manager flag (who runs this outlet+shift).
+  'shift', 'position', 'break_window', 'is_shift_manager',
 ];
 // What a scoped manager (outlet_mgr/store_mgr/bk_manager) may create/edit — no
 // salary, bank/UPI, app-login linking, or department reassignment. 'active' is
@@ -74,7 +75,7 @@ const FULL_EDIT_FIELDS = [
 // Roster fields (shift/position/break_window) are included — an outlet/BK manager runs the
 // shift on the ground, so they assign and change their own team's position, shift and break
 // window (the PATCH route already confines a scoped manager to their own department).
-const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active', 'bank_account_number', 'bank_ifsc', 'shift', 'position', 'break_window'];
+const SCOPED_EDIT_FIELDS = ['name', 'designation', 'phone', 'joining_date', 'notes', 'active', 'bank_account_number', 'bank_ifsc', 'shift', 'position', 'break_window', 'is_shift_manager'];
 // Fields stripped out of API responses for scoped managers — payroll/bank data
 // isn't their business even read-only.
 const SENSITIVE_FIELDS = ['salary', 'salary_type', 'leave_allowed', 'bank_account_name', 'bank_account_number', 'bank_ifsc', 'upi_id'];
@@ -228,6 +229,99 @@ router.patch('/:id', async (req, res) => {
     const { data, error } = await supabase.from('employees').update(updates).eq('id', req.params.id).select('*').single();
     if (error) throw error;
     res.json(sanitize(data, user));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/employees/:id — HARD delete, owner-tier only, and ONLY when the employee
+// has no financial history: no books_ledger rows (advances/fines) and no payroll run at all
+// (finalized/paid/reversed). Otherwise it's refused — a departed staff member with real money
+// history must be marked Inactive (active=false) instead, which keeps the record and just
+// hides them from the payroll matrix. When clean, cascades the no-money child rows first
+// (attendance / OT / payroll overrides / KYC docs) so the employees-row delete isn't FK-blocked.
+router.delete('/:id', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...OWNER_LEVEL_ROLES);
+    if (!user) return;
+    const id = req.params.id;
+    const [{ count: ledgerCount }, { count: runCount }] = await Promise.all([
+      supabase.from('books_ledger').select('id', { count: 'exact', head: true }).eq('employee_id', id),
+      supabase.from('employee_payroll_runs').select('id', { count: 'exact', head: true }).eq('employee_id', id),
+    ]);
+    if ((ledgerCount || 0) > 0 || (runCount || 0) > 0) {
+      return res.status(400).json({ error: 'This employee has advances or payroll history — mark them Inactive instead of deleting.' });
+    }
+    // No financial history: clear the remaining (money-free) child rows, then the employee.
+    await supabase.from('employee_attendance').delete().eq('employee_id', id);
+    await supabase.from('employee_monthly_ot').delete().eq('employee_id', id);
+    await supabase.from('employee_payroll_overrides').delete().eq('employee_id', id);
+    await supabase.from('employee_documents').delete().eq('employee_id', id);
+    const { error } = await supabase.from('employees').delete().eq('id', id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/employees/:id/shift-manager — toggle the shift-manager flag AND its app
+// login in one action. Flipping ON auto-provisions a 'shift_manager' app_users login on the
+// employee's own phone + a generated 4-digit PIN (returned so the manager can share it) —
+// that restricted login lands on the shift-manager photo-capture screen (Opening / Clean
+// Kitchen / Briefing / Closing, built separately). Flipping OFF deactivates that login.
+// Reuses an already-linked login if there is one (keeps the same PIN) rather than spawning
+// duplicates. Scoped managers can only do this for their own department's staff.
+router.post('/:id/shift-manager', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...ALL_EMPLOYEE_ROLES);
+    if (!user) return;
+    const scope = directoryScope(user);
+    if (requireScope(scope, res)) return;
+    const enabled = req.body.enabled === true || req.body.enabled === 'true';
+
+    const { data: emp } = await supabase.from('employees').select('*').eq('id', req.params.id).single();
+    if (!emp) return res.status(404).json({ error: 'Employee not found' });
+    if (scope && emp.department !== scope) return res.status(403).json({ error: 'Cannot edit an employee outside your own outlet/department' });
+
+    if (!enabled) {
+      await supabase.from('employees').update({ is_shift_manager: false, updated_at: new Date().toISOString() }).eq('id', emp.id);
+      if (emp.app_user_id) await supabase.from('app_users').update({ active: false }).eq('id', emp.app_user_id);
+      return res.json({ enabled: false });
+    }
+
+    // Enabling needs a phone — it IS the login id.
+    const phone = (emp.phone || '').replace(/\D/g, '');
+    if (phone.length < 10) return res.status(400).json({ error: 'Add a 10-digit phone number for this employee first — it is their login.' });
+
+    // Reuse the employee's own linked login, else any existing login on that phone.
+    let appUser = null;
+    if (emp.app_user_id) {
+      const { data } = await supabase.from('app_users').select('*').eq('id', emp.app_user_id).maybeSingle();
+      appUser = data || null;
+    }
+    if (!appUser) {
+      const { data } = await supabase.from('app_users').select('*').eq('phone', phone).maybeSingle();
+      appUser = data || null;
+    }
+    // Don't hijack an existing login that belongs to a different role (e.g. the person is
+    // already an outlet_mgr) — surface it instead of silently downgrading their access.
+    if (appUser && appUser.role && appUser.role !== 'shift_manager') {
+      return res.status(400).json({ error: `This phone already has a '${appUser.role}' login — resolve it in Users before making them a shift manager.` });
+    }
+
+    if (appUser) {
+      const { data: upd } = await supabase.from('app_users')
+        .update({ active: true, role: 'shift_manager', outlet_id: emp.department || null, name: emp.name })
+        .eq('id', appUser.id).select('*').single();
+      appUser = upd;
+    } else {
+      const pin = String(Math.floor(1000 + Math.random() * 9000));
+      const { data: ins, error: insErr } = await supabase.from('app_users')
+        .insert({ name: emp.name, phone, pin, role: 'shift_manager', outlet_id: emp.department || null })
+        .select('*').single();
+      if (insErr) return res.status(500).json({ error: insErr.message });
+      appUser = ins;
+    }
+
+    await supabase.from('employees').update({ is_shift_manager: true, app_user_id: appUser.id, updated_at: new Date().toISOString() }).eq('id', emp.id);
+    res.json({ enabled: true, name: emp.name, phone: appUser.phone, pin: appUser.pin });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

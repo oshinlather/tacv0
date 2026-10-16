@@ -158,15 +158,19 @@ router.get('/', async (req, res) => {
 
     const rows = employees.map((e) => {
       const base = { employee_id: e.id, name: e.name, employee_code: e.employee_code, designation: e.designation, department: e.department };
-      const finalized = runByEmp[e.id];
-      if (finalized) {
+      const run = runByEmp[e.id];
+      // A finalized OR paid run is the frozen snapshot (locked). A 'reversed' run is kept on
+      // record but behaves like a draft again — recomputed live and editable/re-finalizable —
+      // so its status is surfaced while its numbers come from the live formula below.
+      if (run && run.status !== 'reversed') {
         return {
           ...base,
-          base_salary: finalized.base_salary, leave_allowed: finalized.leave_allowed, leaves_taken: finalized.leaves_taken,
-          ot_hours: finalized.ot_hours, month_days: finalized.month_days, leaves_cashin: finalized.leaves_cashin,
-          ot_days: finalized.ot_days, working_days: finalized.working_days, prorated_salary: finalized.prorated_salary,
-          advances_deducted: finalized.advances_deducted, net_payable: finalized.net_payable,
-          status: 'finalized', finalized_at: finalized.finalized_at, finalized_by: finalized.finalized_by,
+          base_salary: run.base_salary, leave_allowed: run.leave_allowed, leaves_taken: run.leaves_taken,
+          ot_hours: run.ot_hours, month_days: run.month_days, leaves_cashin: run.leaves_cashin,
+          ot_days: run.ot_days, working_days: run.working_days, prorated_salary: run.prorated_salary,
+          advances_deducted: run.advances_deducted, net_payable: run.net_payable,
+          status: run.status || 'finalized', finalized_at: run.finalized_at, finalized_by: run.finalized_by,
+          paid_at: run.paid_at, paid_by: run.paid_by,
         };
       }
       const computed = computeRow(e, {
@@ -174,7 +178,7 @@ router.get('/', async (req, res) => {
         otHours: otOverrideByEmp[e.id] != null ? otOverrideByEmp[e.id] : (totalsByEmp[e.id]?.otHours || 0),
         advancesDeducted: advByEmp[e.id] || 0, monthDays, overrides: overridesByEmp[e.id] || {},
       });
-      return { ...base, ...computed, status: 'draft', has_overrides: !!overridesByEmp[e.id] };
+      return { ...base, ...computed, status: run ? 'reversed' : 'draft', has_overrides: !!overridesByEmp[e.id], reversed_at: run?.reversed_at, reversed_by: run?.reversed_by };
     });
 
     res.json({ month, rows });
@@ -211,14 +215,14 @@ router.get('/employee/:id', async (req, res) => {
     };
 
     const { data: run } = await supabase.from('employee_payroll_runs').select('*').eq('employee_id', id).eq('month', month).maybeSingle();
-    if (run) {
+    if (run && run.status !== 'reversed') {
       return res.json({ month, month_days: monthDays, row: {
         ...base,
         base_salary: run.base_salary, leave_allowed: run.leave_allowed, leaves_taken: run.leaves_taken,
         ot_hours: run.ot_hours, month_days: run.month_days, leaves_cashin: run.leaves_cashin,
         ot_days: run.ot_days, working_days: run.working_days, prorated_salary: run.prorated_salary,
         advances_deducted: run.advances_deducted, net_payable: run.net_payable,
-        status: 'finalized', finalized_at: run.finalized_at, finalized_by: run.finalized_by,
+        status: run.status || 'finalized', finalized_at: run.finalized_at, finalized_by: run.finalized_by, paid_at: run.paid_at, paid_by: run.paid_by,
       } });
     }
 
@@ -234,7 +238,7 @@ router.get('/employee/:id', async (req, res) => {
     const advancesDeducted = (advances || []).reduce((s, a) => (!a.settled && a.status === 'approved' ? s + Number(a.amount || 0) : s), 0);
     const computed = computeRow(emp, { leavesTaken: totals.leaves, otHours, advancesDeducted, monthDays, overrides: overrideRow || {} });
 
-    res.json({ month, month_days: monthDays, row: { ...base, ...computed, status: 'draft', has_overrides: !!overrideRow } });
+    res.json({ month, month_days: monthDays, row: { ...base, ...computed, status: run ? 'reversed' : 'draft', has_overrides: !!overrideRow, reversed_at: run?.reversed_at, reversed_by: run?.reversed_by } });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -267,8 +271,10 @@ router.patch('/override', async (req, res) => {
     if (!employee_id || !month || !field) return res.status(400).json({ error: 'employee_id, month, and field are required' });
     if (!OVERRIDE_FIELDS.includes(field)) return res.status(400).json({ error: `field must be one of: ${OVERRIDE_FIELDS.join(', ')}` });
 
-    const { data: existingRun } = await supabase.from('employee_payroll_runs').select('employee_id').eq('employee_id', employee_id).eq('month', month).maybeSingle();
-    if (existingRun) return res.status(400).json({ error: 'This month is already finalized — reopen it before editing' });
+    // A finalized/paid run is locked; a 'reversed' run is editable again (it recomputes live
+    // and can be re-finalized), so corrections are allowed on it.
+    const { data: existingRun } = await supabase.from('employee_payroll_runs').select('status').eq('employee_id', employee_id).eq('month', month).maybeSingle();
+    if (existingRun && existingRun.status !== 'reversed') return res.status(400).json({ error: 'This month is already finalized — reverse it before editing' });
 
     const { data: existing } = await supabase.from('employee_payroll_overrides').select('*').eq('employee_id', employee_id).eq('month', month).maybeSingle();
     const row = {
@@ -310,8 +316,11 @@ router.post('/finalize', async (req, res) => {
     const advancesDeducted = (outstandingAdvances || []).reduce((s, a) => s + Number(a.amount || 0), 0);
     const computed = computeRow(emp, { leavesTaken, otHours, advancesDeducted, monthDays, overrides: overrideRow || {} });
 
+    // status reset to 'finalized' and paid/reversed stamps cleared — this also covers
+    // re-finalizing a previously 'reversed' row (whose advances reverse() un-settled, so
+    // they're outstanding again and get re-settled just below).
     const { data: run, error: runErr } = await supabase.from('employee_payroll_runs')
-      .upsert({ employee_id, month, ...computed, finalized_by: user.name, finalized_at: new Date().toISOString() }, { onConflict: 'employee_id,month' })
+      .upsert({ employee_id, month, ...computed, status: 'finalized', paid_at: null, paid_by: null, reversed_at: null, reversed_by: null, finalized_by: user.name, finalized_at: new Date().toISOString() }, { onConflict: 'employee_id,month' })
       .select('*').single();
     if (runErr) throw runErr;
 
@@ -322,6 +331,56 @@ router.post('/finalize', async (req, res) => {
     }
 
     res.json(run);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/payroll/mark-paid — mark a finalized month's salary as actually disbursed.
+router.post('/mark-paid', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...PAYROLL_ROLES);
+    if (!user) return;
+    const { employee_id, month } = req.body;
+    if (!employee_id || !month) return res.status(400).json({ error: 'employee_id and month are required' });
+    const { data: run } = await supabase.from('employee_payroll_runs').select('status').eq('employee_id', employee_id).eq('month', month).maybeSingle();
+    if (!run) return res.status(400).json({ error: 'Finalize this month before marking it paid' });
+    if (run.status === 'paid') return res.json({ ok: true, status: 'paid' }); // idempotent
+    if (run.status !== 'finalized') return res.status(400).json({ error: `Cannot mark paid from '${run.status}'` });
+    const { data, error } = await supabase.from('employee_payroll_runs')
+      .update({ status: 'paid', paid_by: user.name, paid_at: new Date().toISOString() })
+      .eq('employee_id', employee_id).eq('month', month).select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/payroll/reverse — undo a finalized/paid month. Keeps the run row (status
+// 'reversed', for audit) but RESTORES the advances that finalize had deducted: the
+// books_ledger rows it settled with "Deducted from {month} payroll" go back to outstanding,
+// so they're owed again and will be re-deducted if the month is re-finalized. The reversed
+// row then recomputes live and is editable again (see GET / and the override guard).
+router.post('/reverse', async (req, res) => {
+  try {
+    const user = await requireRole(req, res, ...PAYROLL_ROLES);
+    if (!user) return;
+    const { employee_id, month } = req.body;
+    if (!employee_id || !month) return res.status(400).json({ error: 'employee_id and month are required' });
+    const { data: run } = await supabase.from('employee_payroll_runs').select('status').eq('employee_id', employee_id).eq('month', month).maybeSingle();
+    if (!run) return res.status(400).json({ error: 'Nothing to reverse — this month is not finalized' });
+    if (run.status === 'reversed') return res.json({ ok: true, status: 'reversed' }); // idempotent
+    if (!['finalized', 'paid'].includes(run.status)) return res.status(400).json({ error: `Cannot reverse from '${run.status}'` });
+
+    // Un-settle exactly the advances this month's finalize swept (matched by the note it
+    // stamped). Only touches advances still settled under THIS month's payroll.
+    const { error: unsettleErr } = await supabase.from('books_ledger')
+      .update({ settled: false, settled_date: null, settled_note: null })
+      .eq('employee_id', employee_id).eq('is_advance', true).eq('settled', true).eq('settled_note', `Deducted from ${month} payroll`);
+    if (unsettleErr) throw unsettleErr;
+
+    const { data, error } = await supabase.from('employee_payroll_runs')
+      .update({ status: 'reversed', reversed_by: user.name, reversed_at: new Date().toISOString() })
+      .eq('employee_id', employee_id).eq('month', month).select('*').single();
+    if (error) throw error;
+    res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
