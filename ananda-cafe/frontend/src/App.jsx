@@ -15781,6 +15781,7 @@ const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, 
 
 const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
   const [cogsCount, setCogsCount] = useState(defaultCogsCount);
+  const [cogsCat, setCogsCat] = useState("all"); // COGS leakage category filter ("all" or a DEMAND_SECTIONS id)
   const [expandedCogs, setExpandedCogs] = useState(null); // "outletId|name" whose dishes breakdown is open
 
   // Cached-first via useApiData: paints instantly on a revisit, revalidates in the
@@ -15837,7 +15838,7 @@ const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
           if (!(leakCost > 0)) return;
           const variancePct = it.billed > 0 ? Math.round((it.variance / it.billed) * 1000) / 10 : null;
           rows.push({
-            outletId: o.outlet_id, name: `🥤 ${it.name}`, unit: it.unit,
+            outletId: o.outlet_id, itemId: it.item_id, name: `🥤 ${it.name}`, unit: it.unit,
             should: it.billed, actual: it.consumed,
             variance: it.variance, leakCost, variancePct,
             ab: { prev_closing: it.prev_closing, dispatched: 0, purchased: it.purchased, wastage: 0, closing: it.closing },
@@ -15848,8 +15849,11 @@ const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
     }
     return rows.sort((a, b) => b.leakCost - a.leakCost);
   }, [audit, coldDrink, selOutlet]);
-  const cogsTotalLeak = useMemo(() => cogsAll.reduce((s, r) => s + r.leakCost, 0), [cogsAll]);
-  const cogsRows = cogsCount === "all" ? cogsAll : cogsAll.slice(0, cogsCount);
+  // Category filter applies BEFORE the Top-N slice, and the "Total leak" reflects it too,
+  // so the header total and the table always agree with the selected category.
+  const cogsCatFiltered = cogsCat === "all" ? cogsAll : cogsAll.filter((r) => DEMAND_ITEM_SECTION[r.itemId]?.id === cogsCat);
+  const cogsTotalLeak = cogsCatFiltered.reduce((s, r) => s + r.leakCost, 0);
+  const cogsRows = cogsCount === "all" ? cogsCatFiltered : cogsCatFiltered.slice(0, cogsCount);
 
   // ── Challan mismatches — same rules as ChallansSection (demand≠dispatch, or
   //    a verified receipt that differs from what was dispatched) ──
@@ -15904,11 +15908,19 @@ const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
             <span style={{ fontSize: 13, fontWeight: 800, color: "#DC2626", fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap" }}>Total leak {fmt(Math.round(cogsTotalLeak))}</span>
             <select value={cogsCount} onChange={(e) => setCogsCount(e.target.value === "all" ? "all" : Number(e.target.value))} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
               {[5, 10, 15, 20].map((n) => <option key={n} value={n}>Top {n}</option>)}
-              <option value="all">All ({cogsAll.length})</option>
+              <option value="all">All ({cogsCatFiltered.length})</option>
             </select>
           </div>
         }>
-        {cogsRows.length === 0 ? goodMsg("No over-consumption leak to show (needs submitted closing stock + mapped recipes).") : (
+        {/* Category filter — view leakage one category at a time (Total leak + Top-N both
+            follow it). "All" ids as "all"; the rest iterate DEMAND_SECTIONS. */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 12, overflowX: "auto", paddingBottom: 4 }}>
+          {[{ id: "all", emoji: "", titleHi: "All" }, ...DEMAND_SECTIONS].map((sec) => {
+            const active = cogsCat === sec.id;
+            return <button key={sec.id} onClick={() => setCogsCat(sec.id)} style={{ padding: "6px 12px", borderRadius: 8, border: active ? "none" : "1px solid #E0E0DC", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888", fontWeight: 700, fontSize: 11, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{sec.emoji ? `${sec.emoji} ${sec.titleHi}` : sec.titleHi}</button>;
+          })}
+        </div>
+        {cogsRows.length === 0 ? goodMsg(cogsCat === "all" ? "No over-consumption leak to show (needs submitted closing stock + mapped recipes)." : "No leak in this category.") : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
               <thead><tr style={{ background: "#FAFAF8" }}>

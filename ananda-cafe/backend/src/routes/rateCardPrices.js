@@ -16,7 +16,8 @@ const supabase = require("../supabase");
 
 const normalizeName = (s) => (s || "").toLowerCase().trim().replace(/\s+/g, " ");
 // Trailing "." tolerated ("Ltr." == "Ltr"), same leniency as the costing unit compare.
-const sameUnit = (a, b) => (a || "").toLowerCase().replace(/\.+$/, "").trim() === (b || "").toLowerCase().replace(/\.+$/, "").trim();
+const normUnit = (s) => (s || "").toLowerCase().replace(/\.+$/, "").trim();
+const sameUnit = (a, b) => normUnit(a) === normUnit(b);
 
 // items.id -> { rateCardId, baseUnit }. Challan lines carry a store item_id and a price per
 // items.base_unit, so this is how the challan path finds the rate-card item + price unit.
@@ -62,9 +63,43 @@ async function appendRateCardPrice({ rateCardId, effectiveDate, price, source, s
   return true;
 }
 
+// Gm<->Kg price bridge (the one universal SI pair the app uses). Returns the multiplier that
+// turns a per-`fromU` price into a per-`toU` price, or null if the pair isn't Gm/Kg. A price
+// per Gm is 1000x cheaper than per Kg, so Gm->Kg multiplies by 1000 (and Kg->Gm by 1/1000).
+function siPriceFactor(fromU, toU) {
+  const f = normUnit(fromU), t = normUnit(toU);
+  if (f === t) return 1;
+  if (f === "gm" && t === "kg") return 1000;
+  if (f === "kg" && t === "gm") return 1 / 1000;
+  return null;
+}
+
+// Convert a paid price (per `priceUnit`) into a price per the rate_card's own unit, using the
+// configured unit_conversions for that rate-card item (NOT a guess — only factors the owner
+// has recorded). e.g. paid ₹2300/Tin + conversion "1 Tin = 15 Ltr" -> ₹153.33/Ltr when the
+// rate card is per Ltr. Falls through a Gm<->Kg step when the conversion's base_unit and the
+// rate_card unit are the same quantity in different SI scale (e.g. "1 Pkt = 200 Gm" priced
+// into a per-Kg rate card). Returns null when no configured bridge exists -> caller skips.
+function bridgePriceToRcUnit(price, priceUnit, rcUnit, convsForItem) {
+  if (sameUnit(priceUnit, rcUnit)) return price;
+  const conv = (convsForItem || []).find((c) => sameUnit(c.unit_type, priceUnit));
+  if (conv && Number(conv.qty) > 0) {
+    const perConvBase = price / Number(conv.qty); // 1 priceUnit = qty * conv.base_unit
+    if (sameUnit(conv.base_unit, rcUnit)) return perConvBase;
+    const si = siPriceFactor(conv.base_unit, rcUnit);
+    if (si != null) return perConvBase * si;
+  }
+  // Direct SI bridge (no conversion row needed) e.g. paid per Gm, rate card per Kg.
+  const siDirect = siPriceFactor(priceUnit, rcUnit);
+  if (siDirect != null) return price * siDirect;
+  return null;
+}
+
 // Record a batch of paid prices. entries: [{ rateCardId, price, priceUnit, label }].
-// Skips (never writes) any entry with no rate-card match, a non-positive price, or a unit
-// that doesn't match the item's rate_card unit. Returns { written, skipped:[{label,reason}] }.
+// Skips (never writes) any entry with no rate-card match or a non-positive price. When the paid
+// unit differs from the rate_card unit it is CONVERTED via the item's unit_conversions (or a
+// Gm/Kg SI step); only a unit with no configured conversion is skipped (unit-honesty preserved:
+// converted via owner-recorded factors, never guessed). Returns { written, skipped:[{label,reason}] }.
 async function ingestPrices(entries, { effectiveDate, source, sourceId, createdBy }) {
   const skipped = [];
   const writable = [];
@@ -78,14 +113,19 @@ async function ingestPrices(entries, { effectiveDate, source, sourceId, createdB
   const rcIds = [...new Set(writable.map((e) => e.rateCardId))];
   const { data: rcRows } = await supabase.from("rate_card").select("id, unit").in("id", rcIds);
   const rcUnit = {}; (rcRows || []).forEach((r) => { rcUnit[r.id] = r.unit; });
+  // unit_conversions is keyed by the rate_card item id (its own base_unit is the conversion target).
+  const { data: convRows } = await supabase.from("unit_conversions").select("item_id, unit_type, qty, base_unit").in("item_id", rcIds).eq("active", true);
+  const convByItem = {}; (convRows || []).forEach((c) => { (convByItem[c.item_id] = convByItem[c.item_id] || []).push(c); });
 
   let written = 0;
   for (const e of writable) {
-    if (!sameUnit(e.priceUnit, rcUnit[e.rateCardId])) {
-      skipped.push({ label: e.label || e.rateCardId, reason: `unit ${e.priceUnit || "?"} != rate card ${rcUnit[e.rateCardId] || "?"}` });
+    const rcU = rcUnit[e.rateCardId];
+    const priced = bridgePriceToRcUnit(Number(e.price), e.priceUnit, rcU, convByItem[e.rateCardId]);
+    if (priced == null) {
+      skipped.push({ label: e.label || e.rateCardId, reason: `unit ${e.priceUnit || "?"} != rate card ${rcU || "?"} (no conversion recorded)` });
       continue;
     }
-    await appendRateCardPrice({ rateCardId: e.rateCardId, effectiveDate, price: e.price, source, sourceId, createdBy });
+    await appendRateCardPrice({ rateCardId: e.rateCardId, effectiveDate, price: Number(priced.toFixed(4)), source, sourceId, createdBy });
     written++;
   }
   return { written, skipped };
