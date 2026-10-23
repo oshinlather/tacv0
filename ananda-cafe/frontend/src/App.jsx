@@ -1617,7 +1617,10 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
 
     {showAdd && !fineOnly && <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: "16px", marginBottom: 16 }}>
       <input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} style={inputStyle} />
-      <input placeholder="Designation (e.g. Chef, Helper, Cashier)" value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={inputStyle} />
+      <select value={newDesignation} onChange={(e) => setNewDesignation(e.target.value)} style={{ ...inputStyle, color: newDesignation ? "#1A1A1A" : "#999" }}>
+        <option value="">Designation…</option>
+        {ROSTER_POSITIONS.map((p) => <option key={p} value={p} style={{ color: "#1A1A1A" }}>{p}</option>)}
+      </select>
       <input type="tel" placeholder="Phone (optional)" value={newPhone} onChange={(e) => setNewPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
       <input type="date" value={newJoiningDate} onChange={(e) => setNewJoiningDate(e.target.value)} style={inputStyle} />
       <button onClick={addEmployee} disabled={saving} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "✅ Onboard Employee"}</button>
@@ -1683,7 +1686,11 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
           {editId === emp.id ? (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0EC" }}>
               <input placeholder="Name" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus style={inputStyle} />
-              <input placeholder="Designation" value={editDesignation} onChange={(e) => setEditDesignation(e.target.value)} style={inputStyle} />
+              <select value={ROSTER_POSITIONS.includes(editDesignation) ? editDesignation : (editDesignation ? "__custom" : "")} onChange={(e) => e.target.value !== "__custom" && setEditDesignation(e.target.value)} style={{ ...inputStyle, color: editDesignation ? "#1A1A1A" : "#999" }}>
+                <option value="">Designation…</option>
+                {ROSTER_POSITIONS.map((p) => <option key={p} value={p} style={{ color: "#1A1A1A" }}>{p}</option>)}
+                {editDesignation && !ROSTER_POSITIONS.includes(editDesignation) && <option value="__custom" style={{ color: "#1A1A1A" }}>{editDesignation} (current)</option>}
+              </select>
               <input type="tel" placeholder="Phone (optional)" value={editPhone} onChange={(e) => setEditPhone(e.target.value.replace(/\D/g, "").slice(0, 10))} style={inputStyle} />
               {/* Bank details for salary/advance payout — saved onto the employee profile. */}
               <input inputMode="numeric" placeholder="Bank account number (optional)" value={editAccountNumber} onChange={(e) => setEditAccountNumber(e.target.value.replace(/[^0-9]/g, ""))} style={inputStyle} />
@@ -11412,6 +11419,20 @@ const OutletMgr = ({ onBack }) => {
     } finally { setSaving(false); }
   };
 
+  // Finalize a leftover DRAFT straight from the locked view-only screen — promotes it to
+  // 'submitted' (as-is, no edits) so it reaches BK's consolidated. Needed because a demand
+  // that was only Save'd per-category stays a draft and, after the 11:45 evening cutoff,
+  // otherwise has no way to be submitted from the outlet (backend finalize has no cutoff).
+  const finalizeViewedDraft = async () => {
+    if (!existingRecord?.id || saving) return;
+    setSaving(true); setErr(null);
+    try {
+      await api.finalizeDemand(existingRecord.id, { items: existingRecord.items, items_units: existingRecord.items_units, submitted_by: currentUser?.name || outlet });
+      showToastThen("✅ Demand submitted to Base Kitchen.", () => { setSlotViewOnly(false); setDemandSlot(null); setScreen("home"); });
+    } catch (error) { setErr(error.message || "Failed to submit"); }
+    finally { setSaving(false); }
+  };
+
   // Same convention as System Logs — "business date" (the date this action is FOR) shown
   // separately from "logged" (when it was actually submitted), since the two can differ
   // for a late-night or corrected entry.
@@ -12185,7 +12206,7 @@ const OutletMgr = ({ onBack }) => {
     return (<div><SavingOverlay /><Toast /><div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}><BackBtn onClick={() => { setDemandSlot(null); setSlotViewOnly(false); }} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>✏️ Manual Entry</div><span style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: emergencyMode ? "#FEF2F2" : demandSlot === "morning" ? "#FFFBEB" : "#EFF6FF", color: emergencyMode ? "#DC2626" : demandSlot === "morning" ? "#B45309" : "#2563EB", border: `1px solid ${emergencyMode ? "#FECACA" : demandSlot === "morning" ? "#FDE68A" : "#BFDBFE"}` }}>{emergencyMode ? "🚨 Emergency" : demandSlot === "morning" ? "🌅 Morning" : "🌇 Evening"} · {emergencyMode ? today() : demandSlot === "morning" ? (morningDeliveryDate || morningSlotDate()) : today()}</span>{totalCount > 0 && <span style={{ padding: "3px 10px", borderRadius: 6, background: "#F0FDF4", color: "#16A34A", fontSize: 11, fontWeight: 700 }}>{totalCount}</span>}</div>
 
     {(viewingSubmitted || slotViewOnly) && !isDraftRole ? (<>
-      <div style={{ padding: "10px 14px", borderRadius: 10, background: slotViewOnly ? "#FEF2F2" : "#F0FDF4", border: `1px solid ${slotViewOnly ? "#FECACA" : "#BBF7D0"}`, fontSize: 12, color: slotViewOnly ? "#991B1B" : "#166534", marginBottom: 14 }}>{slotViewOnly ? "🔒 This slot is closed — here's the demand you already submitted (view only)." : `✅ Already submitted for this slot — ${ft} items. Tap Edit to change.`}</div>
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: slotViewOnly ? (existingRecord?.status === "draft" ? "#FFFBEB" : "#FEF2F2") : "#F0FDF4", border: `1px solid ${slotViewOnly ? (existingRecord?.status === "draft" ? "#FDE68A" : "#FECACA") : "#BBF7D0"}`, fontSize: 12, color: slotViewOnly ? (existingRecord?.status === "draft" ? "#92400E" : "#991B1B") : "#166534", marginBottom: 14 }}>{slotViewOnly ? (existingRecord?.status === "draft" ? "⚠️ This slot is closed and your demand is still a DRAFT — it has NOT reached Base Kitchen yet. Tap Finalize & Submit below to send it." : "🔒 This slot is closed — here's the demand you submitted (view only).") : `✅ Already submitted for this slot — ${ft} items. Tap Edit to change.`}</div>
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 12 }}>
         {Object.entries(existingRecord?.items || {}).filter(([, q]) => q > 0).map(([id, q]) => (
           <div key={id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid #F0F0EC", fontSize: 13 }}>
@@ -12195,6 +12216,7 @@ const OutletMgr = ({ onBack }) => {
         ))}
       </div>
       {!slotViewOnly && <button onClick={() => setViewingSubmitted(false)} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#2563EB", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>✏️ Edit</button>}
+      {slotViewOnly && existingRecord?.status === "draft" && <button onClick={finalizeViewedDraft} disabled={saving} style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: "#16A34A", color: "#fff", fontWeight: 800, fontSize: 16, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳ Submitting…" : "✅ Finalize & Submit to Base Kitchen"}</button>}
     </>) : (<>
     {isDraftRole && existingRecord?.status === "submitted" && (
       <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 12, color: "#166534", marginBottom: 14 }}>✅ Manager has finalized this slot's demand — showing what was submitted.</div>
