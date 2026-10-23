@@ -1,3 +1,6 @@
 node_modules/
 .env
 .env.*
+
+# Build output (Vercel rebuilds on deploy)
+frontend/build/
