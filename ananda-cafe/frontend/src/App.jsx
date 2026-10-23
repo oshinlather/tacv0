@@ -1461,6 +1461,14 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
       if (enabled && res?.phone) setEmployees((list) => list.map((e) => (e.id === emp.id ? { ...e, shift_login: { phone: res.phone, pin: res.pin, active: true } } : e)));
     } catch (err) { alert("Error: " + err.message); load(); }
   };
+  // Mark a staff member Exited straight from the card — one tap instead of opening Edit.
+  // load() filters to active, so they drop off this list immediately. Re-activation (if they
+  // rejoin) lives in the Onboarding / Employee Master directory, which keeps inactive staff.
+  const markInactive = async (emp) => {
+    if (!window.confirm(`Mark ${emp.name} as inactive?\n\nThey'll be hidden from this list (and from attendance, roster & payroll). You can re-activate them later from the Onboarding directory if they rejoin.`)) return;
+    try { await api.updateEmployee(emp.id, { active: false }); load(); }
+    catch (err) { alert("Error: " + err.message); }
+  };
   const shareShiftLoginWA = (emp) => {
     const l = emp.shift_login; if (!l) return;
     const text = `*The Ananda Cafe — Shift Manager Login*\n👤 ${emp.name}\n📱 Phone: ${l.phone}\n🔑 PIN: ${l.pin}\n\nLog in on the app with these.`;
@@ -1528,9 +1536,10 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
 
   const addEmployee = async () => {
     if (!newName || !newDesignation) { alert("Name and designation required"); return; }
+    if (!department) { alert("No department/outlet in context — open Team from a specific outlet to onboard staff."); return; }
     setSaving(true);
     try {
-      await api.createEmployee({ name: newName, designation: newDesignation, phone: newPhone || null, joining_date: newJoiningDate || null });
+      await api.createEmployee({ name: newName, designation: newDesignation, department, phone: newPhone || null, joining_date: newJoiningDate || null });
       setNewName(""); setNewDesignation(""); setNewPhone(""); setNewJoiningDate(""); setShowAdd(false);
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -1632,7 +1641,15 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
         <div key={emp.id} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", padding: "12px 14px", marginBottom: 8, opacity: emp.active ? 1 : 0.5 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
             <div style={{ fontSize: 14, fontWeight: 700 }}>{emp.name}{emp.employee_code && <span style={{ fontSize: 11, color: "#999", fontWeight: 600 }}> · {emp.employee_code}</span>}{!emp.active && <span style={{ fontSize: 10, color: "#DC2626", fontWeight: 700 }}> · Inactive</span>}</div>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</span>
+            {/* Outlet — a dropdown for managers so they can move staff between outlets right
+                here (saves on change); the Chef fine-only cut keeps it a read-only badge. */}
+            {fineOnly ? (
+              <span style={{ fontSize: 10, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>{EMPLOYEE_DEPARTMENTS.find((d) => d.id === emp.department)?.label || emp.department}</span>
+            ) : (
+              <select title="Outlet — move this employee to another location" value={emp.department || ""} onChange={(ev) => saveRoster(emp, "department", ev.target.value)} style={{ fontSize: 11, fontWeight: 700, color: "#2563EB", background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 6, padding: "3px 6px", flexShrink: 0, fontFamily: "inherit", cursor: "pointer" }}>
+                {EMPLOYEE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+              </select>
+            )}
           </div>
           {emp.phone && <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>📞 {emp.phone}</div>}
           <div style={{ fontSize: 12, color: "#888" }}>{emp.designation}</div>
@@ -1785,6 +1802,7 @@ const TeamPanel = ({ onBack, fineOnly = false, department = null }) => {
                 {!fineOnly && <button onClick={() => openAdvance(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #DDD6FE", background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>💸 Give Advance</button>}
                 <button onClick={() => openFine(emp.id)} style={{ flex: 1, padding: 6, borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚩 Impose Fine</button>
               </div>
+              {!fineOnly && <button onClick={() => markInactive(emp)} style={{ width: "100%", padding: 6, borderRadius: 6, border: "1px solid #E0E0DC", background: "#FAFAF8", color: "#9CA3AF", fontWeight: 600, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚪 Mark Inactive</button>}
             </div>
           )}
         </div>
@@ -12844,7 +12862,7 @@ const StoreMgr = ({ onBack }) => {
   );
 
   // ── TEAM — onboard BK staff, give an advance ──
-  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} />;
+  if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} department="bk" />;
 
   // ── ISSUANCE ──
   if (screen === "bk_demand") return (
