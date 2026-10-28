@@ -145,6 +145,17 @@ router.get('/sales/menu-items/:outlet', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Orders billed before this hour belong to the previous day's trading (the cafe opens for
+// breakfast well after this, and takes no orders in the small hours — so anything timestamped
+// 00:00–04:59 is a late-night straggler from the day before, not a real same-day sale).
+const BUSINESS_DAY_START_HOUR = 5;
+// Previous calendar day for an ISO (YYYY-MM-DD) date, computed in UTC to avoid TZ drift.
+const prevDay = (iso) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+
 // ────────────────────────────────────────────────────────────
 // 3A. POST /api/sales/upload — Upload PetPooja CSV
 // ────────────────────────────────────────────────────────────
@@ -161,8 +172,26 @@ await new Promise((resolve, reject) => {
 stream
 .pipe(csv())
 .on('data', (row) => {
-// Extract date from CSV or use override
-const saleDate = overrideDate || (row.date ? row.date.split(' ')[0] : null);
+// Extract date from CSV or use override.
+// Business-day attribution: PetPooja stamps each order with its billing timestamp, so an
+// order placed after midnight (the tail of the previous day's trading) carries the NEXT
+// calendar date. The cafe closes late — sec31 latest — so those stragglers are what used
+// to appear as a lone "2 invoices on 2026-10-11, sec31 only" entry AND (via the delete-
+// then-replace) wipe the rest of that day. Roll any order billed before the day opens
+// (< BUSINESS_DAY_START_HOUR) back onto the previous day, where it actually belongs, so
+// the file only ever writes the business day it represents. Override (manual single-date
+// upload) is taken as-is — the user picked the date explicitly.
+let saleDate;
+if (overrideDate) {
+saleDate = overrideDate;
+} else if (row.date) {
+const [datePart, timePart] = String(row.date).split(' ');
+saleDate = datePart;
+const hour = timePart ? parseInt(timePart.split(':')[0], 10) : 12;
+if (datePart && Number.isFinite(hour) && hour < BUSINESS_DAY_START_HOUR) saleDate = prevDay(datePart);
+} else {
+saleDate = null;
+}
 if (!saleDate || !row.item_name) return;
 
 rows.push({
@@ -217,7 +246,9 @@ const uploadDate = rows[0].sale_date;
 const uploadDates = [...new Set(rows.map(r => r.sale_date))];
 const uploadOutlets = [...new Set(rows.map(r => r.outlet_code))];
 
-// Delete existing data for these dates/outlets (re-upload replaces)
+// Delete existing data for these dates/outlets (re-upload replaces). sale_date has
+// already been resolved to the business day above (post-midnight orders rolled back),
+// so a single-day export maps to a single date here — no next-day bleed to over-delete.
 await supabase.from('daily_sales').delete().in('sale_date', uploadDates).in('outlet_code', uploadOutlets);
 
 // Insert in batches of 500
