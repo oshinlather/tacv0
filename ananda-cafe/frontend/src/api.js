@@ -79,6 +79,12 @@ const api = {
     post(`/api/purchases/${purchaseId}/photos`, { base64, label }),
   getPurchaseSummary: (date) => get("/api/purchases/summary", { date }),
 
+  // ── Department / Asset Purchases (warranty bill vault) ──
+  getDeptPurchases: (params) => get("/api/department-purchases", params),
+  createDeptPurchase: (data) => post("/api/department-purchases", data),
+  uploadDeptPurchaseBill: (id, base64) => post(`/api/department-purchases/${id}/photos`, { base64 }),
+  deleteDeptPurchase: (id) => del(`/api/department-purchases/${id}`),
+
   // ── Inter-Outlet Transfers ──
   getTransfers: (params) => get("/api/transfers", params),
   createTransfer: (data) => post("/api/transfers", data),

@@ -28,6 +28,7 @@ const bkProductionRouter = require("./routes/bkProduction");
 // been Store's real physical count, mislabeled. This one reflects that correction.
 const storeLedgerHistoryRouter = require("./routes/storeLedgerHistory");
 const outletPhotosRouter = require("./routes/outletPhotos");
+const departmentPurchasesRouter = require("./routes/departmentPurchases");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -70,6 +71,7 @@ app.use("/api/store", stockCountsRouter);
 app.use("/api/store", bkProductionRouter);
 app.use("/api/store", storeLedgerHistoryRouter);
 app.use("/api/outlet-photos", outletPhotosRouter);
+app.use("/api/department-purchases", departmentPurchasesRouter);
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {

@@ -476,6 +476,184 @@ const MultiPhotoUpload = ({ images, onAdd, onRemove }) => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  DEPARTMENT / ASSET PURCHASES — a per-outlet "bill vault". Log a maintenance /
+//  asset purchase under a department and attach the bill photo(s). Point is to
+//  PRESERVE the bill for a future warranty claim — bill is optional at entry
+//  (add it later), and an optional warranty-till date surfaces what's covered.
+// ═════════════════════════════════════════════════════════════════════════════
+const DEPT_PURCHASE_DEPARTMENTS = [
+  { id: "Electrical", icon: "💡" },
+  { id: "Mixer", icon: "🧃" },
+  { id: "Weighing Machine", icon: "⚖️" },
+  { id: "Water Tanki", icon: "🚰" },
+  { id: "Repairs", icon: "🔧" },
+  { id: "Civil Works", icon: "🧱" },
+];
+const deptIcon = (name) => DEPT_PURCHASE_DEPARTMENTS.find((d) => d.id === name)?.icon || "📦";
+
+const DeptPurchasePanel = ({ outlet, onBack }) => {
+  const [list, setList] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  // vault filters
+  const [q, setQ] = useState("");
+  const [deptFilter, setDeptFilter] = useState(""); // "" = all departments
+  // add form
+  const [fDept, setFDept] = useState("");
+  const [fTitle, setFTitle] = useState("");
+  const [fAmount, setFAmount] = useState("");
+  const [fVendor, setFVendor] = useState("");
+  const [fDate, setFDate] = useState(today());
+  const [fWarranty, setFWarranty] = useState("");
+  const [fNote, setFNote] = useState("");
+  const [fBills, setFBills] = useState([]); // base64[]
+
+  const load = () => {
+    setLoading(true);
+    api.getDeptPurchases({ outlet_id: outlet })
+      .then((rows) => setList(rows || []))
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [outlet]);
+
+  const resetForm = () => { setFDept(""); setFTitle(""); setFAmount(""); setFVendor(""); setFDate(today()); setFWarranty(""); setFNote(""); setFBills([]); };
+
+  const save = async () => {
+    if (!fDept || !fTitle.trim()) return;
+    setSaving(true); setErr(null);
+    try {
+      const created = await api.createDeptPurchase({ outlet_id: outlet, department: fDept, title: fTitle, amount: fAmount, vendor: fVendor, purchase_date: fDate, warranty_until: fWarranty || null, note: fNote });
+      for (const b of fBills) { if (b) await api.uploadDeptPurchaseBill(created.id, b); }
+      resetForm(); setShowForm(false); load();
+    } catch (e) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Delete this purchase record and its bills? This can't be undone.")) return;
+    setErr(null);
+    try { await api.deleteDeptPurchase(id); load(); } catch (e) { setErr(e.message); }
+  };
+
+  const td = today();
+  const filtered = (list || []).filter((p) => {
+    if (deptFilter && p.department !== deptFilter) return false;
+    if (q.trim()) {
+      const t = q.trim().toLowerCase();
+      if (!`${p.title} ${p.vendor || ""} ${p.note || ""} ${p.department}`.toLowerCase().includes(t)) return false;
+    }
+    return true;
+  });
+
+  const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 10, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: "#888", marginBottom: 4, display: "block" };
+
+  return (<div>
+    {saving && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999 }}><div style={{ background: "#fff", borderRadius: 16, padding: "24px 32px", textAlign: "center" }}><div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div><div style={{ fontSize: 15, fontWeight: 700 }}>Saving...</div></div></div>}
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}><BackBtn onClick={onBack} /><div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Purchases & Bills</div></div>
+    <div style={{ padding: "8px 12px", borderRadius: 8, background: "#FFF7ED", border: "1px solid #FED7AA", fontSize: 11, color: "#9A3412", marginBottom: 12 }}>🛡️ Keep the bill for every purchase here so you have it for warranty claims later. Uploading the bill is optional — you can add it anytime.</div>
+
+    {err && <div style={{ padding: "10px 12px", borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", fontSize: 12, marginBottom: 12 }}>{err}</div>}
+
+    {!showForm && (
+      <button onClick={() => { resetForm(); setShowForm(true); }} style={{ width: "100%", padding: 13, borderRadius: 12, border: "none", background: "#EA580C", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer", fontFamily: "inherit", marginBottom: 16 }}>➕ Add Purchase</button>
+    )}
+
+    {showForm && (
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 12 }}>➕ New Purchase</div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={labelStyle}>Department *</label>
+          <select value={fDept} onChange={(e) => setFDept(e.target.value)} style={{ ...inputStyle, fontWeight: 700 }}>
+            <option value="">— Select department —</option>
+            {DEPT_PURCHASE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.icon} {d.id}</option>)}
+          </select>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={labelStyle}>What was purchased *</label>
+          <input value={fTitle} onChange={(e) => setFTitle(e.target.value)} placeholder="e.g. Ceiling fan, Mixer jar, Pipe fitting" style={inputStyle} />
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Amount ₹</label>
+            <input type="number" inputMode="decimal" min="0" value={fAmount} onChange={(e) => setFAmount(e.target.value)} placeholder="Optional" style={inputStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Vendor / Shop</label>
+            <input value={fVendor} onChange={(e) => setFVendor(e.target.value)} placeholder="Optional" style={inputStyle} />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Purchase date</label>
+            <input type="date" value={fDate} onChange={(e) => setFDate(e.target.value)} style={inputStyle} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Warranty till</label>
+            <input type="date" value={fWarranty} onChange={(e) => setFWarranty(e.target.value)} style={inputStyle} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={labelStyle}>Note</label>
+          <input value={fNote} onChange={(e) => setFNote(e.target.value)} placeholder="Optional — serial no., warranty terms, etc." style={inputStyle} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelStyle}>Bill photo(s) — optional</label>
+          <MultiPhotoUpload images={fBills} onAdd={(b) => setFBills((p) => [...p, b])} onRemove={(i) => setFBills((p) => p.filter((_, idx) => idx !== i))} />
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => { setShowForm(false); resetForm(); }} style={{ flex: 1, padding: 12, borderRadius: 12, border: "1px solid #E0E0DC", background: "#fff", color: "#888", fontWeight: 700, fontSize: 14, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={save} disabled={!fDept || !fTitle.trim() || saving} style={{ flex: 2, padding: 12, borderRadius: 12, border: "none", background: fDept && fTitle.trim() && !saving ? "#EA580C" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: fDept && fTitle.trim() && !saving ? "pointer" : "not-allowed", fontFamily: "inherit" }}>💾 Save</button>
+        </div>
+      </div>
+    )}
+
+    {/* Search + department dropdown over the saved bill vault */}
+    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Search item, vendor, note…" style={{ ...inputStyle, flex: 1 }} />
+      <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} style={{ ...inputStyle, width: 130, fontWeight: 700 }}>
+        <option value="">All depts</option>
+        {DEPT_PURCHASE_DEPARTMENTS.map((d) => <option key={d.id} value={d.id}>{d.icon} {d.id}</option>)}
+      </select>
+    </div>
+
+    {loading && <div style={{ textAlign: "center", padding: 24, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+    {!loading && filtered.length === 0 && <div style={{ textAlign: "center", padding: 28, color: "#AAA", fontSize: 13 }}>{(list || []).length === 0 ? "No purchases logged yet." : "No matches."}</div>}
+
+    {!loading && filtered.map((p) => {
+      const warrActive = p.warranty_until && p.warranty_until >= td;
+      return (<div key={p.id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", padding: 14, marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ fontSize: 24, flexShrink: 0 }}>{deptIcon(p.department)}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>{p.title}</div>
+            <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{p.department}{p.vendor ? ` · ${p.vendor}` : ""}</div>
+            <div style={{ fontSize: 11, color: "#AAA", marginTop: 2 }}>📅 {p.purchase_date}</div>
+          </div>
+          <div style={{ textAlign: "right", flexShrink: 0 }}>
+            {p.amount != null && <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'" }}>{fmt(p.amount)}</div>}
+            <button onClick={() => remove(p.id)} style={{ marginTop: 4, padding: "3px 8px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🗑️</button>
+          </div>
+        </div>
+        {p.warranty_until && <div style={{ marginTop: 8, display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: warrActive ? "#F0FDF4" : "#F3F4F6", color: warrActive ? "#16A34A" : "#9CA3AF", border: `1px solid ${warrActive ? "#BBF7D0" : "#E5E7EB"}` }}>{warrActive ? `🛡️ Under warranty till ${p.warranty_until}` : `⌛ Warranty expired ${p.warranty_until}`}</div>}
+        {p.note && <div style={{ marginTop: 8, fontSize: 12, color: "#666", background: "#FAFAF8", borderRadius: 8, padding: "6px 10px" }}>{p.note}</div>}
+        {p.photos && p.photos.length > 0 && (
+          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            {p.photos.map((ph) => (
+              <a key={ph.id} href={ph.url} target="_blank" rel="noopener noreferrer" style={{ width: 54, height: 54, borderRadius: 8, overflow: "hidden", border: "1px solid #E0E0DC", flexShrink: 0, display: "block" }}>
+                <img src={ph.url} alt="bill" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              </a>
+            ))}
+          </div>
+        )}
+      </div>);
+    })}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  DAILY P&L (matches user's Excel exactly)
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -11586,7 +11764,7 @@ const OutletMgr = ({ onBack }) => {
         )}
       </div>
     )}
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), ...(reviewsResp ? [{ s: "reviews", icon: "⭐", t: "Reviews", sub: "Daily Review & Rating Summary — all outlets", tag: "⭐ Added responsibility", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, ...(PHOTO_OUTLET_IDS.includes(outlet) ? [{ s: "outlet_photo", icon: "📸", t: "Daily Photos", tag: "⏱️ Time-bound", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }] : []), { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{[...(cogsResp ? [{ s: "cogs", icon: "📊", t: "COGS Oversight", sub: "Flags, COGS Compare & Sales — all outlets", tag: "⭐ Added responsibility", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#BFDBFE", full: true }] : []), ...(onboardingResp ? [{ s: "onboarding", icon: "🧑‍💼", t: "Onboarding", sub: "Add & manage team across all outlets + offer letters", tag: "⭐ Added responsibility", tagC: "#DC2626", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA", full: true }] : []), ...(reviewsResp ? [{ s: "reviews", icon: "⭐", t: "Reviews", sub: "Daily Review & Rating Summary — all outlets", tag: "⭐ Added responsibility", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A", full: true }] : []), { s: "manual", icon: "✏️", t: "Demand — Manual Entry", sub: dw.label, isDemand: false, tag: "⚡ OPEN", tagC: "#B45309", bg: "linear-gradient(135deg,#FFFBEB,#FFF7ED)", bc: "#FDE68A" }, { s: "dispatched", icon: "🚚", t: "Dispatched Challans", sub: "What's been sent to you — verify receipt", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "wastage", icon: "🗑️", t: "Wastage / Disposal", sub: "Record expired or disposed items", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FEF2F2,#FFF1F2)", bc: "#FECACA" }, { s: "close", icon: "📊", t: "Closing Stock", sub: "End of day — stock remaining", tag: "⚠️ Must fill daily", tagC: "#991B1B", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dairy_cold_drink", icon: "🥛", t: "Dairy / Cold Drink Purchase", sub: "Milk, paneer, cold drinks, water — for inventory & audit, not a cash expense", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }, { s: "dept_purchase", icon: "🧾", t: "Purchases & Bills", sub: "Electrical, repairs, civil works — save bills for warranty", tag: "🛡️ Warranty vault", tagC: "#9A3412", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA" }, { s: "daily_sales", icon: "💰", t: "Daily Sales & Cash", sub: "Sales, UPI, cash reconciliation", bg: "linear-gradient(135deg,#F0FDF4,#ECFDF5)", bc: "#BBF7D0" }, ...(PHOTO_OUTLET_IDS.includes(outlet) ? [{ s: "outlet_photo", icon: "📸", t: "Daily Photos", tag: "⏱️ Time-bound", tagC: "#2563EB", bg: "linear-gradient(135deg,#EFF6FF,#F0F9FF)", bc: "#BFDBFE" }] : []), { s: "team", icon: "👥", t: "Team", sub: isChef ? "Impose a fine — goes to Head Chef for approval" : "Onboard staff, give an advance", bg: "linear-gradient(135deg,#F5F3FF,#FAF5FF)", bc: "#DDD6FE" }, { s: "performance", icon: "🏆", t: "Performance Dashboard", sub: isChef ? "COGS score, punches, reviews, wastage" : "COGS score, punches, discipline, reviews", bg: "linear-gradient(135deg,#EFF6FF,#F5F3FF)", bc: "#C7D2FE" }, { s: "transfer", icon: "🔁", t: "Transfer to Outlet", sub: "Send stock directly to another outlet — short on something, get it fast", tag: "⚠️ Audit trail", tagC: "#991B1B", bg: "linear-gradient(135deg,#FFF7ED,#FFFBEB)", bc: "#FED7AA", full: true }].filter((opt) => !isDraftRole || ["manual", "wastage", "close"].includes(opt.s) || (isChef && ["performance", "team"].includes(opt.s))).map((opt) => (<button key={opt.s} onClick={() => { reset(); resetDcPurchase(); setClosing({}); setClosingUnits({}); setItemSearch(""); setOpenDispatchOrder(null); setReceivedDraft({}); setTransferDraft({}); setTransferDest(null); setTransferNote(""); setTransferTab("send"); setOpenIncomingTransfer(null); setScreen(opt.s); }} style={{ gridColumn: opt.full ? "1 / -1" : "auto", padding: "13px 15px", borderRadius: 14, border: `1.5px solid ${opt.bc}`, background: opt.bg, textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 11, opacity: 1 }}><div style={{ fontSize: 26, flexShrink: 0 }}>{opt.icon}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 14.5, fontWeight: 800, lineHeight: 1.2 }}>{opt.t}</div>{opt.tag && <div style={{ fontSize: 10, fontWeight: 700, color: opt.tagC, marginTop: 3 }}>{opt.tag}</div>}</div></button>))}</div>
     {onBack && <button onClick={onBack} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", fontSize: 13, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>← Back to Launcher</button>}
   </div>); }
 
@@ -11598,6 +11776,7 @@ const OutletMgr = ({ onBack }) => {
   // back to their outlet client-side — exactly the unscoped-identity case TeamPanel anticipates.
   if (screen === "team") return <TeamPanel onBack={() => setScreen("home")} fineOnly={isChef} department={outlet} />;
   if (screen === "outlet_photo") return <OutletPhotoCapture outlet={outlet} onBack={() => setScreen("home")} />;
+  if (screen === "dept_purchase") return <DeptPurchasePanel outlet={outlet} onBack={() => setScreen("home")} />;
 
   // ── PERFORMANCE DASHBOARD — this outlet's own COGS score (+ punch/discipline/review
   // score placeholders), with the full RM Audit drill-down locked to this outlet.
