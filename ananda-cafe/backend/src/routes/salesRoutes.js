@@ -3006,6 +3006,42 @@ async function checkEveningDemandCutoff(outlet_id, type, demand_slot) {
   return "Evening demand closes at 11:45 AM. Call the owner if you need a late order today — they can open it for you from the Owner Dashboard.";
 }
 
+// A morning demand's opening balance IS the previous day's closing stock — the P&L consumed
+// formula reads yesterday's SUBMITTED closing (prev_closing + dispatched − wastage − closing).
+// If that closing was punched but left in DRAFT and never finalized, it counts as ₹0 and
+// silently breaks the next day's stock/P&L math — the "closing stock draft stuck unfinalized"
+// the owner flags on Home. So an outlet can't raise its MORNING demand until the previous
+// day's closing is submitted, not stuck in draft. Detection mirrors the stuck-draft condition
+// used by the Home banner / P&L (closing-stock-draft-alerts): a row exists with status='draft'
+// and none 'submitted' for that outlet+date. deliveryDate is the morning the demand is for
+// (morningSlotDate on the client / targetDate here), so the opening day is deliveryDate − 1.
+// Only enforced for a PAST day's draft (< today): the current day's closing is legitimately
+// still in progress (finalized at end of day), so a same-day draft never blocks. A fully
+// MISSING closing is a different case (handled by the frontend recent-closing lock) and is not
+// hard-blocked here. Fails OPEN on a query error, same as the evening cutoff, so a DB hiccup
+// never hard-locks an outlet out of ordering.
+async function checkMorningClosingGate(outlet_id, type, demand_slot, deliveryDate) {
+  if (type !== 'manual' || demand_slot !== 'morning' || !deliveryDate) return null;
+  const d = new Date(deliveryDate); d.setDate(d.getDate() - 1);
+  const priorDate = d.toISOString().split('T')[0];
+  if (priorDate >= todayIST()) return null; // same-day (or future) closing is still being worked on — don't block
+  try {
+    const { data, error } = await supabase.from('closing_stocks')
+      .select('status').eq('outlet_id', outlet_id).eq('date', priorDate);
+    if (error) throw error;
+    const rows = data || [];
+    const hasSubmitted = rows.some((r) => r.status === 'submitted');
+    const hasDraft = rows.some((r) => r.status === 'draft');
+    if (!hasSubmitted && hasDraft) {
+      return `Your closing stock for ${priorDate} is still saved as a DRAFT and was never finalized — please submit it before raising the morning demand. A draft closing counts as ₹0 and breaks the next day's stock & P&L.`;
+    }
+  } catch (e) {
+    console.error('[closing_stock gate] check failed, allowing through:', e.message);
+    return null;
+  }
+  return null;
+}
+
 // Emergency-demand grant marker. There's exactly one demand_exceptions row per (outlet,date)
 // — a normal "Open for Today" (evening) grant vs an "Open Emergency Demand" grant are the
 // same row, distinguished by this sentinel prefix on `reason` (deliberately no new column —
@@ -3051,6 +3087,13 @@ router.post('/demands', async (req, res) => {
       if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
     }
     const targetDate = date || todayIST();
+
+    // Block the morning demand while the previous day's closing is stuck in draft (see
+    // checkMorningClosingGate). An emergency order bypasses it, same as the evening cutoff.
+    if (!emergency) {
+      const closingMsg = await checkMorningClosingGate(outlet_id, type, demand_slot, targetDate);
+      if (closingMsg) return res.status(403).json({ error: closingMsg });
+    }
 
     // Server-side safety net against duplicate challans — never let two draft/submitted
     // demands exist for the same outlet+date+type+slot, no matter what led here (stale
@@ -3137,6 +3180,10 @@ router.patch('/demands/draft', async (req, res) => {
     if (!['owner', 'store_mgr', 'avp'].includes(user.role)) {
       const cutoffMsg = await checkEveningDemandCutoff(outlet_id, type, demand_slot);
       if (cutoffMsg) return res.status(403).json({ error: cutoffMsg });
+      // Same gate as POST /demands — can't even build the morning draft while yesterday's
+      // closing is stuck unfinalized (mirrors the evening cutoff blocking draft-resume too).
+      const closingMsg = await checkMorningClosingGate(outlet_id, type, demand_slot, date);
+      if (closingMsg) return res.status(403).json({ error: closingMsg });
     }
 
     // Server-side backstop matching the frontend's CATEGORY_SCOPE — a direct API call
@@ -3199,7 +3246,7 @@ router.patch('/demands/:id/finalize', async (req, res) => {
   try {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id, status').eq('id', req.params.id).single();
+    const { data: existing, error: findErr } = await supabase.from('demands').select('outlet_id, status, date, type, demand_slot').eq('id', req.params.id).single();
     if (findErr || !existing) return res.status(404).json({ error: 'Not found' });
     // AVP gets the full Base Kitchen Manager module, which includes Dispatch — that
     // needs unrestricted cross-outlet access, same as store_mgr, not just BK's own
@@ -3207,6 +3254,12 @@ router.patch('/demands/:id/finalize', async (req, res) => {
     const allowed = ['owner', 'store_mgr', 'outlet_mgr', 'avp'].includes(user.role) || (user.role === 'bk_manager' && existing.outlet_id === 'bk');
     if (!allowed) return res.status(403).json({ error: 'Insufficient permissions' });
     if (!ensureOutletAccess(user, existing.outlet_id, res)) return;
+    // Can't finalize (raise) a morning demand while the previous day's closing is stuck in
+    // draft — same gate as create/draft-save. Owner/store_mgr/avp intervene freely (exempt).
+    if (!['owner', 'store_mgr', 'avp'].includes(user.role)) {
+      const closingMsg = await checkMorningClosingGate(existing.outlet_id, existing.type, existing.demand_slot, existing.date);
+      if (closingMsg) return res.status(403).json({ error: closingMsg });
+    }
     // Once BK has dispatched it, the outlet's own self-service roles can no longer
     // rewrite it from their portal — the record has to stay exactly what was actually
     // sent (franchise billing and every audit trail read off it as fact). Owner/store_mgr/

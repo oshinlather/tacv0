@@ -11264,6 +11264,26 @@ const OutletMgr = ({ onBack }) => {
     setSlotViewOnly(false);
     if (slot === "morning" && !closingIsCurrent) return;
     const resolvedDate = slot === "morning" ? morningSlotDate() : today();
+    // Mirror of the backend checkMorningClosingGate — a morning demand's opening balance IS
+    // the prior day's closing. If that day's closing was punched but left as a DRAFT (never
+    // finalized), it counts as ₹0 and breaks the next day's stock/P&L math, so block the slot
+    // upfront with the same message instead of letting the manager fill the whole form and
+    // only hit the 403 on submit. Only a PAST day's draft blocks (today's is still in progress).
+    // Fails OPEN on error — the server gate is the authoritative enforcement.
+    if (slot === "morning") {
+      const pd = new Date(resolvedDate); pd.setDate(pd.getDate() - 1);
+      const priorDate = pd.toISOString().split("T")[0];
+      if (priorDate < today()) {
+        try {
+          const csRows = await api.getClosingStocks({ outlet_id: outlet, date: priorDate });
+          const row = (csRows || [])[0];
+          if (row && row.status === "draft") {
+            alert(`Closing stock for ${priorDate} is still a DRAFT and was never finalized.\n\nPlease submit it (Closing Stock → Finalize & Submit) before raising the morning demand — a draft closing counts as ₹0 and breaks the next day's stock & P&L.`);
+            return;
+          }
+        } catch (e) { /* fail open — backend checkMorningClosingGate is the real enforcement */ }
+      }
+    }
     setCheckingSlotDispatch(true);
     try {
       const rows = await api.getOrders({ outlet_id: outlet, date: resolvedDate });
