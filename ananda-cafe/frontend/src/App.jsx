@@ -471,7 +471,7 @@ const MultiPhotoUpload = ({ images, onAdd, onRemove }) => {
         <span style={{ fontSize: 18 }}>📷</span>
         <span style={{ fontSize: 8, fontWeight: 700 }}>{images.length ? "+ Add" : "Photo"}</span>
       </label>
-      <input id={uid} type="file" accept="image/*" capture="environment" onChange={pick} style={{ display: "none" }} />
+      <input id={uid} type="file" accept="image/*" onChange={pick} style={{ display: "none" }} />
     </div>
   );
 };
@@ -665,7 +665,7 @@ const ROLE_OPTIONS = [
   { v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" },
   { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" },
   { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" },
-  { v: "franchise", l: "🤝 Franchise" },
+  { v: "franchise", l: "🤝 Franchise" }, { v: "ops_manager", l: "🔀 Ops Manager" },
 ];
 // Roles whose account is tied to exactly one outlet (an outlet_id must be assigned).
 const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
@@ -756,7 +756,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : r === "ops_manager" ? "🔀 Ops Manager" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -21649,6 +21649,9 @@ export default function AnandaCafe() {
     try {
       const user = await api.login(loginPhone, loginPin);
       localStorage.setItem("ananda_user", JSON.stringify(user));
+      // Clear any stale ops mode from a previous session — an ops_manager re-picks his
+      // mode on every fresh login (his login role is 'ops_manager' until he chooses).
+      try { localStorage.removeItem("ananda_ops_mode"); } catch (e) {}
       api.clearCache(); // fresh start under this user's cache namespace
       _currentUser = user;
       setCurrentUser(user);
@@ -21657,7 +21660,22 @@ export default function AnandaCafe() {
     finally { setLoginLoading(false); }
   };
 
-  const doLogout = () => { localStorage.removeItem("ananda_user"); api.clearCache(); _currentUser = null; setCurrentUser(null); };
+  const doLogout = () => { localStorage.removeItem("ananda_user"); try { localStorage.removeItem("ananda_ops_mode"); } catch (e) {} api.clearCache(); _currentUser = null; setCurrentUser(null); };
+
+  // Ops manager picks / switches his hat: swap his EFFECTIVE role so all the normal
+  // routing + dashboards work unchanged, keep an `ops` flag (so we still show the picker +
+  // switcher), and stash the mode for the x-user-mode header the backend reads.
+  const enterOpsMode = (m) => {
+    const role = m === "bk" ? "bk_manager" : "outlet_mgr";
+    const eff = { ...currentUser, role, ops: true, base_role: "ops_manager" };
+    try {
+      localStorage.setItem("ananda_user", JSON.stringify(eff));
+      localStorage.setItem("ananda_ops_mode", m === "bk" ? "bk" : "outlet");
+    } catch (e) {}
+    api.clearCache();
+    _currentUser = eff;
+    setCurrentUser(eff);
+  };
 
   // Check URL for role parameter: ?role=outlet or ?role=store or ?role=owner
   const [urlRole] = useState(() => {
@@ -21803,6 +21821,36 @@ export default function AnandaCafe() {
       </button>
     </div>
   </div></div>);
+
+  // Ops manager just logged in (role still 'ops_manager', no hat chosen yet) — ask which
+  // mode he's working in today, before any dashboard. Picking sets his effective role.
+  if (currentUser.role === "ops_manager") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "56px 20px" }}>
+    <div style={{ textAlign: "center", marginBottom: 6 }}><img src="/logo.png" alt="" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover" }} /></div>
+    <h1 style={{ fontSize: 22, fontWeight: 900, textAlign: "center", margin: "8px 0 2px" }}>Hi {currentUser.name} 👋</h1>
+    <p style={{ fontSize: 13, color: "#999", textAlign: "center", margin: "0 0 28px" }}>Choose how you're working today</p>
+    {[{ m: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Run any outlet you're sent to" }, { m: "bk", icon: "🏭", title: "Base Kitchen Manager", sub: "Run the Base Kitchen" }].map((o) => (
+      <button key={o.m} onClick={() => enterOpsMode(o.m)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: "#fff", border: "1px solid #E8E8E4", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ fontSize: 36 }}>{o.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800 }}>{o.title}</div><div style={{ fontSize: 12, color: "#999" }}>{o.sub}</div></div>
+      </button>
+    ))}
+    <button onClick={doLogout} style={{ width: "100%", marginTop: 8, padding: "12px", borderRadius: 12, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>
+  </div></div>);
+
+  // Ops manager operating in a chosen mode — render the matching dashboard with a top mode
+  // switcher (Outlet Manager ⇄ BK Manager), the same idea as the owner dashboard's tabs.
+  if (currentUser.ops) {
+    const modeBar = (<div style={{ background: "#1A1A1A", padding: "8px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.12)", borderRadius: 999, padding: 3 }}>
+        {[{ m: "outlet", role: "outlet_mgr", label: "🏪 Outlet Manager" }, { m: "bk", role: "bk_manager", label: "🏭 BK Manager" }].map((o) => (
+          <button key={o.m} onClick={() => { if (currentUser.role !== o.role) enterOpsMode(o.m); }} style={{ padding: "6px 14px", borderRadius: 999, border: "none", background: currentUser.role === o.role ? "#fff" : "transparent", color: currentUser.role === o.role ? "#1A1A1A" : "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{o.label}</button>
+        ))}
+      </div>
+      <div style={{ flex: 1 }} />
+      <span style={{ fontSize: 11, color: "#BBB", whiteSpace: "nowrap" }}>👤 {currentUser.name}</span>
+    </div>);
+    if (currentUser.role === "bk_manager") return (<div>{FONT}{modeBar}<ScopedDashboard /></div>);
+    return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={null} /></div></div>);
+  }
 
   if (effectiveApp === "launcher") return (<div style={PAGE}>{FONT}<div style={{ maxWidth: 440, margin: "0 auto", padding: "40px 20px" }}><div style={{ textAlign: "center", marginBottom: 36 }}><img src="/logo.png" alt="The Ananda Cafe" style={{ width: 80, height: 80, borderRadius: "50%", marginBottom: 12, objectFit: "cover" }} /><h1 style={{ fontSize: 26, fontWeight: 900, margin: "0 0 4px" }}>The Ananda Cafe</h1><p style={{ fontSize: 14, color: "#999", margin: 0 }}>Operations Management System</p>{currentUser && <div style={{ marginTop: 8, fontSize: 12, color: "#888" }}>👤 {currentUser.name} <button onClick={doLogout} style={{ background: "none", border: "none", color: "#DC2626", cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, textDecoration: "underline" }}>Logout</button></div>}</div>
     {[{ id: "owner", icon: "👑", title: "Owner Dashboard", bg: "linear-gradient(135deg, #1A1A1A, #333)", color: "#fff" }, { id: "outlet", icon: "🏪", title: "Outlet Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "store", icon: "📦", title: "Base Kitchen Manager", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }, { id: "driver", icon: "🚚", title: "Driver Portal", bg: "#fff", color: "#1A1A1A", border: "#E8E8E4" }].map((a) => (<button key={a.id} onClick={() => setApp(a.id)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: a.bg, border: a.border ? `1px solid ${a.border}` : "none", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}><div style={{ fontSize: 36 }}>{a.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800, color: a.color }}>{a.title}</div></div></button>))}

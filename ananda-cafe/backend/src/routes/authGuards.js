@@ -66,6 +66,16 @@ async function requireAuth(req, res) {
     res.status(401).json({ error: 'Invalid or inactive user' });
     return null;
   }
+  // "ops_manager" is a flexible manager (e.g. Satyam) who operates EITHER as an outlet
+  // manager — at any outlet he's sent to — OR as the Base Kitchen manager, choosing per
+  // session. The frontend sends x-user-mode ('bk' | 'outlet') for the hat he's wearing;
+  // resolve to the effective role the rest of the stack already understands, and mark him
+  // un-pinned so he isn't confined to a single outlet (unlike a real outlet_mgr). Shallow
+  // copy so the cached DB row (role still 'ops_manager') is never mutated.
+  if (user.role === 'ops_manager') {
+    const mode = req.headers['x-user-mode'];
+    return { ...user, role: mode === 'bk' ? 'bk_manager' : 'outlet_mgr', opsUnpinned: true };
+  }
   return user;
 }
 
@@ -122,6 +132,7 @@ async function requireRoleOrResp(req, res, responsibility, ...allowedRoles) {
 // Returns true if access OK, else sends 403 and returns false.
 const OUTLET_SCOPED_ROLES = ['outlet_mgr', 'chef', 'bainmarry', 'franchise'];
 function ensureOutletAccess(user, requestedOutletId, res) {
+  if (user.opsUnpinned) return true; // ops manager operates any outlet he's sent to
   if (!OUTLET_SCOPED_ROLES.includes(user.role)) return true; // owner & store_mgr unrestricted
   if (!requestedOutletId) return true; // no outlet specified; caller handles
   if (requestedOutletId !== user.outlet_id) {
@@ -137,6 +148,7 @@ function ensureOutletAccess(user, requestedOutletId, res) {
 // ask for 'all' or another outlet. Same OUTLET_SCOPED_ROLES list as ensureOutletAccess,
 // but resolves to a value instead of a pass/fail.
 function scopedOutletFilter(user, requestedOutlet) {
+  if (user.opsUnpinned) return requestedOutlet; // ops manager isn't pinned to one outlet on reads
   // A 'cogs'-responsible manager gets cross-outlet oversight on reads — don't collapse their
   // requested outlet to their own. (Writes stay pinned via ensureOutletAccess, unchanged.)
   if (hasResponsibility(user, 'cogs')) return requestedOutlet;

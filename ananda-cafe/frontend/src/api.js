@@ -20,6 +20,9 @@ function authHeaders(extra = {}) {
   const h = { ...extra };
   const id = getUserId();
   if (id) h["x-user-id"] = id;
+  // An ops_manager (dual outlet/BK manager) sets this when he picks a mode, so the backend
+  // resolves his effective role. Ignored by the backend for every other role.
+  try { const m = localStorage.getItem("ananda_ops_mode"); if (m) h["x-user-mode"] = m; } catch (e) {}
   return h;
 }
 

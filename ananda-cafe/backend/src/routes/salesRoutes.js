@@ -3144,12 +3144,15 @@ router.patch('/demands/draft', async (req, res) => {
     items = await filterItemsToRoleScope(user.role, items);
     items_units = await filterItemsToRoleScope(user.role, items_units);
 
-    // status='draft' is deliberate — without it, this would find and silently rewrite the
-    // most recent row for this outlet/date/type/slot regardless of state, including one
-    // that's already submitted/received/fulfilled (e.g. a morning demand already dispatched
-    // by BK). Only an actual still-open draft is safe to merge into; anything else must
-    // start a fresh row.
-    let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type).eq('status', 'draft');
+    // Merge into any still-OPEN row for this outlet/date/type/slot — draft OR submitted —
+    // exactly like POST /demands' dedup backstop. A submitted demand isn't closed yet (only
+    // 'fulfilled' means BK has dispatched it); editing/adding an item to it must update that
+    // same row in place, NOT spawn a second row. Matching draft-only here was the duplicate-
+    // challan bug: the per-category "Save" couldn't see the submitted row, so it inserted a
+    // fresh draft carrying the prefilled old items + the new one. fulfilled/cancelled stay
+    // excluded (a dispatched slot must start a fresh row, guarded just below). Merging into a
+    // submitted row leaves its status/submitted_at untouched (update sets items only).
+    let query = supabase.from('demands').select('*').eq('outlet_id', outlet_id).eq('date', date).eq('type', type).in('status', ['draft', 'submitted']);
     query = demand_slot ? query.eq('demand_slot', demand_slot) : query.is('demand_slot', null);
     const { data: existingRows, error: findErr } = await query.order('submitted_at', { ascending: false }).limit(1);
     if (findErr) throw findErr;

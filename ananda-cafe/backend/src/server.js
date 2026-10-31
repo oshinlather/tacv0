@@ -40,8 +40,9 @@ const PORT = process.env.PORT || 3001;
 app.use(compression());
 app.use(cors({
   origin: process.env.FRONTEND_URL || "*",
-  // Must allow x-user-id so the browser doesn't strip it on preflight
-  allowedHeaders: ["Content-Type", "Authorization", "x-user-id"],
+  // Must allow x-user-id so the browser doesn't strip it on preflight. x-user-mode lets an
+  // ops_manager (dual outlet/BK) tell the backend which hat he's wearing this session.
+  allowedHeaders: ["Content-Type", "Authorization", "x-user-id", "x-user-mode"],
 }));
 app.use(express.json({ limit: "50mb" }));
 app.use('/api', salesRoutes);
