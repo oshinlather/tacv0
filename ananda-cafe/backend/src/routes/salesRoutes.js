@@ -2558,7 +2558,7 @@ async function cascadeCashForward(supabase, outletId, fromDate) {
   const { data: seed } = await supabase.from('daily_outlet_sales').select('*')
     .eq('outlet_id', outletId).eq('date', fromDate).maybeSingle();
   if (!seed) return;
-  let balance = Number(seed.prev_day_cash || 0) + Number(seed.cash_collected || 0) - Number(seed.cash_expense || 0) - Number(seed.cash_deposited || 0);
+  let balance = Number(seed.prev_day_cash || 0) + Number(seed.cash_collected || 0) - Number(seed.cash_expense || 0) - Number(seed.cash_deposited || 0) - Number(seed.cash_bill_collected || 0);
   let cursorDate = fromDate;
   for (let i = 0; i < 180; i++) {
     const { data: nextRow } = await supabase.from('daily_outlet_sales').select('*')
@@ -2566,9 +2566,21 @@ async function cascadeCashForward(supabase, outletId, fromDate) {
     if (!nextRow) break;
     if (Number(nextRow.prev_day_cash || 0) === balance) break;
     await supabase.from('daily_outlet_sales').update({ prev_day_cash: balance }).eq('outlet_id', outletId).eq('date', nextRow.date);
-    balance = balance + Number(nextRow.cash_collected || 0) - Number(nextRow.cash_expense || 0) - Number(nextRow.cash_deposited || 0);
+    balance = balance + Number(nextRow.cash_collected || 0) - Number(nextRow.cash_expense || 0) - Number(nextRow.cash_deposited || 0) - Number(nextRow.cash_bill_collected || 0);
     cursorDate = nextRow.date;
   }
+}
+
+// Closing cash of the most recent row strictly before `beforeDate` — i.e. the opening
+// (prev_day_cash) that a new row on `beforeDate` should carry forward. Returns 0 if the
+// outlet has no earlier row. Used so recording a collection/bill on a day the manager
+// hasn't reported sales for yet doesn't create a row with a zero opening (which made the
+// closing show as just −collected). Same closing formula as cascadeCashForward.
+async function previousClosing(supabase, outletId, beforeDate) {
+  const { data: prev } = await supabase.from('daily_outlet_sales').select('*')
+    .eq('outlet_id', outletId).lt('date', beforeDate).order('date', { ascending: false }).limit(1).maybeSingle();
+  if (!prev) return 0;
+  return Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0) - Number(prev.cash_bill_collected || 0);
 }
 
 // After a sales row is moved away from `removedDate` (see /move-submission-date), the
@@ -2659,7 +2671,11 @@ router.post('/outlet-sales', async (req, res) => {
     // sales form (which pre-fills whatever is already in the DB) would silently
     // overwrite an owner/store-manager's collection record with their own name.
     const { data: existing } = await supabase.from('daily_outlet_sales')
-      .select('cash_deposited, cash_collected, cash_expense').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+      .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+    // Bill-backed collections are owned by their own endpoint — this full-row upsert
+    // must carry them forward verbatim or re-saving the sales form would wipe them.
+    record.cash_bill_collected = existing?.cash_bill_collected || 0;
+    record.cash_bill_collected_by = existing?.cash_bill_collected_by || null;
     const depositChanged = !existing || Number(existing.cash_deposited || 0) !== Number(cash_deposited || 0);
     if (depositChanged) {
       // cash_deposited_to is the outlet manager's declared recipient (from the fixed
@@ -2699,11 +2715,18 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
     const { data: existing } = await supabase.from('daily_outlet_sales')
       .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
 
+    // The opening is, by definition, the previous day's closing — seed it here so a
+    // collection recorded before the manager reports that day's sales doesn't leave the
+    // row with a zero opening (which made closing show as just −collected). Re-seeding on
+    // every write also heals any row previously created with a wrong opening.
+    const seedPrev = await previousClosing(supabase, outlet_id, date);
+
     const record = {
       outlet_id, date,
       cash_deposited: Number(cash_deposited) || 0,
       cash_deposited_by: collected_by || null,
       cash_deposited_at: new Date().toISOString(),
+      prev_day_cash: seedPrev,
       // Preserve everything else already on the row — this endpoint only ever
       // touches the deposited/collection fields, nothing else.
       ...(existing ? {
@@ -2711,8 +2734,9 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
         other_delivery_sale: existing.other_delivery_sale, cancelled_orders: existing.cancelled_orders,
         complimentary_amount: existing.complimentary_amount, complimentary_reason: existing.complimentary_reason,
         zomato_district: existing.zomato_district, upi_collected: existing.upi_collected,
-        cash_collected: existing.cash_collected, prev_day_cash: existing.prev_day_cash,
+        cash_collected: existing.cash_collected,
         cash_expense: existing.cash_expense, cash_expense_note: existing.cash_expense_note,
+        cash_bill_collected: existing.cash_bill_collected, cash_bill_collected_by: existing.cash_bill_collected_by,
         submitted_by: existing.submitted_by, submitted_at: existing.submitted_at, notes: existing.notes,
       } : { notes: note || null }),
     };
@@ -2721,6 +2745,109 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
     if (error) throw error;
     await cascadeCashForward(supabase, outlet_id, date);
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Recompute daily_outlet_sales.cash_bill_collected (the per-day aggregate the cash
+// cascade subtracts) from the individual outlet_cash_bills rows, then cascade forward
+// so every later day's opening/closing stays consistent.
+async function recomputeBillCollected(supabase, outletId, date) {
+  const { data: bills } = await supabase.from('outlet_cash_bills')
+    .select('amount, collected_by, created_at').eq('outlet_id', outletId).eq('date', date)
+    .order('created_at', { ascending: false });
+  const sum = (bills || []).reduce((s, b) => s + Number(b.amount || 0), 0);
+  const by = bills && bills[0] ? bills[0].collected_by : null;
+  const { data: existing } = await supabase.from('daily_outlet_sales')
+    .select('*').eq('outlet_id', outletId).eq('date', date).maybeSingle();
+  // Opening = previous day's closing (seed/heal it, same as the collection endpoint).
+  const seedPrev = await previousClosing(supabase, outletId, date);
+  const record = existing
+    ? { ...existing, cash_bill_collected: sum, cash_bill_collected_by: by, prev_day_cash: seedPrev }
+    : { outlet_id: outletId, date, cash_bill_collected: sum, cash_bill_collected_by: by, prev_day_cash: seedPrev };
+  await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
+  await cascadeCashForward(supabase, outletId, date);
+}
+
+// ── GET /api/outlet-sales/bill-collections — list bill-backed collections (with
+// signed bill photos) for an outlet, by a single date or a date range.
+router.get('/outlet-sales/bill-collections', async (req, res) => {
+  try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const { outlet_id, date, from, to } = req.query;
+    if (!ensureOutletAccess(_user, outlet_id, res)) return;
+    let q = supabase.from('outlet_cash_bills').select('*').order('created_at', { ascending: false });
+    if (outlet_id) q = q.eq('outlet_id', outlet_id);
+    if (date) q = q.eq('date', date);
+    if (from) q = q.gte('date', from);
+    if (to) q = q.lte('date', to);
+    const { data: bills, error } = await q;
+    if (error) throw error;
+    const ids = (bills || []).map((b) => b.id);
+    const photosByBill = {};
+    if (ids.length) {
+      const { data: photos } = await supabase.from('outlet_cash_bill_photos')
+        .select('*').in('bill_id', ids).order('created_at', { ascending: true });
+      for (const ph of photos || []) {
+        const { data: signed } = await supabase.storage.from('Photos').createSignedUrl(ph.storage_path, 86400);
+        (photosByBill[ph.bill_id] ||= []).push({ id: ph.id, url: signed?.signedUrl || null });
+      }
+    }
+    res.json((bills || []).map((b) => ({ ...b, photos: photosByBill[b.id] || [] })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/outlet-sales/bill-collection — record a bill-backed collection: cash
+// that was spent at the outlet, accepted (against a bill) as collected. Reduces the
+// outlet's available cash via cash_bill_collected; never touches any collector's
+// holding. Photos are attached separately (POST .../:id/photos).
+router.post('/outlet-sales/bill-collection', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
+    const { outlet_id, date, amount, note, collected_by } = req.body;
+    if (!outlet_id || !date || amount === undefined || Number(amount) <= 0) {
+      return res.status(400).json({ error: 'outlet_id, date, and a positive amount are required' });
+    }
+    const { data, error } = await supabase.from('outlet_cash_bills')
+      .insert({ outlet_id, date, amount: Number(amount), note: note || null, collected_by: collected_by || null })
+      .select().single();
+    if (error) throw error;
+    await recomputeBillCollected(supabase, outlet_id, date);
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── POST /api/outlet-sales/bill-collection/:id/photos — attach a bill photo (base64).
+router.post('/outlet-sales/bill-collection/:id/photos', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
+    const { id } = req.params;
+    const { base64 } = req.body;
+    if (!base64) return res.status(400).json({ error: 'base64 is required' });
+    const { data: bill } = await supabase.from('outlet_cash_bills').select('id').eq('id', id).maybeSingle();
+    if (!bill) return res.status(404).json({ error: 'Not found' });
+    const buffer = Buffer.from(base64.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+    const fileName = `cash-bills/${id}/bill_${Date.now()}.jpg`;
+    const { error: uploadError } = await supabase.storage.from('Photos').upload(fileName, buffer, { contentType: 'image/jpeg' });
+    if (uploadError) throw uploadError;
+    const { data, error } = await supabase.from('outlet_cash_bill_photos')
+      .insert({ bill_id: id, storage_path: fileName }).select().single();
+    if (error) throw error;
+    const { data: signed } = await supabase.storage.from('Photos').createSignedUrl(fileName, 86400);
+    res.json({ id: data.id, url: signed?.signedUrl || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DELETE /api/outlet-sales/bill-collection/:id — remove a bill-backed collection
+// (photos cascade), then recompute the day's aggregate + cascade the balance forward.
+router.delete('/outlet-sales/bill-collection/:id', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
+    const { data: bill } = await supabase.from('outlet_cash_bills').select('*').eq('id', req.params.id).maybeSingle();
+    if (!bill) return res.status(404).json({ error: 'Not found' });
+    const { error } = await supabase.from('outlet_cash_bills').delete().eq('id', req.params.id);
+    if (error) throw error;
+    await recomputeBillCollected(supabase, bill.outlet_id, bill.date);
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3608,7 +3735,7 @@ router.post('/move-submission-date', async (req, res) => {
           // The moved row's own prev_day_cash was computed for its old neighbors — recompute
           // it for whatever now actually precedes it at the target date before cascading.
           const { data: predB } = await supabase.from('daily_outlet_sales').select('*').eq('outlet_id', outlet_id).lt('date', to_date).order('date', { ascending: false }).limit(1).maybeSingle();
-          const correctPrevCash = predB ? (Number(predB.prev_day_cash || 0) + Number(predB.cash_collected || 0) - Number(predB.cash_expense || 0) - Number(predB.cash_deposited || 0)) : 0;
+          const correctPrevCash = predB ? (Number(predB.prev_day_cash || 0) + Number(predB.cash_collected || 0) - Number(predB.cash_expense || 0) - Number(predB.cash_deposited || 0) - Number(predB.cash_bill_collected || 0)) : 0;
 
           const { data: moved, error } = await supabase.from('daily_outlet_sales').update({ date: to_date, prev_day_cash: correctPrevCash }).eq('id', src.id).select().single();
           if (error) throw error;

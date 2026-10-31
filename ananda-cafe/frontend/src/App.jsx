@@ -321,6 +321,7 @@ export const DEMAND_SECTIONS = [
       { id: "wooden_plates", name: "Wooden Plates", unit: "Pcs" },
       { id: "paper_bowl", name: "Paper Bowl", unit: "Pkt" },
       { id: "filter_coffee_glass", name: "Filter Coffee Glass", unit: "Pkt" },
+      { id: "cold_coffee_glass", name: "Cold Coffee Glass", unit: "Pkt" },
       { id: "chhachh_glass", name: "Masala Chhachh Glass", unit: "Pkt" },
       { id: "filter_coffee_pkg", name: "Filter Coffee Packaging", unit: "Pkt" },
       { id: "chhachh_pkg", name: "Masala Chhachh Packaging", unit: "Pkt" },
@@ -2405,6 +2406,11 @@ const CashLedger = () => {
   const [ccExisting, setCcExisting] = useState(null);
   const [ccLoading, setCcLoading] = useState(false);
   const [ccSaving, setCcSaving] = useState(false);
+  const [ccBills, setCcBills] = useState([]); // base64[] bill photos for bill-mode
+  // Bill-review modal — which date of the selected outlet's bill collections is open
+  const [billModalDate, setBillModalDate] = useState(null);
+  const [billModalRows, setBillModalRows] = useState(null);
+  const [billModalLoading, setBillModalLoading] = useState(false);
 
   const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
   const dates = Array.from({ length: daysInMonth }, (_, i) => `${selMonth}-${String(i + 1).padStart(2, "0")}`).filter((d) => d <= today());
@@ -2434,11 +2440,24 @@ const CashLedger = () => {
   useEffect(loadMonth, [loadMonth]);
 
   const rowFor = (date) => rows.find((r) => r.date === date);
-  const closingFor = (date) => {
-    const r = rowFor(date);
-    if (!r) return null;
-    return Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0);
-  };
+  // Continuous running cash balance: each day's opening = the previous day's closing,
+  // carried forward even for days with no reported row yet — so the current day shows its
+  // real opening (yesterday's closing) instead of zero before sales/collection are entered.
+  // Seeded from the first available row's stored opening; later rows with a stale stored
+  // opening are superseded by the running carry, so the ledger always reads continuously.
+  const ledgerByDate = {};
+  {
+    let running = null;
+    for (const d of dates) { // dates is ascending
+      const r = rowFor(d);
+      const opening = running != null ? running : (r ? Number(r.prev_day_cash || 0) : null);
+      if (opening == null) { ledgerByDate[d] = { opening: null, closing: null }; continue; }
+      const delta = r ? (Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0) - Number(r.cash_bill_collected || 0)) : 0;
+      const closing = opening + delta;
+      ledgerByDate[d] = { opening, closing };
+      running = closing;
+    }
+  }
 
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const currentUser = getCurrentUser();
@@ -2477,6 +2496,19 @@ const CashLedger = () => {
   useEffect(() => { if (showCollectCash) loadCcExisting(); }, [showCollectCash, loadCcExisting]);
 
   const saveCollectCash = async () => {
+    // Bill mode: cash used at the outlet, accepted against a bill as collected.
+    if (ccMode === "bill") {
+      if (ccAmount === "" || Number(ccAmount) <= 0) return;
+      setCcSaving(true);
+      try {
+        const created = await api.createBillCollection({ outlet_id: ccOutlet, date: ccDate, amount: Number(ccAmount) || 0, note: ccNote || null, collected_by: currentUser?.name || null });
+        for (const b of ccBills) { if (b) await api.uploadBillCollectionPhoto(created.id, b); }
+        setShowCollectCash(false); setCcAmount(""); setCcNote(""); setCcBills([]);
+        loadMonth(); loadSummary();
+      } catch (e) { alert("Error: " + e.message); }
+      finally { setCcSaving(false); }
+      return;
+    }
     if (ccAmount === "" || Number(ccAmount) < 0) return;
     setCcSaving(true);
     try {
@@ -2489,6 +2521,21 @@ const CashLedger = () => {
       loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
     finally { setCcSaving(false); }
+  };
+
+  const openBillModal = (date) => {
+    setBillModalDate(date);
+    setBillModalRows(null);
+    setBillModalLoading(true);
+    api.getBillCollections({ outlet_id: selOutlet, date })
+      .then((r) => setBillModalRows(r || []))
+      .catch(() => setBillModalRows([]))
+      .finally(() => setBillModalLoading(false));
+  };
+  const deleteBill = async (id) => {
+    if (!window.confirm("Delete this bill collection? The outlet's available cash will go back up by this amount.")) return;
+    try { await api.deleteBillCollection(id); openBillModal(billModalDate); loadMonth(); loadSummary(); }
+    catch (e) { alert("Error: " + e.message); }
   };
 
   return (<div>
@@ -2509,20 +2556,21 @@ const CashLedger = () => {
     {showCollectCash && (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", padding: 16, marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
-          <button onClick={() => setCcMode("outlet")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "outlet" ? "none" : "1px solid #E0E0DC", background: ccMode === "outlet" ? "#1A1A1A" : "#fff", color: ccMode === "outlet" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>🏪 From an Outlet</button>
-          <button onClick={() => setCcMode("custodian")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "custodian" ? "none" : "1px solid #E0E0DC", background: ccMode === "custodian" ? "#1A1A1A" : "#fff", color: ccMode === "custodian" ? "#fff" : "#888", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>👤 From a Custodian</button>
+          <button onClick={() => setCcMode("outlet")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "outlet" ? "none" : "1px solid #E0E0DC", background: ccMode === "outlet" ? "#1A1A1A" : "#fff", color: ccMode === "outlet" ? "#fff" : "#888", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>🏪 Outlet</button>
+          <button onClick={() => setCcMode("custodian")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "custodian" ? "none" : "1px solid #E0E0DC", background: ccMode === "custodian" ? "#1A1A1A" : "#fff", color: ccMode === "custodian" ? "#fff" : "#888", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>👤 Custodian</button>
+          <button onClick={() => setCcMode("bill")} style={{ flex: 1, padding: "8px", borderRadius: 8, border: ccMode === "bill" ? "none" : "1px solid #E0E0DC", background: ccMode === "bill" ? "#7C3AED" : "#fff", color: ccMode === "bill" ? "#fff" : "#888", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>🧾 Bill</button>
         </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>{ccMode === "outlet" ? "Outlet" : "Custodian"}</div>
-            {ccMode === "outlet" ? (
-              <select value={ccOutlet} onChange={(e) => setCcOutlet(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
-                {OWN_OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-            ) : (
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>{ccMode === "custodian" ? "Custodian" : "Outlet"}</div>
+            {ccMode === "custodian" ? (
               <select value={ccCustodian} onChange={(e) => setCcCustodian(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
                 {CASH_CUSTODIANS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            ) : (
+              <select value={ccOutlet} onChange={(e) => setCcOutlet(e.target.value)} style={{ width: "100%", padding: "10px 8px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+                {OWN_OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
             )}
           </div>
@@ -2543,16 +2591,29 @@ const CashLedger = () => {
             {ccCustodian} is currently holding {fmt(custodianBalances[ccCustodian]?.balance || 0)}
           </div>
         )}
+        {ccMode === "bill" && (
+          <div style={{ fontSize: 11, color: "#6D28D9", marginBottom: 8, background: "#F5F3FF", border: "1px solid #DDD6FE", borderRadius: 6, padding: "6px 8px" }}>
+            🧾 Cash spent at the outlet, accepted against a bill as collected. The outlet's available cash drops by this amount — it does NOT add to your holding (the money was spent, not carried). Adds on top of any physical collection for the day.
+          </div>
+        )}
 
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected{ccMode === "outlet" ? " (total for the day)" : ""}</div>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>{ccMode === "bill" ? "Amount (cash used at outlet)" : `Amount collected${ccMode === "outlet" ? " (total for the day)" : ""}`}</div>
         <input type="number" inputMode="numeric" value={ccAmount} onChange={(e) => setCcAmount(e.target.value)}
           style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-        {ccMode === "custodian" && (
-          <input value={ccNote} onChange={(e) => setCcNote(e.target.value)} placeholder="Note (optional)"
+        {ccMode !== "outlet" && (
+          <input value={ccNote} onChange={(e) => setCcNote(e.target.value)} placeholder={ccMode === "bill" ? "What was it spent on? (optional)" : "Note (optional)"}
             style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
         )}
-        <button onClick={saveCollectCash} disabled={ccSaving || ccLoading || ccAmount === ""} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: !ccSaving && !ccLoading && ccAmount !== "" ? "#16A34A" : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: !ccSaving && !ccLoading && ccAmount !== "" ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
-          {ccSaving ? "⏳..." : `💾 Save — ₹${Number(ccAmount || 0).toLocaleString("en-IN")} collected from ${ccMode === "outlet" ? (OWN_OUTLETS.find((o) => o.id === ccOutlet)?.short || "") : ccCustodian}`}
+        {ccMode === "bill" && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Bill photo(s) — optional</div>
+            <MultiPhotoUpload images={ccBills} onAdd={(b) => setCcBills((p) => [...p, b])} onRemove={(i) => setCcBills((p) => p.filter((_, idx) => idx !== i))} />
+          </div>
+        )}
+        <button onClick={saveCollectCash} disabled={ccSaving || ccLoading || ccAmount === "" || (ccMode === "bill" && Number(ccAmount) <= 0)} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: (!ccSaving && !ccLoading && ccAmount !== "" && !(ccMode === "bill" && Number(ccAmount) <= 0)) ? (ccMode === "bill" ? "#7C3AED" : "#16A34A") : "#D0D0CC", color: "#fff", fontWeight: 800, fontSize: 14, cursor: (!ccSaving && !ccLoading && ccAmount !== "" && !(ccMode === "bill" && Number(ccAmount) <= 0)) ? "pointer" : "not-allowed", fontFamily: "inherit" }}>
+          {ccSaving ? "⏳..." : ccMode === "bill"
+            ? `🧾 Accept ₹${Number(ccAmount || 0).toLocaleString("en-IN")} as collected`
+            : `💾 Save — ₹${Number(ccAmount || 0).toLocaleString("en-IN")} collected from ${ccMode === "outlet" ? (OWN_OUTLETS.find((o) => o.id === ccOutlet)?.short || "") : ccCustodian}`}
         </button>
       </div>
     )}
@@ -2561,7 +2622,7 @@ const CashLedger = () => {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 8, marginBottom: 20 }}>
       {OWN_OUTLETS.map((o) => {
         const r = latestByOutlet[o.id];
-        const avail = r ? Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0) : 0;
+        const avail = r ? Number(r.prev_day_cash || 0) + Number(r.cash_collected || 0) - Number(r.cash_expense || 0) - Number(r.cash_deposited || 0) - Number(r.cash_bill_collected || 0) : 0;
         return (
           <div key={o.id} onClick={() => setSelOutlet(o.id)} style={{ background: selOutlet === o.id ? "#1A1A1A" : "#fff", borderRadius: 10, border: "1px solid #E8E8E4", padding: "12px", cursor: "pointer", textAlign: "center" }}>
             <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4, color: selOutlet === o.id ? "#fff" : "#1A1A1A" }}>{o.short}</div>
@@ -2602,6 +2663,7 @@ const CashLedger = () => {
               <th style={{ ...thS, textAlign: "right" }}>+ Collected</th>
               <th style={{ ...thS, textAlign: "right" }}>− Expense</th>
               <th style={{ ...thS, textAlign: "right" }}>− Deposited</th>
+              <th style={{ ...thS, textAlign: "right" }}>🧾 Bill</th>
               <th style={{ ...thS, textAlign: "left" }}>By</th>
               <th style={{ ...thS, textAlign: "right" }}>= Closing</th>
               {canRecord && <th style={thS}></th>}
@@ -2609,16 +2671,17 @@ const CashLedger = () => {
             <tbody>
               {dates.slice().reverse().map((d) => {
                 const r = rowFor(d);
-                const closing = closingFor(d);
+                const led = ledgerByDate[d] || {};
                 return (
                   <tr key={d} style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td style={tdS}>{d.slice(5)}</td>
-                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{r ? fmt(r.prev_day_cash) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{led.opening != null ? fmt(led.opening) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{r ? fmt(r.cash_collected) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{r && r.cash_expense > 0 ? fmt(r.cash_expense) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{r && r.cash_deposited > 0 ? fmt(r.cash_deposited) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{r && r.cash_bill_collected > 0 ? <button onClick={() => openBillModal(d)} style={{ border: "none", background: "transparent", color: "#7C3AED", fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>{fmt(r.cash_bill_collected)}</button> : "—"}</td>
                     <td style={{ ...tdS, fontSize: 10, color: "#999" }}>{r?.cash_deposited_by || "—"}</td>
-                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: closing > 0 ? "#B45309" : "#16A34A" }}>{closing != null ? fmt(closing) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (led.closing || 0) > 0 ? "#B45309" : "#16A34A" }}>{led.closing != null ? fmt(led.closing) : "—"}</td>
                     {canRecord && (
                       <td style={tdS}>
                         <button onClick={() => openEdit(d)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 10, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️</button>
@@ -2667,6 +2730,41 @@ const CashLedger = () => {
           <button onClick={() => { setEditCustodian(null); loadSummary(); }} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
         </div>
         <CustodianLedgerDetail person={editCustodian} />
+      </div>
+    </>)}
+
+    {/* Bill-collections review modal — the preserved bills behind a day's 🧾 Bill figure */}
+    {billModalDate && (<>
+      <div onClick={() => setBillModalDate(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(460px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🧾 Bill Collections</div>
+          <button onClick={() => setBillModalDate(null)} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>{outletName} · {billModalDate}</div>
+        {billModalLoading && <div style={{ textAlign: "center", padding: 20, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {!billModalLoading && billModalRows && billModalRows.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#AAA", fontSize: 13 }}>No bill collections for this day.</div>}
+        {!billModalLoading && (billModalRows || []).map((b) => (
+          <div key={b.id} style={{ background: "#FAFAF8", borderRadius: 12, border: "1px solid #E8E8E4", padding: 12, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{fmt(b.amount)}</div>
+                {b.collected_by && <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Accepted by {b.collected_by}</div>}
+                {b.note && <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{b.note}</div>}
+              </div>
+              {canRecord && <button onClick={() => deleteBill(b.id)} style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🗑️</button>}
+            </div>
+            {b.photos && b.photos.length > 0 ? (
+              <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {b.photos.map((ph) => (
+                  <a key={ph.id} href={ph.url} target="_blank" rel="noopener noreferrer" style={{ width: 54, height: 54, borderRadius: 8, overflow: "hidden", border: "1px solid #E0E0DC", display: "block", flexShrink: 0 }}>
+                    <img src={ph.url} alt="bill" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  </a>
+                ))}
+              </div>
+            ) : <div style={{ fontSize: 10, color: "#C2884B", marginTop: 8 }}>⚠️ No bill attached</div>}
+          </div>
+        ))}
       </div>
     </>)}
   </div>);
@@ -11933,7 +12031,7 @@ const OutletMgr = ({ onBack }) => {
           setExistingData(s);
         }
         if (prev) {
-          const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0);
+          const closingCash = Number(prev.prev_day_cash || 0) + Number(prev.cash_collected || 0) - Number(prev.cash_expense || 0) - Number(prev.cash_deposited || 0) - Number(prev.cash_bill_collected || 0);
           setPrevCash(closingCash);
         }
       }).finally(() => setSalesLoading(false));
@@ -16644,6 +16742,138 @@ const FlagCard = ({ icon, title, subtitle, count, extra, children, collapsible, 
   );
 };
 
+// ── COGS Leakage — 7-day matrix (date rows × outlet columns) ──
+// Each cell = ₹ leak for that outlet/day (Σ over items of max(0, actual_cost − should_cost),
+// same should-vs-actual definition as the single-day COGS Leakage card, cold-drink leak
+// included) with leakage % underneath (= leak ÷ ideal material cost × 100). Collapsible and
+// lazy — it fires 7 days × 2 endpoints only on first expand, so it costs nothing on a
+// dashboard view where nobody opens it.
+const MON_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const CogsLeakage7Day = ({ dateStr, selOutlet }) => {
+  const [open, setOpen] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [matrix, setMatrix] = useState({}); // { [date]: { [outletId]: { leak, should } } }
+
+  // 7 days ending at the anchor date (oldest → newest), so the bottom row is `dateStr`.
+  const dates = useMemo(() => Array.from({ length: 7 }, (_, i) => shiftDateStr(dateStr, i - 6)), [dateStr]);
+  const cols = useMemo(() => (selOutlet ? OUTLETS.filter((o) => o.id === selOutlet) : OUTLETS), [selOutlet]);
+
+  // Reset the cache whenever the anchor date / outlet changes so a re-open refetches.
+  useEffect(() => { setLoaded(false); setMatrix({}); }, [dateStr, selOutlet]);
+
+  useEffect(() => {
+    if (!open || loaded) return;
+    let cancelled = false;
+    setLoading(true);
+    Promise.all(dates.map((ds) => Promise.all([
+      api.getRMAudit(ds).catch(() => null),
+      api.getColdDrinkAudit(ds).catch(() => null),
+    ]))).then((results) => {
+      if (cancelled) return;
+      const m = {};
+      dates.forEach((ds, i) => {
+        const [rm, cd] = results[i];
+        const per = {};
+        (rm?.outlets || []).forEach((o) => {
+          let leak = 0, should = 0;
+          (o.items || []).forEach((it) => {
+            if (it.should_consume_cost != null) should += Number(it.should_consume_cost) || 0;
+            if (it.actual_consumed == null) return; // needs submitted closing stock
+            const l = Number(it.actual_consumed_cost || 0) - Number(it.should_consume_cost || 0);
+            if (l > 0) leak += l;
+          });
+          per[o.outlet_id] = { leak, should };
+        });
+        // Cold-drink leak rolls into the same cell (matches the single-day card's total).
+        // Its "should" is billed sales value, a different base, so it stays out of the %
+        // denominator — the % is strictly leak over ideal material cost.
+        (cd?.outlets || []).forEach((o) => {
+          const p = per[o.outlet_id] || (per[o.outlet_id] = { leak: 0, should: 0 });
+          (o.items || []).forEach((it) => {
+            if (it.should_consume_cost == null || it.actual_consumed_cost == null) return;
+            const l = Number(it.actual_consumed_cost) - Number(it.should_consume_cost);
+            if (l > 0) p.leak += l;
+          });
+        });
+        m[ds] = per;
+      });
+      setMatrix(m);
+      setLoaded(true);
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [open, loaded, dates]);
+
+  const fmtDate = (ds) => `${ds.slice(8, 10)} ${MON_ABBR[Number(ds.slice(5, 7)) - 1]}`;
+  // Background tint scales with leakage %, so the worst outlet/day pops at a glance.
+  const cellBg = (pct) => pct == null || pct <= 0 ? "transparent" : pct >= 40 ? "#FEE2E2" : pct >= 20 ? "#FEF0F0" : pct >= 8 ? "#FEF7F7" : "transparent";
+
+  const th = { ...thS, paddingTop: 7, paddingBottom: 7, textAlign: "right", whiteSpace: "nowrap" };
+  const colTotals = {}; // per-outlet sum across the 7 days
+  cols.forEach((c) => { colTotals[c.id] = 0; });
+  let grandTotal = 0;
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
+      <div onClick={() => setOpen((v) => !v)} style={{ padding: "12px 16px", borderBottom: open ? "1px solid #F0F0EC" : "none", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap", cursor: "pointer" }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800 }}>📉 COGS Leakage — 7-Day Trend</div>
+          <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>Daily ₹ leak (ordered − consumed) per outlet, last 7 days · % = leak ÷ ideal material cost</div>
+        </div>
+        <span style={{ fontSize: 12, color: "#999" }}>{open ? "▾" : "▸"}</span>
+      </div>
+      {open && (
+        <div style={{ padding: "12px 16px" }}>
+          {loading ? <div style={{ textAlign: "center", padding: 30, color: "#999" }}>⏳ Loading 7-day trend…</div> : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead><tr style={{ background: "#FAFAF8" }}>
+                  <th style={{ ...th, textAlign: "left", position: "sticky", left: 0, background: "#FAFAF8" }}>Date</th>
+                  {cols.map((c) => <th key={c.id} style={th}>{c.short}</th>)}
+                  <th style={{ ...th, borderLeft: "2px solid #E8E8E4" }}>Total</th>
+                </tr></thead>
+                <tbody>
+                  {dates.map((ds) => {
+                    const per = matrix[ds] || {};
+                    let rowTotal = 0;
+                    const cells = cols.map((c) => {
+                      const d = per[c.id];
+                      if (d) { rowTotal += d.leak; colTotals[c.id] += d.leak; }
+                      return { id: c.id, d };
+                    });
+                    grandTotal += rowTotal;
+                    return (
+                      <tr key={ds} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap" }}>{fmtDate(ds)}</td>
+                        {cells.map(({ id, d }) => {
+                          if (!d) return <td key={id} style={{ ...tdS, textAlign: "right", color: "#CCC" }}>—</td>;
+                          const pct = d.should > 0 ? (d.leak / d.should) * 100 : null;
+                          return (
+                            <td key={id} style={{ ...tdS, textAlign: "right", background: cellBg(pct) }}>
+                              <div style={{ fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: d.leak > 0 ? "#DC2626" : "#16A34A" }}>{d.leak > 0 ? fmt(Math.round(d.leak)) : "₹0"}</div>
+                              <div style={{ fontSize: 10, fontFamily: "'JetBrains Mono', monospace", color: "#B45454", marginTop: 1 }}>{pct != null && d.leak > 0 ? `${pct.toFixed(1)}%` : ""}</div>
+                            </td>
+                          );
+                        })}
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: "#DC2626", borderLeft: "2px solid #E8E8E4" }}>{fmt(Math.round(rowTotal))}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot><tr style={{ background: "#FAFAF8", borderTop: "2px solid #E8E8E4" }}>
+                  <td style={{ ...tdS, fontWeight: 800, position: "sticky", left: 0, background: "#FAFAF8" }}>Total</td>
+                  {cols.map((c) => <td key={c.id} style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: "#DC2626" }}>{fmt(Math.round(colTotals[c.id]))}</td>)}
+                  <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 800, color: "#DC2626", borderLeft: "2px solid #E8E8E4" }}>{fmt(Math.round(grandTotal))}</td>
+                </tr></tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
   const [cogsCount, setCogsCount] = useState(defaultCogsCount);
   const [cogsCat, setCogsCat] = useState("all"); // COGS leakage category filter ("all" or a DEMAND_SECTIONS id)
@@ -16831,6 +17061,9 @@ const FlagsSection = ({ dateStr, selOutlet, defaultCogsCount = 5 }) => {
           </div>
         )}
       </FlagCard>
+
+      {/* ── 1b. COGS leakage — 7-day trend matrix (date rows × outlet columns) ── */}
+      <CogsLeakage7Day dateStr={dateStr} selOutlet={selOutlet} />
 
       {/* ── 2-4. Compact row: three collapsed flag cards side by side (wrap on narrow screens) ── */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 14 }}>
@@ -17921,7 +18154,7 @@ const MonthlySalesMatrix = () => {
     const storeSale = Math.max(0, n(r.total_sale) - deliverySale - n(r.cancelled_orders) - n(r.complimentary_amount));
     const effectivePayment = n(r.upi_collected) + n(r.cash_collected) - n(r.zomato_district);
     const paymentDiff = storeSale - effectivePayment;
-    const closingCash = n(r.prev_day_cash) + n(r.cash_collected) - n(r.cash_expense) - n(r.cash_deposited);
+    const closingCash = n(r.prev_day_cash) + n(r.cash_collected) - n(r.cash_expense) - n(r.cash_deposited) - n(r.cash_bill_collected);
     return { r, storeSale, paymentDiff, closingCash };
   };
 
@@ -17947,6 +18180,7 @@ const MonthlySalesMatrix = () => {
     { key: "today_cash", label: "+ Today Cash", get: (c) => n(c.r.cash_collected), summable: true, color: "#16A34A" },
     { key: "cash_expense", label: "− Cash Expense (legacy)", get: (c) => n(c.r.cash_expense), summable: true, color: "#B45309" },
     { key: "cash_deposited_row", label: "− Cash Deposited", get: (c) => n(c.r.cash_deposited), summable: true },
+    { key: "cash_bill_collected_row", label: "− Cash Bill Collected", get: (c) => n(c.r.cash_bill_collected), summable: true, color: "#7C3AED" },
     { key: "closing_cash", label: "💰 Closing Cash", get: (c) => c.closingCash, summable: false, bold: true, color: (v) => v >= 0 ? "#B45309" : "#DC2626" },
   ];
 

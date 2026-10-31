@@ -216,6 +216,11 @@ const api = {
   submitOutletSales: (data) => post("/api/outlet-sales", data),
   verifyOutletSales: (data) => patch("/api/outlet-sales/verify", data),
   recordCashCollection: (data) => patch("/api/outlet-sales/cash-collection", data),
+  // Bill-backed cash collections (cash spent at outlet, accepted against a bill)
+  getBillCollections: (params) => get("/api/outlet-sales/bill-collections", params),
+  createBillCollection: (data) => post("/api/outlet-sales/bill-collection", data),
+  uploadBillCollectionPhoto: (id, base64) => post(`/api/outlet-sales/bill-collection/${id}/photos`, { base64 }),
+  deleteBillCollection: (id) => del(`/api/outlet-sales/bill-collection/${id}`),
 
   // ── Staff Demands (Food & Dress) ──
   getStaffDemandItems: () => get("/api/staff-demands/items"),
