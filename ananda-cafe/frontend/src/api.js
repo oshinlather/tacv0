@@ -219,6 +219,10 @@ const api = {
   submitOutletSales: (data) => post("/api/outlet-sales", data),
   verifyOutletSales: (data) => patch("/api/outlet-sales/verify", data),
   recordCashCollection: (data) => patch("/api/outlet-sales/cash-collection", data),
+  // Cash-deposit collections — multiple entries per day that sum into cash_deposited; owner removes any
+  getCashCollections: (params) => get("/api/outlet-sales/cash-collections", params),
+  addCashCollection: (data) => post("/api/outlet-sales/cash-collection-entry", data),
+  deleteCashCollection: (id) => del(`/api/outlet-sales/cash-collection-entry/${id}`),
   // Bill-backed cash collections (cash spent at outlet, accepted against a bill)
   getBillCollections: (params) => get("/api/outlet-sales/bill-collections", params),
   getSalesLogs: (params) => get("/api/outlet-sales/logs", params),

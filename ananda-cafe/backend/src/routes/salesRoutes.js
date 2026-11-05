@@ -2730,10 +2730,13 @@ router.post('/outlet-sales', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── PATCH /api/outlet-sales/cash-collection — Owner/Store Manager records an
-// actual cash collection/deposit for a specific outlet+date. This writes to the
-// SAME cash_deposited field the outlet manager's daily-sales form uses, so
-// there's one shared number regardless of who records it — not two competing ones.
+// ── PATCH /api/outlet-sales/cash-collection — DEPRECATED single-value path, kept so older
+// cached clients keep working. cash_deposited is now the SUM of outlet_cash_collections
+// entries (see the cash-collection-entry endpoints below), so instead of overwriting the
+// column directly — which would make it diverge from the entries — this honours the old
+// "set this absolute total" contract by collapsing the day to ONE entry of that amount and
+// recomputing. Every write to cash_deposited thus flows through the one entries→recompute
+// path. The Cash Ledger UI now adds/removes individual entries instead of calling this.
 router.patch('/outlet-sales/cash-collection', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
@@ -2741,47 +2744,25 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
     if (!outlet_id || !date || cash_deposited === undefined) {
       return res.status(400).json({ error: 'outlet_id, date, and cash_deposited are required' });
     }
-
-    const { data: existing } = await supabase.from('daily_outlet_sales')
-      .select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
-
-    // The opening is, by definition, the previous day's closing — seed it here so a
-    // collection recorded before the manager reports that day's sales doesn't leave the
-    // row with a zero opening (which made closing show as just −collected). Re-seeding on
-    // every write also heals any row previously created with a wrong opening.
-    const seedPrev = await previousClosing(supabase, outlet_id, date);
-
-    const record = {
-      outlet_id, date,
-      cash_deposited: Number(cash_deposited) || 0,
-      cash_deposited_by: collected_by || null,
-      cash_deposited_at: new Date().toISOString(),
-      prev_day_cash: seedPrev,
-      // Collector's optional remark: update it when `remark` is present in the
-      // body (empty string clears it), otherwise keep whatever's already there.
-      cash_collection_remark: remark !== undefined ? (remark || null) : (existing?.cash_collection_remark ?? null),
-      // Preserve everything else already on the row — this endpoint only ever
-      // touches the deposited/collection fields, nothing else.
-      ...(existing ? {
-        total_sale: existing.total_sale, swiggy_sale: existing.swiggy_sale, zomato_sale: existing.zomato_sale,
-        other_delivery_sale: existing.other_delivery_sale, cancelled_orders: existing.cancelled_orders,
-        complimentary_amount: existing.complimentary_amount, complimentary_reason: existing.complimentary_reason,
-        zomato_district: existing.zomato_district, upi_collected: existing.upi_collected,
-        cash_collected: existing.cash_collected,
-        cash_expense: existing.cash_expense, cash_expense_note: existing.cash_expense_note,
-        cash_bill_collected: existing.cash_bill_collected, cash_bill_collected_by: existing.cash_bill_collected_by,
-        submitted_by: existing.submitted_by, submitted_at: existing.submitted_at, notes: existing.notes,
-      } : { notes: note || null }),
-    };
-
-    const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' }).select('*').single();
-    if (error) throw error;
-    await cascadeCashForward(supabase, outlet_id, date);
+    // Collapse the day to a single entry of the posted absolute total (0 clears it).
+    await supabase.from('outlet_cash_collections').delete().eq('outlet_id', outlet_id).eq('date', date);
+    if (Number(cash_deposited) > 0) {
+      await supabase.from('outlet_cash_collections')
+        .insert({ outlet_id, date, amount: Number(cash_deposited), note: (remark || note) || null, collected_by: collected_by || null });
+    }
+    await recomputeCashDeposited(supabase, outlet_id, date);
+    // Preserve the day-level remark this endpoint used to set directly (recompute carries the
+    // rest of the row forward via ...existing, so this only needs to touch the remark).
+    if (remark !== undefined) {
+      await supabase.from('daily_outlet_sales').update({ cash_collection_remark: remark || null })
+        .eq('outlet_id', outlet_id).eq('date', date);
+    }
     await logSalesChange({
       outlet_id, date, action: 'cash_collected', actor: collected_by || null,
-      detail: `Cash collection recorded${remark ? ' · ' + remark : ''}`,
-      old_value: Number(existing?.cash_deposited || 0), new_value: Number(cash_deposited) || 0,
+      detail: `Cash collection set to ₹${Number(cash_deposited) || 0}${remark ? ' · ' + remark : ''}`,
+      old_value: null, new_value: Number(cash_deposited) || 0,
     });
+    const { data } = await supabase.from('daily_outlet_sales').select('*').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

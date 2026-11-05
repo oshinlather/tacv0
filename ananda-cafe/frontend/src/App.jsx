@@ -2397,6 +2397,11 @@ const CashLedger = () => {
   const [editBy, setEditBy] = useState("");
   const [editRemark, setEditRemark] = useState(""); // optional free-text remark on a collection
   const [saving, setSaving] = useState(false);
+  // The day's individual cash-collection entries (outlet_cash_collections) behind the
+  // "− Deposited" total — several per day, each summed into cash_deposited. Loaded when the
+  // collections modal (editDate) is open so a collector can add more or the owner remove one.
+  const [collRows, setCollRows] = useState(null);
+  const [collLoading, setCollLoading] = useState(false);
   // Which custodian's complete ledger (collections + handovers history, record-handover
   // form) is open in the modal below — reuses CustodianLedgerDetail so this shows the
   // exact same fully-auditable trail as the standalone Custodian Ledger page.
@@ -2476,27 +2481,40 @@ const CashLedger = () => {
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const currentUser = getCurrentUser();
   const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
+  const canDeleteColl = currentUser?.role === "owner"; // only the owner may remove a collection entry
 
+  const loadCollections = (date) => {
+    setCollLoading(true); setCollRows(null);
+    api.getCashCollections({ outlet_id: selOutlet, date })
+      .then((r) => setCollRows(r || []))
+      .catch(() => setCollRows([]))
+      .finally(() => setCollLoading(false));
+  };
   const openEdit = (date) => {
-    const r = rowFor(date);
     setEditDate(date);
-    setEditAmt(r ? String(r.cash_deposited || 0) : "0");
-    // Pre-fill with whoever's already recorded (if valid) rather than the logged-in
-    // user's own name — this modal records who physically has the cash, not who's typing.
-    setEditBy(CASH_RECIPIENTS.includes(r?.cash_deposited_by) ? r.cash_deposited_by : "");
-    setEditRemark(r?.cash_collection_remark || "");
+    setEditAmt(""); setEditBy(""); setEditRemark(""); // the add-entry form starts blank
+    loadCollections(date);
   };
 
+  // Add one collection entry — appends to the day (several add up into the deposited total),
+  // leaving the modal open and the collector selected so the next entry is quick to add.
   const saveCollection = async () => {
     if (!editDate) return;
-    if (Number(editAmt) > 0 && !editBy) { alert("Please select who collected the cash"); return; }
+    if (!editAmt || Number(editAmt) <= 0) { alert("Enter an amount greater than 0"); return; }
+    if (!editBy) { alert("Please select who collected the cash"); return; }
     setSaving(true);
     try {
-      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || null, remark: editRemark.trim() });
-      setEditDate(null);
-      loadMonth(); loadSummary();
+      await api.addCashCollection({ outlet_id: selOutlet, date: editDate, amount: Number(editAmt), collected_by: editBy, note: editRemark.trim() || null });
+      setEditAmt(""); setEditRemark(""); // keep editBy for the next entry
+      loadCollections(editDate); loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
     finally { setSaving(false); }
+  };
+  // Remove a single collection entry — OWNER ONLY (backend enforces); the day re-sums.
+  const deleteCollectionEntry = async (id) => {
+    if (!window.confirm("Remove this cash collection entry? The day's deposited total will go down by this amount.")) return;
+    try { await api.deleteCashCollection(id); loadCollections(editDate); loadMonth(); loadSummary(); }
+    catch (e) { alert("Error: " + e.message); }
   };
 
   const loadCcExisting = useCallback(() => {
@@ -2524,11 +2542,12 @@ const CashLedger = () => {
       finally { setCcSaving(false); }
       return;
     }
-    if (ccAmount === "" || Number(ccAmount) < 0) return;
+    if (ccAmount === "" || Number(ccAmount) <= 0) return;
     setCcSaving(true);
     try {
       if (ccMode === "outlet") {
-        await api.recordCashCollection({ outlet_id: ccOutlet, date: ccDate, cash_deposited: Number(ccAmount) || 0, collected_by: currentUser?.name || null, remark: ccNote.trim() });
+        // Append a collection entry (adds to the day's deposited total — no longer an overwrite).
+        await api.addCashCollection({ outlet_id: ccOutlet, date: ccDate, amount: Number(ccAmount), collected_by: currentUser?.name || null, note: ccNote.trim() || null });
       } else {
         await api.saveCashHandover({ date: ccDate, from_name: ccCustodian, to_name: currentUser?.name, amount: Number(ccAmount) || 0, note: ccNote || null });
       }
@@ -2606,8 +2625,8 @@ const CashLedger = () => {
         </div>
 
         {ccMode === "outlet" && (ccLoading ? <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>⏳ Checking existing record...</div> : ccExisting && Number(ccExisting.cash_deposited) > 0 && (
-          <div style={{ fontSize: 11, color: "#B45309", marginBottom: 8, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 8px" }}>
-            ⚠️ Already has ₹{fmt(ccExisting.cash_deposited)} recorded{ccExisting.cash_deposited_by ? ` (by ${ccExisting.cash_deposited_by})` : ""} for this date — this will overwrite it, not add to it.
+          <div style={{ fontSize: 11, color: "#15803D", marginBottom: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "6px 8px" }}>
+            ℹ️ Already has ₹{fmt(ccExisting.cash_deposited)} collected{ccExisting.cash_deposited_by ? ` (by ${ccExisting.cash_deposited_by})` : ""} for this date — this ADDS to it as another collection.
           </div>
         ))}
         {ccMode === "custodian" && (
@@ -2701,7 +2720,7 @@ const CashLedger = () => {
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#888" }}>{led.opening != null ? fmt(led.opening) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{r ? fmt(r.cash_collected) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{r && r.cash_expense > 0 ? fmt(r.cash_expense) : "—"}</td>
-                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{r && r.cash_deposited > 0 ? fmt(r.cash_deposited) : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{r && r.cash_deposited > 0 ? (canRecord ? <button onClick={() => openEdit(d)} style={{ border: "none", background: "transparent", color: "#2563EB", fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>{fmt(r.cash_deposited)}</button> : fmt(r.cash_deposited)) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{r && r.cash_bill_collected > 0 ? <button onClick={() => openBillModal(d)} style={{ border: "none", background: "transparent", color: "#7C3AED", fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>{fmt(r.cash_bill_collected)}</button> : "—"}</td>
                     <td style={{ ...tdS, fontSize: 10, color: "#999" }}>
                       {r?.cash_deposited_by || "—"}
@@ -2723,28 +2742,53 @@ const CashLedger = () => {
       </div>
     )}
 
-    {/* Record collection modal */}
+    {/* Cash collections modal — the individual entries behind a day's "− Deposited" total.
+        Several collections a day add up; each is owner-removable. An add-entry form appends. */}
     {editDate && (<>
-      <div onClick={() => setEditDate(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
-      <div style={{ position: "fixed", top: "30%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: 300, padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>💵 Record Collection</div>
-        <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editDate}</div>
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected / deposited</div>
-        <input type="number" inputMode="numeric" autoFocus value={editAmt} onChange={(e) => setEditAmt(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Collected by</div>
-        <select value={editBy} onChange={(e) => setEditBy(e.target.value)}
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box", background: "#fff", color: editBy ? "#1A1A1A" : "#999" }}>
-          <option value="">Select...</option>
-          {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
-        </select>
-        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Remark (optional)</div>
-        <textarea value={editRemark} onChange={(e) => setEditRemark(e.target.value)} rows={2} placeholder="Any note about this collection…"
-          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box", resize: "vertical" }} />
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={saveCollection} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
-          <button onClick={() => setEditDate(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+      <div onClick={() => { setEditDate(null); setCollRows(null); }} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(420px, 94vw)", maxHeight: "88vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>💵 Cash Collections</div>
+          <button onClick={() => { setEditDate(null); setCollRows(null); }} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
         </div>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 12 }}>{outletName} · {editDate}</div>
+
+        {/* Existing entries + running total */}
+        {collLoading && <div style={{ textAlign: "center", padding: 16, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {!collLoading && collRows && collRows.length === 0 && <div style={{ textAlign: "center", padding: 14, color: "#AAA", fontSize: 12.5 }}>No collections recorded yet — add one below.</div>}
+        {!collLoading && (collRows || []).map((c) => (
+          <div key={c.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, background: "#FAFAF8", borderRadius: 10, border: "1px solid #E8E8E4", padding: "8px 12px", marginBottom: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(c.amount)}</div>
+              <div style={{ fontSize: 10.5, color: "#888", marginTop: 2 }}>
+                {c.collected_by || "—"}{c.created_at ? ` · ${new Date(c.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}` : ""}
+              </div>
+              {c.note && <div style={{ fontSize: 11, color: "#666", marginTop: 3, fontStyle: "italic" }}>📝 {c.note}</div>}
+            </div>
+            {canDeleteColl && <button onClick={() => deleteCollectionEntry(c.id)} title="Owner: remove this entry" style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>🗑️</button>}
+          </div>
+        ))}
+        {!collLoading && collRows && collRows.length > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 2px 12px", borderTop: "1px dashed #E0E0DC", marginTop: 2 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#888" }}>Deposited total</span>
+            <span style={{ fontSize: 15, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{fmt(collRows.reduce((s, c) => s + Number(c.amount || 0), 0))}</span>
+          </div>
+        )}
+
+        {/* Add a new collection entry */}
+        {canRecord && (<div style={{ borderTop: "1px solid #E8E8E4", paddingTop: 12, marginTop: 4 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: "#555", marginBottom: 8 }}>➕ Add a collection</div>
+          <input type="number" inputMode="numeric" value={editAmt} onChange={(e) => setEditAmt(e.target.value)} placeholder="Amount ₹"
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 16, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 8, boxSizing: "border-box" }} />
+          <select value={editBy} onChange={(e) => setEditBy(e.target.value)}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box", background: "#fff", color: editBy ? "#1A1A1A" : "#999" }}>
+            <option value="">Collected by…</option>
+            {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+          <input value={editRemark} onChange={(e) => setEditRemark(e.target.value)} placeholder="Remark (optional)"
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 12, boxSizing: "border-box" }} />
+          <button onClick={saveCollection} disabled={saving} style={{ width: "100%", padding: 11, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#16A34A", color: "#fff", fontSize: 13, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "➕ Add collection"}</button>
+        </div>)}
       </div>
     </>)}
 
@@ -2891,16 +2935,17 @@ const CustodianLedgerDetail = ({ person }) => {
     api.getOutletSales({ outlet_id: collectOutlet, date: collectDate }).then((rows) => {
       const r = rows && rows[0];
       setCollectExisting(r || null);
-      setCollectAmount(r ? String(r.cash_deposited || 0) : "0");
-    }).catch(() => { setCollectExisting(null); setCollectAmount("0"); }).finally(() => setCollectLoading(false));
+      setCollectAmount(""); // each save ADDS a new collection entry, so start the field blank
+    }).catch(() => { setCollectExisting(null); setCollectAmount(""); }).finally(() => setCollectLoading(false));
   }, [collectOutlet, collectDate]);
   useEffect(() => { if (showCollect) loadCollectExisting(); }, [showCollect, loadCollectExisting]);
 
   const saveCollect = async () => {
-    if (!collectOutlet || collectAmount === "") return;
+    if (!collectOutlet || collectAmount === "" || Number(collectAmount) <= 0) return;
     setCollectSaving(true);
     try {
-      await api.recordCashCollection({ outlet_id: collectOutlet, date: collectDate, cash_deposited: Number(collectAmount) || 0, collected_by: person });
+      // Append a collection entry (adds to the day's deposited total — no longer an overwrite).
+      await api.addCashCollection({ outlet_id: collectOutlet, date: collectDate, amount: Number(collectAmount), collected_by: person });
       setShowCollect(false);
       load();
     } catch (e) { alert("Error: " + e.message); }
@@ -22048,10 +22093,10 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
@@ -22059,8 +22104,7 @@ export default function AnandaCafe() {
     {dodDropdown && (<>
       <div onClick={() => setDodDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
-        {[{ id: "daily_sales", label: "💵 Daily Sales", sub: "All outlets — sale, delivery, outlet, Paytm, cash" },
-          { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
+        {[{ id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
           { id: "stock_usage", label: "📦 Stock", sub: "Daily stock usage" },
           { id: "demands", label: "📋 Demands", sub: "Last 7 days, AM/PM split" },
           { id: "closing_stock_history", label: "📊 Closing Stock", sub: "History across outlets" },
@@ -22126,7 +22170,8 @@ export default function AnandaCafe() {
     {paymentsDropdown && (<>
       <div onClick={() => setPaymentsDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
-        {[{ id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
+        {[{ id: "daily_sales", label: "💵 Daily Sales", sub: "All outlets — sale, delivery, outlet, Paytm, cash" },
+          { id: "paytm", label: "💳 Paytm", sub: "Reconciliation" },
           { id: "cash_ledger", label: "💵 Cash", sub: "Ledger & deposits" },
           { id: "custodian_ledger", label: "👤 Custodian Ledger", sub: "Ravinder / Sahil / Ganga" },
           { id: "books_ledger", label: "📚 Books", sub: "Expense ledger from TAC - Books" },
