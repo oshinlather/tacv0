@@ -2707,7 +2707,7 @@ router.post('/outlet-sales', async (req, res) => {
 router.patch('/outlet-sales/cash-collection', async (req, res) => {
   try {
     if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
-    const { outlet_id, date, cash_deposited, collected_by, note } = req.body;
+    const { outlet_id, date, cash_deposited, collected_by, note, remark } = req.body;
     if (!outlet_id || !date || cash_deposited === undefined) {
       return res.status(400).json({ error: 'outlet_id, date, and cash_deposited are required' });
     }
@@ -2727,6 +2727,9 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
       cash_deposited_by: collected_by || null,
       cash_deposited_at: new Date().toISOString(),
       prev_day_cash: seedPrev,
+      // Collector's optional remark: update it when `remark` is present in the
+      // body (empty string clears it), otherwise keep whatever's already there.
+      cash_collection_remark: remark !== undefined ? (remark || null) : (existing?.cash_collection_remark ?? null),
       // Preserve everything else already on the row — this endpoint only ever
       // touches the deposited/collection fields, nothing else.
       ...(existing ? {

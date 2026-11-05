@@ -2386,6 +2386,7 @@ const CashLedger = () => {
   const [editDate, setEditDate] = useState(null);
   const [editAmt, setEditAmt] = useState("");
   const [editBy, setEditBy] = useState("");
+  const [editRemark, setEditRemark] = useState(""); // optional free-text remark on a collection
   const [saving, setSaving] = useState(false);
   // Which custodian's complete ledger (collections + handovers history, record-handover
   // form) is open in the modal below — reuses CustodianLedgerDetail so this shows the
@@ -2470,6 +2471,7 @@ const CashLedger = () => {
     // Pre-fill with whoever's already recorded (if valid) rather than the logged-in
     // user's own name — this modal records who physically has the cash, not who's typing.
     setEditBy(CASH_RECIPIENTS.includes(r?.cash_deposited_by) ? r.cash_deposited_by : "");
+    setEditRemark(r?.cash_collection_remark || "");
   };
 
   const saveCollection = async () => {
@@ -2477,7 +2479,7 @@ const CashLedger = () => {
     if (Number(editAmt) > 0 && !editBy) { alert("Please select who collected the cash"); return; }
     setSaving(true);
     try {
-      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || null });
+      await api.recordCashCollection({ outlet_id: selOutlet, date: editDate, cash_deposited: Number(editAmt) || 0, collected_by: editBy || null, remark: editRemark.trim() });
       setEditDate(null);
       loadMonth(); loadSummary();
     } catch (e) { alert("Error: " + e.message); }
@@ -2513,7 +2515,7 @@ const CashLedger = () => {
     setCcSaving(true);
     try {
       if (ccMode === "outlet") {
-        await api.recordCashCollection({ outlet_id: ccOutlet, date: ccDate, cash_deposited: Number(ccAmount) || 0, collected_by: currentUser?.name || null });
+        await api.recordCashCollection({ outlet_id: ccOutlet, date: ccDate, cash_deposited: Number(ccAmount) || 0, collected_by: currentUser?.name || null, remark: ccNote.trim() });
       } else {
         await api.saveCashHandover({ date: ccDate, from_name: ccCustodian, to_name: currentUser?.name, amount: Number(ccAmount) || 0, note: ccNote || null });
       }
@@ -2600,10 +2602,9 @@ const CashLedger = () => {
         <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>{ccMode === "bill" ? "Amount (cash used at outlet)" : `Amount collected${ccMode === "outlet" ? " (total for the day)" : ""}`}</div>
         <input type="number" inputMode="numeric" value={ccAmount} onChange={(e) => setCcAmount(e.target.value)}
           style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 18, fontFamily: "'JetBrains Mono'", fontWeight: 700, textAlign: "center", marginBottom: 10, boxSizing: "border-box" }} />
-        {ccMode !== "outlet" && (
-          <input value={ccNote} onChange={(e) => setCcNote(e.target.value)} placeholder={ccMode === "bill" ? "What was it spent on? (optional)" : "Note (optional)"}
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
-        )}
+        <input value={ccNote} onChange={(e) => setCcNote(e.target.value)} placeholder={ccMode === "bill" ? "What was it spent on? (optional)" : ccMode === "outlet" ? "Remark (optional)" : "Note (optional)"}
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 10, boxSizing: "border-box" }} />
+
         {ccMode === "bill" && (
           <div style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Bill photo(s) — optional</div>
@@ -2680,7 +2681,10 @@ const CashLedger = () => {
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#DC2626" }}>{r && r.cash_expense > 0 ? fmt(r.cash_expense) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#2563EB" }}>{r && r.cash_deposited > 0 ? fmt(r.cash_deposited) : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: "#7C3AED" }}>{r && r.cash_bill_collected > 0 ? <button onClick={() => openBillModal(d)} style={{ border: "none", background: "transparent", color: "#7C3AED", fontFamily: "'JetBrains Mono'", fontWeight: 700, fontSize: 11, cursor: "pointer", padding: 0, textDecoration: "underline" }}>{fmt(r.cash_bill_collected)}</button> : "—"}</td>
-                    <td style={{ ...tdS, fontSize: 10, color: "#999" }}>{r?.cash_deposited_by || "—"}</td>
+                    <td style={{ ...tdS, fontSize: 10, color: "#999" }}>
+                      {r?.cash_deposited_by || "—"}
+                      {r?.cash_collection_remark && <div title={r.cash_collection_remark} style={{ fontSize: 9.5, color: "#B45309", marginTop: 2, fontStyle: "italic", maxWidth: 160, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📝 {r.cash_collection_remark}</div>}
+                    </td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (led.closing || 0) > 0 ? "#B45309" : "#16A34A" }}>{led.closing != null ? fmt(led.closing) : "—"}</td>
                     {canRecord && (
                       <td style={tdS}>
@@ -2711,6 +2715,9 @@ const CashLedger = () => {
           <option value="">Select...</option>
           {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
         </select>
+        <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Remark (optional)</div>
+        <textarea value={editRemark} onChange={(e) => setEditRemark(e.target.value)} rows={2} placeholder="Any note about this collection…"
+          style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit", marginBottom: 14, boxSizing: "border-box", resize: "vertical" }} />
         <div style={{ display: "flex", gap: 6 }}>
           <button onClick={saveCollection} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "none", background: saving ? "#D0D0CC" : "#1A1A1A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: saving ? "not-allowed" : "pointer", fontFamily: "inherit" }}>{saving ? "⏳..." : "💾 Save"}</button>
           <button onClick={() => setEditDate(null)} disabled={saving} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", fontSize: 12, fontWeight: 600, color: "#888", cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
@@ -12077,7 +12084,17 @@ const OutletMgr = ({ onBack }) => {
     const existingCashExpense = n(salesData.cash_expense);
     const closingCash = prevCash + cash - existingCashExpense - n(salesData.cash_deposited);
 
+    // Managers may not change an already-submitted previous day's sales — once a past date
+    // has a record, it's frozen to them (prevents quietly editing yesterday's numbers after
+    // the fact). Still editable: today (same-day corrections) and a past day with no record
+    // yet (late first submission / the pre-6am "closing out yesterday" flow). The owner can
+    // always edit, to make legitimate corrections.
+    const isOwner = currentUser?.role === "owner";
+    const salesLocked = !isOwner && !!existingData && selectedDate < today();
+    const lockedInputStyle = salesLocked ? { background: "#F3F3F1", color: "#9A9A9A", cursor: "not-allowed" } : {};
+
     const submitSales = async () => {
+      if (salesLocked) return;
       if (n(salesData.cash_deposited) > 0 && !salesData.cash_deposited_to) { alert("Please select who the cash was submitted to"); return; }
       setSalesSaving(true);
       try {
@@ -12095,7 +12112,7 @@ const OutletMgr = ({ onBack }) => {
       <div key={field} style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
         <span style={{ flex: 1, fontSize: 12, color: "#555" }}>{label}</span>
         <span style={{ fontSize: 12, color: "#999" }}>{prefix}</span>
-        <input type="number" inputMode="numeric" placeholder="0" value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={numInputStyle} />
+        <input type="number" inputMode="numeric" placeholder="0" disabled={salesLocked} value={salesData[field]} onChange={(e) => setSalesData((p) => ({ ...p, [field]: e.target.value }))} style={{ ...numInputStyle, ...lockedInputStyle }} />
       </div>
     );
     const V = ({ label, value, color }) => (
@@ -12119,16 +12136,16 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Cancelled Orders</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-          <input type="number" inputMode="numeric" placeholder="0" value={salesData.cancelled_orders} onChange={(e) => setSalesData((p) => ({ ...p, cancelled_orders: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626" }} />
+          <input type="number" inputMode="numeric" placeholder="0" disabled={salesLocked} value={salesData.cancelled_orders} onChange={(e) => setSalesData((p) => ({ ...p, cancelled_orders: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", ...lockedInputStyle }} />
         </div>
         <div style={{ padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <div style={{ display: "flex", alignItems: "center" }}>
             <span style={{ flex: 1, fontSize: 12, color: "#DC2626" }}>− Complimentary Order</span>
             <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-            <input type="number" inputMode="numeric" placeholder="0" value={salesData.complimentary_amount} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_amount: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626" }} />
+            <input type="number" inputMode="numeric" placeholder="0" disabled={salesLocked} value={salesData.complimentary_amount} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_amount: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", ...lockedInputStyle }} />
           </div>
           {n(salesData.complimentary_amount) > 0 && (
-            <select value={salesData.complimentary_reason} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_reason: e.target.value }))} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#FAFAF8", marginTop: 4, color: salesData.complimentary_reason ? "#1A1A1A" : "#999", cursor: "pointer" }}>
+            <select value={salesData.complimentary_reason} disabled={salesLocked} onChange={(e) => setSalesData((p) => ({ ...p, complimentary_reason: e.target.value }))} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#FAFAF8", marginTop: 4, color: salesData.complimentary_reason ? "#1A1A1A" : "#999", cursor: salesLocked ? "not-allowed" : "pointer" }}>
               <option value="">Select reason...</option>
               <option value="sir">Sir</option>
               <option value="mam">Mam</option>
@@ -12146,7 +12163,7 @@ const OutletMgr = ({ onBack }) => {
         <div style={{ display: "flex", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #F5F5F3" }}>
           <span style={{ flex: 1, fontSize: 12, color: "#7C3AED" }}>− Paid by Zomato District</span>
           <span style={{ fontSize: 12, color: "#999" }}>₹</span>
-          <input type="number" inputMode="numeric" placeholder="0" value={salesData.zomato_district} onChange={(e) => setSalesData((p) => ({ ...p, zomato_district: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #C4B5FD", background: "#F5F3FF", color: "#7C3AED" }} />
+          <input type="number" inputMode="numeric" placeholder="0" disabled={salesLocked} value={salesData.zomato_district} onChange={(e) => setSalesData((p) => ({ ...p, zomato_district: e.target.value }))} style={{ ...numInputStyle, border: "1px solid #C4B5FD", background: "#F5F3FF", color: "#7C3AED", ...lockedInputStyle }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 11, fontWeight: 700 }}>
           <span>UPI+Cash−Zomato = ₹{effectivePayment}</span>
@@ -12173,8 +12190,8 @@ const OutletMgr = ({ onBack }) => {
           )}
           <div style={{ display: "flex", alignItems: "center", padding: "4px 0 6px" }}>
             <span style={{ flex: 1, fontSize: 12, color: "#555" }}>Submitted To</span>
-            <select value={salesData.cash_deposited_to} onChange={(e) => setSalesData((p) => ({ ...p, cash_deposited_to: e.target.value }))}
-              style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: "#fff", color: salesData.cash_deposited_to ? "#1A1A1A" : "#999" }}>
+            <select value={salesData.cash_deposited_to} disabled={salesLocked} onChange={(e) => setSalesData((p) => ({ ...p, cash_deposited_to: e.target.value }))}
+              style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: salesLocked ? "#F3F3F1" : "#fff", color: salesData.cash_deposited_to ? "#1A1A1A" : "#999" }}>
               <option value="">Select...</option>
               {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
             </select>
@@ -12186,11 +12203,16 @@ const OutletMgr = ({ onBack }) => {
         </div>
       </div>
 
-      <input value={salesData.notes} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes..." style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", marginBottom: 8, boxSizing: "border-box" }} />
+      <input value={salesData.notes} disabled={salesLocked} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes..." style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: salesLocked ? "#F3F3F1" : "#fff", marginBottom: 8, boxSizing: "border-box" }} />
 
+      {salesLocked && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11.5, color: "#991B1B", marginBottom: 8, fontWeight: 600 }}>
+          🔒 This day's sales are already submitted and locked. Previous-day sales can't be changed — contact the owner if a correction is needed.
+        </div>
+      )}
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
-        <button onClick={submitSales} disabled={salesSaving || !totalSale} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: salesSaving || !totalSale ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: salesSaving || !totalSale ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
-          {salesSaving ? "⏳..." : existingData ? "💾 Update" : "💰 Submit Sales"}
+        <button onClick={submitSales} disabled={salesSaving || !totalSale || salesLocked} style={{ width: "100%", padding: "12px", borderRadius: 12, border: "none", background: salesSaving || !totalSale || salesLocked ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 14, cursor: salesSaving || !totalSale || salesLocked ? "not-allowed" : "pointer", fontFamily: "inherit" }}>
+          {salesLocked ? "🔒 Locked" : salesSaving ? "⏳..." : existingData ? "💾 Update" : "💰 Submit Sales"}
         </button>
       </div>
     </div>);
