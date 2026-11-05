@@ -2376,6 +2376,15 @@ const MonthlyPayrollPanel = ({ syncMonth, selOutlet } = {}) => {
 //  of two disconnected self-reports. Used by both the Owner and Store Manager
 //  dashboards (both roles can record a collection).
 // ═════════════════════════════════════════════════════════════════════════════
+// Per-date Cash Ledger change-history (🕘): icon/label/colour per logged action.
+const HIST_ACTION_META = {
+  sales_submitted: { icon: "📝", label: "Sales submitted", color: "#16A34A" },
+  sales_edited: { icon: "✏️", label: "Sales edited", color: "#B45309" },
+  cash_collected: { icon: "💰", label: "Cash collection recorded", color: "#2563EB" },
+  bill_collected: { icon: "🧾", label: "Bill accepted as collected", color: "#7C3AED" },
+};
+const histTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }); } catch (e) { return ""; } };
+
 const CashLedger = () => {
   const [selOutlet, setSelOutlet] = useState(OWN_OUTLETS[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
@@ -2412,6 +2421,10 @@ const CashLedger = () => {
   const [billModalDate, setBillModalDate] = useState(null);
   const [billModalRows, setBillModalRows] = useState(null);
   const [billModalLoading, setBillModalLoading] = useState(false);
+  // Per-date change-history (🕘) modal
+  const [histDate, setHistDate] = useState(null);
+  const [histRows, setHistRows] = useState(null);
+  const [histLoading, setHistLoading] = useState(false);
 
   const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
   const dates = Array.from({ length: daysInMonth }, (_, i) => `${selMonth}-${String(i + 1).padStart(2, "0")}`).filter((d) => d <= today());
@@ -2533,6 +2546,15 @@ const CashLedger = () => {
       .then((r) => setBillModalRows(r || []))
       .catch(() => setBillModalRows([]))
       .finally(() => setBillModalLoading(false));
+  };
+  const openHistory = (date) => {
+    setHistDate(date);
+    setHistRows(null);
+    setHistLoading(true);
+    api.getSalesLogs({ outlet_id: selOutlet, date })
+      .then((r) => setHistRows(r || []))
+      .catch(() => setHistRows([]))
+      .finally(() => setHistLoading(false));
   };
   const deleteBill = async (id) => {
     if (!window.confirm("Delete this bill collection? The outlet's available cash will go back up by this amount.")) return;
@@ -2667,7 +2689,7 @@ const CashLedger = () => {
               <th style={{ ...thS, textAlign: "right" }}>🧾 Bill</th>
               <th style={{ ...thS, textAlign: "left" }}>By</th>
               <th style={{ ...thS, textAlign: "right" }}>= Closing</th>
-              {canRecord && <th style={thS}></th>}
+              <th style={thS}></th>
             </tr></thead>
             <tbody>
               {dates.slice().reverse().map((d) => {
@@ -2686,11 +2708,12 @@ const CashLedger = () => {
                       {r?.cash_collection_remark && <div title={r.cash_collection_remark} style={{ fontSize: 9.5, color: "#B45309", marginTop: 2, fontStyle: "italic", maxWidth: 160, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>📝 {r.cash_collection_remark}</div>}
                     </td>
                     <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700, color: (led.closing || 0) > 0 ? "#B45309" : "#16A34A" }}>{led.closing != null ? fmt(led.closing) : "—"}</td>
-                    {canRecord && (
-                      <td style={tdS}>
-                        <button onClick={() => openEdit(d)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 10, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️</button>
-                      </td>
-                    )}
+                    <td style={tdS}>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button onClick={() => openHistory(d)} title="History of changes" style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #E0E0DC", background: "#FAFAF8", fontSize: 10, fontWeight: 700, color: "#6B6459", cursor: "pointer", fontFamily: "inherit" }}>🕘</button>
+                        {canRecord && <button onClick={() => openEdit(d)} style={{ padding: "3px 8px", borderRadius: 5, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 10, fontWeight: 700, color: "#2563EB", cursor: "pointer", fontFamily: "inherit" }}>✏️</button>}
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
@@ -2772,6 +2795,36 @@ const CashLedger = () => {
             ) : <div style={{ fontSize: 10, color: "#C2884B", marginTop: 8 }}>⚠️ No bill attached</div>}
           </div>
         ))}
+      </div>
+    </>)}
+
+    {/* Per-date change history — every submission/edit/collection logged for this day */}
+    {histDate && (<>
+      <div onClick={() => setHistDate(null)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.4)" }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", boxShadow: "0 12px 32px rgba(0,0,0,0.2)", zIndex: 999, width: "min(460px, 92vw)", maxHeight: "85vh", overflowY: "auto", padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ flex: 1, fontSize: 15, fontWeight: 800 }}>🕘 History</div>
+          <button onClick={() => setHistDate(null)} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
+        </div>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 14 }}>{outletName} · {histDate} — all changes & submissions</div>
+        {histLoading && <div style={{ textAlign: "center", padding: 20, color: "#999", fontSize: 12 }}>⏳ Loading...</div>}
+        {!histLoading && histRows && histRows.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#AAA", fontSize: 13 }}>No changes logged for this day.</div>}
+        {!histLoading && (histRows || []).map((e, i) => {
+          const meta = HIST_ACTION_META[e.action] || { icon: "•", label: e.action, color: "#6B6459" };
+          return (
+            <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: i < histRows.length - 1 ? "1px solid #F0F0EC" : "none" }}>
+              <div style={{ fontSize: 18, flexShrink: 0 }}>{meta.icon}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: meta.color }}>{meta.label}{e.actor ? <span style={{ color: "#888", fontWeight: 600 }}> · {e.actor}</span> : ""}</div>
+                {e.old_value != null && e.new_value != null
+                  ? <div style={{ fontSize: 12, color: "#666", fontFamily: "'JetBrains Mono'" }}>{fmt(e.old_value)} → {fmt(e.new_value)}</div>
+                  : (e.new_value != null ? <div style={{ fontSize: 12, color: meta.color, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{fmt(e.new_value)}</div> : null)}
+                {e.detail && <div style={{ fontSize: 11.5, color: "#888", marginTop: 2 }}>{e.detail}</div>}
+              </div>
+              <div style={{ fontSize: 10, color: "#AAA", flexShrink: 0, whiteSpace: "nowrap" }}>{histTime(e.at)}</div>
+            </div>
+          );
+        })}
       </div>
     </>)}
   </div>);

@@ -2640,6 +2640,20 @@ router.get('/outlet-sales/latest-cash', async (req, res) => {
 });
 
 // ── POST /api/outlet-sales — Submit/update daily sales
+// Append-only change log for the Cash Ledger's per-date history icon. Best-effort: a
+// logging failure must NEVER break the actual sales/collection write, so any error is
+// swallowed. Covers sales submissions/edits + cash-collection edits; bill collections
+// come from their own append table (outlet_cash_bills) and are merged in on read.
+async function logSalesChange(entry) {
+  try {
+    await supabase.from('daily_sales_logs').insert({
+      outlet_id: entry.outlet_id, date: entry.date, action: entry.action,
+      actor: entry.actor || null, detail: entry.detail || null,
+      old_value: entry.old_value ?? null, new_value: entry.new_value ?? null,
+    });
+  } catch (e) { /* logging is best-effort — never fail the write over it */ }
+}
+
 router.post('/outlet-sales', async (req, res) => {
   try {
     const _user = await requireAuth(req, res); if (!_user) return;
@@ -2672,6 +2686,14 @@ router.post('/outlet-sales', async (req, res) => {
     // overwrite an owner/store-manager's collection record with their own name.
     const { data: existing } = await supabase.from('daily_outlet_sales')
       .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+    // Previous-day lock: once a past date has a submitted record, only the owner may change
+    // it — managers can't quietly revise yesterday's numbers after the fact. Same-day edits
+    // and a late first submission (no record yet) are still allowed. (UI mirrors this, but
+    // the rule has to live here so a direct API call can't bypass it.) IST = UTC+5:30.
+    const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+    if (_user.role !== 'owner' && existing && date < istTodayStr) {
+      return res.status(403).json({ error: "Previous-day sales are locked — contact the owner to make a correction." });
+    }
     // Bill-backed collections are owned by their own endpoint — this full-row upsert
     // must carry them forward verbatim or re-saving the sales form would wipe them.
     record.cash_bill_collected = existing?.cash_bill_collected || 0;
@@ -2694,6 +2716,17 @@ router.post('/outlet-sales', async (req, res) => {
 
     if (error) throw error;
     if (closingChanged) await cascadeCashForward(supabase, outlet_id, date);
+    // Log to the Cash Ledger history: first submission, or an edit that changed the cash
+    // figures (other field edits aren't cash-relevant and are left off the cash history).
+    if (!existing) {
+      await logSalesChange({ outlet_id, date, action: 'sales_submitted', actor: submitted_by, detail: `Daily sales submitted · Total ₹${Number(total_sale) || 0}, Cash ₹${Number(cash_collected) || 0}` });
+    } else if (closingChanged) {
+      const parts = [];
+      if (Number(existing.cash_collected || 0) !== Number(cash_collected || 0)) parts.push(`Cash collected ₹${Number(existing.cash_collected) || 0}→₹${Number(cash_collected) || 0}`);
+      if (Number(existing.cash_expense || 0) !== Number(cash_expense || 0)) parts.push(`Expense ₹${Number(existing.cash_expense) || 0}→₹${Number(cash_expense) || 0}`);
+      if (depositChanged) parts.push(`Deposited ₹${Number(existing.cash_deposited) || 0}→₹${Number(cash_deposited) || 0}`);
+      await logSalesChange({ outlet_id, date, action: 'sales_edited', actor: submitted_by, detail: parts.join(' · ') || 'Cash figures updated' });
+    }
     // Write to Google Sheet (non-blocking)
     if (sheetsHelper) sheetsHelper.writeToSheet(supabase, outlet_id, 'daily_sales', submitted_by, { date }, { total_sale, swiggy_sale, zomato_sale, other_delivery_sale, cancelled_orders, complimentary_amount, complimentary_reason, zomato_district, upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note, cash_deposited, notes }).catch(() => {});
     res.json({ ok: true });
@@ -2747,7 +2780,36 @@ router.patch('/outlet-sales/cash-collection', async (req, res) => {
     const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' }).select('*').single();
     if (error) throw error;
     await cascadeCashForward(supabase, outlet_id, date);
+    await logSalesChange({
+      outlet_id, date, action: 'cash_collected', actor: collected_by || null,
+      detail: `Cash collection recorded${remark ? ' · ' + remark : ''}`,
+      old_value: Number(existing?.cash_deposited || 0), new_value: Number(cash_deposited) || 0,
+    });
     res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── GET /api/outlet-sales/logs — per-(outlet,date) change history for the Cash Ledger's
+// 🕘 icon: sales submissions/edits + cash-collection edits (daily_sales_logs) merged with
+// bill-backed collections (outlet_cash_bills), newest first.
+router.get('/outlet-sales/logs', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
+    const { outlet_id, date } = req.query;
+    if (!outlet_id || !date) return res.status(400).json({ error: 'outlet_id and date are required' });
+    const [logsRes, billsRes] = await Promise.all([
+      supabase.from('daily_sales_logs').select('*').eq('outlet_id', outlet_id).eq('date', date),
+      supabase.from('outlet_cash_bills').select('*').eq('outlet_id', outlet_id).eq('date', date),
+    ]);
+    const events = [];
+    for (const l of (logsRes.data || [])) {
+      events.push({ action: l.action, actor: l.actor, detail: l.detail, old_value: l.old_value, new_value: l.new_value, at: l.created_at });
+    }
+    for (const b of (billsRes.data || [])) {
+      events.push({ action: 'bill_collected', actor: b.collected_by, detail: b.note || null, old_value: null, new_value: Number(b.amount), at: b.created_at });
+    }
+    events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+    res.json(events);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

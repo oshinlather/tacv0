@@ -221,6 +221,7 @@ const api = {
   recordCashCollection: (data) => patch("/api/outlet-sales/cash-collection", data),
   // Bill-backed cash collections (cash spent at outlet, accepted against a bill)
   getBillCollections: (params) => get("/api/outlet-sales/bill-collections", params),
+  getSalesLogs: (params) => get("/api/outlet-sales/logs", params),
   createBillCollection: (data) => post("/api/outlet-sales/bill-collection", data),
   uploadBillCollectionPhoto: (id, base64) => post(`/api/outlet-sales/bill-collection/${id}/photos`, { base64 }),
   deleteBillCollection: (id) => del(`/api/outlet-sales/bill-collection/${id}`),
