@@ -2677,7 +2677,7 @@ router.post('/outlet-sales', async (req, res) => {
       complimentary_reason: complimentary_reason || null,
       zomato_district: zomato_district || 0,
       upi_collected, cash_collected, prev_day_cash, cash_expense, cash_expense_note,
-      cash_deposited, submitted_by, notes, submitted_at: new Date().toISOString()
+      submitted_by, notes, submitted_at: new Date().toISOString()
     };
 
     // Only re-stamp who/when "cash deposited" was set if this submission actually
@@ -2694,22 +2694,20 @@ router.post('/outlet-sales', async (req, res) => {
     if (_user.role !== 'owner' && existing && date < istTodayStr) {
       return res.status(403).json({ error: "Previous-day sales are locked — contact the owner to make a correction." });
     }
-    // Bill-backed collections are owned by their own endpoint — this full-row upsert
-    // must carry them forward verbatim or re-saving the sales form would wipe them.
+    // Bill-backed collections AND cash-deposit collections are each owned by their own
+    // append-table endpoints — this full-row upsert must carry BOTH forward verbatim, or
+    // re-saving the sales form would wipe the summed entries. cash_deposited is now a derived
+    // aggregate (recomputeCashDeposited, the only writer); the form never sets it — collections
+    // are recorded in the Cash Ledger and the daily-sales form shows the sum read-only.
     record.cash_bill_collected = existing?.cash_bill_collected || 0;
     record.cash_bill_collected_by = existing?.cash_bill_collected_by || null;
-    const depositChanged = !existing || Number(existing.cash_deposited || 0) !== Number(cash_deposited || 0);
-    if (depositChanged) {
-      // cash_deposited_to is the outlet manager's declared recipient (from the fixed
-      // CASH_RECIPIENTS list) — falls back to the submitter's own name only if they
-      // didn't pick one, so this stays backward-compatible with older clients.
-      record.cash_deposited_by = cash_deposited_to || submitted_by || null;
-      record.cash_deposited_at = new Date().toISOString();
-    }
+    record.cash_deposited = existing?.cash_deposited || 0;
+    record.cash_deposited_by = existing?.cash_deposited_by || null;
+    record.cash_deposited_at = existing?.cash_deposited_at || null;
     // Any of these changing on a past date shifts that day's closing balance, which
     // later days' prev_day_cash would otherwise go stale against — cascade forward.
-    const closingChanged = depositChanged
-      || Number(existing?.cash_collected || 0) !== Number(cash_collected || 0)
+    // (Deposit changes come from the collection endpoints, which cascade on their own.)
+    const closingChanged = Number(existing?.cash_collected || 0) !== Number(cash_collected || 0)
       || Number(existing?.cash_expense || 0) !== Number(cash_expense || 0);
 
     const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
@@ -2724,7 +2722,6 @@ router.post('/outlet-sales', async (req, res) => {
       const parts = [];
       if (Number(existing.cash_collected || 0) !== Number(cash_collected || 0)) parts.push(`Cash collected ₹${Number(existing.cash_collected) || 0}→₹${Number(cash_collected) || 0}`);
       if (Number(existing.cash_expense || 0) !== Number(cash_expense || 0)) parts.push(`Expense ₹${Number(existing.cash_expense) || 0}→₹${Number(cash_expense) || 0}`);
-      if (depositChanged) parts.push(`Deposited ₹${Number(existing.cash_deposited) || 0}→₹${Number(cash_deposited) || 0}`);
       await logSalesChange({ outlet_id, date, action: 'sales_edited', actor: submitted_by, detail: parts.join(' · ') || 'Cash figures updated' });
     }
     // Write to Google Sheet (non-blocking)
@@ -2912,6 +2909,84 @@ router.delete('/outlet-sales/bill-collection/:id', async (req, res) => {
     const { error } = await supabase.from('outlet_cash_bills').delete().eq('id', req.params.id);
     if (error) throw error;
     await recomputeBillCollected(supabase, bill.outlet_id, bill.date);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Cash collection ENTRIES — a day's "deposited" amount (cash_deposited) is the SUM of
+// one or more collection entries (outlet_cash_collections), mirroring the bill-collection
+// append model. Multiple collections a day add up; the owner can remove any entry and the
+// day re-sums + re-cascades. recomputeCashDeposited is the ONLY writer of cash_deposited now
+// (the daily sales form carries it forward verbatim — see POST /outlet-sales), so the form
+// and the entries can never diverge into two competing numbers.
+async function recomputeCashDeposited(supabase, outletId, date) {
+  const { data: entries } = await supabase.from('outlet_cash_collections')
+    .select('amount, collected_by, created_at').eq('outlet_id', outletId).eq('date', date)
+    .order('created_at', { ascending: false });
+  const sum = (entries || []).reduce((s, e) => s + Number(e.amount || 0), 0);
+  const latest = entries && entries[0] ? entries[0] : null; // "by/at" track the most recent entry
+  const { data: existing } = await supabase.from('daily_outlet_sales')
+    .select('*').eq('outlet_id', outletId).eq('date', date).maybeSingle();
+  const seedPrev = await previousClosing(supabase, outletId, date); // opening = prior day's closing (seed/heal)
+  const fields = {
+    cash_deposited: sum,
+    cash_deposited_by: latest ? latest.collected_by : null,
+    cash_deposited_at: latest ? latest.created_at : null,
+    prev_day_cash: seedPrev,
+  };
+  const record = existing ? { ...existing, ...fields } : { outlet_id: outletId, date, ...fields };
+  await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
+  await cascadeCashForward(supabase, outletId, date);
+}
+
+// GET list of a day's (or range's) collection entries.
+router.get('/outlet-sales/cash-collections', async (req, res) => {
+  try {
+    const _user = await requireAuth(req, res); if (!_user) return;
+    const { outlet_id, date, from, to } = req.query;
+    if (!ensureOutletAccess(_user, outlet_id, res)) return;
+    let q = supabase.from('outlet_cash_collections').select('*').order('created_at', { ascending: false });
+    if (outlet_id) q = q.eq('outlet_id', outlet_id);
+    if (date) q = q.eq('date', date);
+    if (from) q = q.gte('date', from);
+    if (to) q = q.lte('date', to);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST add a collection entry → re-sum into cash_deposited + cascade forward.
+router.post('/outlet-sales/cash-collection-entry', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner', 'store_mgr', 'avp')) return;
+    const { outlet_id, date, amount, note, collected_by } = req.body;
+    if (!outlet_id || !date || amount === undefined || Number(amount) <= 0) {
+      return res.status(400).json({ error: 'outlet_id, date, and a positive amount are required' });
+    }
+    const { data, error } = await supabase.from('outlet_cash_collections')
+      .insert({ outlet_id, date, amount: Number(amount), note: note || null, collected_by: collected_by || null })
+      .select().single();
+    if (error) throw error;
+    await recomputeCashDeposited(supabase, outlet_id, date);
+    await logSalesChange({ outlet_id, date, action: 'cash_collected', actor: collected_by || null,
+      detail: `Cash collection +₹${Number(amount)}${note ? ' · ' + note : ''}`, old_value: null, new_value: Number(amount) });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE a collection entry — OWNER ONLY (owner oversight on removals, so a collection can't
+// be quietly deleted to hide cash) → re-sum into cash_deposited + cascade.
+router.delete('/outlet-sales/cash-collection-entry/:id', async (req, res) => {
+  try {
+    if (!await requireRole(req, res, 'owner')) return;
+    const { data: entry } = await supabase.from('outlet_cash_collections').select('*').eq('id', req.params.id).maybeSingle();
+    if (!entry) return res.status(404).json({ error: 'Not found' });
+    const { error } = await supabase.from('outlet_cash_collections').delete().eq('id', req.params.id);
+    if (error) throw error;
+    await recomputeCashDeposited(supabase, entry.outlet_id, entry.date);
+    await logSalesChange({ outlet_id: entry.outlet_id, date: entry.date, action: 'cash_collection_removed', actor: null,
+      detail: `Cash collection removed −₹${Number(entry.amount)}`, old_value: Number(entry.amount), new_value: null });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
