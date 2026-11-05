@@ -32,8 +32,10 @@ CREATE TABLE IF NOT EXISTS outlet_cash_collections (
 CREATE INDEX IF NOT EXISTS idx_outlet_cash_collections_od ON outlet_cash_collections (outlet_id, date);
 
 -- Backfill existing single-value deposits as one entry each (preserves the day's total).
+-- note is left NULL (the day-level cash_collection_remark stays on daily_outlet_sales) so this
+-- doesn't depend on that column existing — keeps the migration order-independent.
 INSERT INTO outlet_cash_collections (outlet_id, date, amount, note, collected_by, created_at)
-SELECT s.outlet_id, s.date, s.cash_deposited, s.cash_collection_remark, s.cash_deposited_by,
+SELECT s.outlet_id, s.date, s.cash_deposited, NULL, s.cash_deposited_by,
        COALESCE(s.cash_deposited_at, s.date::timestamptz + interval '12 hours')
 FROM daily_outlet_sales s
 WHERE s.cash_deposited IS NOT NULL AND s.cash_deposited <> 0

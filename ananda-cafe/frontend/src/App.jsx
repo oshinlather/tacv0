@@ -3049,8 +3049,8 @@ const CustodianLedgerDetail = ({ person }) => {
           </div>
         </div>
         {collectLoading ? <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>⏳ Checking existing record...</div> : collectExisting && Number(collectExisting.cash_deposited) > 0 && (
-          <div style={{ fontSize: 11, color: "#B45309", marginBottom: 8, background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "6px 8px" }}>
-            ⚠️ Already has ₹{fmt(collectExisting.cash_deposited)} recorded{collectExisting.cash_deposited_by ? ` (by ${collectExisting.cash_deposited_by})` : ""} for this date — editing below will overwrite it, not add to it.
+          <div style={{ fontSize: 11, color: "#15803D", marginBottom: 8, background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "6px 8px" }}>
+            ℹ️ Already has ₹{fmt(collectExisting.cash_deposited)} collected{collectExisting.cash_deposited_by ? ` (by ${collectExisting.cash_deposited_by})` : ""} for this date — this ADDS to it as another collection.
           </div>
         )}
         <div style={{ fontSize: 10, color: "#999", marginBottom: 4 }}>Amount collected (total for the day)</div>
@@ -12180,7 +12180,7 @@ const OutletMgr = ({ onBack }) => {
     // on the record for dates that had one before the removal, so historical closing-cash
     // math for those dates stays accurate; every date going forward is simply 0.
     const existingCashExpense = n(salesData.cash_expense);
-    const closingCash = prevCash + cash - existingCashExpense - n(salesData.cash_deposited);
+    const closingCash = prevCash + cash - existingCashExpense - n(existingData?.cash_deposited);
 
     // Managers may not change an already-submitted previous day's sales — once a past date
     // has a record, it's frozen to them (prevents quietly editing yesterday's numbers after
@@ -12193,7 +12193,8 @@ const OutletMgr = ({ onBack }) => {
 
     const submitSales = async () => {
       if (salesLocked) return;
-      if (n(salesData.cash_deposited) > 0 && !salesData.cash_deposited_to) { alert("Please select who the cash was submitted to"); return; }
+      // Cash Deposited is no longer entered here — it's the sum of the Cash Ledger collection
+      // entries (the server ignores cash_deposited on this write and carries it forward).
       setSalesSaving(true);
       try {
         await api.submitOutletSales({ outlet_id: outlet, date: selectedDate, total_sale: totalSale, swiggy_sale: n(salesData.swiggy_sale), zomato_sale: n(salesData.zomato_sale), other_delivery_sale: n(salesData.other_delivery_sale), cancelled_orders: cancelledOrders, complimentary_amount: complimentaryAmt, complimentary_reason: salesData.complimentary_reason || null, zomato_district: zomatoDistrict, upi_collected: upi, cash_collected: cash, prev_day_cash: prevCash, cash_expense: existingCashExpense, cash_expense_note: salesData.cash_expense_note, cash_deposited: n(salesData.cash_deposited), cash_deposited_to: salesData.cash_deposited_to || null, submitted_by: getCurrentUser()?.name || outlet, notes: salesData.notes });
@@ -12279,22 +12280,19 @@ const OutletMgr = ({ onBack }) => {
             value recorded from before the removal, read-only, so historical closing-cash
             math stays correct without giving the impression it's still editable. */}
         {existingCashExpense > 0 && <V label="− Cash Expense (legacy)" value={existingCashExpense} color="#B45309" />}
-        {salesRow("− Cash Deposited", "cash_deposited", "₹")}
-        {n(salesData.cash_deposited) > 0 && (<>
-          {existingData?.cash_deposited_by && Number(existingData.cash_deposited) === n(salesData.cash_deposited) && (
-            <div style={{ padding: "5px 8px", borderRadius: 6, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 10, color: "#166534", marginBottom: 4 }}>
-              ✅ Already recorded — collected by {existingData.cash_deposited_by}{existingData.cash_deposited_at ? ` at ${new Date(existingData.cash_deposited_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}` : ""}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", padding: "4px 0 6px" }}>
-            <span style={{ flex: 1, fontSize: 12, color: "#555" }}>Submitted To</span>
-            <select value={salesData.cash_deposited_to} disabled={salesLocked} onChange={(e) => setSalesData((p) => ({ ...p, cash_deposited_to: e.target.value }))}
-              style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E8E8E4", fontSize: 12, fontFamily: "inherit", background: salesLocked ? "#F3F3F1" : "#fff", color: salesData.cash_deposited_to ? "#1A1A1A" : "#999" }}>
-              <option value="">Select...</option>
-              {CASH_RECIPIENTS.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
+        {/* Cash Deposited is now the SUM of the collection entries owner/store record in the
+            Cash Ledger — a read-only mirror here (several collections a day add up), so the
+            form and the ledger can never show two different numbers. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0" }}>
+          <span style={{ fontSize: 13, color: "#555" }}>− Cash Deposited</span>
+          <span style={{ fontFamily: "'JetBrains Mono'", fontWeight: 700, color: "#2563EB", fontSize: 14 }}>₹{n(existingData?.cash_deposited)}</span>
+        </div>
+        {n(existingData?.cash_deposited) > 0 && existingData?.cash_deposited_by && (
+          <div style={{ padding: "5px 8px", borderRadius: 6, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 10, color: "#166534", marginBottom: 4 }}>
+            ✅ Collected by {existingData.cash_deposited_by}{existingData.cash_deposited_at ? ` at ${new Date(existingData.cash_deposited_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" })}` : ""}
           </div>
-        </>)}
+        )}
+        <div style={{ fontSize: 10, color: "#999", padding: "0 0 6px" }}>Recorded by owner/store in the Cash Ledger — multiple collections a day add up here.</div>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0 4px", fontSize: 13, fontWeight: 800 }}>
           <span>💰 Closing Cash</span>
           <span style={{ fontFamily: "'JetBrains Mono'", color: closingCash >= 0 ? "#B45309" : "#DC2626", fontSize: 16 }}>₹{closingCash}</span>

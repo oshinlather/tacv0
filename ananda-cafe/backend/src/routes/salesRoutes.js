@@ -2786,8 +2786,17 @@ router.get('/outlet-sales/logs', async (req, res) => {
     for (const b of (billsRes.data || [])) {
       events.push({ action: 'bill_collected', actor: b.collected_by, detail: b.note || null, old_value: null, new_value: Number(b.amount), at: b.created_at });
     }
-    events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
-    res.json(events);
+    // Collapse exact-duplicate rows (same action/actor/values at the SAME timestamp) — these
+    // only arise from the backfill running twice or overlapping a live log; two genuine edits
+    // always have distinct timestamps, so this never merges real separate actions.
+    const seen = new Set();
+    const deduped = events.filter((e) => {
+      const key = `${e.action}|${e.actor}|${e.old_value}|${e.new_value}|${e.at}`;
+      if (seen.has(key)) return false;
+      seen.add(key); return true;
+    });
+    deduped.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+    res.json(deduped);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
