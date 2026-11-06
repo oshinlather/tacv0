@@ -2705,13 +2705,18 @@ router.post('/outlet-sales', async (req, res) => {
     // sales form (which pre-fills whatever is already in the DB) would silently
     // overwrite an owner/store-manager's collection record with their own name.
     const { data: existing } = await supabase.from('daily_outlet_sales')
-      .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
-    // Previous-day lock: once a past date has a submitted record, only the owner may change
-    // it — managers can't quietly revise yesterday's numbers after the fact. Same-day edits
-    // and a late first submission (no record yet) are still allowed. (UI mirrors this, but
-    // the rule has to live here so a direct API call can't bypass it.) IST = UTC+5:30.
+      .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by, submitted_at, total_sale').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+    // Previous-day lock: the day closes to a manager AFTER their one real sales submission, NOT
+    // on the calendar day changing. "Submitted" = a row with submitted_at or a total_sale, same
+    // as the UI's salesSubmitted — NOT merely any row. This matters because an owner cash
+    // collection (or the cash cascade) can create a daily_outlet_sales row with neither field;
+    // keying the lock off `existing` alone meant that after midnight such a collection-only row
+    // blocked the manager's FIRST real sales submission for the day that just ended (restaurants
+    // close past 12am). So lock only when real sales were already submitted. Owner always edits;
+    // a one-shot sales unlock lifts it for a single correction. IST = UTC+5:30.
+    const salesAlreadySubmitted = !!(existing && (existing.submitted_at || existing.total_sale != null));
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-    if (_user.role !== 'owner' && existing && date < istTodayStr && !(await hasSalesUnlock(outlet_id, date))) {
+    if (_user.role !== 'owner' && salesAlreadySubmitted && date < istTodayStr && !(await hasSalesUnlock(outlet_id, date))) {
       return res.status(403).json({ error: "Previous-day sales are locked — contact the owner to make a correction." });
     }
     // Bill-backed collections AND cash-deposit collections are each owned by their own
