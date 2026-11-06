@@ -17,6 +17,12 @@ import BKClosingWastage from "./BKClosingWastage";
 // Global user ref — set by AnandaCafe on login, read by child components
 let _currentUser = null;
 const getCurrentUser = () => _currentUser;
+// CEO has identical rights to the owner, but a trimmed view (DOD dropdown only, landing on
+// Challans). Normalize the logged-in role to "owner" so every owner-gated control — nav AND
+// the edit buttons inside each view (all `role === "owner"` checks) — works unchanged, and
+// carry a `ceo` flag so the nav can still single them out. Mirrors the ops_manager base_role
+// idiom. The DB row / backend keep the real 'ceo' role (backend normalizes it separately).
+const normalizeAuthUser = (u) => (u && u.role === "ceo") ? { ...u, role: "owner", ceo: true, base_role: "ceo" } : u;
 // True if the logged-in user carries a given extra responsibility (app_users.responsibilities
 // — duties assigned on top of their base role, e.g. an outlet manager also made responsible
 // for 'cogs' cross-outlet oversight). See the Owner → Users panel to assign them.
@@ -669,7 +675,7 @@ const ROLE_OPTIONS = [
   { v: "outlet_mgr", l: "🏪 Outlet" }, { v: "chef", l: "👨‍🍳 Chef" }, { v: "bainmarry", l: "🍲 Bainmarry" },
   { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" },
   { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" },
-  { v: "franchise", l: "🤝 Franchise" }, { v: "ops_manager", l: "🔀 Ops Manager" },
+  { v: "franchise", l: "🤝 Franchise" }, { v: "ops_manager", l: "🔀 Ops Manager" }, { v: "ceo", l: "🎩 CEO" },
 ];
 // Roles whose account is tied to exactly one outlet (an outlet_id must be assigned).
 const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
@@ -760,7 +766,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : r === "ops_manager" ? "🔀 Ops Manager" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "ceo" ? "🎩 CEO" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : r === "ops_manager" ? "🔀 Ops Manager" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -22064,7 +22070,7 @@ const OwnerHome = ({ setOwnerTab }) => {
 export default function AnandaCafe() {
   // Auth state
   const [currentUser, setCurrentUser] = useState(() => {
-    try { const u = localStorage.getItem("ananda_user"); if (u) { _currentUser = JSON.parse(u); return _currentUser; } } catch (e) {} return null;
+    try { const u = localStorage.getItem("ananda_user"); if (u) { _currentUser = normalizeAuthUser(JSON.parse(u)); return _currentUser; } } catch (e) {} return null;
   });
   const [loginPhone, setLoginPhone] = useState("");
   const [loginPin, setLoginPin] = useState("");
@@ -22076,13 +22082,14 @@ export default function AnandaCafe() {
     setLoginLoading(true); setLoginErr(null);
     try {
       const user = await api.login(loginPhone, loginPin);
-      localStorage.setItem("ananda_user", JSON.stringify(user));
+      localStorage.setItem("ananda_user", JSON.stringify(user)); // store the raw row (real role)
       // Clear any stale ops mode from a previous session — an ops_manager re-picks his
       // mode on every fresh login (his login role is 'ops_manager' until he chooses).
       try { localStorage.removeItem("ananda_ops_mode"); } catch (e) {}
       api.clearCache(); // fresh start under this user's cache namespace
-      _currentUser = user;
-      setCurrentUser(user);
+      const nu = normalizeAuthUser(user); // CEO → owner rights + ceo flag for this session
+      _currentUser = nu;
+      setCurrentUser(nu);
       setLoginPhone(""); setLoginPin("");
     } catch (e) { setLoginErr(e.message || "Login failed"); }
     finally { setLoginLoading(false); }
@@ -22123,7 +22130,8 @@ export default function AnandaCafe() {
     } catch (e) {}
     return "launcher";
   });
-  const [ownerTab, setOwnerTab] = useState("home");
+  // CEO lands on Challans (its nav only exposes the DOD dropdown); everyone else on Home.
+  const [ownerTab, setOwnerTab] = useState(() => getCurrentUser()?.ceo ? "challans" : "home");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
@@ -22198,7 +22206,7 @@ export default function AnandaCafe() {
   // Auto-route when user logs in
   useEffect(() => {
     if (currentUser && app === "launcher") {
-      if (currentUser.role === "owner") setApp("owner");
+      if (currentUser.role === "owner" || currentUser.role === "ceo") setApp("owner");
       else if (currentUser.role === "store_mgr") setApp("store");
       else if (currentUser.role === "outlet_mgr") setApp("outlet");
       else if (currentUser.role === "driver") setApp("driver");
@@ -22211,8 +22219,11 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "shift_manager" ? "shift_manager" : currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : null;
+  const lockedApp = currentUser?.role === "shift_manager" ? "shift_manager" : currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : currentUser?.ceo ? "owner" : null;
   const effectiveApp = lockedApp || app;
+  // CEO uses the full owner dashboard (same rights) but with the nav trimmed to just the DOD
+  // dropdown, landing on Challans — see the owner nav bar below.
+  const isCeo = currentUser?.ceo === true;
 
   // Load master data from DB on startup — updates in-memory arrays
   useEffect(() => {
@@ -22312,13 +22323,15 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      {!isCeo && [{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: DOD_TABS.includes(ownerTab) ? 700 : 500, color: DOD_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: DOD_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      {!isCeo && (<>
       <button ref={othersBtnRef} onClick={() => { anchorDropdown(othersBtnRef); setOthersDropdown(!othersDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: OTHERS_TABS.includes(ownerTab) ? 700 : 500, color: OTHERS_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: OTHERS_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📂 Others ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
+      </>)}
       </div>
     </div>
     {/* DOD Dropdown */}

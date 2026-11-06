@@ -76,6 +76,12 @@ async function requireAuth(req, res) {
     const mode = req.headers['x-user-mode'];
     return { ...user, role: mode === 'bk' ? 'bk_manager' : 'outlet_mgr', opsUnpinned: true };
   }
+  // "ceo" has identical backend rights to the owner — normalize at the auth boundary so every
+  // downstream owner check (requireOwner, requireRole('owner'), `role === 'owner'`) treats them
+  // the same, without touching dozens of scattered call sites. The FRONTEND keeps the real
+  // 'ceo' role (login returns the raw DB row, un-normalized) to restrict the visible nav to DOD.
+  // Shallow copy so the cached DB row (role still 'ceo') is never mutated.
+  if (user.role === 'ceo') return { ...user, role: 'owner' };
   return user;
 }
 
