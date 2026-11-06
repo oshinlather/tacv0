@@ -5833,7 +5833,7 @@ let RAW_MATERIALS = [
   { id: "meetha_soda_raw", name: "Meetha Soda", unit: "Kg" },
   { id: "coconut_raw", name: "Coconut (Fresh)", unit: "Pcs" },
   { id: "pineapple_raw", name: "Pineapple", unit: "Pcs" },
-  { id: "milk_raw", name: "Milk", unit: "Ltr" },
+  { id: "milk_raw", name: "Full Cream Milk", unit: "Ltr" },
   { id: "kishmish_raw", name: "Kishmish", unit: "Kg" },
   { id: "kesar_raw", name: "Kesar", unit: "Kg" },
   { id: "whole_red_chilli_raw", name: "Whole Red Chilli", unit: "Kg" },
@@ -11178,7 +11178,7 @@ const DC_PURCHASE_CATEGORIES = [
   // as type 'other_purchase', which folds into the P&L purchases total like any other buy.
   { id: "others", label: "📦 DOD", items: [
     { id: "ro_water_tanki", name: "RO Water (20L Tanki)", unit: "Tanki" },
-    { id: "porter", name: "Porter", unit: "", amountOnly: true },
+    { id: "porter", name: "Porter", unit: "", amountOnly: true, multi: true },
     { id: "ice_cubes", name: "Ice Cubes", unit: "Pkt" },
     { id: "staff_nashta", name: "Staff ka Nashta", unit: "", amountOnly: true },
     { id: "harpic", name: "Harpic", unit: "Pcs" },
@@ -11579,6 +11579,10 @@ const OutletMgr = ({ onBack }) => {
   // drink directly, always).
   const [dcCategory, setDcCategory] = useState("dairy");
   const [dcQty, setDcQty] = useState({}); const [dcAmount, setDcAmount] = useState({}); const [dcSaving, setDcSaving] = useState(false);
+  // Repeatable lines (e.g. Porter) — an item can be logged multiple times a day (one trip =
+  // one entry). Keyed by item id → array of { amount, note }. Separate from the single-value
+  // dcQty/dcAmount containers which can only hold one value per item id.
+  const [dcMulti, setDcMulti] = useState({});
   // The purchases row already saved for this outlet+date (if any) — without this, the
   // form always rendered blank on reopen even after a successful save, which is why it
   // looked like nothing was being saved at all. Also lets a second save UPDATE that same
@@ -11601,12 +11605,16 @@ const OutletMgr = ({ onBack }) => {
         setDcEditing(!existing);
         setDcColdDrinkSkipped((existing?.items || []).some((i) => i.type === "cold_drink_purchase_none"));
         const allDcItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
-        const q = {}, a = {};
+        const q = {}, a = {}, m = {};
         (existing?.items || []).forEach((i) => {
           const item = allDcItems.find((it) => it.name === i.item_name);
-          if (item) { q[item.id] = i.quantity; a[item.id] = i.amount; }
+          if (!item) return;
+          if (item.multi) {
+            // Repeatable line — append each saved occurrence instead of overwriting by id.
+            (m[item.id] = m[item.id] || []).push({ amount: Number(i.amount) || 0, note: i.note || "" });
+          } else { q[item.id] = i.quantity; a[item.id] = i.amount; }
         });
-        setDcQty(q); setDcAmount(a);
+        setDcQty(q); setDcAmount(a); setDcMulti(m);
       })
       .catch(() => { setDcExisting(null); setDcEditing(true); setDcColdDrinkSkipped(false); })
       .finally(() => setDcLoading(false));
@@ -11621,7 +11629,7 @@ const OutletMgr = ({ onBack }) => {
       🌙 It's past midnight — defaulted to <b>yesterday's</b> date since you're likely closing out yesterday's business. Tap a date above if that's wrong.
     </div>
   ) : null;
-  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); setDcExisting(null); setDcEditing(false); setDcColdDrinkSkipped(false); };
+  const resetDcPurchase = () => { setDcCategory("dairy"); setDcQty({}); setDcAmount({}); setDcMulti({}); setDcExisting(null); setDcEditing(false); setDcColdDrinkSkipped(false); };
   // forceColdDrinkSkip: true only when called from the "🚫 Not Purchased Today" button —
   // an explicit, unambiguous action that always wins, dropping any Cold Drink items that
   // happen to be filled in. Without it, the normal Save button falls back to whatever
@@ -11629,7 +11637,10 @@ const OutletMgr = ({ onBack }) => {
   // real Cold Drink values (those always take priority over a stale flag).
   const submitDcPurchase = async (forceColdDrinkSkip = false) => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
-    let filled = allItems.filter((i) => dcLineFilled(i, dcQty[i.id], dcAmount[i.id]));
+    // Repeatable (multi) lines are held in dcMulti, not dcQty/dcAmount — flatten their
+    // positive-amount entries into their own line list so each occurrence saves separately.
+    const multiLines = allItems.filter((i) => i.multi).flatMap((i) => (dcMulti[i.id] || []).filter((e) => Number(e.amount) > 0).map((e) => ({ item_name: i.name, quantity: 0, unit: i.unit, amount: Number(e.amount), vendor: null, note: e.note || null, type: dcLineType(i.cat) })));
+    let filled = allItems.filter((i) => !i.multi && dcLineFilled(i, dcQty[i.id], dcAmount[i.id]));
     let effectiveSkip;
     if (forceColdDrinkSkip) {
       filled = filled.filter((i) => i.cat !== "cold_drink");
@@ -11638,10 +11649,10 @@ const OutletMgr = ({ onBack }) => {
       const hasRealColdDrink = filled.some((i) => i.cat === "cold_drink");
       effectiveSkip = dcColdDrinkSkipped && !hasRealColdDrink;
     }
-    if (filled.length === 0 && !effectiveSkip) { alert("Fill qty and amount for at least 1 item"); return; }
+    if (filled.length === 0 && multiLines.length === 0 && !effectiveSkip) { alert("Fill qty and amount for at least 1 item"); return; }
     setDcSaving(true); setErr(null);
     try {
-      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: i.amountOnly ? 0 : Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: dcLineType(i.cat) }));
+      const apiItems = [...filled.map((i) => ({ item_name: i.name, quantity: i.amountOnly ? 0 : Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: dcLineType(i.cat) })), ...multiLines];
       if (effectiveSkip) apiItems.push({ item_name: "Not purchased today", quantity: 0, unit: "", amount: 0, vendor: null, type: "cold_drink_purchase_none" });
       let result;
       if (dcExisting) {
@@ -11662,7 +11673,7 @@ const OutletMgr = ({ onBack }) => {
         // isn't — it's paid in full immediately, just not out of the outlet's cash).
         result = await api.createPurchase({ items: apiItems, payment_mode: "upi", note: "", outlet_id: outlet, submitted_by: getCurrentUser()?.name || outlet, date: selectedDate });
       }
-      alert(effectiveSkip && filled.length === 0 ? "✅ Cold Drink marked as not purchased today" : `✅ Purchase ${dcExisting ? "updated" : "saved"} — ${filled.length} items`);
+      alert(effectiveSkip && filled.length === 0 && multiLines.length === 0 ? "✅ Cold Drink marked as not purchased today" : `✅ Purchase ${dcExisting ? "updated" : "saved"} — ${filled.length + multiLines.length} items`);
       // Stay on this screen showing what was just saved (instead of jumping back to
       // home) — the whole point of this fix is to make the save visibly stick.
       setDcExisting(result); setDcEditing(false); setDcColdDrinkSkipped(effectiveSkip);
@@ -12977,8 +12988,9 @@ const OutletMgr = ({ onBack }) => {
   if (screen === "dairy_cold_drink") {
     const dcActiveCat = DC_PURCHASE_CATEGORIES.find((c) => c.id === dcCategory) || DC_PURCHASE_CATEGORIES[0];
     const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
-    const dcFilledCount = dcAllItems.filter((i) => dcLineFilled(i, dcQty[i.id], dcAmount[i.id])).length;
-    const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0);
+    const dcMultiEntries = dcAllItems.filter((i) => i.multi).flatMap((i) => (dcMulti[i.id] || []));
+    const dcFilledCount = dcAllItems.filter((i) => !i.multi && dcLineFilled(i, dcQty[i.id], dcAmount[i.id])).length + dcMultiEntries.filter((e) => Number(e.amount) > 0).length;
+    const dcTotal = dcAllItems.filter((i) => !i.multi).reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0) + dcMultiEntries.reduce((s, e) => s + (Number(e.amount) || 0), 0);
     // The cold_drink_purchase_none sentinel is a bookkeeping marker, not a real line
     // item — excluded from every real-items list/count shown below.
     const dcRealItems = (dcExisting?.items || []).filter((i) => i.type !== "cold_drink_purchase_none");
@@ -13032,6 +13044,30 @@ const OutletMgr = ({ onBack }) => {
 
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 14 }}>
         {dcActiveCat.items.map((item) => {
+          // Repeatable line (Porter): a list of { amount, note } entries with add/remove,
+          // so multiple porter charges in a day each get their own row.
+          if (item.multi) {
+            const entries = dcMulti[item.id] || [];
+            const setEntries = (fn) => setDcMulti((p) => ({ ...p, [item.id]: fn(p[item.id] || []) }));
+            return (<div key={item.id} style={{ padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
+                  <div style={{ fontSize: 10, color: "#999" }}>Add one entry per trip</div>
+                </div>
+                <button onClick={() => setEntries((l) => [...l, { amount: 0, note: "" }])} style={{ padding: "6px 12px", borderRadius: 8, border: "1px dashed #93C5FD", background: "#EFF6FF", color: "#2563EB", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>+ Add</button>
+              </div>
+              {entries.map((e, idx) => (
+                <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                  <input placeholder="Note (optional)" value={e.note} onChange={(ev) => setEntries((l) => l.map((x, i2) => i2 === idx ? { ...x, note: ev.target.value } : x))}
+                    style={{ flex: 1, minWidth: 0, padding: "8px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 13, fontFamily: "inherit" }} />
+                  <input type="number" inputMode="decimal" min="0" placeholder="₹" value={e.amount || ""} onChange={(ev) => setEntries((l) => l.map((x, i2) => i2 === idx ? { ...x, amount: Math.max(0, +ev.target.value || 0) } : x))}
+                    style={{ width: 72, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+                  <button onClick={() => setEntries((l) => l.filter((_, i2) => i2 !== idx))} style={{ padding: "6px 9px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", color: "#DC2626", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
+                </div>
+              ))}
+            </div>);
+          }
           const qty = Number(dcQty[item.id]) || 0;
           const amount = Number(dcAmount[item.id]) || 0;
           const perUnit = !item.amountOnly && qty > 0 && amount > 0 ? amount / qty : null;

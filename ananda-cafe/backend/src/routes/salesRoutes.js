@@ -1417,6 +1417,10 @@ const RECIPE_RAW_MATERIAL_MAP = {
   'fortune refined oil': 'fortune_refined',
   'filter coffee powder': 'filter_coffee_powder',
   'hari ilaychi': 'ilaychi',
+  // Milk's rate_card display name was changed to "Full Cream Milk"; recipes may store either
+  // the old "Milk" or the new "Full Cream Milk" text — both resolve to the stable id `milk`.
+  'milk': 'milk',
+  'full cream milk': 'milk',
 };
 
 // Dish names: PetPooja exports and recipe entries can differ in case/spacing/trailing
@@ -5320,6 +5324,13 @@ async function computeLivePnl(date, outlet, datedCtx) {
       // Pulled out of the generic Purchases bucket into its own Variable Cost category
       // below instead, so it shows up "along with all the categories" there.
       const coldDrinkItemTotals = {}; // item_name -> { qty, amount, unit }
+      // Dairy (milk/paneer/butter/…) is a Material Cost too, but — like Cold Drink — it's
+      // bought directly by the outlet, never dispatched from BK, so it isn't already in the
+      // BK-dispatch variable cost. Surface it as its own 'Dairy' Material/Variable category at
+      // the amount actually paid (same purchase basis Cold Drink uses here), instead of letting
+      // it disappear into the generic "Purchases" line. (The physical consumed-×-rate view of
+      // dairy lives in RM Audit / stock-usage; this money P&L mirrors Cold Drink's spend basis.)
+      const dairyItemTotals = {}; // item_name -> { qty, amount, unit }
       outletPurchases.forEach(p => {
         (p.items || []).forEach(i => {
           const amt = Number(i.amount) || 0;
@@ -5329,6 +5340,13 @@ async function computeLivePnl(date, outlet, datedCtx) {
             if (!coldDrinkItemTotals[key]) coldDrinkItemTotals[key] = { qty: 0, amount: 0, unit: i.unit || 'Pcs' };
             coldDrinkItemTotals[key].qty += Number(i.quantity) || 0;
             coldDrinkItemTotals[key].amount += amt;
+            return;
+          }
+          if (i.type === 'dairy_purchase') {
+            const key = i.item_name || 'Dairy';
+            if (!dairyItemTotals[key]) dairyItemTotals[key] = { qty: 0, amount: 0, unit: i.unit || 'Ltr' };
+            dairyItemTotals[key].qty += Number(i.quantity) || 0;
+            dairyItemTotals[key].amount += amt;
             return;
           }
           newPurchases += amt;
@@ -5347,13 +5365,26 @@ async function computeLivePnl(date, outlet, datedCtx) {
           });
         });
       }
+      const dairyPurchaseTotal = Object.values(dairyItemTotals).reduce((s, v) => s + v.amount, 0);
+      if (dairyPurchaseTotal > 0) {
+        totalVariableCost += dairyPurchaseTotal;
+        variableByCategory['Dairy'] = (variableByCategory['Dairy'] || 0) + dairyPurchaseTotal;
+        Object.entries(dairyItemTotals).forEach(([name, v]) => {
+          itemBreakdown.push({
+            item_id: `dairy_${name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+            name, category: 'Dairy', qty: v.qty, unit: v.unit,
+            rate: v.qty > 0 ? Math.round(v.amount / v.qty * 100) / 100 : null,
+            cost: Math.round(v.amount * 100) / 100,
+          });
+        });
+      }
       // Purchases recorded before per-item breakdown existed (empty items array) still count
       // toward the total but can't be split — fold them into new_purchase so nothing goes missing.
-      const unsplit = dailyPurchaseTotal - (vendorPayments + newPurchases + coldDrinkPurchaseTotal);
+      const unsplit = dailyPurchaseTotal - (vendorPayments + newPurchases + coldDrinkPurchaseTotal + dairyPurchaseTotal);
       if (unsplit > 0.5) newPurchases += unsplit;
-      // Now excludes Cold Drink's amount, which moved into Variable Cost above — without
+      // Excludes Cold Drink AND Dairy amounts, which moved into Variable Cost above — without
       // this, the same rupees would be counted twice in total_expense.
-      const purchasesExclColdDrink = Math.round((dailyPurchaseTotal - coldDrinkPurchaseTotal) * 100) / 100;
+      const purchasesExclColdDrink = Math.round((dailyPurchaseTotal - coldDrinkPurchaseTotal - dairyPurchaseTotal) * 100) / 100;
 
       // ── FIXED COSTS (daily = monthly / days in month) ──
       const outletFixed = resolvedFixedCosts.filter(f => f.outlet_id === oid);
