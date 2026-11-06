@@ -11174,6 +11174,8 @@ const DC_PURCHASE_CATEGORIES = [
     { id: "ro_water_tanki", name: "RO Water (20L Tanki)", unit: "Tanki" },
     { id: "porter", name: "Porter", unit: "", amountOnly: true },
     { id: "ice_cubes", name: "Ice Cubes", unit: "Pkt" },
+    { id: "staff_nashta", name: "Staff ka Nashta", unit: "", amountOnly: true },
+    { id: "harpic", name: "Harpic", unit: "Pcs" },
   ] },
 ];
 // A purchase line is "filled" once it has an amount; a normal line also needs a quantity.
