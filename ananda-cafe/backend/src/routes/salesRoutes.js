@@ -2654,6 +2654,22 @@ async function logSalesChange(entry) {
   } catch (e) { /* logging is best-effort — never fail the write over it */ }
 }
 
+// Does the owner currently have a one-shot "open this locked sales entry" grant live for
+// this (outlet, date)? Mirrors checkEveningDemandCutoff's fail-OPEN posture: on any query
+// error (e.g. the sales_unlocks migration not yet run) it returns false — i.e. it never
+// *grants* an unlock it can't verify, so the lock simply stays as it was.
+async function hasSalesUnlock(outlet_id, date) {
+  try {
+    const { data, error } = await supabase.from('sales_unlocks')
+      .select('id').eq('outlet_id', outlet_id).eq('date', date).limit(1);
+    if (error) throw error;
+    return !!(data && data.length > 0);
+  } catch (e) {
+    console.error('[sales_unlocks] check failed, treating as not-unlocked:', e.message);
+    return false;
+  }
+}
+
 router.post('/outlet-sales', async (req, res) => {
   try {
     const _user = await requireAuth(req, res); if (!_user) return;
@@ -2691,7 +2707,7 @@ router.post('/outlet-sales', async (req, res) => {
     // and a late first submission (no record yet) are still allowed. (UI mirrors this, but
     // the rule has to live here so a direct API call can't bypass it.) IST = UTC+5:30.
     const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-    if (_user.role !== 'owner' && existing && date < istTodayStr) {
+    if (_user.role !== 'owner' && existing && date < istTodayStr && !(await hasSalesUnlock(outlet_id, date))) {
       return res.status(403).json({ error: "Previous-day sales are locked — contact the owner to make a correction." });
     }
     // Bill-backed collections AND cash-deposit collections are each owned by their own
@@ -2713,6 +2729,12 @@ router.post('/outlet-sales', async (req, res) => {
     const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
 
     if (error) throw error;
+    // Consume a one-shot owner unlock, if one was live for this day — the correction has
+    // landed, so re-lock the day. Owner submits never create/consume an unlock (they're
+    // never locked). Best-effort: a failed delete must not fail the sales write.
+    if (_user.role !== 'owner') {
+      try { await supabase.from('sales_unlocks').delete().eq('outlet_id', outlet_id).eq('date', date); } catch (e) { /* non-fatal */ }
+    }
     if (closingChanged) await cascadeCashForward(supabase, outlet_id, date);
     // Log to the Cash Ledger history: first submission, or an edit that changed the cash
     // figures (other field edits aren't cash-relevant and are left off the cash history).
@@ -3476,6 +3498,66 @@ router.delete('/demand-exceptions/:id', async (req, res) => {
   try {
     if (!await requireOwner(req, res)) return;
     const { error } = await supabase.from('demand_exceptions').delete().eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Sales Unlock — owner "opens" a locked (already-submitted) daily-sales entry so the
+// outlet manager can make exactly ONE correction. Mirrors demand_exceptions ("ordering
+// open"): one idempotent row per (outlet_id, date). Unlike demand (today-only), a sales
+// unlock may target any date and is CONSUMED on the manager's next submit (see POST
+// /outlet-sales), so it re-locks after the single correction. Owner can also revoke.
+
+// GET /api/sales-unlocks?date= — owner's list of live unlocks for a date (defaults today).
+router.get('/sales-unlocks', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const date = req.query.date || todayIST();
+    const { data, error } = await supabase.from('sales_unlocks').select('*').eq('date', date).order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// GET /api/sales-unlocks/mine?outlet_id=&date= — outlet-side check: "has the owner opened
+// my outlet's sales for this date?" Not owner-gated; scoped via ensureOutletAccess.
+router.get('/sales-unlocks/mine', async (req, res) => {
+  try {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { outlet_id } = req.query;
+    if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
+    if (!ensureOutletAccess(user, outlet_id, res)) return;
+    const date = req.query.date || todayIST();
+    const { data, error } = await supabase.from('sales_unlocks').select('id, reason, granted_by').eq('outlet_id', outlet_id).eq('date', date).limit(1);
+    if (error) throw error;
+    const row = data && data[0];
+    res.json({ granted: !!row, reason: row?.reason || null, granted_by: row?.granted_by || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// POST /api/sales-unlocks — grant one. Owner only. Idempotent upsert on (outlet_id, date).
+router.post('/sales-unlocks', async (req, res) => {
+  try {
+    const user = await requireOwner(req, res);
+    if (!user) return;
+    const { outlet_id, reason } = req.body;
+    if (!outlet_id) return res.status(400).json({ error: 'outlet_id is required' });
+    const date = req.body.date || todayIST();
+    const { data, error } = await supabase.from('sales_unlocks')
+      .upsert({ outlet_id, date, reason: reason || null, granted_by: user.name }, { onConflict: 'outlet_id,date' })
+      .select('*').single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// DELETE /api/sales-unlocks/:id — revoke a grant made in error.
+router.delete('/sales-unlocks/:id', async (req, res) => {
+  try {
+    if (!await requireOwner(req, res)) return;
+    const { error } = await supabase.from('sales_unlocks').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

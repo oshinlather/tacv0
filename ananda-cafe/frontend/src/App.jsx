@@ -362,6 +362,9 @@ export const DEMAND_SECTIONS = [
   { id: "cold_drink", titleHi: "Cold Drink & Water", emoji: "🥤", color: "#0EA5E9", bg: "#F0F9FF", border: "#BAE6FD",
     items: [
       { id: "cold_drink", name: "Cold Drink", unit: "Pcs" },
+      { id: "cold_drink_30", name: "Cold Drink (30)", unit: "Pcs" },
+      { id: "cold_drink_35", name: "Cold Drink (35)", unit: "Pcs" },
+      { id: "cold_drink_50", name: "Cold Drink (50)", unit: "Pcs" },
       { id: "diet_coke", name: "Diet Coke", unit: "Pcs" },
       { id: "lahori_jeera", name: "Lahori Jeera", unit: "Pcs" },
       { id: "small_water_bottle", name: "Small Water Bottle", unit: "Pcs" },
@@ -7074,7 +7077,7 @@ const OrderChallanView = ({ items, categories, displayCategory, selCat, setSelCa
 // total_items, created_by} card shape PurchaseOrderHistory already renders.
 const DC_HISTORY_LABEL = "🥛 Dairy / Cold Drink";
 const dcPurchaseToOrder = (p) => {
-  const dcItems = (p.items || []).filter((i) => ["dairy_purchase", "cold_drink_purchase"].includes(i.type));
+  const dcItems = (p.items || []).filter((i) => ["dairy_purchase", "cold_drink_purchase", "other_purchase"].includes(i.type));
   if (dcItems.length === 0) return null;
   return {
     id: `dc_${p.id}`,
@@ -9795,6 +9798,126 @@ const OutletActivityGrid = ({ mode }) => {
 const ClosingStockHistory = () => <OutletActivityGrid mode="closing" />;
 const WastageHistory = () => <OutletActivityGrid mode="wastage" />;
 
+// DOD → Daily Purchases. Read-only owner view of what every outlet bought on one day — the
+// `purchases` table (the cash / dairy / cold-drink / other purchases managers log), grouped
+// by outlet with line items, amounts and payment mode, under a day total + payment split.
+const PURCHASE_MODE_META = {
+  cash: { label: "Cash", color: "#166534", bg: "#F0FDF4", border: "#BBF7D0" },
+  upi: { label: "UPI", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  paytm: { label: "Paytm", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  gpay: { label: "GPay", color: "#2563EB", bg: "#EFF6FF", border: "#BFDBFE" },
+  bank_transfer: { label: "Bank", color: "#7C3AED", bg: "#F5F3FF", border: "#C4B5FD" },
+};
+const DailyPurchases = () => {
+  const [selDate, setSelDate] = useState(today());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    api.getPurchases({ date: selDate, limit: 500 })
+      .then((d) => setRows(d || []))
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [selDate]);
+
+  const shiftDay = (n) => {
+    const d = new Date(selDate + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    const ds = d.toISOString().slice(0, 10);
+    if (ds > today()) return; // never walk past today
+    setSelDate(ds);
+  };
+
+  const dayTotal = useMemo(() => rows.reduce((s, p) => s + Number(p.total_amount || 0), 0), [rows]);
+  const byMode = useMemo(() => {
+    const m = {};
+    rows.forEach((p) => { const k = p.payment_mode || "cash"; m[k] = (m[k] || 0) + Number(p.total_amount || 0); });
+    return m;
+  }, [rows]);
+  const byOutlet = useMemo(() => {
+    const m = {};
+    rows.forEach((p) => { (m[p.outlet_id] = m[p.outlet_id] || []).push(p); });
+    return m;
+  }, [rows]);
+  // Keep outlets in the canonical OUTLETS order; anything unrecognised sinks to the bottom.
+  const outletIds = useMemo(() => Object.keys(byOutlet).sort((a, b) => {
+    const ai = OUTLETS.findIndex((o) => o.id === a), bi = OUTLETS.findIndex((o) => o.id === b);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  }), [byOutlet]);
+
+  const timeStr = (p) => { const t = p.submitted_at || p.created_at; return t ? new Date(t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" }) : ""; };
+  const navBtn = { padding: "7px 11px", borderRadius: 8, fontSize: 14, border: "1px solid #E0E0DC", background: "#fff", color: "#555", cursor: "pointer", fontFamily: "inherit", fontWeight: 700 };
+
+  return (<div>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+      <div>
+        <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>🧾 Daily Purchases</h3>
+        <p style={{ fontSize: 12, color: "#888", margin: 0 }}>What each outlet bought on a day — cash / dairy / cold-drink purchases, grouped by outlet</p>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button onClick={() => shiftDay(-1)} style={navBtn}>‹</button>
+        <input type="date" value={selDate} max={today()} onChange={(e) => e.target.value && setSelDate(e.target.value)} style={{ padding: "7px 10px", borderRadius: 8, fontSize: 12, border: "1px solid #E0E0DC", fontFamily: "inherit", background: "#fff", color: "#555" }} />
+        <button onClick={() => shiftDay(1)} disabled={selDate >= today()} style={{ ...navBtn, opacity: selDate >= today() ? 0.4 : 1, cursor: selDate >= today() ? "not-allowed" : "pointer" }}>›</button>
+      </div>
+    </div>
+
+    {loading ? <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div> : (<>
+      <div style={{ background: "#F0FDF4", borderRadius: 12, border: "1px solid #BBF7D0", padding: "14px 16px", textAlign: "center", marginBottom: 10 }}>
+        <div style={{ fontSize: 10, color: "#166534", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 4 }}>Total Purchases — All Outlets</div>
+        <div style={{ fontSize: 22, fontWeight: 800, color: "#16A34A", fontFamily: "'JetBrains Mono', monospace" }}>{fmt(dayTotal)}</div>
+        {Object.keys(byMode).length > 0 && (
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+            {Object.entries(byMode).map(([k, v]) => { const m = PURCHASE_MODE_META[k] || { label: k, color: "#555", bg: "#F5F5F3", border: "#E0E0DC" }; return (
+              <span key={k} style={{ fontSize: 11, fontWeight: 700, color: m.color, background: m.bg, border: `1px solid ${m.border}`, borderRadius: 6, padding: "2px 8px" }}>{m.label}: {fmt(v)}</span>
+            ); })}
+          </div>
+        )}
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ padding: "40px 16px", textAlign: "center", color: "#999", fontSize: 13, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4" }}>No purchases recorded on {selDate}</div>
+      ) : outletIds.map((oid) => {
+        const list = byOutlet[oid];
+        const oTotal = list.reduce((s, p) => s + Number(p.total_amount || 0), 0);
+        const oName = OUTLETS.find((o) => o.id === oid)?.name || oid;
+        return (
+          <div key={oid} style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", marginBottom: 10, overflow: "hidden" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4" }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{oName}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#16A34A" }}>{fmt(oTotal)}</span>
+            </div>
+            {list.map((p) => {
+              const m = PURCHASE_MODE_META[p.payment_mode || "cash"] || { label: p.payment_mode || "—", color: "#555", bg: "#F5F5F3", border: "#E0E0DC" };
+              return (
+                <div key={p.id} style={{ padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, border: `1px solid ${m.border}`, borderRadius: 5, padding: "1px 7px" }}>{m.label}</span>
+                      <span style={{ fontSize: 10, color: "#999" }}>{p.submitted_by || "—"}{timeStr(p) ? ` · ${timeStr(p)}` : ""}</span>
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'JetBrains Mono'", color: "#1A1A1A" }}>{fmt(Number(p.total_amount || 0))}</span>
+                  </div>
+                  {(p.items || []).length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      {(p.items || []).map((it, idx) => (
+                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11, color: "#555", padding: "2px 0" }}>
+                          <span>{it.item_name}{it.quantity ? ` · ${it.quantity}${it.unit ? " " + it.unit : ""}` : ""}</span>
+                          <span style={{ fontFamily: "'JetBrains Mono'", color: "#888" }}>{fmt(Number(it.amount || 0))}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {p.note && <div style={{ marginTop: 4, fontSize: 11, color: "#888", fontStyle: "italic" }}>{p.note}</div>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </>)}
+  </div>);
+};
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  SYSTEM LOGS — unified, owner-only activity timeline across every submission/
 //  edit action (demand, wastage, dispatch, sales, closing stock, cash, purchase,
@@ -11042,7 +11165,20 @@ const CATEGORY_SCOPE = {
 const DC_PURCHASE_CATEGORIES = [
   { id: "dairy", label: "🥛 Dairy", items: DEMAND_SECTIONS.find((s) => s.id === "dairy")?.items || [] },
   { id: "cold_drink", label: "🥤 Cold Drink & Water", items: DEMAND_SECTIONS.find((s) => s.id === "cold_drink")?.items || [] },
+  // Others — purchase-only service/utility lines (NOT stock/demand items, so defined inline).
+  // Porter is a flat amount with no quantity (amountOnly drops the qty box + the qty>0 submit
+  // rule for that line); RO water is counted in 20L tankis, ice cubes in packets. These save
+  // as type 'other_purchase', which folds into the P&L purchases total like any other buy.
+  { id: "others", label: "📦 Others", items: [
+    { id: "ro_water_tanki", name: "RO Water (20L Tanki)", unit: "Tanki" },
+    { id: "porter", name: "Porter", unit: "", amountOnly: true },
+    { id: "ice_cubes", name: "Ice Cubes", unit: "Pkt" },
+  ] },
 ];
+// A purchase line is "filled" once it has an amount; a normal line also needs a quantity.
+// amountOnly lines (e.g. Porter) are complete on amount alone.
+const dcLineFilled = (item, qty, amount) => item.amountOnly ? Number(amount) > 0 : (Number(qty) > 0 && Number(amount) > 0);
+const dcLineType = (cat) => cat === "dairy" ? "dairy_purchase" : cat === "cold_drink" ? "cold_drink_purchase" : "other_purchase";
 
 // Cross-outlet COGS oversight panel, shown inside OutletMgr for a manager carrying the
 // 'cogs' responsibility (assigned in Owner → Users). Flags + COGS Compare across ALL
@@ -11424,6 +11560,7 @@ const OutletMgr = ({ onBack }) => {
   const [salesSaving, setSalesSaving] = useState(false);
   const [existingData, setExistingData] = useState(null);
   const [salesLoaded, setSalesLoaded] = useState(false);
+  const [salesUnlocked, setSalesUnlocked] = useState(false); // owner granted a one-shot "open this locked entry"
   // Dairy / Cold Drink Purchase — a fixed catalog per category, qty + total amount paid
   // per line. Manager enters what they actually paid, not a per-unit price they'd have
   // to calculate themselves — price/unit is derived (amount ÷ qty). Purely a record for
@@ -11450,7 +11587,7 @@ const OutletMgr = ({ onBack }) => {
     setDcLoading(true);
     api.getPurchases({ outlet_id: outlet, date: selectedDate })
       .then((rows) => {
-        const existing = (rows || []).find((p) => (p.items || []).some((i) => ["dairy_purchase", "cold_drink_purchase", "cold_drink_purchase_none"].includes(i.type))) || null;
+        const existing = (rows || []).find((p) => (p.items || []).some((i) => ["dairy_purchase", "cold_drink_purchase", "cold_drink_purchase_none", "other_purchase"].includes(i.type))) || null;
         setDcExisting(existing);
         setDcEditing(!existing);
         setDcColdDrinkSkipped((existing?.items || []).some((i) => i.type === "cold_drink_purchase_none"));
@@ -11483,7 +11620,7 @@ const OutletMgr = ({ onBack }) => {
   // real Cold Drink values (those always take priority over a stale flag).
   const submitDcPurchase = async (forceColdDrinkSkip = false) => {
     const allItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items.map((i) => ({ ...i, cat: c.id })));
-    let filled = allItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0);
+    let filled = allItems.filter((i) => dcLineFilled(i, dcQty[i.id], dcAmount[i.id]));
     let effectiveSkip;
     if (forceColdDrinkSkip) {
       filled = filled.filter((i) => i.cat !== "cold_drink");
@@ -11495,7 +11632,7 @@ const OutletMgr = ({ onBack }) => {
     if (filled.length === 0 && !effectiveSkip) { alert("Fill qty and amount for at least 1 item"); return; }
     setDcSaving(true); setErr(null);
     try {
-      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: i.cat === "dairy" ? "dairy_purchase" : "cold_drink_purchase" }));
+      const apiItems = filled.map((i) => ({ item_name: i.name, quantity: i.amountOnly ? 0 : Number(dcQty[i.id]), unit: i.unit, amount: Number(dcAmount[i.id]), vendor: null, type: dcLineType(i.cat) }));
       if (effectiveSkip) apiItems.push({ item_name: "Not purchased today", quantity: 0, unit: "", amount: 0, vendor: null, type: "cold_drink_purchase_none" });
       let result;
       if (dcExisting) {
@@ -12149,7 +12286,9 @@ const OutletMgr = ({ onBack }) => {
       Promise.all([
         api.getOutletSales({ outlet_id: outlet, date: selectedDate }).catch(() => []),
         api.getLatestCash(outlet, selectedDate).catch(() => null),
-      ]).then(([sales, prev]) => {
+        api.checkMySalesUnlock(outlet, selectedDate).catch(() => null),
+      ]).then(([sales, prev, unlock]) => {
+        setSalesUnlocked(!!unlock?.granted);
         if (sales && sales.length > 0) {
           const s = sales[0];
           setSalesData({ total_sale: s.total_sale || "", swiggy_sale: s.swiggy_sale || "", zomato_sale: s.zomato_sale || "", other_delivery_sale: s.other_delivery_sale || "", cancelled_orders: s.cancelled_orders || "", complimentary_amount: s.complimentary_amount || "", complimentary_reason: s.complimentary_reason || "", zomato_district: s.zomato_district || "", upi_collected: s.upi_collected || "", cash_collected: s.cash_collected || "", cash_expense: s.cash_expense || "", cash_expense_note: s.cash_expense_note || "", cash_deposited: s.cash_deposited || "", cash_deposited_to: s.cash_deposited_by || "", notes: s.notes || "" });
@@ -12188,9 +12327,12 @@ const OutletMgr = ({ onBack }) => {
     // merely any row: the sales POST stamps submitted_at + total_sale, whereas a row created
     // only by an owner's cash-collection has neither — so a collection-only day stays open
     // for the manager to still submit sales. Owner can always edit, for legitimate corrections.
+    // ...unless the owner has granted a one-shot unlock for this outlet+date ("open a
+    // locked sales entry", the sales analogue of "ordering open"). It lifts the lock for a
+    // single correction and is consumed by the backend on the next submit, re-locking the day.
     const isOwner = currentUser?.role === "owner";
     const salesSubmitted = !!(existingData && (existingData.submitted_at || existingData.total_sale != null));
-    const salesLocked = !isOwner && salesSubmitted;
+    const salesLocked = !isOwner && salesSubmitted && !salesUnlocked;
     const lockedInputStyle = salesLocked ? { background: "#F3F3F1", color: "#9A9A9A", cursor: "not-allowed" } : {};
 
     const submitSales = async () => {
@@ -12306,6 +12448,11 @@ const OutletMgr = ({ onBack }) => {
       {salesLocked && (
         <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11.5, color: "#991B1B", marginBottom: 8, fontWeight: 600 }}>
           🔒 This day's sales are already submitted and locked. Submitted sales can't be changed — contact the owner if a correction is needed.
+        </div>
+      )}
+      {!isOwner && salesSubmitted && salesUnlocked && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 11.5, color: "#166534", marginBottom: 8, fontWeight: 600 }}>
+          🔓 The owner has opened this day for one correction. Fix the figures and submit — it will re-lock after you save.
         </div>
       )}
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
@@ -12821,7 +12968,7 @@ const OutletMgr = ({ onBack }) => {
   if (screen === "dairy_cold_drink") {
     const dcActiveCat = DC_PURCHASE_CATEGORIES.find((c) => c.id === dcCategory) || DC_PURCHASE_CATEGORIES[0];
     const dcAllItems = DC_PURCHASE_CATEGORIES.flatMap((c) => c.items);
-    const dcFilledCount = dcAllItems.filter((i) => Number(dcQty[i.id]) > 0 && Number(dcAmount[i.id]) > 0).length;
+    const dcFilledCount = dcAllItems.filter((i) => dcLineFilled(i, dcQty[i.id], dcAmount[i.id])).length;
     const dcTotal = dcAllItems.reduce((s, i) => s + (Number(dcAmount[i.id]) || 0), 0);
     // The cold_drink_purchase_none sentinel is a bookkeeping marker, not a real line
     // item — excluded from every real-items list/count shown below.
@@ -12847,7 +12994,7 @@ const OutletMgr = ({ onBack }) => {
             {dcRealItems.map((i, idx) => (
               <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: idx < dcRealItems.length - 1 ? "1px solid #F0F0EC" : "none" }}>
                 <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{i.item_name}</span>
-                <span style={{ fontSize: 12, color: "#888" }}>{i.quantity} {i.unit}</span>
+                <span style={{ fontSize: 12, color: "#888" }}>{Number(i.quantity) > 0 ? `${i.quantity} ${i.unit}` : ""}</span>
                 <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono'", minWidth: 60, textAlign: "right" }}>{fmt(i.amount)}</span>
               </div>
             ))}
@@ -12878,15 +13025,19 @@ const OutletMgr = ({ onBack }) => {
         {dcActiveCat.items.map((item) => {
           const qty = Number(dcQty[item.id]) || 0;
           const amount = Number(dcAmount[item.id]) || 0;
-          const perUnit = qty > 0 && amount > 0 ? amount / qty : null;
+          const perUnit = !item.amountOnly && qty > 0 && amount > 0 ? amount / qty : null;
           return (<div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid #F0F0EC" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{item.name}</div>
               {perUnit != null && <div style={{ fontSize: 10, color: "#2563EB", fontWeight: 700 }}>₹{perUnit.toFixed(2)}/{item.unit}</div>}
+              {item.amountOnly && <div style={{ fontSize: 10, color: "#999" }}>Direct amount</div>}
             </div>
-            <input type="number" inputMode="decimal" min="0" placeholder="Qty" value={dcQty[item.id] || ""} onChange={(e) => setDcQty((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
-              style={{ width: 60, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
-            <span style={{ fontSize: 9, color: "#999", width: 22 }}>{item.unit}</span>
+            {/* amountOnly lines (e.g. Porter) have no quantity — just a ₹ amount. */}
+            {!item.amountOnly && (<>
+              <input type="number" inputMode="decimal" min="0" placeholder="Qty" value={dcQty[item.id] || ""} onChange={(e) => setDcQty((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
+                style={{ width: 60, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
+              <span style={{ fontSize: 9, color: "#999", width: 22 }}>{item.unit}</span>
+            </>)}
             <input type="number" inputMode="decimal" min="0" placeholder="₹ Amount" value={dcAmount[item.id] || ""} onChange={(e) => setDcAmount((p) => ({ ...p, [item.id]: Math.max(0, +e.target.value || 0) }))}
               style={{ width: 78, padding: "8px 4px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, textAlign: "center", fontFamily: "inherit", fontWeight: 700 }} />
           </div>);
@@ -18271,18 +18422,41 @@ const MonthlyInventory = () => {
 const DailySalesReport = () => {
   const [date, setDate] = useState(() => today());
   const [rows, setRows] = useState([]);
+  const [unlocks, setUnlocks] = useState([]); // owner's live sales-unlock grants for this date
+  const [busyOutlet, setBusyOutlet] = useState(null);
   const [loading, setLoading] = useState(true);
+  const currentUser = getCurrentUser();
+  const isOwner = currentUser?.role === "owner";
 
   useEffect(() => {
     setLoading(true);
-    api.getOutletSales({ date }) // owner is unscoped → all outlets for the date
-      .then((data) => setRows(data || []))
-      .catch(() => setRows([]))
+    Promise.all([
+      api.getOutletSales({ date }).catch(() => []), // owner is unscoped → all outlets for the date
+      isOwner ? api.getSalesUnlocks({ date }).catch(() => []) : Promise.resolve([]),
+    ]).then(([sales, unl]) => { setRows(sales || []); setUnlocks(unl || []); })
       .finally(() => setLoading(false));
   }, [date]);
 
+  const refreshUnlocks = () => api.getSalesUnlocks({ date }).then((u) => setUnlocks(u || [])).catch(() => {});
+
+  const grantUnlock = async (outletId) => {
+    const reason = window.prompt("Open this day's sales for the manager to make ONE correction.\n\nReason (optional):", "");
+    if (reason === null) return; // cancelled
+    setBusyOutlet(outletId);
+    try { await api.grantSalesUnlock({ outlet_id: outletId, date, reason: reason.trim() || null }); await refreshUnlocks(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyOutlet(null); }
+  };
+  const revokeUnlock = async (id, outletId) => {
+    setBusyOutlet(outletId);
+    try { await api.revokeSalesUnlock(id); await refreshUnlocks(); }
+    catch (e) { alert("Error: " + e.message); }
+    finally { setBusyOutlet(null); }
+  };
+
   const n = (v) => Number(v) || 0;
   const byOutlet = {}; rows.forEach((r) => { byOutlet[r.outlet_id] = r; });
+  const unlockByOutlet = {}; unlocks.forEach((u) => { unlockByOutlet[u.outlet_id] = u; });
 
   const metricsFor = (r) => {
     if (!r) return null;
@@ -18327,16 +18501,34 @@ const DailySalesReport = () => {
             <thead><tr style={{ background: "#FAFAF8" }}>
               <th style={{ ...thS, position: "sticky", left: 0, background: "#FAFAF8" }}>Outlet</th>
               {COLS.map((c) => <th key={c.key} style={{ ...thS, textAlign: "right" }}>{c.label}</th>)}
+              {isOwner && <th style={{ ...thS, textAlign: "center" }}>Lock</th>}
             </tr></thead>
             <tbody>
               {OUTLETS.map((o) => {
-                const m = metricsFor(byOutlet[o.id]);
+                const r = byOutlet[o.id];
+                const m = metricsFor(r);
+                const submitted = !!(r && (r.submitted_at || r.total_sale != null));
+                const unlock = unlockByOutlet[o.id];
+                const busy = busyOutlet === o.id;
                 return (
                   <tr key={o.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
                     <td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", whiteSpace: "nowrap" }}>{o.name}{o.franchise && <span style={{ fontSize: 9, color: "#999", marginLeft: 4 }}>(F)</span>}</td>
                     {COLS.map((c) => (
                       <td key={c.key} style={{ ...tdS, ...num, color: m ? c.color : "#CCC", fontWeight: c.key === "sale" ? 700 : 500 }}>{m ? fmt(m[c.key]) : "—"}</td>
                     ))}
+                    {isOwner && (
+                      <td style={{ ...tdS, textAlign: "center", whiteSpace: "nowrap" }}>
+                        {!submitted ? <span style={{ color: "#CCC" }}>—</span>
+                          : unlock ? (
+                            <span title={unlock.reason || "Opened for one correction"} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#16A34A" }}>🔓 Open</span>
+                              <button onClick={() => revokeUnlock(unlock.id, o.id)} disabled={busy} style={{ padding: "2px 7px", borderRadius: 5, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, fontWeight: 700, color: "#DC2626", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" }}>Revoke</button>
+                            </span>
+                          ) : (
+                            <button onClick={() => grantUnlock(o.id)} disabled={busy} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #BFDBFE", background: "#EFF6FF", fontSize: 11, fontWeight: 700, color: "#2563EB", cursor: busy ? "wait" : "pointer", fontFamily: "inherit" }}>🔓 Open</button>
+                          )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -18344,6 +18536,7 @@ const DailySalesReport = () => {
             <tfoot><tr style={{ background: "#FAFAF8", borderTop: "2px solid #E8E8E4" }}>
               <td style={{ ...tdS, fontWeight: 800, position: "sticky", left: 0, background: "#FAFAF8" }}>Total</td>
               {COLS.map((c) => <td key={c.key} style={{ ...tdS, ...num, fontWeight: 800, color: c.color }}>{fmt(totals[c.key])}</td>)}
+              {isOwner && <td style={tdS} />}
             </tr></tfoot>
           </table>
         </div>
@@ -22093,7 +22286,7 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
       {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
       <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
@@ -22117,6 +22310,7 @@ export default function AnandaCafe() {
           { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
           { id: "monthly_bk_audit", label: "📅 Monthly Store Audit", sub: "Per-item opening, in/out & closing, split by outlet & BK" },
           { id: "outlet_photos", label: "📸 OP/CL/BR", sub: "Daily opening / closing / clean / briefing photos per outlet" },
+          { id: "daily_purchases", label: "🧾 Daily Purchases", sub: "What each outlet bought on a day, by payment mode" },
         ].map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setDodDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
@@ -22246,6 +22440,7 @@ export default function AnandaCafe() {
       {ownerTab === "closing_stock_history" && <ClosingStockHistory />}
       {ownerTab === "wastage_history" && <WastageHistory />}
       {ownerTab === "stock_usage" && <DailyStockUsage />}
+      {ownerTab === "daily_purchases" && <DailyPurchases />}
       {ownerTab === "mgr_perf" && <ManagersPerformance />}
       {ownerTab === "punches" && <MissingPunchesTab />}
       {ownerTab === "attendance" && <AttendanceTab />}

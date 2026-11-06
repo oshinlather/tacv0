@@ -63,6 +63,12 @@ const api = {
   revokeDemandException: (id) => del(`/api/demand-exceptions/${id}`),
   // Outlet-side check — "has the owner opened evening ordering for MY outlet today".
   checkMyDemandException: (outlet_id) => get("/api/demand-exceptions/mine", { outlet_id }),
+  // Owner "open a locked (already-submitted) daily-sales entry" grants — one-shot per
+  // (outlet, date), consumed on the manager's next submit. Mirrors demand exceptions.
+  getSalesUnlocks: (params) => get("/api/sales-unlocks", params),
+  grantSalesUnlock: (data) => post("/api/sales-unlocks", data),
+  revokeSalesUnlock: (id) => del(`/api/sales-unlocks/${id}`),
+  checkMySalesUnlock: (outlet_id, date) => get("/api/sales-unlocks/mine", { outlet_id, date }),
 
   // ── Closing Stock ──
   submitClosingStock: (data) => post("/api/demands/closing-stock", data),
