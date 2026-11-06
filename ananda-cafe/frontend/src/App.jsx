@@ -18559,6 +18559,14 @@ const MonthlySalesMatrix = () => {
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Inline cell editing — the owner can fix a wrong number or fill a missing day's sale right
+  // in this grid. editCell pins the cell being edited; only raw input fields are editable
+  // (computed/derived rows and the cash-ledger-owned aggregates stay read-only — see METRIC_ROWS).
+  const [editCell, setEditCell] = useState(null); // { date, field } | null
+  const [editVal, setEditVal] = useState("");
+  const [cellSaving, setCellSaving] = useState(false);
+  const escRef = useRef(false); // set by Escape so the ensuing blur cancels instead of saving
+  const isOwner = getCurrentUser()?.role === "owner";
 
   const isCurrentMonth = selMonth === today().slice(0, 7);
   const daysInMonth = new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate();
@@ -18566,7 +18574,7 @@ const MonthlySalesMatrix = () => {
   const dates = dayNums.map((d) => `${selMonth}-${String(d).padStart(2, "0")}`).filter((d) => !isCurrentMonth || d <= today());
   const todayDay = Number(today().slice(8, 10));
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!selOutlet) return;
     setLoading(true);
     const lastDate = `${selMonth}-${String(new Date(Number(selMonth.slice(0, 4)), Number(selMonth.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
@@ -18575,6 +18583,7 @@ const MonthlySalesMatrix = () => {
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
   }, [selOutlet, selMonth]);
+  useEffect(load, [load]);
 
   const rowByDate = {}; rows.forEach((r) => { rowByDate[r.date] = r; });
   const n = (v) => Number(v) || 0;
@@ -18597,17 +18606,17 @@ const MonthlySalesMatrix = () => {
   // don't have a meaningful month sum, so they show "—" there instead.
   const METRIC_ROWS = [
     { section: "Sales" },
-    { key: "total_sale", label: "Total Sale (Billing)", get: (c) => n(c.r.total_sale), summable: true },
-    { key: "swiggy_sale", label: "Swiggy", get: (c) => n(c.r.swiggy_sale), summable: true },
-    { key: "zomato_sale", label: "Zomato", get: (c) => n(c.r.zomato_sale), summable: true },
-    { key: "other_delivery_sale", label: "Other Delivery", get: (c) => n(c.r.other_delivery_sale), summable: true },
-    { key: "cancelled_orders", label: "− Cancelled Orders", get: (c) => n(c.r.cancelled_orders), summable: true, color: "#DC2626" },
-    { key: "complimentary_amount", label: "− Complimentary Order", get: (c) => n(c.r.complimentary_amount), summable: true, color: "#DC2626" },
+    { key: "total_sale", label: "Total Sale (Billing)", get: (c) => n(c.r.total_sale), summable: true, field: "total_sale" },
+    { key: "swiggy_sale", label: "Swiggy", get: (c) => n(c.r.swiggy_sale), summable: true, field: "swiggy_sale" },
+    { key: "zomato_sale", label: "Zomato", get: (c) => n(c.r.zomato_sale), summable: true, field: "zomato_sale" },
+    { key: "other_delivery_sale", label: "Other Delivery", get: (c) => n(c.r.other_delivery_sale), summable: true, field: "other_delivery_sale" },
+    { key: "cancelled_orders", label: "− Cancelled Orders", get: (c) => n(c.r.cancelled_orders), summable: true, color: "#DC2626", field: "cancelled_orders" },
+    { key: "complimentary_amount", label: "− Complimentary Order", get: (c) => n(c.r.complimentary_amount), summable: true, color: "#DC2626", field: "complimentary_amount" },
     { key: "store_sale", label: "🏪 Store Sale", get: (c) => c.storeSale, summable: true, bold: true, color: "#16A34A" },
     { section: "Payment (Store Sale)" },
-    { key: "upi_collected", label: "UPI Collected", get: (c) => n(c.r.upi_collected), summable: true },
-    { key: "cash_collected", label: "Cash Collected", get: (c) => n(c.r.cash_collected), summable: true },
-    { key: "zomato_district", label: "− Paid by Zomato District", get: (c) => n(c.r.zomato_district), summable: true, color: "#7C3AED" },
+    { key: "upi_collected", label: "UPI Collected", get: (c) => n(c.r.upi_collected), summable: true, field: "upi_collected" },
+    { key: "cash_collected", label: "Cash Collected", get: (c) => n(c.r.cash_collected), summable: true, field: "cash_collected" },
+    { key: "zomato_district", label: "− Paid by Zomato District", get: (c) => n(c.r.zomato_district), summable: true, color: "#7C3AED", field: "zomato_district" },
     { key: "payment_diff", label: "Match Diff (Store Sale − Payment)", get: (c) => c.paymentDiff, summable: false, color: (v) => v === 0 ? "#16A34A" : "#DC2626" },
     { section: "Cash Management" },
     { key: "prev_day_cash", label: "Previous Day Cash", get: (c) => n(c.r.prev_day_cash), summable: false },
@@ -18626,10 +18635,52 @@ const MonthlySalesMatrix = () => {
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const cellStyle = { padding: "6px 5px", textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontSize: 10, whiteSpace: "nowrap" };
 
+  // A cell is editable only for the owner, only on a raw-input field (m.field), and only up to
+  // today (no future days). The backend already lets the owner rewrite a locked past day.
+  const cellEditable = (m, date) => isOwner && !!m.field && date <= today();
+  const startEdit = (m, date, currentVal) => { setEditCell({ date, field: m.field }); setEditVal(currentVal === 0 ? "0" : String(currentVal ?? "")); };
+  const cancelEdit = () => { setEditCell(null); setEditVal(""); };
+  const prevDateStr = (date) => { const dt = new Date(date); dt.setDate(dt.getDate() - 1); return dt.toISOString().split("T")[0]; };
+  // Save one edited field by re-submitting the whole day's sales row (existing values carried,
+  // the one field overridden) through the normal daily-sales endpoint — so its cash cascade,
+  // previous-day-lock exemption and logging all apply exactly as a manual edit would. A missing
+  // day (no row yet) is created, seeding its opening from the prior day's closing in this grid.
+  const saveCell = async (field, rawVal) => {
+    if (!editCell) return;
+    const { date } = editCell;
+    const r = rowByDate[date] || {};
+    const isNew = !rowByDate[date];
+    const seededPrev = r.prev_day_cash != null ? n(r.prev_day_cash) : (computed(prevDateStr(date))?.closingCash ?? 0);
+    const payload = {
+      outlet_id: selOutlet, date,
+      total_sale: n(r.total_sale), swiggy_sale: n(r.swiggy_sale), zomato_sale: n(r.zomato_sale),
+      other_delivery_sale: n(r.other_delivery_sale), cancelled_orders: n(r.cancelled_orders),
+      complimentary_amount: n(r.complimentary_amount), complimentary_reason: r.complimentary_reason || null,
+      zomato_district: n(r.zomato_district), upi_collected: n(r.upi_collected), cash_collected: n(r.cash_collected),
+      prev_day_cash: isNew ? seededPrev : n(r.prev_day_cash),
+      cash_expense: n(r.cash_expense), cash_expense_note: r.cash_expense_note || null,
+      // cash_deposited is a derived aggregate (Cash Ledger) — the backend carries it forward;
+      // sending the current value keeps this submit from disturbing it.
+      cash_deposited: n(r.cash_deposited), cash_deposited_to: r.cash_deposited_by || null,
+      submitted_by: getCurrentUser()?.name || "owner", notes: r.notes || null,
+      [field]: Math.max(0, Number(rawVal) || 0),
+    };
+    setCellSaving(true);
+    try {
+      await api.submitOutletSales(payload);
+      cancelEdit();
+      load();
+    } catch (e) { alert("Error saving: " + e.message); }
+    finally { setCellSaving(false); }
+  };
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📅 Monthly Sales — {outletName}</h3>
+        <div>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>📅 Monthly Sales — {outletName}</h3>
+          {isOwner && <div style={{ fontSize: 10.5, color: "#999", marginTop: 2 }}>✏️ Tap any sales/payment cell to edit — fix a wrong number or fill a missing day. Store Sale, Closing Cash, Cash Deposited & Bill are calculated/ledger-managed and stay read-only.</div>}
+        </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <select value={selOutlet || ""} onChange={(e) => setSelOutlet(e.target.value)} style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #E0E0DC", fontSize: 11, fontFamily: "inherit", background: "#fff" }}>
             {OUTLETS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -18681,11 +18732,33 @@ const MonthlySalesMatrix = () => {
                     {dayNums.map((d) => {
                       const date = `${selMonth}-${String(d).padStart(2, "0")}`;
                       const c = computed(date);
-                      if (!c) return <td key={d} style={{ ...cellStyle, color: "#EEE" }}>—</td>;
+                      const editable = cellEditable(m, date);
+                      const isEditing = editCell && editCell.date === date && editCell.field === m.field;
+                      const todayBg = isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent";
+                      if (isEditing) {
+                        return (
+                          <td key={d} style={{ ...cellStyle, padding: 2, background: "#FFFBEB" }}>
+                            <input type="number" inputMode="decimal" autoFocus value={editVal} disabled={cellSaving}
+                              onChange={(e) => setEditVal(e.target.value)}
+                              onBlur={() => { if (escRef.current) { escRef.current = false; cancelEdit(); } else saveCell(m.field, editVal); }}
+                              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); else if (e.key === "Escape") { escRef.current = true; e.currentTarget.blur(); } }}
+                              style={{ width: 40, padding: "3px 2px", borderRadius: 4, border: "1px solid #2563EB", fontSize: 10, textAlign: "right", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700 }} />
+                          </td>
+                        );
+                      }
+                      if (!c) {
+                        // No sales row yet for this day — the owner can click an editable field to
+                        // create it (fill a missing day); everything else just shows a dash.
+                        return <td key={d} onClick={editable ? () => startEdit(m, date, "") : undefined}
+                          title={editable ? "Add" : undefined}
+                          style={{ ...cellStyle, color: editable ? "#BBB" : "#EEE", cursor: editable ? "pointer" : "default", background: todayBg }}>{editable ? "+" : "—"}</td>;
+                      }
                       const v = m.get(c);
                       const vColor = typeof m.color === "function" ? m.color(v) : m.color;
                       return (
-                        <td key={d} style={{ ...cellStyle, fontWeight: m.bold ? 700 : 500, background: isCurrentMonth && d === todayDay ? "#FFFDF5" : "transparent", color: vColor || "#333" }}>{Math.round(v)}</td>
+                        <td key={d} onClick={editable ? () => startEdit(m, date, Math.round(v)) : undefined}
+                          title={editable ? "Tap to edit" : undefined}
+                          style={{ ...cellStyle, fontWeight: m.bold ? 700 : 500, background: todayBg, color: vColor || "#333", cursor: editable ? "pointer" : "default", textDecoration: editable ? "underline dotted #D0D0CC" : "none" }}>{Math.round(v)}</td>
                       );
                     })}
                   </tr>
