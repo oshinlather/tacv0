@@ -210,7 +210,8 @@ export const DEMAND_SECTIONS = [
       { id: "paneer", name: "Paneer", unit: "Kg" },
       { id: "amul_cream", name: "Amul Cream", unit: "Kg" },
       { id: "dahi", name: "Dahi", unit: "Kg" },
-      { id: "milk", name: "Milk", unit: "Ltr" },
+      { id: "full_cream_milk", name: "Full Cream Milk", unit: "Ltr" },
+      { id: "toned_milk", name: "Toned Milk", unit: "Ltr" },
     ]},
   { id: "vegetable", titleHi: "Vegetables", emoji: "🥬", color: "#16A34A", bg: "#F0FDF4", border: "#BBF7D0",
     items: [
@@ -22124,7 +22125,8 @@ export default function AnandaCafe() {
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
-  const [dodDropdown, setDodDropdown] = useState(false); // "DOD" — RM Audit/Stock/Demands/Closing Stock/Wastage grouped under one pill
+  const [dodDropdown, setDodDropdown] = useState(false); // "DOD" — Daily Purchases/Demands/Closing/Wastage/Challans
+  const [othersDropdown, setOthersDropdown] = useState(false); // "Others" — the rest that used to live under DOD (RM Audit/Stock/perf/attendance/roster/…)
   const [franchiseDropdown, setFranchiseDropdown] = useState(false); // Franchise Billing/Rate Card/Rate Alert/Franchise Settings — Rate Card/Alert/Settings moved out of the PIN-gated Audit dropdown, so no auditUnlocked check here
   // The 5 nav dropdowns (DOD/Franchise Billing/BK & Store/Payments/Audit) all used to render
   // at a hardcoded `left: 50%` of the viewport regardless of which tab opened them — looked
@@ -22141,6 +22143,7 @@ export default function AnandaCafe() {
   const bkBtnRef = useRef(null);
   const paymentsBtnRef = useRef(null);
   const auditBtnRef = useRef(null);
+  const othersBtnRef = useRef(null);
   const anchorDropdown = (btnRef) => {
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
@@ -22151,6 +22154,28 @@ export default function AnandaCafe() {
   };
   const AUDIT_TABS = ["master", "packaging", "iss_audit", "inv_monthly", "recipes", "pp_recipes", "dish_cost", "users", "employees", "payroll", "corrections", "system_logs", "move_date"];
   const AUDIT_PIN = "5502";
+  // DOD keeps the daily operational views; everything else that used to be grouped under it
+  // moved to a catch-all "Others" dropdown. Both menus share the same render/highlight logic.
+  const DOD_MENU = [
+    { id: "daily_purchases", label: "🧾 Daily Purchases", sub: "What each outlet bought on a day, by payment mode" },
+    { id: "demands", label: "📋 Demands", sub: "Last 7 days, AM/PM split" },
+    { id: "closing_stock_history", label: "📊 Closing Stock", sub: "History across outlets" },
+    { id: "wastage_history", label: "🗑️ Wastage", sub: "History across outlets" },
+    { id: "challans", label: "🧾 Challans", sub: "Demand vs dispatch vs verified" },
+  ];
+  const OTHERS_MENU = [
+    { id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
+    { id: "stock_usage", label: "📦 Stock", sub: "Daily stock usage" },
+    { id: "mgr_perf", label: "🏆 Managers Performance", sub: "Cross-outlet manager scorecard" },
+    { id: "punches", label: "🔔 Missing Punches", sub: "Owner nudge tool, own outlets" },
+    { id: "attendance", label: "👥 Attendance", sub: "Daily attendance & monthly payroll" },
+    { id: "roster", label: "🗓️ Roster", sub: "Shifts, positions & breaks per employee" },
+    { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
+    { id: "monthly_bk_audit", label: "📅 Monthly Store Audit", sub: "Per-item opening, in/out & closing, split by outlet & BK" },
+    { id: "outlet_photos", label: "📸 OP/CL/BR", sub: "Daily opening / closing / clean / briefing photos per outlet" },
+  ];
+  const DOD_TABS = DOD_MENU.map((t) => t.id);
+  const OTHERS_TABS = OTHERS_MENU.map((t) => t.id);
   const [auditUnlocked, setAuditUnlocked] = useState(() => { try { return sessionStorage.getItem("audit_unlocked") === "1"; } catch (e) { return false; } });
   const [auditPinPrompt, setAuditPinPrompt] = useState(false);
   const [auditPinInput, setAuditPinInput] = useState("");
@@ -22285,34 +22310,33 @@ export default function AnandaCafe() {
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 50 }}>{!urlRole && <BackBtn onClick={() => setApp("launcher")} />}<div style={{ flex: 1 }}><div style={{ fontSize: 16, fontWeight: 800 }}>👑 Owner Dashboard</div><div style={{ fontSize: 11, color: "#999" }}>The Ananda Cafe{currentUser ? ` · ${currentUser.name}` : ""}</div></div>{currentUser && <button onClick={doLogout} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #FECACA", background: "#FEF2F2", fontSize: 10, color: "#DC2626", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Logout</button>}</div>
     <div style={{ background: "#fff", borderBottom: "1px solid #E8E8E4", position: "sticky", top: 52, zIndex: 49 }}>
       <div style={{ padding: "0 18px", display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-      {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
-      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? 700 : 500, color: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["audit","stock_usage","demands","closing_stock_history","wastage_history","mgr_perf","punches","attendance","roster","challans","demand_vs_closing","monthly_bk_audit","outlet_photos","daily_purchases"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
-      <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
-      <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
-      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
-      <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
+      {[{ id: "home", label: "🏠 Home" }, { id: "pnl", label: "💰 P&L" }, { id: "finance", label: "💵 Finance" }, { id: "sales", label: "📤 Sales" }, { id: "reviews", label: "⭐ Reviews" }].map((t) => (<button key={t.id} onClick={() => { setOwnerTab(t.id); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
+      <button ref={dodBtnRef} onClick={() => { anchorDropdown(dodBtnRef); setDodDropdown(!dodDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: DOD_TABS.includes(ownerTab) ? 700 : 500, color: DOD_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: DOD_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📋 DOD ▾</button>
+      <button ref={othersBtnRef} onClick={() => { anchorDropdown(othersBtnRef); setOthersDropdown(!othersDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: OTHERS_TABS.includes(ownerTab) ? 700 : 500, color: OTHERS_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: OTHERS_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>📂 Others ▾</button>
+      <button ref={franchiseBtnRef} onClick={() => { anchorDropdown(franchiseBtnRef); setFranchiseDropdown(!franchiseDropdown); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? 700 : 500, color: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["franchise_billing","franchise_pricing","rate_card","rate_alert","franchise_settings"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🧾 Franchise Billing ▾</button>
+      <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
+      <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </div>
     </div>
     {/* DOD Dropdown */}
     {dodDropdown && (<>
       <div onClick={() => setDodDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
       <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
-        {[{ id: "audit", label: "🔍 RM Audit", sub: "Theoretical vs actual consumption" },
-          { id: "stock_usage", label: "📦 Stock", sub: "Daily stock usage" },
-          { id: "demands", label: "📋 Demands", sub: "Last 7 days, AM/PM split" },
-          { id: "closing_stock_history", label: "📊 Closing Stock", sub: "History across outlets" },
-          { id: "wastage_history", label: "🗑️ Wastage", sub: "History across outlets" },
-          { id: "mgr_perf", label: "🏆 Managers Performance", sub: "Cross-outlet manager scorecard" },
-          { id: "punches", label: "🔔 Missing Punches", sub: "Owner nudge tool, own outlets" },
-          { id: "attendance", label: "👥 Attendance", sub: "Daily attendance & monthly payroll" },
-          { id: "roster", label: "🗓️ Roster", sub: "Shifts, positions & breaks per employee" },
-          { id: "challans", label: "🧾 Challans", sub: "Demand vs dispatch vs verified" },
-          { id: "demand_vs_closing", label: "📦 Demand vs Closing", sub: "What to order right now" },
-          { id: "monthly_bk_audit", label: "📅 Monthly Store Audit", sub: "Per-item opening, in/out & closing, split by outlet & BK" },
-          { id: "outlet_photos", label: "📸 OP/CL/BR", sub: "Daily opening / closing / clean / briefing photos per outlet" },
-          { id: "daily_purchases", label: "🧾 Daily Purchases", sub: "What each outlet bought on a day, by payment mode" },
-        ].map((t) => (
+        {DOD_MENU.map((t) => (
           <button key={t.id} onClick={() => { setOwnerTab(t.id); setDodDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
+            <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
+            <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
+          </button>
+        ))}
+      </div>
+    </>)}
+    {/* Others Dropdown — the views moved out of DOD */}
+    {othersDropdown && (<>
+      <div onClick={() => setOthersDropdown(false)} style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 998, background: "rgba(0,0,0,0.1)" }} />
+      <div style={{ position: "fixed", top: dropdownAnchor.top, left: dropdownAnchor.left, background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", boxShadow: "0 8px 24px rgba(0,0,0,0.15)", zIndex: 999, minWidth: 240, maxWidth: DROPDOWN_MENU_W, maxHeight: `calc(100vh - ${dropdownAnchor.top + 16}px)`, overflowY: "auto", overscrollBehavior: "contain", padding: "6px 0" }}>
+        {OTHERS_MENU.map((t) => (
+          <button key={t.id} onClick={() => { setOwnerTab(t.id); setOthersDropdown(false); }} style={{ width: "100%", padding: "10px 16px", border: "none", background: ownerTab === t.id ? "#F5F5F3" : "transparent", textAlign: "left", cursor: "pointer", fontFamily: "inherit", display: "block" }}>
             <div style={{ fontSize: 13, fontWeight: ownerTab === t.id ? 700 : 500, color: ownerTab === t.id ? "#1A1A1A" : "#555" }}>{t.label}</div>
             <div style={{ fontSize: 10, color: "#999", marginTop: 1 }}>{t.sub}</div>
           </button>
