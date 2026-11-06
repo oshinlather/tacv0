@@ -12182,13 +12182,15 @@ const OutletMgr = ({ onBack }) => {
     const existingCashExpense = n(salesData.cash_expense);
     const closingCash = prevCash + cash - existingCashExpense - n(existingData?.cash_deposited);
 
-    // Managers may not change an already-submitted previous day's sales — once a past date
-    // has a record, it's frozen to them (prevents quietly editing yesterday's numbers after
-    // the fact). Still editable: today (same-day corrections) and a past day with no record
-    // yet (late first submission / the pre-6am "closing out yesterday" flow). The owner can
-    // always edit, to make legitimate corrections.
+    // Managers get exactly ONE sales submission per date: the moment sales are submitted
+    // the form freezes to them, irrespective of the day (today included — no same-day
+    // re-editing after submitting). "Submitted" means a real sales submission exists, not
+    // merely any row: the sales POST stamps submitted_at + total_sale, whereas a row created
+    // only by an owner's cash-collection has neither — so a collection-only day stays open
+    // for the manager to still submit sales. Owner can always edit, for legitimate corrections.
     const isOwner = currentUser?.role === "owner";
-    const salesLocked = !isOwner && !!existingData && selectedDate < today();
+    const salesSubmitted = !!(existingData && (existingData.submitted_at || existingData.total_sale != null));
+    const salesLocked = !isOwner && salesSubmitted;
     const lockedInputStyle = salesLocked ? { background: "#F3F3F1", color: "#9A9A9A", cursor: "not-allowed" } : {};
 
     const submitSales = async () => {
@@ -12303,7 +12305,7 @@ const OutletMgr = ({ onBack }) => {
 
       {salesLocked && (
         <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11.5, color: "#991B1B", marginBottom: 8, fontWeight: 600 }}>
-          🔒 This day's sales are already submitted and locked. Previous-day sales can't be changed — contact the owner if a correction is needed.
+          🔒 This day's sales are already submitted and locked. Submitted sales can't be changed — contact the owner if a correction is needed.
         </div>
       )}
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
