@@ -22130,8 +22130,10 @@ export default function AnandaCafe() {
     } catch (e) {}
     return "launcher";
   });
-  // CEO lands on Challans (its nav only exposes the DOD dropdown); everyone else on Home.
-  const [ownerTab, setOwnerTab] = useState(() => getCurrentUser()?.ceo ? "challans" : "home");
+  // CEO lands on the Cash section (its nav exposes only the DOD + Payments dropdowns);
+  // everyone else on Home. (Also enforced by an effect below for the login-without-reload
+  // case, where this initializer has already run under the previous session.)
+  const [ownerTab, setOwnerTab] = useState(() => getCurrentUser()?.ceo ? "cash_ledger" : "home");
   const [bkDropdown, setBkDropdown] = useState(false);
   const [auditDropdown, setAuditDropdown] = useState(false);
   const [paymentsDropdown, setPaymentsDropdown] = useState(false);
@@ -22213,6 +22215,12 @@ export default function AnandaCafe() {
       else if (currentUser.role === "franchise") setApp("franchise");
     }
   }, [currentUser]);
+
+  // CEO lands on the Cash section. The ownerTab useState initializer only covers a fresh page
+  // load that's ALREADY a CEO session; when Oshin logs in without a reload (same component
+  // instance, initializer long since run under her prior owner session) ownerTab is still
+  // "home", so force it here the moment the ceo flag flips on.
+  useEffect(() => { if (currentUser?.ceo) setOwnerTab("cash_ledger"); }, [currentUser?.ceo]);
 
   // Outlet managers and drivers are locked to their own module — no back button, no
   // launcher, and no reaching another module via a stray setApp call or a hand-typed
