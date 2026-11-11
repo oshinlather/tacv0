@@ -2705,20 +2705,12 @@ router.post('/outlet-sales', async (req, res) => {
     // sales form (which pre-fills whatever is already in the DB) would silently
     // overwrite an owner/store-manager's collection record with their own name.
     const { data: existing } = await supabase.from('daily_outlet_sales')
-      .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by, submitted_at, total_sale').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
-    // Previous-day lock: the day closes to a manager AFTER their one real sales submission, NOT
-    // on the calendar day changing. "Submitted" = a row with submitted_at or a total_sale, same
-    // as the UI's salesSubmitted — NOT merely any row. This matters because an owner cash
-    // collection (or the cash cascade) can create a daily_outlet_sales row with neither field;
-    // keying the lock off `existing` alone meant that after midnight such a collection-only row
-    // blocked the manager's FIRST real sales submission for the day that just ended (restaurants
-    // close past 12am). So lock only when real sales were already submitted. Owner always edits;
-    // a one-shot sales unlock lifts it for a single correction. IST = UTC+5:30.
-    const salesAlreadySubmitted = !!(existing && (existing.submitted_at || existing.total_sale != null));
-    const istTodayStr = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-    if (_user.role !== 'owner' && salesAlreadySubmitted && date < istTodayStr && !(await hasSalesUnlock(outlet_id, date))) {
-      return res.status(403).json({ error: "Previous-day sales are locked — contact the owner to make a correction." });
-    }
+      .select('cash_deposited, cash_collected, cash_expense, cash_bill_collected, cash_bill_collected_by').eq('outlet_id', outlet_id).eq('date', date).maybeSingle();
+    // Previous-day lock REMOVED — outlet managers can submit/edit any date freely. The lock
+    // (one submission then frozen, past days owner-only) kept catching legitimate late closes
+    // past midnight and collection-only rows, causing more trouble than it was worth. Sales
+    // edits are audited via daily_sales_logs regardless. (sales_unlocks infra is left in place
+    // but inert; nothing grants/needs an unlock now.)
     // Bill-backed collections AND cash-deposit collections are each owned by their own
     // append-table endpoints — this full-row upsert must carry BOTH forward verbatim, or
     // re-saving the sales form would wipe the summed entries. cash_deposited is now a derived
@@ -2738,12 +2730,6 @@ router.post('/outlet-sales', async (req, res) => {
     const { data, error } = await supabase.from('daily_outlet_sales').upsert(record, { onConflict: 'outlet_id,date' });
 
     if (error) throw error;
-    // Consume a one-shot owner unlock, if one was live for this day — the correction has
-    // landed, so re-lock the day. Owner submits never create/consume an unlock (they're
-    // never locked). Best-effort: a failed delete must not fail the sales write.
-    if (_user.role !== 'owner') {
-      try { await supabase.from('sales_unlocks').delete().eq('outlet_id', outlet_id).eq('date', date); } catch (e) { /* non-fatal */ }
-    }
     if (closingChanged) await cascadeCashForward(supabase, outlet_id, date);
     // Log to the Cash Ledger history: first submission, or an edit that changed the cash
     // figures (other field edits aren't cash-relevant and are left off the cash history).

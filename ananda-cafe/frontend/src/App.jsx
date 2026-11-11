@@ -12341,19 +12341,15 @@ const OutletMgr = ({ onBack }) => {
     const existingCashExpense = n(salesData.cash_expense);
     const closingCash = prevCash + cash - existingCashExpense - n(existingData?.cash_deposited);
 
-    // Managers get exactly ONE sales submission per date: the moment sales are submitted
-    // the form freezes to them, irrespective of the day (today included — no same-day
-    // re-editing after submitting). "Submitted" means a real sales submission exists, not
-    // merely any row: the sales POST stamps submitted_at + total_sale, whereas a row created
-    // only by an owner's cash-collection has neither — so a collection-only day stays open
-    // for the manager to still submit sales. Owner can always edit, for legitimate corrections.
-    // ...unless the owner has granted a one-shot unlock for this outlet+date ("open a
-    // locked sales entry", the sales analogue of "ordering open"). It lifts the lock for a
-    // single correction and is consumed by the backend on the next submit, re-locking the day.
+    // Sales lock REMOVED — managers can submit and re-edit a day's sales freely (any date),
+    // same as the owner. The old "one submission then frozen" rule caused more trouble than it
+    // prevented (late midnight closes, collection-only rows). Edits stay audited via the Cash
+    // Ledger's per-date history. salesLocked is kept as a const (wired through the inputs) so the
+    // rest of this screen is untouched — it's just always false now.
     const isOwner = currentUser?.role === "owner";
     const salesSubmitted = !!(existingData && (existingData.submitted_at || existingData.total_sale != null));
-    const salesLocked = !isOwner && salesSubmitted && !salesUnlocked;
-    const lockedInputStyle = salesLocked ? { background: "#F3F3F1", color: "#9A9A9A", cursor: "not-allowed" } : {};
+    const salesLocked = false;
+    const lockedInputStyle = {};
 
     const submitSales = async () => {
       if (salesLocked) return;
@@ -12465,14 +12461,9 @@ const OutletMgr = ({ onBack }) => {
 
       <input value={salesData.notes} disabled={salesLocked} onChange={(e) => setSalesData((p) => ({ ...p, notes: e.target.value }))} placeholder="Notes..." style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: salesLocked ? "#F3F3F1" : "#fff", marginBottom: 8, boxSizing: "border-box" }} />
 
-      {salesLocked && (
-        <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 11.5, color: "#991B1B", marginBottom: 8, fontWeight: 600 }}>
-          🔒 This day's sales are already submitted and locked. Submitted sales can't be changed — contact the owner if a correction is needed.
-        </div>
-      )}
-      {!isOwner && salesSubmitted && salesUnlocked && (
-        <div style={{ padding: "10px 12px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0", fontSize: 11.5, color: "#166534", marginBottom: 8, fontWeight: 600 }}>
-          🔓 The owner has opened this day for one correction. Fix the figures and submit — it will re-lock after you save.
+      {salesSubmitted && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 11.5, color: "#1D4ED8", marginBottom: 8, fontWeight: 600 }}>
+          ✏️ Already submitted for this day — you can edit the figures above and save again.
         </div>
       )}
       <div style={{ position: "sticky", bottom: 0, padding: "8px 0", background: "linear-gradient(transparent, #FAF9F6 20%)", zIndex: 10 }}>
