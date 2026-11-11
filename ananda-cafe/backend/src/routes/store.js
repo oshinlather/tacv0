@@ -25,9 +25,16 @@ async function gate(req, res) {
 // which is the source of truth. Pass { itemId, locationId } to limit the rebuild to one
 // row (used after a single new movement); call with no args to rebuild everything (used
 // for an admin/repair pass).
-async function rebuildStockBalances({ itemId, locationId } = {}) {
+// Rebuild the cached balance for one item, a BATCH of items (itemIds), or everything.
+// Prefer the batch form: receiving/dispatching a challan touches many items, and rebuilding
+// them one-at-a-time was the main slowness — each per-item call is its own SELECT+upsert
+// round-trip to the DB, so an M-item challan meant ~2M sequential round-trips (and it got
+// worse as stock_movements grew). Passing itemIds does it in a single SELECT + single upsert.
+async function rebuildStockBalances({ itemId, itemIds, locationId } = {}) {
+  const ids = itemIds && itemIds.length ? [...new Set(itemIds)] : (itemId ? [itemId] : null);
+  if (ids && ids.length === 0) return 0; // nothing to rebuild (empty batch)
   let query = supabase.from("stock_movements").select("item_id, location_id, qty_delta, id, created_at");
-  if (itemId) query = query.eq("item_id", itemId);
+  if (ids) query = query.in("item_id", ids);
   if (locationId) query = query.eq("location_id", locationId);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
@@ -236,7 +243,7 @@ router.post("/adjust-batch", async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   const uniqueItemIds = [...new Set(validItems.map((i) => i.item_id))];
-  for (const itemId of uniqueItemIds) await rebuildStockBalances({ itemId, locationId: location_id });
+  await rebuildStockBalances({ itemIds: uniqueItemIds, locationId: location_id });
 
   // Surface anything that went negative — same courtesy the old batched Stock Out gave,
   // so a physical-count problem gets caught same-day rather than drifting silently.

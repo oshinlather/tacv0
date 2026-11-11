@@ -117,7 +117,11 @@ async function ingestPrices(entries, { effectiveDate, source, sourceId, createdB
   const { data: convRows } = await supabase.from("unit_conversions").select("item_id, unit_type, qty, base_unit").in("item_id", rcIds).eq("active", true);
   const convByItem = {}; (convRows || []).forEach((c) => { (convByItem[c.item_id] = convByItem[c.item_id] || []).push(c); });
 
-  let written = 0;
+  // Build every ledger row first, then write them in ONE insert + mirror rate_card.price in
+  // ONE grouped pass. The old code did INSERT + SELECT-latest + UPDATE serialized PER line
+  // (via appendRateCardPrice) — a 3×N round-trip N+1 that made a multi-line vendor-challan
+  // receive slow. Same end state, a handful of round-trips instead of 3 per item.
+  const toInsert = [];
   for (const e of writable) {
     const rcU = rcUnit[e.rateCardId];
     const priced = bridgePriceToRcUnit(Number(e.price), e.priceUnit, rcU, convByItem[e.rateCardId]);
@@ -125,10 +129,25 @@ async function ingestPrices(entries, { effectiveDate, source, sourceId, createdB
       skipped.push({ label: e.label || e.rateCardId, reason: `unit ${e.priceUnit || "?"} != rate card ${rcU || "?"} (no conversion recorded)` });
       continue;
     }
-    await appendRateCardPrice({ rateCardId: e.rateCardId, effectiveDate, price: Number(priced.toFixed(4)), source, sourceId, createdBy });
-    written++;
+    toInsert.push({
+      rate_card_id: e.rateCardId, effective_date: effectiveDate, price: Number(priced.toFixed(4)),
+      source, source_id: sourceId != null ? String(sourceId) : null, created_by: createdBy || null,
+    });
   }
-  return { written, skipped };
+  if (!toInsert.length) return { written: 0, skipped };
+  const { error: insErr } = await supabase.from("rate_card_prices").insert(toInsert);
+  if (insErr) throw insErr;
+  // Mirror rate_card.price to the latest-effective ledger row for each affected rate card:
+  // one query to find latest-per-id, then concurrent per-id updates (distinct ids → no races).
+  const affectedRcIds = [...new Set(toInsert.map((r) => r.rate_card_id))];
+  const { data: latestRows } = await supabase.from("rate_card_prices")
+    .select("rate_card_id, price, effective_date, created_at").in("rate_card_id", affectedRcIds)
+    .order("effective_date", { ascending: false }).order("created_at", { ascending: false });
+  const latestByRc = {};
+  (latestRows || []).forEach((r) => { if (!(r.rate_card_id in latestByRc)) latestByRc[r.rate_card_id] = Number(r.price); });
+  await Promise.all(affectedRcIds.filter((id) => id in latestByRc)
+    .map((id) => supabase.from("rate_card").update({ price: latestByRc[id] }).eq("id", id)));
+  return { written: toInsert.length, skipped };
 }
 
 // Undoes appendRateCardPrice's write when its source document (a vendor challan, a legacy

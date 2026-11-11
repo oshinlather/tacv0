@@ -150,9 +150,8 @@ router.post("/counts/:id/submit", async (req, res) => {
   if (movements.length) {
     const { error: mvErr } = await supabase.from("stock_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
     if (mvErr) return res.status(500).json({ error: mvErr.message });
-    for (const itemId of new Set(movements.map((m) => m.item_id))) {
-      await rebuildStockBalances({ itemId, locationId: count.location_id });
-    }
+    // One batched rebuild for all counted items (single SELECT + upsert) vs a per-item loop.
+    await rebuildStockBalances({ itemIds: movements.map((m) => m.item_id), locationId: count.location_id });
   }
 
   const { data: updated, error: updErr } = await supabase.from("stock_counts")

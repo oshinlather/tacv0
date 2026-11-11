@@ -271,6 +271,7 @@ router.patch("/challans/:id/items", async (req, res) => {
   if (!items || !Object.keys(items).length) return res.status(400).json({ error: "items is required" });
 
   const priceCorrections = []; // items whose price actually changed on an already-received challan
+  const rebuildIds = new Set(); // items whose balance needs rebuilding — done once, batched, after the loop
   for (const [itemId, patch] of Object.entries(items)) {
     const linePatch = {};
     if (patch.qty_entered != null) linePatch.qty_entered = Number(patch.qty_entered);
@@ -302,13 +303,14 @@ router.patch("/challans/:id/items", async (req, res) => {
           source_type: "challan_edit", source_id: req.params.id, reason: "Challan item corrected after receiving",
           idempotency_key: `challan_edit:${req.params.id}:${itemId}:${Date.now()}`, created_by: user.name,
         });
-        await rebuildStockBalances({ itemId, locationId: existing.location_id });
+        rebuildIds.add(itemId);
       }
       if (linePatch.unit_price != null && linePatch.unit_price !== Number(line.unit_price)) {
         priceCorrections.push({ item_id: itemId, unit_price: linePatch.unit_price, unit_entered: line.unit_entered });
       }
     }
   }
+  if (rebuildIds.size) await rebuildStockBalances({ itemIds: [...rebuildIds], locationId: existing.location_id });
 
   const { data: allLines } = await supabase.from("vendor_challan_items").select("line_total").eq("challan_id", req.params.id);
   const total = (allLines || []).reduce((s, l) => s + (Number(l.line_total) || 0), 0);
@@ -488,9 +490,9 @@ router.post("/challans/:id/receive", async (req, res) => {
   const { error: mvErr } = await supabase.from("stock_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
   if (mvErr) return res.status(500).json({ error: mvErr.message });
 
-  for (const itemId of new Set(lines.map((l) => l.item_id))) {
-    await rebuildStockBalances({ itemId, locationId: challan.location_id });
-  }
+  // One batched rebuild for every received item (single SELECT + upsert) instead of a
+  // per-item round-trip loop — the main cause of a slow "receive" on a multi-line challan.
+  await rebuildStockBalances({ itemIds: lines.map((l) => l.item_id), locationId: challan.location_id });
 
   const { data: updated, error: updErr } = await supabase.from("vendor_challans")
     .update({ status: "received", received_by: user.name, received_at: new Date().toISOString() })
@@ -557,9 +559,7 @@ router.delete("/challans/:id", async (req, res) => {
     const { data: lines } = await supabase.from("vendor_challan_items").select("item_id").eq("challan_id", challan.id);
     const { error: mvErr } = await supabase.from("stock_movements").delete().eq("source_type", "receipt").eq("source_id", challan.id);
     if (mvErr) return res.status(500).json({ error: mvErr.message });
-    for (const itemId of new Set((lines || []).map((l) => l.item_id))) {
-      await rebuildStockBalances({ itemId, locationId: challan.location_id });
-    }
+    await rebuildStockBalances({ itemIds: (lines || []).map((l) => l.item_id), locationId: challan.location_id });
     try { await removeRateCardPricesBySource("challan", challan.id); }
     catch (e) { console.error(`[rate-card ledger] challan ${challan.id} price removal failed:`, e.message); }
   }

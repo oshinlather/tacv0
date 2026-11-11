@@ -81,10 +81,11 @@ async function applyDispatchStockOut({ demandId, type, outletId, dispatchItems, 
   const { error: mvErr } = await supabase.from("stock_movements").upsert(movements, { onConflict: "idempotency_key", ignoreDuplicates: true });
   if (mvErr) { console.error(`[stockOutHooks] demand ${demandId}: failed to write stock_movements:`, mvErr.message); return { error: mvErr.message, movements }; }
 
-  for (const key of affected) {
-    const [itemId, locationId] = key.split("::");
-    try { await rebuildStockBalances({ itemId, locationId }); } catch (e) { console.error(`[stockOutHooks] demand ${demandId}: balance rebuild failed for ${key}:`, e.message); }
-  }
+  // One batched rebuild for all affected items at this location (single SELECT + upsert)
+  // instead of a per-item round-trip loop — all movements here share location 'store'.
+  const affectedItemIds = [...affected].map((k) => k.split("::")[0]);
+  try { await rebuildStockBalances({ itemIds: affectedItemIds, locationId: "store" }); }
+  catch (e) { console.error(`[stockOutHooks] demand ${demandId}: balance rebuild failed:`, e.message); }
   return { wrote: movements.length, movements, skippedItems };
 }
 
