@@ -211,11 +211,12 @@ router.post("/challans", async (req, res) => {
 // but patching it post-receive is harmless. Mirrors the "edit at all stages" relaxation
 // the /:id/items route already made.
 router.patch("/challans/:id", async (req, res) => {
-  if (!await gate(req, res)) return;
+  const user = await gate(req, res);
+  if (!user) return;
   const { data: existing } = await supabase.from("vendor_challans").select("status").eq("id", req.params.id).maybeSingle();
   if (!existing) return res.status(404).json({ error: "Challan not found" });
   if (existing.status === "cancelled") return res.status(400).json({ error: "A cancelled challan cannot be edited" });
-  const { vendor_id, vendor_name, challan_number, notes, no_bill_reason } = req.body;
+  const { vendor_id, vendor_name, challan_number, notes, no_bill_reason, payment_status, paid_by } = req.body;
   const patch = {};
   // vendor_name (new or existing-by-name) is resolved to an id the same way create does,
   // so the detail screen can assign/rename a vendor without the client needing its id.
@@ -235,6 +236,17 @@ router.patch("/challans/:id", async (req, res) => {
   if (challan_number !== undefined) patch.challan_number = challan_number;
   if (notes !== undefined) patch.notes = notes;
   if (no_bill_reason !== undefined) patch.no_bill_reason = no_bill_reason;
+  // Payment status (Paid/Unpaid) is independent of receiving. Marking Paid stamps who
+  // settled it (paid_by, from the fixed people list the UI offers) and when; clearing back
+  // to Unpaid wipes both. paid_by can also be changed on an already-paid challan on its own.
+  if (payment_status !== undefined) {
+    const ps = payment_status === "paid" ? "paid" : "unpaid";
+    patch.payment_status = ps;
+    patch.paid_by = ps === "paid" ? (paid_by || null) : null;
+    patch.paid_at = ps === "paid" ? new Date().toISOString() : null;
+  } else if (paid_by !== undefined) {
+    patch.paid_by = paid_by || null;
+  }
   const { data, error } = await supabase.from("vendor_challans").update(patch).eq("id", req.params.id).select("*, vendors(name)").single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

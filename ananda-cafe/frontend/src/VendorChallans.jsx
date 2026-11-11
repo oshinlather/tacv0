@@ -67,6 +67,8 @@ const STATUS_COLORS = {
   received: { bg: "#F0FDF4", border: "#BBF7D0", text: "#166534", label: "✅ Received" },
   cancelled: { bg: "#FEF2F2", border: "#FECACA", text: "#991B1B", label: "🚫 Cancelled" },
 };
+// Who settled the vendor's bill — fixed people list the Paid dropdown offers.
+const PAID_BY_OPTIONS = ["Oshin Mam", "Parveen", "Father Shab", "Tekchand", "Satyam"];
 
 const btnPrimary = { padding: "10px 16px", borderRadius: 10, border: "none", background: "#1A1A1A", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const btnGhost = { padding: "10px 16px", borderRadius: 10, border: "1px solid #E0E0DC", background: "#fff", color: "#555", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" };
@@ -272,6 +274,9 @@ function ChallanList({ status, setStatus, bucket, setBucket, fromDate, setFromDa
                 <div style={{ textAlign: "right" }}>
                   {c.total_amount != null && <div style={{ fontSize: 13, fontWeight: 700 }}>{fmtMoney(c.total_amount)}</div>}
                   <div style={{ fontSize: 10, fontWeight: 700, color: s.text, background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "2px 6px", display: "inline-block", marginTop: 3 }}>{s.label}</div>
+                  {!c._legacy && (c.payment_status === "paid"
+                    ? <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "2px 6px", display: "inline-block", marginTop: 3, marginLeft: 4 }}>✅ Paid</div>
+                    : <div style={{ fontSize: 10, fontWeight: 700, color: "#B45309", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "2px 6px", display: "inline-block", marginTop: 3, marginLeft: 4 }}>⏳ Unpaid</div>)}
                 </div>
                 <button onClick={(e) => downloadOne(c, e)} disabled={exporting === c.id} title="Download this challan as CSV" style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontSize: 13, lineHeight: 1, opacity: exporting === c.id ? 0.5 : 1 }}>{exporting === c.id ? "⏳" : "📥"}</button>
               </div>
@@ -871,6 +876,14 @@ function ChallanDetail({ id, onBack }) {
   // useEffect below wrongly treats as its unmount cleanup function and tries to call.
   const load = () => { api.getChallan(id).then(setChallan).catch((e) => setError(e.message)); };
   useEffect(load, [id]);
+
+  // Payment status (Paid/Unpaid + who paid) — independent of receiving. One PATCH either way.
+  const [payBusy, setPayBusy] = useState(false);
+  const setPayment = async (status, payer) => {
+    setPayBusy(true); setError("");
+    try { await api.updateChallan(id, status === "paid" ? { payment_status: "paid", paid_by: payer } : { payment_status: "unpaid" }); load(); }
+    catch (e) { setError(e.message); } finally { setPayBusy(false); }
+  };
   useEffect(() => { api.getVendors().then(setVendors).catch(() => {}); }, []);
   useEffect(() => { api.getStoreItems().then((l) => setItemMaster(l || [])).catch(() => setItemMaster([])); }, []);
 
@@ -1226,6 +1239,31 @@ function ChallanDetail({ id, onBack }) {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {challan.status !== "cancelled" && (
+        <div style={{ background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: 14, marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#555" }}>💰 Payment</span>
+            {challan.payment_status === "paid"
+              ? <span style={{ fontSize: 11, fontWeight: 700, color: "#166534", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 6, padding: "3px 8px" }}>✅ Paid{challan.paid_by ? ` · ${challan.paid_by}` : ""}</span>
+              : <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 6, padding: "3px 8px" }}>⏳ Unpaid</span>}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {challan.payment_status === "paid" ? (<>
+              <select value={challan.paid_by || ""} disabled={payBusy} onChange={(e) => setPayment("paid", e.target.value)} style={{ ...inputStyle, width: 150 }}>
+                {!PAID_BY_OPTIONS.includes(challan.paid_by) && <option value={challan.paid_by || ""}>{challan.paid_by || "—"}</option>}
+                {PAID_BY_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+              <button onClick={() => setPayment("unpaid")} disabled={payBusy} style={btnGhost}>Mark Unpaid</button>
+            </>) : (
+              <select value="" disabled={payBusy} onChange={(e) => e.target.value && setPayment("paid", e.target.value)} style={{ ...inputStyle, width: 190 }}>
+                <option value="">Mark Paid — paid by…</option>
+                {PAID_BY_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            )}
+          </div>
         </div>
       )}
 
