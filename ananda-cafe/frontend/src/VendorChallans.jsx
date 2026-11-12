@@ -61,6 +61,11 @@ const challanBucket = (c) => {
 };
 const BUCKET_LABEL = Object.fromEntries(ORDER_VENDORS.map((v) => [v.id, v.label]));
 const bucketLabel = (id) => BUCKET_LABEL[id] || "📦 Other";
+// Order-flow challans used to store the bucket LABEL (e.g. "📦 Packaging & Cleaning") as a
+// fake "vendor". Treat those as "no real vendor" so the listing shows "none" until a real
+// vendor is assigned, instead of surfacing the category label as if it were a supplier.
+const BUCKET_LABELS_SET = new Set(ORDER_VENDORS.map((v) => v.label));
+const realVendorName = (c) => (!c._legacy && c.vendor_name && !BUCKET_LABELS_SET.has(c.vendor_name)) ? c.vendor_name : null;
 
 const STATUS_COLORS = {
   draft: { bg: "#FFFBEB", border: "#FDE68A", text: "#92400E", label: "📝 Draft" },
@@ -266,7 +271,8 @@ function ChallanList({ status, setStatus, bucket, setBucket, fromDate, setFromDa
           return (
             <div key={(c._legacy ? "po_" : "vc_") + c.id} onClick={() => (c._legacy ? onOpenLegacy(c.id) : onOpen(c.id))} style={{ background: "#fff", border: c._legacy ? "1px dashed #D0D0CC" : "1px solid #E8E8E4", borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{c.vendor_name || "(no vendor)"} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{c._legacy ? (c.vendor_name || "(no vendor)") : bucketLabel(challanBucket(c))} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
+                {!c._legacy && <div style={{ fontSize: 11, color: realVendorName(c) ? "#6B6459" : "#B0A99E", marginTop: 1, fontWeight: 600 }}>🏷️ {realVendorName(c) || "none"}</div>}
                 <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number && !c._legacy ? ` · #${c.challan_number}` : ""}</div>
                 {c.status === "received" && fmtRecvDate(c.received_at) && <div style={{ fontSize: 11, color: "#16A34A", marginTop: 1 }}>📥 Received {fmtRecvDate(c.received_at)}</div>}
               </div>
@@ -529,8 +535,10 @@ function OrderView({ onCreated, onBack }) {
   const [rmConfig, setRmConfig] = useState({});
   const [usage, setUsage] = useState({});
   const [loading, setLoading] = useState(true);
-  const [selVendorId, setSelVendorId] = useState(null);
+  const [selVendorId, setSelVendorId] = useState(null); // the ORDER BUCKET id (vegetable/packaging_cleaning/…), not a real vendor
   const [pendingVendorId, setPendingVendorId] = useState(null); // daily vendors ask today/tomorrow first
+  const [vendors, setVendors] = useState([]); // real supplier list (for the per-bucket vendor dropdown)
+  const [orderVendorId, setOrderVendorId] = useState(""); // chosen real vendor for this order ("" = none)
   const [selDate, setSelDate] = useState(todayStr());
   const [orderQty, setOrderQty] = useState({}); // item_id -> string override
   const [rmEditing, setRmEditing] = useState(false);
@@ -546,8 +554,10 @@ function OrderView({ onCreated, onBack }) {
       api.getStoreStock({ location: "store" }).catch(() => []),
       api.getRmOrderConfig().catch(() => []),
       api.getRmOrderSuggestNew().catch(() => ({})),
-    ]).then(([itemList, stockList, config, usageMap]) => {
+      api.getVendors().catch(() => []),
+    ]).then(([itemList, stockList, config, usageMap, vendorList]) => {
       setItems(itemList);
+      setVendors(vendorList || []);
       const stockMap = {}; (stockList || []).forEach((s) => { stockMap[s.id] = Number(s.current_qty) || 0; });
       setStock(stockMap);
       const cfgMap = {}; (config || []).forEach((c) => { cfgMap[c.item_id] = Number(c.rm_qty) || 0; });
@@ -591,7 +601,9 @@ function OrderView({ onCreated, onBack }) {
     if (!lines.length) return setError("No items to order.");
     setSaving(true);
     try {
-      const challan = await api.createChallan({ location_id: "store", challan_date: selDate, vendor_name: v.label, items: lines });
+      // Attach the chosen real vendor (or none). The challan's category is derived from its
+      // items, so we no longer stuff the bucket label in as a fake vendor.
+      const challan = await api.createChallan({ location_id: "store", challan_date: selDate, vendor_id: orderVendorId || null, items: lines });
       onCreated(challan.id);
     } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
@@ -642,10 +654,14 @@ function OrderView({ onCreated, onBack }) {
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-          <button onClick={() => { setSelVendorId(null); setOrderQty({}); setSearch(""); }} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
+          <button onClick={() => { setSelVendorId(null); setOrderQty({}); setSearch(""); setOrderVendorId(""); }} style={{ ...btnGhost, padding: "8px 12px" }}>← Back</button>
           <div style={{ flex: 1 }}><div style={{ fontSize: 15, fontWeight: 800 }}>{v.label} Order</div><div style={{ fontSize: 11, color: "#888" }}>{v.period === "daily" ? "Daily order" : "10-day RM order"} · {selDate}</div></div>
           <button onClick={() => setRmEditing(true)} style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${v.border}`, background: v.bg, fontSize: 10, fontWeight: 700, color: v.color, cursor: "pointer", fontFamily: "inherit" }}>⚙️ Set Req</button>
         </div>
+        <select value={orderVendorId} onChange={(e) => setOrderVendorId(e.target.value)} style={{ ...inputStyle, marginBottom: 10, fontWeight: 700 }}>
+          <option value="">🏷️ Vendor — none</option>
+          {vendors.filter((vn) => vn.category === v.id).map((vn) => <option key={vn.id} value={vn.id}>{vn.name}</option>)}
+        </select>
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="🔍 Search items…" style={{ ...inputStyle, marginBottom: 10 }} />
         <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: "8px 12px", fontSize: 11, color: "#166534", marginBottom: 14, display: "flex", justifyContent: "space-between" }}>
           <span>Order = Requirement − Store Stock</span><span style={{ fontWeight: 700 }}>{tot} items</span>

@@ -36,9 +36,9 @@ router.get("/vendors", async (req, res) => {
 
 router.post("/vendors", async (req, res) => {
   if (!await gate(req, res)) return;
-  const { name, phone } = req.body;
+  const { name, phone, category } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: "Vendor name is required" });
-  const { data, error } = await supabase.from("vendors").insert({ name: name.trim(), phone: phone || null }).select().single();
+  const { data, error } = await supabase.from("vendors").insert({ name: name.trim(), phone: phone || null, category: category || null }).select().single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
