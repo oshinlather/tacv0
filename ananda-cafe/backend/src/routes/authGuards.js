@@ -74,7 +74,9 @@ async function requireAuth(req, res) {
   // copy so the cached DB row (role still 'ops_manager') is never mutated.
   if (user.role === 'ops_manager') {
     const mode = req.headers['x-user-mode'];
-    return { ...user, role: mode === 'bk' ? 'bk_manager' : 'outlet_mgr', opsUnpinned: true };
+    // 'cash' → store_mgr (the role the Cash Ledger is built for, incl. recording collections).
+    const effectiveRole = mode === 'bk' ? 'bk_manager' : mode === 'cash' ? 'store_mgr' : 'outlet_mgr';
+    return { ...user, role: effectiveRole, opsUnpinned: true };
   }
   // "ceo" has identical backend rights to the owner — normalize at the auth boundary so every
   // downstream owner check (requireOwner, requireRole('owner'), `role === 'owner'`) treats them

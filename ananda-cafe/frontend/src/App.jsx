@@ -22222,11 +22222,14 @@ export default function AnandaCafe() {
   // routing + dashboards work unchanged, keep an `ops` flag (so we still show the picker +
   // switcher), and stash the mode for the x-user-mode header the backend reads.
   const enterOpsMode = (m) => {
-    const role = m === "bk" ? "bk_manager" : "outlet_mgr";
+    // Each mode maps to an effective role the rest of the stack already understands: outlet
+    // manager, BK manager, or — for the Cash module — store_mgr (the role that owns the Cash
+    // Ledger, incl. recording collections). The backend resolves the same via x-user-mode.
+    const role = m === "bk" ? "bk_manager" : m === "cash" ? "store_mgr" : "outlet_mgr";
     const eff = { ...currentUser, role, ops: true, base_role: "ops_manager" };
     try {
       localStorage.setItem("ananda_user", JSON.stringify(eff));
-      localStorage.setItem("ananda_ops_mode", m === "bk" ? "bk" : "outlet");
+      localStorage.setItem("ananda_ops_mode", m); // 'outlet' | 'bk' | 'cash' → x-user-mode header
     } catch (e) {}
     api.clearCache();
     _currentUser = eff;
@@ -22420,7 +22423,7 @@ export default function AnandaCafe() {
     <div style={{ textAlign: "center", marginBottom: 6 }}><img src="/logo.png" alt="" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover" }} /></div>
     <h1 style={{ fontSize: 22, fontWeight: 900, textAlign: "center", margin: "8px 0 2px" }}>Hi {currentUser.name} 👋</h1>
     <p style={{ fontSize: 13, color: "#999", textAlign: "center", margin: "0 0 28px" }}>Choose how you're working today</p>
-    {[{ m: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Run any outlet you're sent to" }, { m: "bk", icon: "🏭", title: "Base Kitchen Manager", sub: "Run the Base Kitchen" }].map((o) => (
+    {[{ m: "outlet", icon: "🏪", title: "Outlet Manager", sub: "Run any outlet you're sent to" }, { m: "bk", icon: "🏭", title: "Base Kitchen Manager", sub: "Run the Base Kitchen" }, { m: "cash", icon: "💵", title: "Cash", sub: "Record & track cash collections" }].map((o) => (
       <button key={o.m} onClick={() => enterOpsMode(o.m)} style={{ width: "100%", padding: "22px 24px", borderRadius: 18, background: "#fff", border: "1px solid #E8E8E4", textAlign: "left", cursor: "pointer", fontFamily: "inherit", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
         <div style={{ fontSize: 36 }}>{o.icon}</div><div><div style={{ fontSize: 18, fontWeight: 800 }}>{o.title}</div><div style={{ fontSize: 12, color: "#999" }}>{o.sub}</div></div>
       </button>
@@ -22433,7 +22436,7 @@ export default function AnandaCafe() {
   if (currentUser.ops) {
     const modeBar = (<div style={{ background: "#1A1A1A", padding: "8px 14px", display: "flex", alignItems: "center", gap: 10 }}>
       <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.12)", borderRadius: 999, padding: 3 }}>
-        {[{ m: "outlet", role: "outlet_mgr", label: "🏪 Outlet Manager" }, { m: "bk", role: "bk_manager", label: "🏭 BK Manager" }].map((o) => (
+        {[{ m: "outlet", role: "outlet_mgr", label: "🏪 Outlet" }, { m: "bk", role: "bk_manager", label: "🏭 BK" }, { m: "cash", role: "store_mgr", label: "💵 Cash" }].map((o) => (
           <button key={o.m} onClick={() => { if (currentUser.role !== o.role) enterOpsMode(o.m); }} style={{ padding: "6px 14px", borderRadius: 999, border: "none", background: currentUser.role === o.role ? "#fff" : "transparent", color: currentUser.role === o.role ? "#1A1A1A" : "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{o.label}</button>
         ))}
       </div>
@@ -22441,6 +22444,7 @@ export default function AnandaCafe() {
       <span style={{ fontSize: 11, color: "#BBB", whiteSpace: "nowrap" }}>👤 {currentUser.name}</span>
     </div>);
     if (currentUser.role === "bk_manager") return (<div>{FONT}{modeBar}<ScopedDashboard /></div>);
+    if (currentUser.role === "store_mgr") return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 18px" }}><CashLedger /></div></div>);
     return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={null} /></div></div>);
   }
 
