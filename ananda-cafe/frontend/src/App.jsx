@@ -676,6 +676,7 @@ const ROLE_OPTIONS = [
   { v: "store_mgr", l: "📦 Store" }, { v: "owner", l: "👑 Owner" }, { v: "driver", l: "🚚 Driver" },
   { v: "avp", l: "🧭 AVP" }, { v: "head_chef", l: "🧑‍🍳 Head Chef" }, { v: "bk_manager", l: "🏭 BK Manager" },
   { v: "franchise", l: "🤝 Franchise" }, { v: "ops_manager", l: "🔀 Ops Manager" }, { v: "ceo", l: "🎩 CEO" },
+  { v: "hr", l: "🧑‍💼 HR" },
 ];
 // Roles whose account is tied to exactly one outlet (an outlet_id must be assigned).
 const OUTLET_SCOPED_ROLES_FE = ["outlet_mgr", "chef", "bainmarry", "franchise"];
@@ -766,7 +767,7 @@ const UsersPanel = () => {
 
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
-  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "ceo" ? "🎩 CEO" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : r === "ops_manager" ? "🔀 Ops Manager" : "🏪 Outlet";
+  const roleLabel = (r) => r === "owner" ? "👑 Owner" : r === "ceo" ? "🎩 CEO" : r === "store_mgr" ? "📦 Store" : r === "driver" ? "🚚 Driver" : r === "chef" ? "👨‍🍳 Chef" : r === "bainmarry" ? "🍲 Bainmarry" : r === "avp" ? "🧭 AVP" : r === "head_chef" ? "🧑‍🍳 Head Chef" : r === "bk_manager" ? "🏭 BK Manager" : r === "franchise" ? "🤝 Franchise" : r === "shift_manager" ? "⭐ Shift Manager" : r === "ops_manager" ? "🔀 Ops Manager" : r === "hr" ? "🧑‍💼 HR" : "🏪 Outlet";
   const outletLabel = (id) => OUTLETS.find(o => o.id === id)?.name || id || "—";
 
   return (<div>
@@ -1266,6 +1267,7 @@ const EmployeeMasterPanel = ({ onBack } = {}) => {
   const [editDraft, setEditDraft] = useState(EMPLOYEE_FORM_DEFAULTS);
   const [attendanceOpenId, setAttendanceOpenId] = useState(null);
   const [profileId, setProfileId] = useState(null);
+  const [deptFilter, setDeptFilter] = useState("all"); // outlet/department filter ("all" or an EMPLOYEE_DEPARTMENTS id)
   // Give Advance / Impose Fine — same actions TeamPanel already has (Outlet/BK Manager),
   // added here so Owner/AVP/Head Chef don't have to leave Employee Master to do either.
   // Backend already permitted all three roles on both routes (ALL_EMPLOYEE_ROLES /
@@ -1354,12 +1356,18 @@ const EmployeeMasterPanel = ({ onBack } = {}) => {
   if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading...</div>;
 
   const activeCount = employees.filter(e => e.active).length;
-  const grouped = EMPLOYEE_DEPARTMENTS.map(d => ({ ...d, emps: employees.filter(e => e.department === d.id) }));
+  const grouped = EMPLOYEE_DEPARTMENTS
+    .filter(d => deptFilter === "all" || d.id === deptFilter)
+    .map(d => ({ ...d, emps: employees.filter(e => e.department === d.id) }));
 
   return (<div>
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
       {onBack && <button onClick={onBack} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", color: "#555", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>← Back</button>}
       <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, flex: 1 }}>👤 {onBack ? "Onboarding" : "Employee Master"} ({activeCount}/{employees.length})</h3>
+      <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} title="Filter by outlet" style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 12, fontFamily: "inherit", background: "#fff", cursor: "pointer" }}>
+        <option value="all">All outlets</option>
+        {EMPLOYEE_DEPARTMENTS.map(d => <option key={d.id} value={d.id}>{d.label}</option>)}
+      </select>
       <button onClick={() => setShowAdd(!showAdd)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#1A1A1A", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add Employee</button>
     </div>
 
@@ -21679,8 +21687,19 @@ const SCOPED_ROLE_TABS = {
     { id: "team", label: "👥 Team" },
     { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   ],
+  // HR (People-ops): the whole employee domain across every outlet — directory + KYC/docs/
+  // phone/bank (Employee Master), salary (Monthly Payroll), attendance, roster and fine
+  // approvals. All these components are already cross-outlet with their own outlet filters,
+  // and the backend widened employees.js/payroll.js guards to accept 'hr'.
+  hr: [
+    { id: "employees", label: "👤 Team" },
+    { id: "payroll", label: "💰 Monthly Payroll" },
+    { id: "attendance", label: "👥 Attendance" },
+    { id: "roster", label: "🗓️ Roster" },
+    { id: "fines", label: "🚩 Fines" },
+  ],
 };
-const SCOPED_ROLE_TITLES = { avp: "🧭 AVP Dashboard", head_chef: "🧑‍🍳 Head Chef Dashboard", bk_manager: "🏭 BK Manager Dashboard" };
+const SCOPED_ROLE_TITLES = { avp: "🧭 AVP Dashboard", head_chef: "🧑‍🍳 Head Chef Dashboard", bk_manager: "🏭 BK Manager Dashboard", hr: "🧑‍💼 HR Dashboard" };
 
 // Missing-recipes banner, aggregated across every outlet — persistent at the top of the
 // AVP/Head Chef dashboard (not tucked inside RM Audit's per-outlet view) so the gap that
@@ -21744,7 +21763,7 @@ const ScopedDashboard = () => {
         {[{ id: "bk", label: "🏭 Kitchen" }, { id: "dispatch", label: "🚚 Dispatch" }, { id: "demands", label: "📋 Demands" }, { id: "new_store_stock", label: "📦 Store Stock" }, { id: "bk_closing_wastage", label: "🏭 BK Closing & Wastage" }, { id: "bk_audit", label: "🔍 BK Audit" }, { id: "sales", label: "📤 Sales" }, { id: "cash", label: "💵 Cash" }, { id: "custodian_ledger", label: "👤 Custodian Ledger" }, { id: "actions", label: "🏭 BK Demand" }, { id: "vendor_challans", label: "🧾 Vendor Challans" }, { id: "stock_counts", label: "🔢 Closing Counts" }, { id: "bk_production", label: "🏭 Production" }, { id: "master", label: "🗂️ Master Data" }].map((t) => (<button key={t.id} onClick={() => setStoreView(t.id)} style={{ padding: "9px 12px", border: "none", background: "transparent", fontSize: 11, fontWeight: storeView === t.id ? 700 : 500, color: storeView === t.id ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: storeView === t.id ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{t.label}</button>))}
       </div>
     ) : null}
-    <div style={{ maxWidth: ["payroll", "cogs_compare", "demand_vs_closing", "finance", "franchise_billing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
+    <div style={{ maxWidth: ["payroll", "attendance", "roster", "cogs_compare", "demand_vs_closing", "finance", "franchise_billing"].includes(tab) ? "100%" : 1200, margin: "0 auto", padding: "20px 18px" }}>
       {["avp", "head_chef"].includes(currentUser?.role) && <MissingRecipesSummary />}
       {tab === "store" && storeView === "bk" && <BaseKitchen />}
       {tab === "store" && storeView === "dispatch" && <Dispatch />}
@@ -21778,6 +21797,8 @@ const ScopedDashboard = () => {
       {tab === "stock_counts" && <StoreClosingCount />}
       {tab === "employees" && <EmployeeMasterPanel />}
       {tab === "payroll" && <MonthlyPayrollPanel />}
+      {tab === "attendance" && <AttendanceTab />}
+      {tab === "roster" && <RosterPage />}
       {tab === "fines" && <FinesPanel />}
       {tab === "team" && <TeamPanel department="bk" />}
       {tab === "demand_vs_closing" && <DemandVsClosingSection />}
@@ -22327,7 +22348,7 @@ export default function AnandaCafe() {
   // ?role= URL param (that param is meant for owner testing/oversight only). This
   // overrides whatever `app` is currently set to for those two roles; owner and
   // store_mgr are unaffected and can still use ?role= to preview other views.
-  const lockedApp = currentUser?.role === "shift_manager" ? "shift_manager" : currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : currentUser?.ceo ? "owner" : null;
+  const lockedApp = currentUser?.role === "shift_manager" ? "shift_manager" : currentUser?.role === "driver" ? "driver" : ["outlet_mgr", "chef", "bainmarry"].includes(currentUser?.role) ? "outlet" : ["avp", "head_chef", "bk_manager", "hr"].includes(currentUser?.role) ? "scoped" : currentUser?.role === "franchise" ? "franchise" : currentUser?.ceo ? "owner" : null;
   const effectiveApp = lockedApp || app;
   // CEO uses the full owner dashboard (same rights) but with the nav trimmed to just the DOD
   // dropdown, landing on Challans — see the owner nav bar below.

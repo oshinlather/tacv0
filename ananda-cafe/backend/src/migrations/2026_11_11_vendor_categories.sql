@@ -16,8 +16,7 @@ SELECT v.name, v.category FROM (VALUES
   ('Areca Plates',    'packaging_cleaning'),
   ('Piyush',          'packaging_cleaning'),
   ('Kapil',           'grocery_masala'),
-  ('Rishit',          'grocery_masala'),
-  ('Glido',           'grocery_masala')
+  ('Rishit (Glido)',  'grocery_masala')
 ) AS v(name, category)
 WHERE NOT EXISTS (SELECT 1 FROM vendors e WHERE lower(e.name) = lower(v.name));
 
@@ -25,6 +24,6 @@ WHERE NOT EXISTS (SELECT 1 FROM vendors e WHERE lower(e.name) = lower(v.name));
 UPDATE vendors SET category = 'packaging_cleaning'
   WHERE category IS NULL AND lower(name) IN ('dheeraj traders', 'areca plates', 'piyush');
 UPDATE vendors SET category = 'grocery_masala'
-  WHERE category IS NULL AND lower(name) IN ('kapil', 'rishit', 'glido');
+  WHERE category IS NULL AND lower(name) IN ('kapil', 'rishit (glido)');
 
 NOTIFY pgrst, 'reload schema';
