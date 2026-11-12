@@ -490,8 +490,19 @@ router.post("/challans/:id/receive", async (req, res) => {
     return res.status(400).json({ error: "Upload the bill photo, or record a reason there isn't one, before receiving." });
   }
 
-  const { data: lines, error: linesErr } = await supabase.from("vendor_challan_items").select("*").eq("challan_id", challan.id);
+  const { data: lines, error: linesErr } = await supabase.from("vendor_challan_items").select("*, items(name)").eq("challan_id", challan.id);
   if (linesErr) return res.status(500).json({ error: linesErr.message });
+
+  // Qty AND price are mandatory on every line before a challan can be received — a receipt
+  // with a missing quantity or price corrupts both the stock balance and the rate-card ledger.
+  // (qty_base > 0 = a real quantity; unit_price > 0 = a price was entered, since unit_price is
+  // derived from the line's total ÷ qty.) Block the whole receive and name what's missing.
+  if (!lines || !lines.length) return res.status(400).json({ error: "This challan has no items to receive." });
+  const incomplete = lines.filter((l) => !(Number(l.qty_base) > 0) || !(Number(l.unit_price) > 0));
+  if (incomplete.length) {
+    const names = incomplete.map((l) => l.items?.name || l.item_id).join(", ");
+    return res.status(400).json({ error: `Enter both quantity and price for every item before receiving. Missing qty or price for: ${names}` });
+  }
 
   const movements = lines.map((l) => ({
     item_id: l.item_id, location_id: challan.location_id, movement_type: "RECEIPT",

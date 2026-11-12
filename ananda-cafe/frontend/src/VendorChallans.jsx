@@ -66,6 +66,15 @@ const bucketLabel = (id) => BUCKET_LABEL[id] || "📦 Other";
 // vendor is assigned, instead of surfacing the category label as if it were a supplier.
 const BUCKET_LABELS_SET = new Set(ORDER_VENDORS.map((v) => v.label));
 const realVendorName = (c) => (!c._legacy && c.vendor_name && !BUCKET_LABELS_SET.has(c.vendor_name)) ? c.vendor_name : null;
+// Category/bucket of a challan, reliably: prefer the item-derived categories, but fall back
+// to the bucket label that older order-flow challans stored as their vendor_name (those rows
+// often have an empty `categories` array, which would otherwise collapse them all to "Other").
+const LABEL_TO_BUCKET = Object.fromEntries(ORDER_VENDORS.map((v) => [v.label, v.id]));
+const challanCategoryId = (c) => {
+  const fromItems = challanBucket(c);
+  if (fromItems !== "other") return fromItems;
+  return LABEL_TO_BUCKET[c.vendor_name] || "other";
+};
 
 const STATUS_COLORS = {
   draft: { bg: "#FFFBEB", border: "#FDE68A", text: "#92400E", label: "📝 Draft" },
@@ -271,8 +280,8 @@ function ChallanList({ status, setStatus, bucket, setBucket, fromDate, setFromDa
           return (
             <div key={(c._legacy ? "po_" : "vc_") + c.id} onClick={() => (c._legacy ? onOpenLegacy(c.id) : onOpen(c.id))} style={{ background: "#fff", border: c._legacy ? "1px dashed #D0D0CC" : "1px solid #E8E8E4", borderRadius: 10, padding: "12px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{c._legacy ? (c.vendor_name || "(no vendor)") : bucketLabel(challanBucket(c))} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
-                {!c._legacy && <div style={{ fontSize: 11, color: realVendorName(c) ? "#6B6459" : "#B0A99E", marginTop: 1, fontWeight: 600 }}>🏷️ {realVendorName(c) || "none"}</div>}
+                <div style={{ fontSize: 13, fontWeight: 800 }}>{c._legacy ? (c.vendor_name || "(no vendor)") : bucketLabel(challanCategoryId(c))} <span style={{ fontWeight: 500, color: "#999", fontSize: 11 }}>· {c.location_id === "store" ? "Store" : "BK"}</span></div>
+                {!c._legacy && <div style={{ fontSize: 12.5, fontWeight: 700, color: realVendorName(c) ? "#1A1A1A" : "#B0A99E", marginTop: 2 }}>🏷️ {realVendorName(c) || "none"}</div>}
                 <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>{c.challan_date}{c.challan_number && !c._legacy ? ` · #${c.challan_number}` : ""}</div>
                 {c.status === "received" && fmtRecvDate(c.received_at) && <div style={{ fontSize: 11, color: "#16A34A", marginTop: 1 }}>📥 Received {fmtRecvDate(c.received_at)}</div>}
               </div>
@@ -1097,9 +1106,14 @@ function ChallanDetail({ id, onBack }) {
   if (!challan) return <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>;
 
   const s = STATUS_COLORS[challan.status] || STATUS_COLORS.draft;
+  // Every line must have BOTH a quantity and a price before receiving (the backend enforces
+  // this too — a receipt with a missing qty/price corrupts the stock balance and price ledger).
+  // unit_price > 0 means a price was entered (it's derived from the line's total ÷ qty).
+  const incompleteLines = (challan.items || []).filter((it) => !(Number(it.qty_base) > 0) || !(Number(it.unit_price) > 0));
+  const linesComplete = (challan.items || []).length > 0 && incompleteLines.length === 0;
   // A typed no-bill reason (not yet Confirmed) also unlocks Receive — receive() persists it
   // for you, so you don't have to click Confirm separately first.
-  const canReceive = challan.status === "draft" && (challan.bill_photo_path || challan.no_bill_reason || noBillReason.trim());
+  const canReceive = challan.status === "draft" && (challan.bill_photo_path || challan.no_bill_reason || noBillReason.trim()) && linesComplete;
   // Edit allowed at every stage except cancelled — see PATCH /:id/items for how a
   // post-receive edit also corrects the stock ledger and rate-card price, not just this
   // record.
@@ -1289,7 +1303,7 @@ function ChallanDetail({ id, onBack }) {
         <button onClick={shareWA} style={btnGhost}>📤 Share on WhatsApp</button>
         {isOwner && <button onClick={deleteChallan} disabled={busy} style={{ ...btnGhost, color: "#DC2626", borderColor: "#FECACA", background: "#FEF2F2" }}>🗑️ Delete (duplicate)</button>}
       </div>
-      {challan.status === "draft" && !canReceive && <div style={{ fontSize: 11, color: "#999", marginTop: 8 }}>Upload the bill (or confirm there isn't one) before receiving.</div>}
+      {challan.status === "draft" && !canReceive && <div style={{ fontSize: 11, color: "#999", marginTop: 8 }}>{!linesComplete ? `Enter both quantity and price for every item before receiving${incompleteLines.length ? ` — missing: ${incompleteLines.map((it) => it.item_name).join(", ")}` : ""}.` : "Upload the bill (or confirm there isn't one) before receiving."}</div>}
       {challan.status === "received" && <div style={{ fontSize: 11, color: "#999", marginTop: 8 }}>Received by {challan.received_by} — stock updated.</div>}
     </div>
   );
