@@ -35,7 +35,10 @@ const supabase = require('../supabase');
 const { requireRole, requireAuth } = require('./authGuards');
 const { todayIST } = require('../helpers');
 
-const PAYROLL_ROLES = ['owner', 'avp', 'head_chef'];
+// 'hr' (People-ops) runs payroll end-to-end alongside owner tier — compute, OT, overrides,
+// finalize, mark-paid, reverse, reopen. Cross-outlet; matches the employee-domain access in
+// employees.js (OWNER_LEVEL_ROLES).
+const PAYROLL_ROLES = ['owner', 'avp', 'head_chef', 'hr'];
 
 // Every column in the payroll sheet except OT Hours (which already has its own
 // override path via employee_monthly_ot / POST /ot) can be manually corrected

@@ -45,7 +45,12 @@ const DOC_BUCKET = 'employee-docs';
 // owner-only, same as salary/bank data.
 const SCOPED_DOC_TYPES = ['aadhar', 'police_verification'];
 
-const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef'];
+// 'hr' is a dedicated People-ops role: cross-outlet (unrestricted department scope, like
+// owner/avp) over the whole employee domain — directory, KYC/documents, phone/bank, roster,
+// advances, fines, attendance — plus payroll (see PAYROLL_ROLES in payroll.js). It is NOT an
+// owner elsewhere: this constant is file-local, so folding HR in here widens ONLY the
+// employee/attendance routes, nothing financial or operational outside People-ops.
+const OWNER_LEVEL_ROLES = ['owner', 'avp', 'head_chef', 'hr'];
 const SCOPED_MANAGER_ROLES = ['outlet_mgr', 'store_mgr', 'bk_manager'];
 const ALL_EMPLOYEE_ROLES = [...OWNER_LEVEL_ROLES, ...SCOPED_MANAGER_ROLES];
 const ATTENDANCE_ROLES = [...OWNER_LEVEL_ROLES, 'store_mgr'];
