@@ -2403,7 +2403,7 @@ const HIST_ACTION_META = {
 };
 const histTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: true }); } catch (e) { return ""; } };
 
-const CashLedger = () => {
+const CashLedger = ({ readOnly = false } = {}) => {
   const [selOutlet, setSelOutlet] = useState(OWN_OUTLETS[0]?.id || null);
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
   const [rows, setRows] = useState([]);
@@ -2498,7 +2498,9 @@ const CashLedger = () => {
 
   const outletName = OUTLETS.find((o) => o.id === selOutlet)?.name || selOutlet;
   const currentUser = getCurrentUser();
-  const canRecord = currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
+  // readOnly forces view-only (used for the ops-manager Cash mode — Satyam can see the ledger
+  // but not record collections or edit), independent of the role that loads the data.
+  const canRecord = !readOnly && currentUser && (currentUser.role === "owner" || currentUser.role === "store_mgr");
   const canDeleteColl = currentUser?.role === "owner"; // only the owner may remove a collection entry
 
   const loadCollections = (date) => {
@@ -2821,7 +2823,7 @@ const CashLedger = () => {
           <div style={{ flex: 1, fontSize: 16, fontWeight: 800 }}>👤 {editCustodian} — Complete Ledger</div>
           <button onClick={() => { setEditCustodian(null); loadSummary(); }} style={{ border: "none", background: "transparent", color: "#888", fontWeight: 700, fontSize: 18, cursor: "pointer" }}>✕</button>
         </div>
-        <CustodianLedgerDetail person={editCustodian} />
+        <CustodianLedgerDetail person={editCustodian} readOnly={readOnly} />
       </div>
     </>)}
 
@@ -2905,7 +2907,7 @@ const CashLedger = () => {
 //  standalone CustodianLedger page and CashLedger's "view complete ledger" modal, so
 //  either entry point shows the exact same fully-auditable trail, not a summary.
 // ═════════════════════════════════════════════════════════════════════════════
-const CustodianLedgerDetail = ({ person }) => {
+const CustodianLedgerDetail = ({ person, readOnly = false }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selMonth, setSelMonth] = useState(() => today().slice(0, 7));
@@ -3039,7 +3041,7 @@ const CustodianLedgerDetail = ({ person }) => {
       ))}
     </div>
 
-    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+    {!readOnly && <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
       <button onClick={() => { setShowCollect(!showCollect); setShowHandover(false); setShowExpense(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showCollect ? "#D0D0CC" : "#16A34A", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
         {showCollect ? "✕ Cancel" : "📥 Collect from Outlet"}
       </button>
@@ -3049,7 +3051,7 @@ const CustodianLedgerDetail = ({ person }) => {
       <button onClick={() => { setShowExpense(!showExpense); setShowCollect(false); setShowHandover(false); }} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: showExpense ? "#D0D0CC" : "#B45309", color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>
         {showExpense ? "✕ Cancel" : "🧾 Cash Expense"}
       </button>
-    </div>
+    </div>}
 
     {showCollect && (
       <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #BBF7D0", padding: 16, marginBottom: 16 }}>
@@ -22444,7 +22446,7 @@ export default function AnandaCafe() {
       <span style={{ fontSize: 11, color: "#BBB", whiteSpace: "nowrap" }}>👤 {currentUser.name}</span>
     </div>);
     if (currentUser.role === "bk_manager") return (<div>{FONT}{modeBar}<ScopedDashboard /></div>);
-    if (currentUser.role === "store_mgr") return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 18px" }}><CashLedger /></div></div>);
+    if (currentUser.role === "store_mgr") return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 1000, margin: "0 auto", padding: "20px 18px" }}><CashLedger readOnly /></div></div>);
     return (<div style={PAGE}>{FONT}{modeBar}<div style={{ maxWidth: 500, margin: "0 auto", padding: "24px 18px" }}><OutletMgr onBack={null} /></div></div>);
   }
 
