@@ -6067,6 +6067,11 @@ const BaseKitchen = () => {
   // a legacy Batch entry (no items_units stamped) correctly either way, converting
   // whichever one doesn't already match the target.
   const consolidated = {}; BK_ITEMS.forEach((bk) => { consolidated[bk.id] = { total: 0, by: {} }; const targetUnit = bkDisplayUnit(bk.id, bk.unit); activeOrders.forEach((o) => { const q = normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], targetUnit); consolidated[bk.id].total += q; consolidated[bk.id].by[o.outlet_id] = (consolidated[bk.id].by[o.outlet_id] || 0) + q; }); });
+  // Consolidated Demand ordering: kitchen-prep items first in this fixed sequence, then every
+  // other demanded item in its normal DEMAND_SECTIONS order (sort is stable, so ties hold).
+  const KITCHEN_PREP_ORDER = ["sambhar", "red_chutney", "onion_masala", "garlic_paste", "pineapple_halwa", "rasam", "dosa_batter", "idli_batter", "vada_batter"];
+  const bkPrepRank = (id) => { const i = KITCHEN_PREP_ORDER.indexOf(id); return i === -1 ? KITCHEN_PREP_ORDER.length : i; };
+  const orderedBkItems = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).sort((a, b) => bkPrepRank(a.id) - bkPrepRank(b.id));
 
   const foodSection = DEMAND_SECTIONS.find((s) => s.id === "food");
   const foodItemIds = new Set(foodSection?.items.map((i) => i.id) || []);
@@ -6138,10 +6143,10 @@ const BaseKitchen = () => {
       <div id="print-demand" style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", marginBottom: 20 }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid #E8E8E4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>📋 Consolidated Demand</span>
-          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return [bk.name, bkDisplayUnit(bk.id, bk.unit) || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
+          <div style={{ display: "flex", gap: 6 }}><ExportBtn onClick={() => { const headers = ["Item", "Unit", "TOTAL", ...OUTLETS.map((o) => o.short)]; const rows = orderedBkItems.map((bk) => { const d = consolidated[bk.id]; return [bk.name, bkDisplayUnit(bk.id, bk.unit) || "", d.total, ...OUTLETS.map((o) => d.by[o.id] || 0)]; }); exportCSV(headers, rows, `demand_${selDate}.csv`); }} /><PrintBtn sectionId="print-demand" title="Consolidated Demand" /></div>
         </div>
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}><thead><tr style={{ background: "#FAFAF8" }}>{["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>)}</tr></thead>
-        <tbody>{BK_ITEMS.filter((bk) => consolidated[bk.id]?.total > 0).map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bkDisplayUnit(bk.id, bk.unit)}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => { const csItems = closingStocksByOutlet[o.id]; const rawClosing = csItems?.[`cs_${bk.id}`] ?? csItems?.[bk.id]; const closingLabel = rawClosing != null && rawClosing !== "" ? Math.round(Number(rawClosing) * 100) / 100 : "NA"; return (<td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({closingLabel})</span></td>); })}</tr>); })}</tbody></table></div>
+        <tbody>{orderedBkItems.map((bk) => { const d = consolidated[bk.id]; return (<tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}><td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bkDisplayUnit(bk.id, bk.unit)}</span></td><td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>{OUTLETS.map((o) => { const csItems = closingStocksByOutlet[o.id]; const rawClosing = csItems?.[`cs_${bk.id}`] ?? csItems?.[bk.id]; const closingLabel = rawClosing != null && rawClosing !== "" ? Math.round(Number(rawClosing) * 100) / 100 : "NA"; return (<td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>({closingLabel})</span></td>); })}</tr>); })}</tbody></table></div>
       </div>
 
       {/* Staff Food Requests — separate from the regular demand items above (different
@@ -21891,6 +21896,7 @@ const HOME_SECTIONS = [
   { id: "demand_vs_closing", label: "📦 Demand vs Closing" },
   { id: "demand", label: "📦 Demand & Dispatch" },
   { id: "team", label: "👥 Team" },
+  { id: "closing", label: "🧊 Closing" },
 ];
 // Nav pills for the BK cockpit (shown when the BK pill is selected) — jump straight to each
 // BK section, same scroll-spy mechanism as HOME_SECTIONS.
@@ -22055,6 +22061,79 @@ const OutletPhotoStrip = ({ outlet, date }) => {
   );
 };
 
+// Owner Home → Closing tab. One cross-outlet view of BK-PREPARED FOOD (sambhar, chutneys,
+// batters, etc.) for a day: items in rows, outlets in columns. Each cell shows that outlet's
+// DEMAND for the day with its end-of-day CLOSING stock in brackets — same proven layout as
+// BK's Consolidated Demand table — so the owner can spot prepared food piling up (high
+// closing vs demand = freshness risk) across the whole chain at a glance. TOTAL = total
+// demand. Demand qty is normalized to each item's display unit (batters → Kg) exactly like
+// the BK grid; closing is read from closing_stocks (cs_-prefixed keys), submitted rows only.
+const FoodClosingDemandGrid = ({ date }) => {
+  const [orders, setOrders] = useState(null);
+  const [closingByOutlet, setClosingByOutlet] = useState({});
+  useEffect(() => {
+    setOrders(null);
+    api.getOrders({ date }).then((d) => setOrders((d || []).filter((o) => o.type === "manual" && o.items && o.status !== "draft"))).catch(() => setOrders([]));
+    api.getClosingStocks({ date }).then((rows) => {
+      const m = {};
+      (rows || []).filter((r) => r.status === "submitted").forEach((r) => { m[r.outlet_id] = r.items || {}; });
+      setClosingByOutlet(m);
+    }).catch(() => setClosingByOutlet({}));
+  }, [date]);
+
+  const foodItems = useMemo(() => (DEMAND_SECTIONS.find((s) => s.id === "food")?.items || []), []);
+  const consolidated = useMemo(() => {
+    const c = {};
+    foodItems.forEach((bk) => {
+      c[bk.id] = { total: 0, by: {} };
+      const targetUnit = bkDisplayUnit(bk.id, bk.unit);
+      (orders || []).forEach((o) => {
+        const q = normalizeUnit(bk.id, o.items?.[bk.id] || 0, o.items_units?.[bk.id], targetUnit);
+        if (q) { c[bk.id].total += q; c[bk.id].by[o.outlet_id] = (c[bk.id].by[o.outlet_id] || 0) + q; }
+      });
+    });
+    return c;
+  }, [orders, foodItems]);
+  const closingOf = (outletId, itemId) => {
+    const cs = closingByOutlet[outletId];
+    const v = cs?.[`cs_${itemId}`] ?? cs?.[itemId];
+    return v != null && v !== "" ? Math.round(Number(v) * 100) / 100 : null;
+  };
+  // Only show an item row if it was demanded somewhere OR has closing somewhere — keep it tight.
+  const shownItems = useMemo(() => foodItems.filter((bk) =>
+    (consolidated[bk.id]?.total > 0) || OUTLETS.some((o) => (closingOf(o.id, bk.id) || 0) > 0)
+  ), [foodItems, consolidated, closingByOutlet]);
+
+  return (
+    <FlagCard icon="🧊" title="Closing — Prepared Food (all outlets)" subtitle={`BK-made items · ${date} — number = demanded, (bracket) = closing left. Watch high closing for freshness.`}>
+      {orders === null ? (
+        <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>
+      ) : shownItems.length === 0 ? (
+        <div style={{ color: "#999", fontSize: 13, padding: 20, textAlign: "center" }}>No prepared-food demand or closing recorded for {date}.</div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr style={{ background: "#FAFAF8" }}>
+              {["Item", "TOTAL", ...OUTLETS.map((o) => o.short)].map((h, i) => (
+                <th key={i} style={{ ...thS, textAlign: i > 0 ? "center" : "left", color: i === 1 ? "#1A1A1A" : undefined, fontWeight: i === 1 ? 800 : undefined, whiteSpace: "nowrap", minWidth: i === 0 ? 100 : 50, ...(i === 0 ? { position: "sticky", left: 0, background: "#FAFAF8", zIndex: 2 } : {}) }}>{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>{shownItems.map((bk) => { const d = consolidated[bk.id]; return (
+              <tr key={bk.id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                <td style={{ ...tdS, fontWeight: 600, position: "sticky", left: 0, background: "#fff", zIndex: 1, whiteSpace: "nowrap" }}>{bk.name} <span style={{ fontSize: 10, color: "#999", fontWeight: 400 }}>{bkDisplayUnit(bk.id, bk.unit)}</span></td>
+                <td style={{ ...tdS, textAlign: "center", fontWeight: 800, fontFamily: "'JetBrains Mono', monospace", fontSize: 15, color: "#B45309" }}>{Math.round(d.total * 100) / 100}</td>
+                {OUTLETS.map((o) => { const cl = closingOf(o.id, bk.id); return (
+                  <td key={o.id} style={{ ...tdS, textAlign: "center", color: d.by[o.id] ? "#1A1A1A" : "#DDD" }}>{d.by[o.id] ? Math.round(d.by[o.id] * 100) / 100 : "—"} <span style={{ fontSize: 10, color: cl != null && cl > 0 ? "#B45309" : "#999", fontWeight: 400 }}>({cl != null ? cl : "NA"})</span></td>
+                ); })}
+              </tr>
+            ); })}</tbody>
+          </table>
+        </div>
+      )}
+    </FlagCard>
+  );
+};
+
 const OwnerHome = ({ setOwnerTab }) => {
   const [selOutlet, setSelOutlet] = useState("sec23");
   const isBK = selOutlet === "bk";
@@ -22182,6 +22261,11 @@ const OwnerHome = ({ setOwnerTab }) => {
 
       {section("team", "👥 Team", `${outletShort} · ${effDateStr} — roster, attendance & OT`,
         <RosterPage lockedOutlet={selOutlet} date={effDateStr} />)}
+
+      {/* All-outlets, cross-outlet by design (ignores the selected outlet) — prepared-food
+          demand + closing in one grid to watch freshness. Placed last, per the request. */}
+      {section("closing", "🧊 Closing", `Prepared food — demand & closing, all outlets · ${effDateStr}`,
+        <FoodClosingDemandGrid date={effDateStr} />)}
       </>}
     </div>
   );
