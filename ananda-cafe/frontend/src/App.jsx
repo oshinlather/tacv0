@@ -9534,6 +9534,7 @@ const OutletActivityGrid = ({ mode }) => {
   const isBK = isClosing && selOutlet === "bk";
   const [selMonth, setSelMonth] = useState(() => { const d = istNow(); return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`; });
   const [selCategory, setSelCategory] = useState(null); // demand mode only — filter items by DEMAND_SECTIONS category
+  const [metric, setMetric] = useState("demand"); // demand mode only — 'demand' | 'dispatch' | 'received'
   const [bkItems, setBkItems] = useState([]); // inventory_items master — only needed for the BK tab
   useEffect(() => { if (isClosing) api.getInventory().then((d) => setBkItems(d || [])).catch(() => setBkItems([])); }, [isClosing]);
   const isWastage = mode === "wastage";
@@ -9642,14 +9643,22 @@ const OutletActivityGrid = ({ mode }) => {
   const dayWise = useMemo(() => {
     const map = {};
     records.forEach((r) => {
-      Object.entries(r.items || {}).forEach(([rawId, qty]) => {
+      // Which quantity to chart. Closing/wastage always use r.items; demand mode has the
+      // 3-way switch: demand = ordered, dispatch = what BK sent (fulfilled rows only, falling
+      // back to the demanded qty on older rows), received = what the outlet confirmed (only
+      // once received_at is set).
+      const src = !isDemand ? (r.items || {})
+        : metric === "dispatch" ? (r.status === "fulfilled" ? (r.dispatch_items || r.items || {}) : {})
+        : metric === "received" ? (r.received_at ? (r.received_items || {}) : {})
+        : (r.items || {});
+      Object.entries(src).forEach(([rawId, qty]) => {
         const id = rawId.startsWith("cs_") ? rawId.replace("cs_", "") : rawId;
         if (!map[id]) map[id] = {};
         map[id][r.date] = (map[id][r.date] || 0) + (Number(qty) || 0);
       });
     });
     return map;
-  }, [records]);
+  }, [records, isDemand, metric]);
 
   const allDemandItems = useMemo(() => DEMAND_SECTIONS.flatMap((s) => s.items), []);
   // item_id → section id (food, dairy, vegetable, ...) — used by the demand-mode category pills
@@ -9675,6 +9684,7 @@ const OutletActivityGrid = ({ mode }) => {
   const monthLabel = monthOptions.find((m) => m.value === selMonth)?.label || selMonth;
   const modeLabel = isClosing ? "closing stock" : isDemand ? "demand" : "wastage";
   const modeTitle = isClosing ? "📊 Closing Stock" : isDemand ? "📋 Demand" : "🗑️ Wastage";
+  const metricLabel = !isDemand ? "" : metric === "dispatch" ? "Dispatch" : metric === "received" ? "Received" : "Demand";
 
   // Wastage cost — all-outlets total, per-outlet breakdown, and per-item cost for the
   // selected outlet, all derived from the one month-wide fetch above.
@@ -9696,7 +9706,7 @@ const OutletActivityGrid = ({ mode }) => {
       const perDay = days.map((ds) => Math.round(((dayWise[i.id] || {})[ds] || 0) * 100) / 100);
       return [i.name, i.unit, ...perDay, Math.round(i.total * 100) / 100, ...(isWastage ? [Math.round(wastageItemCostMap[i.id] || 0)] : [])];
     });
-    exportCSV(headers, rows, `${mode}_${selOutlet}_${selMonth}.csv`);
+    exportCSV(headers, rows, `${isDemand ? metric : mode}_${selOutlet}_${selMonth}.csv`);
   };
 
   return (
@@ -9720,6 +9730,14 @@ const OutletActivityGrid = ({ mode }) => {
           <button onClick={() => { setSelOutlet("bk"); setSelCategory(null); setDrafts({}); setEditMode(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: isBK ? 700 : 500, border: isBK ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: isBK ? "#1A1A1A" : "#fff", color: isBK ? "#fff" : "#888" }}>🏭 Base Kitchen</button>
         )}
       </div>
+
+      {isDemand && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+          {[{ k: "demand", label: "📋 Demand" }, { k: "dispatch", label: "🚚 Dispatch" }, { k: "received", label: "📥 Received" }].map((m) => (
+            <button key={m.k} onClick={() => setMetric(m.k)} style={{ padding: "8px 18px", borderRadius: 999, fontSize: 12.5, fontWeight: 700, border: metric === m.k ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: metric === m.k ? "#1A1A1A" : "#fff", color: metric === m.k ? "#fff" : "#888" }}>{m.label}</button>
+          ))}
+        </div>
+      )}
 
       {(isDemand || isClosing) && (
         <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
@@ -9757,7 +9775,7 @@ const OutletActivityGrid = ({ mode }) => {
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E8E8E4", overflow: "hidden" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", background: "#F8F8F5", borderBottom: "1px solid #E8E8E4" }}>
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}</div>
+              <div style={{ fontSize: 13, fontWeight: 700 }}>{outletName}{metricLabel ? ` · ${metricLabel}` : ""}</div>
               <div style={{ fontSize: 11, color: "#888" }}>{monthLabel}</div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
