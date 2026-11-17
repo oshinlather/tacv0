@@ -29,6 +29,7 @@ const bkProductionRouter = require("./routes/bkProduction");
 const storeLedgerHistoryRouter = require("./routes/storeLedgerHistory");
 const outletPhotosRouter = require("./routes/outletPhotos");
 const departmentPurchasesRouter = require("./routes/departmentPurchases");
+const bkUtilisationRouter = require("./routes/bkUtilisation");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -73,6 +74,7 @@ app.use("/api/store", bkProductionRouter);
 app.use("/api/store", storeLedgerHistoryRouter);
 app.use("/api/outlet-photos", outletPhotosRouter);
 app.use("/api/department-purchases", departmentPurchasesRouter);
+app.use("/api/bk-utilisation", bkUtilisationRouter); // CEO-only BK audit
 
 // Outlets — any authenticated user can list outlets (needed by all role UIs)
 app.get("/api/outlets", async (req, res) => {

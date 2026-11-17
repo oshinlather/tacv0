@@ -19066,6 +19066,192 @@ const BKAudit = () => {
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  BK UTILISATION AUDIT (CEO only) — monthly: is everything BK bought accounted for?
+//    Purchased (received vendor challans)  vs  Raw dispatched to 6 outlets + Used in BK recipes
+//  Recipe use is theoretical: the 15 BK-prepared items dispatched to outlets, broken into
+//  raw ingredients via bk_recipes. Outlet-side usage is out of scope. Ignores opening/closing
+//  stock (owner: roughly constant month to month). Backed by GET /api/bk-utilisation (ceo role).
+// ═════════════════════════════════════════════════════════════════════════════
+const BKUtilisationAudit = ({ initialMonth = today().slice(0, 7) }) => {
+  const [month, setMonth] = useState(initialMonth);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [filter, setFilter] = useState("flagged");
+  const [selCat, setSelCat] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [showProduction, setShowProduction] = useState(false);
+
+  useEffect(() => { setMonth(initialMonth); }, [initialMonth]);
+  useEffect(() => {
+    setLoading(true); setError(null); setExpandedId(null);
+    api.getBkUtilisation(month).then(setData).catch((e) => { setData(null); setError(e?.message || "Couldn't load"); }).finally(() => setLoading(false));
+  }, [month]);
+
+  const thisMonth = today().slice(0, 7);
+  const shiftMonth = (n) => { const [y, m] = month.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); setMonth(d.toISOString().slice(0, 7)); };
+  const q = (n) => n == null ? "—" : (Math.round(n * 100) / 100).toLocaleString("en-IN");
+  const STATUS = {
+    ok: { label: "OK", color: "#16A34A", bg: "#F0FDF4" },
+    excess: { label: "Bought > Used", color: "#DC2626", bg: "#FEF2F2" },
+    short: { label: "Used > Bought", color: "#B45309", bg: "#FFFBEB" },
+    not_used: { label: "Not used", color: "#DC2626", bg: "#FEF2F2" },
+    not_purchased: { label: "No purchase", color: "#B45309", bg: "#FFFBEB" },
+  };
+  const FILTERS = [
+    { key: "flagged", label: "Flagged", test: (i) => i.status !== "ok" },
+    { key: "excess", label: "Bought > Used", test: (i) => i.status === "excess" || i.status === "not_used" },
+    { key: "short", label: "Used > Bought", test: (i) => i.status === "short" || i.status === "not_purchased" },
+    { key: "ok", label: "OK", test: (i) => i.status === "ok" },
+    { key: "all", label: "All", test: () => true },
+  ];
+  const items = data?.items || [];
+  const filterFn = FILTERS.find((f) => f.key === filter).test;
+  const byFilter = items.filter(filterFn);
+  const categories = [...new Set(byFilter.map((i) => i.category))].sort();
+  const visible = selCat ? byFilter.filter((i) => i.category === selCat) : byFilter;
+  const outletShort = (id) => OUTLETS.find((o) => o.id === id)?.short || id;
+  const pill = (active) => ({ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: active ? 700 : 500, border: active ? "none" : "1px solid #E0E0DC", cursor: "pointer", fontFamily: "inherit", background: active ? "#1A1A1A" : "#fff", color: active ? "#fff" : "#888" });
+  const tile = (label, value, color, sub) => (
+    <div style={{ flex: "1 1 140px", background: "#fff", border: "1px solid #E8E8E4", borderRadius: 12, padding: "12px 14px" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#999", textTransform: "uppercase", letterSpacing: 0.6 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color: color || "#1A1A1A", fontFamily: "'JetBrains Mono'", marginTop: 4 }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  return (<div>
+    <div style={{ marginBottom: 14 }}>
+      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 4px" }}>⚖️ BK Utilisation Audit</h3>
+      <p style={{ fontSize: 12, color: "#888", margin: 0 }}>Vendor challans received = Raw items dispatched to 6 outlets + Raw items used (as per BK recipe) to prepare the BK food sent to outlets.</p>
+    </div>
+
+    <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+      <button onClick={() => shiftMonth(-1)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontSize: 14 }}>←</button>
+      <input type="month" value={month} max={thisMonth} onChange={(e) => e.target.value && setMonth(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #E0E0DC", fontSize: 14, fontFamily: "inherit", fontWeight: 700, textAlign: "center" }} />
+      <button onClick={() => shiftMonth(1)} disabled={month >= thisMonth} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #E0E0DC", background: "#fff", cursor: month >= thisMonth ? "not-allowed" : "pointer", opacity: month >= thisMonth ? 0.4 : 1, fontFamily: "inherit", fontSize: 14 }}>→</button>
+    </div>
+
+    {loading ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>⏳ Loading audit...</div>
+    ) : !data ? (
+      <div style={{ textAlign: "center", padding: 40, color: "#999" }}>Couldn't load audit for {month}{error ? ` — ${error}` : ""}</div>
+    ) : (<>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        {tile("Purchased", fmt(data.totals.purchased_value), null, `${data.totals.challans} challans received`)}
+        {tile("Accounted for", fmt(data.totals.used_value), null, `${data.totals.dispatches} dispatches + recipes`)}
+        {tile("Bought > Used", fmt(data.totals.excess_value), "#DC2626", "possible leakage / stock build-up")}
+        {tile("Used > Bought", fmt(Math.abs(data.totals.short_value)), "#B45309", "stock drawn down / purchase not entered")}
+        {tile("Items flagged", `${data.totals.flagged} / ${data.totals.items}`, null, `outside ±${data.tolerance_pct}%`)}
+      </div>
+
+      <div style={{ padding: "10px 14px", borderRadius: 10, background: "#EFF6FF", border: "1px solid #BFDBFE", fontSize: 12, color: "#1D4ED8", marginBottom: 12, lineHeight: 1.5 }}>
+        ℹ️ Gap = Purchased − (Dispatched + Recipe use). Recipe use is what the BK recipes <em>say</em> should have been used for the BK food dispatched (Sambhar, batters, chutneys etc.); how outlets use what they receive is not part of this check. ₹ uses this month's average challan price.
+        {month === thisMonth && " This month is still in progress."}
+        {data.totals.unpriced > 0 && ` ${data.totals.unpriced} item(s) have no price, so they're left out of the ₹ totals.`}
+      </div>
+
+      {(data.unmapped_ingredients.length > 0 || (data.bk_items_without_recipe || []).length > 0 || data.production.some((p) => p.unit_issue || !p.has_ingredients) || items.some((i) => i.unit_issues.length)) && (
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", marginBottom: 12, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>⚠️ Data gaps that affect these numbers</div>
+          {(data.bk_items_without_recipe || []).length > 0 && <div>BK items dispatched with no BK recipe: {data.bk_items_without_recipe.map((b) => `${b.name}${b.counted_as_raw ? " (counted 1:1 as raw)" : " (not counted)"}`).join(", ")}</div>}
+          {data.unmapped_ingredients.length > 0 && <div>Recipe ingredients not linked to any store item (not counted): {data.unmapped_ingredients.map((u) => `${u.id} (${u.recipes.join(", ")})`).join("; ")}</div>}
+          {data.production.filter((p) => !p.has_ingredients).length > 0 && <div>BK recipes with no ingredients entered: {data.production.filter((p) => !p.has_ingredients).map((p) => p.name).join(", ")}</div>}
+          {data.production.filter((p) => p.unit_issue).length > 0 && <div>Food dispatched in a unit with no conversion (skipped): {data.production.filter((p) => p.unit_issue).map((p) => `${p.name} (${p.unit_issue})`).join(", ")}</div>}
+          {items.filter((i) => i.unit_issues.length).length > 0 && <div>Unit conversions missing (some entries skipped): {items.filter((i) => i.unit_issues.length).map((i) => `${i.name} (${i.unit_issues.join(", ")})`).join("; ")}</div>}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        {FILTERS.map((f) => <button key={f.key} onClick={() => { setFilter(f.key); setSelCat(null); }} style={pill(filter === f.key)}>{f.label} ({items.filter(f.test).length})</button>)}
+      </div>
+      {categories.length > 1 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+          <button onClick={() => setSelCat(null)} style={{ ...pill(!selCat), padding: "4px 10px", fontSize: 10 }}>All categories</button>
+          {categories.map((c) => <button key={c} onClick={() => setSelCat(c)} style={{ ...pill(selCat === c), padding: "4px 10px", fontSize: 10 }}>{c} ({byFilter.filter((i) => i.category === c).length})</button>)}
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40 }}><div style={{ fontSize: 36, marginBottom: 8 }}>✅</div><div style={{ color: "#16A34A", fontWeight: 700 }}>Nothing in this view for {month}</div></div>
+      ) : (
+        <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead><tr style={{ background: "#FAFAF8" }}>
+                <th style={thS}>Item</th>
+                <th style={{ ...thS, textAlign: "right" }}>Purchased</th>
+                <th style={{ ...thS, textAlign: "right" }}>Dispatched</th>
+                <th style={{ ...thS, textAlign: "right" }}>Recipe use</th>
+                <th style={{ ...thS, textAlign: "right" }}>Gap</th>
+                <th style={{ ...thS, textAlign: "right" }}>Gap ₹</th>
+                <th style={{ ...thS, textAlign: "center" }}>Status</th>
+              </tr></thead>
+              <tbody>
+                {visible.map((i) => {
+                  const st = STATUS[i.status];
+                  const open = expandedId === i.item_id;
+                  const hasDetail = Object.keys(i.outlet_breakdown).length || Object.keys(i.recipe_breakdown).length;
+                  return (<Fragment key={i.item_id}>
+                    <tr onClick={() => hasDetail && setExpandedId(open ? null : i.item_id)} style={{ borderBottom: "1px solid #F0F0EC", background: open ? "#FAFAF8" : "transparent", cursor: hasDetail ? "pointer" : "default" }}>
+                      <td style={tdS}><div style={{ fontWeight: 600 }}>{hasDetail ? (open ? "▾ " : "▸ ") : ""}{i.name}</div><div style={{ fontSize: 9, color: "#999" }}>{i.category} · {i.unit}{i.rate != null ? ` · ₹${i.rate}/${i.unit}` : ""}</div></td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{q(i.purchased)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.dispatched > 0 ? "#1A1A1A" : "#BBB" }}>{q(i.dispatched)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: i.recipe_use > 0 ? "#1A1A1A" : "#BBB" }}>{q(i.recipe_use)}</td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", fontWeight: 800, color: st.color }}>{i.gap > 0 ? "+" : ""}{q(i.gap)}<div style={{ fontSize: 9, fontWeight: 500 }}>{i.gap_pct > 0 ? "+" : ""}{i.gap_pct}%</div></td>
+                      <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'", color: st.color }}>{i.gap_value == null ? "—" : `${i.gap_value < 0 ? "−" : ""}${fmt(Math.abs(i.gap_value))}`}</td>
+                      <td style={{ ...tdS, textAlign: "center" }}><span style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, color: st.color, background: st.bg, whiteSpace: "nowrap" }}>{st.label}</span></td>
+                    </tr>
+                    {open && (
+                      <tr style={{ background: "#FAFAF8", borderBottom: "1px solid #F0F0EC" }}>
+                        <td colSpan={7} style={{ padding: "8px 14px 12px 30px", fontSize: 11, color: "#888", lineHeight: 1.7 }}>
+                          {Object.keys(i.outlet_breakdown).length > 0 && <div>Dispatched by outlet: {Object.entries(i.outlet_breakdown).map(([o, v]) => <span key={o} style={{ marginRight: 14 }}>{outletShort(o)}: <strong style={{ color: "#555" }}>{q(v)}</strong></span>)}</div>}
+                          {Object.keys(i.recipe_breakdown).length > 0 && <div>Used in recipes: {Object.entries(i.recipe_breakdown).map(([r, v]) => <span key={r} style={{ marginRight: 14 }}>{r}: <strong style={{ color: "#555" }}>{q(v)}</strong></span>)}</div>}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>);
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {data.production.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <button onClick={() => setShowProduction(!showProduction)} style={{ ...pill(false), fontSize: 12 }}>{showProduction ? "▾" : "▸"} BK food sent to outlets this month ({data.production.length} items) — basis for recipe use</button>
+          {showProduction && (
+            <div style={{ background: "#fff", borderRadius: 12, border: "1px solid #E8E8E4", overflow: "hidden", marginTop: 8 }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead><tr style={{ background: "#FAFAF8" }}>
+                    <th style={thS}>BK item</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Sent</th>
+                    <th style={{ ...thS, textAlign: "right" }}>Recipe batches</th>
+                    <th style={thS}>By outlet</th>
+                  </tr></thead>
+                  <tbody>
+                    {data.production.map((p) => (
+                      <tr key={p.recipe_id} style={{ borderBottom: "1px solid #F0F0EC" }}>
+                        <td style={tdS}><div style={{ fontWeight: 600 }}>{p.name}</div>{!p.has_ingredients && <div style={{ fontSize: 9, color: "#B45309" }}>no ingredients in recipe</div>}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{q(p.qty)} {p.unit}</td>
+                        <td style={{ ...tdS, textAlign: "right", fontFamily: "'JetBrains Mono'" }}>{q(p.batches)}</td>
+                        <td style={{ ...tdS, fontSize: 11, color: "#888" }}>{Object.entries(p.by_outlet).map(([o, v]) => `${outletShort(o)} ${q(v)}`).join(" · ")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </>)}
+  </div>);
+};
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  BK STORE AUDIT — first-principles version of the reconciliation above. Store is the
 //  single source both Base Kitchen (raw materials, to cook) and outlets (everything
 //  except food prepared in BK) draw from, so per item:
@@ -22568,6 +22754,9 @@ export default function AnandaCafe() {
       <button ref={bkBtnRef} onClick={() => { anchorDropdown(bkBtnRef); setBkDropdown(!bkDropdown); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? 700 : 500, color: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["kitchen","dispatch","inventory","bk_closing","bk_closing_wastage","bk_audit","inv_ledger","activity","orders","history","new_store_stock","vendor_challans","stock_counts","bk_production","store_ledger_history"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>🏭 BK & Store ▾</button>
       </>)}
       <button ref={paymentsBtnRef} onClick={() => { anchorDropdown(paymentsBtnRef); setPaymentsDropdown(!paymentsDropdown); setBkDropdown(false); setAuditDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? 700 : 500, color: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ["daily_sales","paytm","cash_ledger","custodian_ledger","books_ledger","monthly_sales"].includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>💰 Payments ▾</button>
+      {isCeo && (
+        <button onClick={() => { setOwnerTab("ceo_audit"); setBkDropdown(false); setAuditDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: ownerTab === "ceo_audit" ? 700 : 500, color: ownerTab === "ceo_audit" ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: ownerTab === "ceo_audit" ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>⚖️ Audit</button>
+      )}
       {!isCeo && (<>
       <button ref={auditBtnRef} onClick={() => { if (!auditUnlocked) { setAuditPinPrompt(true); setAuditPinInput(""); setAuditPinError(""); return; } anchorDropdown(auditBtnRef); setAuditDropdown(!auditDropdown); setBkDropdown(false); setPaymentsDropdown(false); setDodDropdown(false); setOthersDropdown(false); setFranchiseDropdown(false); }} style={{ padding: "11px 14px", border: "none", background: "transparent", fontSize: 12, fontWeight: AUDIT_TABS.includes(ownerTab) ? 700 : 500, color: AUDIT_TABS.includes(ownerTab) ? "#1A1A1A" : "#999", cursor: "pointer", fontFamily: "inherit", borderBottom: AUDIT_TABS.includes(ownerTab) ? "2px solid #1A1A1A" : "2px solid transparent", whiteSpace: "nowrap" }}>{auditUnlocked ? "🔍" : "🔒"} Audit ▾</button>
       </>)}
@@ -22709,6 +22898,7 @@ export default function AnandaCafe() {
       {ownerTab === "custodian_ledger" && <CustodianLedger />}
       {ownerTab === "books_ledger" && <BooksLedger />}
       {ownerTab === "monthly_sales" && <MonthlySalesMatrix />}
+      {ownerTab === "ceo_audit" && isCeo && <BKUtilisationAudit />}
       {ownerTab === "home" && <OwnerHome setOwnerTab={setOwnerTab} />}
       {ownerTab === "pnl" && <DailyPnL />}
       {ownerTab === "finance" && <FinancePnL />}

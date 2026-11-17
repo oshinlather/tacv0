@@ -7383,6 +7383,8 @@ module.exports.computeDailySalesRevenue = computeDailySalesRevenue;
 module.exports.buildCostingContext = buildCostingContext;
 module.exports.computeBkPurchaseByOutlet = computeBkPurchaseByOutlet;
 module.exports.computeBkPurchaseDetail = computeBkPurchaseDetail;
+// For bkUtilisation.js — resolves recipe _raw ids whose raw_materials.inventory_item_id is stale.
+module.exports.BK_INGREDIENT_TO_RATE = BK_INGREDIENT_TO_RATE;
 module.exports.computeBkOwnCostByCategory = computeBkOwnCostByCategory;
 module.exports.resolveFixedCostsForMonth = resolveFixedCostsForMonth;
 // Exported for finance.js's Consumption-basis pill — same Yesterday Closing + Dispatched
