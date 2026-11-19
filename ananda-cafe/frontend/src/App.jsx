@@ -8469,9 +8469,10 @@ const DemandHistory = ({ outletOverride } = {}) => {
       const items = d.items || {};
       const units = d.items_units || {};
       const dispItems = d.dispatch_items || null;
-      const ids = new Set([...Object.keys(items), ...Object.keys(dispItems || {})]);
+      const recvItems = (d.received_at && d.received_items) || null; // only once the outlet confirmed receipt
+      const ids = new Set([...Object.keys(items), ...Object.keys(dispItems || {}), ...Object.keys(recvItems || {})]);
       ids.forEach(id => {
-        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, demandIds: [] };
+        if (!merged[id]) merged[id] = { qty: 0, dispatchedQty: 0, hasDispatch: false, receivedQty: 0, hasReceived: false, demandIds: [] };
         // NOT switched to bkDisplayUnit/Kg like every other screen — see the comment on
         // the `displayUnit` line below in the .map() for why (RECIPES[id].yieldQty for
         // dosa/idli batter is a separate, pre-existing bug that this Batch-denominated
@@ -8481,6 +8482,10 @@ const DemandHistory = ({ outletOverride } = {}) => {
         if (dispItems) {
           merged[id].hasDispatch = true;
           merged[id].dispatchedQty += toDefaultUnit(id, Number(dispItems[id]) || 0, units[id], defaultUnit);
+        }
+        if (recvItems) {
+          merged[id].hasReceived = true;
+          merged[id].receivedQty += toDefaultUnit(id, Number(recvItems[id]) || 0, units[id], defaultUnit);
         }
         if (!merged[id].demandIds.includes(d.id)) merged[id].demandIds.push(d.id);
       });
@@ -8570,6 +8575,7 @@ const DemandHistory = ({ outletOverride } = {}) => {
           id, name: def?.name || id.replace(/_/g, ' '), unit: displayUnit,
           qty: Math.round(data.qty * 100) / 100, demandIds: data.demandIds,
           hasDispatch: data.hasDispatch, dispatchedQty: Math.round(data.dispatchedQty * 100) / 100, mismatch,
+          hasReceived: data.hasReceived, receivedQty: Math.round(data.receivedQty * 100) / 100,
           rate: Math.round(unitPrice * 100) / 100, rateUnit, cost,
           section: DEMAND_SECTIONS.find(s => s.items.some(i => i.id === id))?.titleHi || 'Other'
         };
@@ -8745,6 +8751,7 @@ const DemandHistory = ({ outletOverride } = {}) => {
                                           {item.hasDispatch
                                             ? <> → Dispatch: <span style={{ color: item.mismatch ? "#DC2626" : "#BBB", fontWeight: item.mismatch ? 800 : 400 }}>{item.dispatchedQty} {item.unit}</span>{item.mismatch ? " ⚠️" : ""}</>
                                             : ' · not dispatched yet'}
+                                          {item.hasReceived && <> → Received: <span style={{ color: "#16A34A", fontWeight: 600 }}>{item.receivedQty} {item.unit}</span></>}
                                           {' · ₹' + item.rate + '/' + (item.rateUnit || item.unit) + ')'}
                                         </span>
                                       </span>
